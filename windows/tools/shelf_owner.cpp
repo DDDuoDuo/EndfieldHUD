@@ -598,8 +598,10 @@ std::unique_ptr<DesignModuleOwner> ShelfService::makeOwner(native::LayerRasteriz
     options.message = [this](const app::NativeMessage& m, double t) { return message(m, t); };
     options.updated = [this](const app::ModuleFrame& frame) { impl_->time = std::max(impl_->time, frame.time); impl_->updateInput(); };
     // HUD closing: the picker is cancelled; the icon worker ends once every
-    // wanted icon is cached (else it finishes them for the next opening).
-    options.closing = [this](double) { auto& s = *impl_; ++s.closings; s.relinkTarget.reset(); s.picker->cancel(); s.heldReveal.reset(); if (!s.iconsMissing()) s.parkIcons(); };
+    // wanted icon is cached (else it finishes them for the next opening); the
+    // canvas drops the other layout's tiles (their artwork goes with the close).
+    options.closing = [this](double) { auto& s = *impl_; ++s.closings; s.relinkTarget.reset(); s.picker->cancel(); s.heldReveal.reset(); if (!s.iconsMissing()) s.parkIcons();
+        if (auto* c = s.canvas()) c->overlayClosing(); };
     auto ownerCore = std::make_unique<DesignOwnerCore>(raster, context, std::move(options));
     auto token = std::make_shared<int>(0);
     std::optional<std::string> error;

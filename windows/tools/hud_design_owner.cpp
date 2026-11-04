@@ -491,6 +491,9 @@ bool DesignOwnerCore::hostEvent(const app::HostEvent& e, double t) {
         i.bind();
         for (auto& s : i.slots) s->canvas->resetSession();
         i.parkHidden();
+        // The shown canvas keeps its page, not the parts its close took away
+        // (a pop-over or menu): no expiry wake runs while the HUD is hidden.
+        if (i.renderer) for (auto& s : i.slots) (void)s->scene->releaseKept(*i.renderer);
     }
     if (!i.options.hostEvent) return false;
     i.bind();

@@ -28,6 +28,7 @@
 #include <objbase.h>
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 using namespace endfield;
@@ -243,6 +244,27 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     const_cast<m::ArchiveState&>(h.owner->state()).classifySelected("correct horse");
     h.await("the sealed document", [&] { return canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::locked; });
     check(!h.owner->body().shown(), "A locked document draws no body editor");
+    // The locked panel fades as one image (CALayer group opacity, its stagger,
+    // module switches, the HUD's fades): its plate and the bars, stamp and
+    // password bar after the revealed text's own part draw in one group (one
+    // entry), not the plate faded apart under them.
+    {
+        h.settle(5);
+        const std::function<d::Layer*(d::Layer&)> find = [&](d::Layer& l) -> d::Layer* {
+            if (l.id().ends_with(".archive.classified")) return &l;   // the arena prefixes its ids
+            for (auto* child : l.children()) if (auto* found = find(*child)) return found;
+            return nullptr;
+        };
+        auto* panel = find(canvas.root());
+        check(panel != nullptr, "The locked page shows its panel");
+        const auto rest = h.owner->entries(core::Module::archive).size();
+        panel->setValue(d::Channel::opacity, .5); h.frame();
+        const auto faded = h.owner->entries(core::Module::archive).size();
+        // Apart, the plate keeps its own entry and the bars' part takes a group: as many entries as at rest.
+        check(faded < rest && h.owner->core().sceneStats(core::Module::archive)->groups == 1, "Fading, one group draws the locked panel's plate with its bars, stamp and password bar");
+        panel->setValue(d::Channel::opacity, 1); h.frame();
+        check(h.owner->entries(core::Module::archive).size() == rest && h.owner->core().sceneStats(core::Module::archive)->groups == 0, "At rest the panel's parts draw directly");
+    }
     // The HUD session ends: the canvas discards its document and the media go.
     h.owner->setOverlayVisible(false, h.time); h.settle(5);
     h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(5);

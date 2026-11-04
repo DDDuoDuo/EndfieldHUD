@@ -1289,9 +1289,23 @@ int Application::Impl::runHiddenVerification(){
                         if(enforceBounds)hostCheck(within,"The timed action "+key+" spreads its later work over frames ("+std::to_string(settleRasterMax)+" of "+std::to_string(bound->second)+" rasterizations on one frame)");
                     }
                     time+=.1;};
+                // Group b2's work bounds (Media Assembly; timed below by timeDetailed and
+                // timeWindow, and by the area): the second after each action (pages
+                // built, rasterizations). Like `bounds`, each holds only for an action
+                // that ran (b2Bound), and a skip of one fails.
+                // rc140 (new page ids on every rebuild): Media Assembly's import start, close
+                // and overwrite each rasterized the whole panel again, twice for close and
+                // more around an overwrite's reload.
+                // Measured with kept ids: 29, 47, 94 and 73 rasterizations, 150 for the first
+                // Stickers visit, at most 2 pages each. 18 of close's and overwrite's are the
+                // confirm bar leaving; the rest is the stage's own picture, export gauge and
+                // empty state and the header, which the Mac redraws too (no panel part changes).
+                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{
+                    {"mediaAssembly.importShelf",{2,36}},{"mediaAssembly.closeConfirm",{2,56}},{"mediaAssembly.overwriteConfirm",{2,110}},
+                    {"mediaAssembly.overwriteFinish",{2,88}},{"mediaAssembly.stickersFirstVisit",{2,170}}};
                 const auto skip=[&](core::Module m,const char*name,std::string reason={}){timings.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(m))},{"action",std::string(name)},{"skipped",true}});
                     if(!reason.empty())timings.back()["reason"]=reason;
-                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;hostCheck(!bounds.contains(key),"The timed action "+key+" ran (skipped"+(reason.empty()?std::string():": "+reason)+")");};
+                    const auto key=std::string(core::moduleIdentifier(m))+"."+name;hostCheck(!bounds.contains(key)&&!b2Bounds.contains(key),"The timed action "+key+" ran (skipped"+(reason.empty()?std::string():": "+reason)+")");};
                 // Work Mode: the host's one controller, left by the cycles as a paused stopwatch.
                 if(workMode&&workModeCanvas&&showModule(core::Module::workMode)){
                     const auto M=core::Module::workMode;
@@ -1497,19 +1511,10 @@ int Application::Impl::runHiddenVerification(){
                     }
                 }
                 // ---- Group b2: Shelf Open, Media Assembly (freeze sweep 9, 36-39) ----
-                // Work bounds of the second after each action (pages built, rasterizations).
-                // rc140 (new page ids on every rebuild): Media Assembly's import start, close
-                // and overwrite each rasterized the whole panel again, twice for close and
-                // more around an overwrite's reload.
-                // Measured with kept ids: 29, 47, 94 and 73 rasterizations, 150 for the first
-                // Stickers visit, at most 2 pages each. 18 of close's and overwrite's are the
-                // confirm bar leaving; the rest is the stage's own picture, export gauge and
-                // empty state and the header, which the Mac redraws too (no panel part changes).
-                const std::map<std::string,std::pair<std::int64_t,std::int64_t>,std::less<>> b2Bounds{
-                    {"mediaAssembly.importShelf",{2,36}},{"mediaAssembly.closeConfirm",{2,56}},{"mediaAssembly.overwriteConfirm",{2,110}},
-                    {"mediaAssembly.overwriteFinish",{2,88}},{"mediaAssembly.stickersFirstVisit",{2,170}}};
                 const auto b2Bound=[&](const std::string&key){
                     const auto bound=b2Bounds.find(key);if(bound==b2Bounds.end())return;auto&row=timings.back();
+                    // As in timeAction: a bound holds only for an action that ran.
+                    hostCheck(row["ran"].boolean(),"The timed action "+key+" ran");
                     const auto pages=row["secondPagesBuilt"].integer(),rasters=row["secondRasterizations"].integer();
                     const bool within=pages<=bound->second.first&&rasters<=bound->second.second;row["withinBound"]=within;
                     hostCheck(within,"The timed action "+key+" stays within its work bound ("+std::to_string(pages)+" of "+std::to_string(bound->second.first)+
@@ -1586,9 +1591,13 @@ int Application::Impl::runHiddenVerification(){
                 }
                 // Media Assembly: import from the (synthetic) Shelf, close, import again,
                 // overwrite the original (the shared confirm bar) and its progress display.
+                // A missing or disabled area skips the bounded actions (a failed check, not a silent pass).
+                bool mediaAssemblyTimed{};
                 for(auto&area:externalModules){
-                    if(area.name!="mediaAssembly"||!registry.enabled(*area.owner))continue;
-                    const auto M=core::Module::mediaAssembly;auto*c=showModule(M);
+                    if(area.name!="mediaAssembly")continue;
+                    const auto M=core::Module::mediaAssembly;mediaAssemblyTimed=true;
+                    if(!registry.enabled(*area.owner)){skip(M,"importShelf","area disabled");break;}
+                    auto*c=showModule(M);
                     if(!c){skip(M,"importShelf");break;}
                     const auto perform=[&](std::string_view id,double t){return c->performAccessibilityAction(id,t);};
                     const auto confirmIs=[&](std::string_view id){const auto&r=designContext.overlay().confirmState().request();return designContext.overlay().isConfirming()&&r&&r->id==id;};
@@ -1611,8 +1620,11 @@ int Application::Impl::runHiddenVerification(){
                     settleFor(30);(void)perform("close",time);if(confirmIs("mediaClose"))(void)designContext.overlay().decide(dz::ConfirmState::Decision::confirm);settleFor(30);
                     break;
                 }
+                if(!mediaAssemblyTimed)skip(core::Module::mediaAssembly,"importShelf","no area");
                 // Rows the areas timed inside their own steps (Media Assembly's first Stickers visit).
-                for(auto&row:areaTimings){timings.push_back(row);b2Bound(row["module"].string()+"."+row["action"].string());}
+                bool stickersTimed{};
+                for(auto&row:areaTimings){timings.push_back(row);const auto key=row["module"].string()+"."+row["action"].string();b2Bound(key);stickersTimed|=key=="mediaAssembly.stickersFirstVisit";}
+                if(!stickersTimed)skip(core::Module::mediaAssembly,"stickersFirstVisit","not timed by the area");
                 // Group b4 (Calendar, Event Log, Classified Archive, E-Reader, OrbiPom): the
                 // freeze sweep's findings 17, 19, 20, 22, 25, 27, 42, 45 and 46.
                 {

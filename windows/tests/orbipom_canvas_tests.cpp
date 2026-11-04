@@ -248,6 +248,19 @@ void bootingVM() {
     ahead.port->booting = false; w.advance(.13); third.setActive(true, w.now);
     check(!third.booting() && ahead.port->starts == 1 && ahead.session.snapshot().isPlaying() && third.hasFrameTimer() && ahead.events == std::vector{m::OrbiPomEvent::started},
         "Activated with the boot done, the game starts at once");
+    // Shown ahead of an activation that never came (a superseding switch, the
+    // HUD closed first): the prepared VM goes with the HUD's close, not on the
+    // leave (a click); a started game keeps its VM.
+    Game passed(71); passed.booting = true;
+    C fifth(w.context, passed.session);
+    fifth.show(w.now);
+    check(passed.session.hasPrepared() && !passed.session.hasRuntime(), "Showing the canvas ahead boots a VM");
+    fifth.prepareToLeave(w.now);
+    check(passed.session.hasPrepared(), "The leave keeps the prepared VM (a click does not wait for its boot)");
+    fifth.resetSession();
+    check(!passed.session.hasPrepared() && !passed.session.hasRuntime(), "The finished close releases a VM no game started");
+    third.prepareToLeave(w.now); third.setActive(false, w.now); third.resetSession();
+    check(ahead.session.hasRuntime() && ahead.port->starts == 1, "A started game keeps its VM through the close");
     // Input before the boot ended starts the game first (waiting for the VM), so it is not lost.
     Game early(71); early.booting = true;
     C fourth(w.context, early.session);

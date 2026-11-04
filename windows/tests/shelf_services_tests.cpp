@@ -574,6 +574,23 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     std::cout << "cost: reopening on the Shelf after its artwork was released " << reopened << " ms\n";
     std::cout << "resident: icons cached " << shelf.resources().cachedIcons << " (" << shelf.resources().cachedIconBytes << " bytes), worker starts " << shelf.resources().iconWorkerStarts
               << ", scene parts " << shelf.resources().sceneParts << ", raster bytes " << shelf.resources().scenePixelBytes << '\n';
+    // Closing the HUD on the Shelf keeps its page, not the other layout's
+    // tiles rasterized ahead: the close's frames take them out of the scene,
+    // and the finished close releases them (no frame or wake while hidden).
+    const auto page = *hud.owner->core().sceneStats(core::Module::fileShelf);
+    // The shared design deadlines (the put-back timer, a tile a frame) as the host runs them.
+    for (unsigned n = 0; n < 90; ++n) { (void)hud.overlay->deadline(hud.time); (void)hud.owner->deadline(hud.time); hud.frame(); }
+    const auto ahead = *hud.owner->core().sceneStats(core::Module::fileShelf);
+    check(hud.canvas().alternateTileCountForTesting() > 0 && ahead.parts > page.parts && ahead.residentPixelBytes > page.residentPixelBytes,
+        "The other layout's tiles are rasterized ahead again (" + std::to_string(hud.canvas().alternateTileCountForTesting()) + " tiles, " + std::to_string(ahead.parts) + " of " +
+        std::to_string(page.parts) + " parts)");
+    hud.owner->overlayClosing(hud.time);
+    for (unsigned n = 0; n < 10; ++n) hud.frame();
+    (void)hud.owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, hud.time);
+    const auto concealed = *hud.owner->core().sceneStats(core::Module::fileShelf);
+    check(hud.canvas().alternateTileCountForTesting() == 0 && concealed.parts == page.parts && concealed.keptParts == 0 && concealed.residentPixelBytes <= page.residentPixelBytes,
+        "Closing the HUD on the Shelf releases the tiles rasterized ahead (" + std::to_string(concealed.parts) + " of " + std::to_string(page.parts) + " parts, " +
+        std::to_string(concealed.residentPixelBytes) + " of " + std::to_string(page.residentPixelBytes) + " bytes, " + std::to_string(concealed.keptParts) + " kept)");
 }
 // An Open still with the Shell when the HUD shuts down: its thread finishes
 // on its own, and no result reaches the gone service or its window.
