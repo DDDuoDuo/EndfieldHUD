@@ -81,6 +81,9 @@ struct ShelfResourceStats {
     std::size_t sceneParts{}, sceneSurfaces{}, scenePixelBytes{}; std::uint64_t sceneParks{};
     bool iconProvider{}; std::size_t iconWorkers{}; std::uint64_t iconWorkerStarts{}, iconParks{}, iconRequests{};
     std::size_t cachedIcons{}, cachedIconBytes{};
+    // Archive saves handed to the utility worker, and saved at once on this
+    // thread (a full queue), since the service started.
+    std::uint64_t savesQueued{}, savesAtOnce{};
 };
 // Store / native failure text in the HUD language (Mac FileShelfStoreError
 // errorDescription, with Windows' own situations from modules::shelfText).

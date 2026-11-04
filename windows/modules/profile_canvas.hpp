@@ -161,6 +161,7 @@ public:
     void resetSession() override;
     void didClosePopover() override;
     void recordingModeChanged() override;
+    void renderScaleChanged() override;
     bool presentingPanel() const override { return chooser_ || colorPanel_; }
     bool inputLocked() const override { return Canvas::inputLocked() || presentingPanel(); }
 private:

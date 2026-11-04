@@ -201,6 +201,7 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     step.check(s.canvas().itemCount() == 0, "The coverage Shelf starts every cycle empty");
     const std::vector<std::string> paths{utf8(report), utf8(notes), utf8(kept), utf8(recycled)};
     step.check(shelf.importFiles(paths, next()) && s.canvas().itemCount() == 4, "Four synthetic references are added");
+    step.drain(); pump(); // the records follow the archive's save on the utility worker
     step.check(events_.size() == 4 && recorded(0, mod::EventKind::shelfAdded, "filename", "Quarterly report.txt") &&
                recorded(1, mod::EventKind::shelfAdded, "filename", "Synthetic notes.ehudshelf") && recorded(2, mod::EventKind::shelfAdded, "filename", "Kept folder") &&
                recorded(3, mod::EventKind::shelfAdded, "filename", "Recycled folder"), "Every new reference records shelfAdded with its filename");
@@ -277,8 +278,8 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     events_.clear();
     step.check(shelf.relink(recordID, std::vector<std::string>{utf8(replacement)}, next()) && shelf.pendingRelinks() == 0, "The chosen file relinks the imported item");
     step.check(s.item("Plan on this PC.key") && s.item("Plan on this PC.key")->id == recordID && !s.item("Plan on this PC.key")->availabilityError, "The relinked reference keeps the imported identifier");
+    step.drain(); pump(); // resolveMacRelink runs on the utility worker after the record's save
     step.check(events_.size() == 1 && recorded(0, mod::EventKind::shelfAdded, "filename", "Plan on this PC.key"), "Relinking records shelfAdded");
-    step.drain(); pump(); // resolveMacRelink runs on the utility worker after the record write
     {
         const mig::MacRelinkLedger ledger(root_ / "shelf-data");
         const auto* entry = ledger.find(imported.id);
@@ -303,12 +304,14 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     // Remove and clear: references only, with their Event Log records.
     events_.clear();
     const auto deleted = s.item("Renamed report.txt")->id;
-    step.check(shelf.perform("shelf:" + deleted + ":remove", next()) && !s.item("Renamed report.txt") && events_.size() == 1 &&
-               recorded(0, mod::EventKind::shelfRemoved, "filename", "Renamed report.txt"), "Removing a reference records shelfRemoved with its filename");
+    const bool removed = shelf.perform("shelf:" + deleted + ":remove", next()) && !s.item("Renamed report.txt");
+    step.drain(); pump();
+    step.check(removed && events_.size() == 1 && recorded(0, mod::EventKind::shelfRemoved, "filename", "Renamed report.txt"), "Removing a reference records shelfRemoved with its filename");
     const auto count = s.canvas().itemCount();
     step.check(shelf.perform("shelf:clear", next()) && s.overlay->context().overlay().isConfirming(), "Clear asks through the confirm bar first");
     s.overlay->context().overlay().decide(d::ConfirmState::Decision::confirm);
     step.check(s.canvas().itemCount() == 0, "Confirming clears every reference");
+    step.drain(); pump();
     step.check(events_.size() == 2 && recorded(1, mod::EventKind::shelfCleared, "count", std::to_string(count)), "Clearing records shelfCleared with the cleared count");
     step.check(fs::exists(moved) && fs::exists(kept) && fs::exists(bin / "Recycled folder"), "Removing and clearing references leave every original in place");
     s.overlay->context().overlay().reset();

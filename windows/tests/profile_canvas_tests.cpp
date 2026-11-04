@@ -346,6 +346,21 @@ void behaviour() {
     check(w.toast() && w.toast()->title == "Notice", "A failed save toasts Notice");
     o.refuseCommit = false;
 }
+// A render-scale change while the Profile is hidden: the page re-renders when
+// next shown, and its portrait for the new scale is asked at the change.
+void hiddenScaleChange() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner o; o.avatar = true; auto profile = sample(); profile.avatarFilename = "00000000-0000-4000-8000-000000000001.image"; auto store = o.store(profile);
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    check(!o.portraitSteps.empty(), "The shown Profile asks for its portrait");
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now);
+    o.portraitSteps.clear();
+    w.context.update(d::geometry::baseUnit, 3 / d::geometry::baseUnit, w.now);
+    check(o.portraitSteps == std::vector<int>{1}, "A hidden Profile asks for its portrait at the new scale at once");
+    w.show(canvas);
+    check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
+}
 }
 
 int main(int argc, char** argv) {
@@ -353,7 +368,7 @@ int main(int argc, char** argv) {
         std::optional<Json> data;
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
-        behaviour();
+        behaviour(); hiddenScaleChange();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);

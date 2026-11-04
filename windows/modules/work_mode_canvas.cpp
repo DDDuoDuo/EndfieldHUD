@@ -311,7 +311,11 @@ void WorkModeCanvas::controllerChanged() {
     if (!applying_) refresh(true);
 }
 // Structure changes re-render in place; anything else updates the digits, the
-// ring and the primary button's label.
+// ring and the primary button's label. Start, Pause, Resume, Reset, a preset,
+// the custom field and a lap re-render (as on the Mac): the page keeps its
+// layer ids (Canvas::rerender), so the scene reuses the ring, the title, the
+// timer and the presets and rasterizes only the state, tab lock and buttons
+// that changed (rc140: the whole page, ~63 surfaces, 55-78 ms per click).
 void WorkModeCanvas::refresh(bool animated) {
     if (!renderedLanguage() || transitioning()) return;
     if (structure() != renderedStructure_) { rerender(); applyBlink(); return; }

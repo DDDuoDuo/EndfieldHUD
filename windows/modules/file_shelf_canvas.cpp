@@ -85,11 +85,11 @@ std::optional<std::string> FileShelfItem::sizeLabel() const {
 // becomes either a click (selection) or, after 5 px, a drag-out ------------------
 class FileShelfCanvas::Tile final : public d::Control {
 public:
-    Tile(d::Builder& b, const FileShelfItem& item, int index, double width, bool redacted, FileShelfCanvas& canvas)
+    Tile(d::Builder& b, const FileShelfItem& item, int index, double width, int columns, bool redacted, FileShelfCanvas& canvas)
         : Control(b.env, "file:" + std::to_string(index), spokenLabel(item, redacted, b.env), b.layer("file:" + std::to_string(index))),
           itemID(item.id), number(index), canvas_(&canvas) {
         const auto language = b.env.language;
-        tile = &b.make<d::ArchiveTile>("tile:" + std::to_string(index), index, item.name, tileKind(item), extensionLabel(item),
+        tile = &b.make<d::ArchiveTile>(tileID(item, columns), index, item.name, tileKind(item), extensionLabel(item),
             sizeTag(item, language), std::nullopt, width, 100.0, redacted);
         auto& l = layer();
         l.setAnimatable();                 // the add entrance and the Clear `gone`
@@ -148,6 +148,7 @@ FileShelfCanvas::FileShelfCanvas(d::Context& context, FileShelfServices services
     : Canvas(core::Module::fileShelf, context), services_(std::move(services)), pendingError_(error), storeError_(std::move(error)) {
     if (services_.available && services_.items) items_ = services_.items();
     clearTimer_ = timerGroup();
+    alternateTimer_ = timerGroup();
 }
 
 double FileShelfCanvas::scrollOffset() const noexcept { return grid_ ? grid_->offset() : 0; }
@@ -170,8 +171,10 @@ void FileShelfCanvas::show(double now) {
 void FileShelfCanvas::didActivate() {
     if (!renderedStructure_ || structure() != *renderedStructure_) rerender();
     if (auto error = std::exchange(pendingError_, std::nullopt)) showError(std::move(*error));
+    scheduleAlternates(.5);                       // after the module's entrance
 }
 void FileShelfCanvas::didDeactivate() {
+    cancel(alternateTimer_);                      // kept: a switch back inside the open HUD keeps its rasters
     if (dropTarget_) setDropTarget(false);
     if (services_.deactivate) services_.deactivate();
 }
@@ -180,6 +183,7 @@ void FileShelfCanvas::didDeactivate() {
 void FileShelfCanvas::willLeave() { if (clearing_) { cancel(clearTimer_); finishClear(); } }
 void FileShelfCanvas::resetSession() {
     if (isActive()) return;
+    dropAlternates();
     selected_.clear(); focus_.reset(); anchor_.reset();
     if (storeError_) pendingError_ = storeError_;
     Canvas::resetSession();
@@ -216,7 +220,7 @@ void FileShelfCanvas::storeChanged() {
 // --- Page (:149-193) ----------------------------------------------------------------
 void FileShelfCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
-    tiles_.clear(); parked_.clear(); cardBinder_ = nullptr; card_ = nullptr; grid_ = nullptr; cardRows_.clear();
+    tiles_.clear(); parked_.clear(); alternates_.clear(); cardBinder_ = nullptr; card_ = nullptr; grid_ = nullptr; cardRows_.clear();
     const auto previousCard = std::exchange(renderedCard_, std::nullopt);
     auto& add = page.make<d::Button>("shelf.add", text("Add", "添加"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
     add.place({0, 0});
@@ -247,6 +251,7 @@ void FileShelfCanvas::buildPage(d::Page& page) {
         area.setContentHeight(layout_->contentHeight);
         page.restoreOffset(area);
         syncTiles(page, area.offset(), false);
+        if (isActive()) { if (!alternatesReady_ || !buildAlternates(page, items_.size())) scheduleAlternates(.1); }
         body = area.layer().frame();
         if (shown) buildCard(*shown, page, top, previousCard != shown->id);
     }
@@ -310,7 +315,7 @@ void FileShelfCanvas::syncTiles(d::Page& page, double offset, bool routing) {
         if (tiles_.contains(value.id)) continue;
         Tile* tile{};
         if (const auto kept = parked_.find(value.id); kept != parked_.end()) { tile = kept->second; parked_.erase(kept); }
-        else tile = &page.make<Tile>(value, int(n) + 1, layout_->tileWidth, recording, *this);
+        else tile = &page.make<Tile>(value, int(n) + 1, layout_->tileWidth, layout_->columns, recording, *this);
         const bool selected = selected_.contains(value.id);
         tile->tile->setSelected(selected && renderedSelection_.contains(value.id), false);
         tile->layer().setFrame(layout_->frame(n));
@@ -320,7 +325,92 @@ void FileShelfCanvas::syncTiles(d::Page& page, double offset, bool routing) {
         if (!routing) page.stagger(tile->layer());
         tiles_.emplace(value.id, tile); changed = true;
     }
-    if (routing && changed) { refreshRouter(); inputChanged(); notifyIcons(); }
+    if (routing && changed) { refreshRouter(); inputChanged(); notifyIcons(); scheduleAlternates(.15); }
+}
+
+// Windows: the Mac lays every tile out again when a selection opens or
+// closes the properties card (4 columns <-> 3), which only rebuilds its
+// CALayers. Here every tile rasterizes again at its new width, the Shelf's
+// slight freeze on a click (rc140: ~200 surfaces, 200-300 ms). So the grid
+// also holds the other layout's tiles, transparent (never drawn, outside
+// the router, the hover pass and accessibility) under the layer ids the
+// other layout's tiles take (tileID: columns + item id): the
+// scene rasterizes them ahead, a tile per frame after the module's entrance,
+// and the page the click builds finds every unselected tile it shows
+// already rasterized. The pixels and the page are the Mac's.
+std::string FileShelfCanvas::tileID(const FileShelfItem& item, int columns) { return "tile:" + std::to_string(columns) + ":" + item.id; }
+std::optional<FileShelfCanvas::GridLayout> FileShelfCanvas::alternateLayout() const {
+    if (!layout_ || items_.empty()) return std::nullopt;
+    const bool besideCard = layout_->columns == 3;
+    return GridLayout(d::metric::boxWidth - (besideCard ? 0 : cardWidth + 12), besideCard ? 4 : 3, items_.size());
+}
+// Adds at most `limit` missing tiles of the other layout at the grid's
+// offset (as the other layout would restore it); true once none is missing.
+// A tile put back (the HUD reopened, a scroll) counts too: the scene
+// released its artwork when it left the tree.
+bool FileShelfCanvas::buildAlternates(d::Page& page, std::size_t limit) {
+    if (!grid_) return true;
+    const auto other = alternateLayout();
+    if (!other) return true;
+    const double offset = std::clamp(grid_->offset(), 0.0, std::max(0.0, other->contentHeight - other->height));
+    const auto [begin, end] = other->indices(offset, items_.size());
+    Set wanted;
+    for (auto n = begin; n < end; ++n) wanted.insert(tileID(items_[n], other->columns));
+    for (auto& [id, tile] : alternates_) if (!wanted.contains(id) && tile->layer().parent()) tile->layer().removeFromParent();
+    const bool recording = env().recordingMode;
+    std::size_t added{};
+    for (auto n = begin; n < end; ++n) {
+        const auto& value = items_[n];
+        const auto id = tileID(value, other->columns);
+        if (const auto it = alternates_.find(id); it != alternates_.end()) {
+            if (!it->second->layer().parent()) { if (added == limit) return false; grid_->content().add(it->second->layer()); ++added; }
+            continue;
+        }
+        if (added == limit) return false;
+        auto& tile = page.make<d::ArchiveTile>(id, int(n) + 1, value.name, tileKind(value), extensionLabel(value),
+            sizeTag(value, env().language), std::nullopt, other->tileWidth, 100.0, recording);
+        // Transparent, not hidden: a hidden layer emits its text with the box
+        // density (a different artwork from the shown tile's).
+        tile.layer().setValue(d::Channel::opacity, 0);
+        // In its row, inside this grid's width: the scene rasterizes the
+        // scroll rows inside the clip (the wider layout's last column is not).
+        auto frame = other->frame(n);
+        frame.x = std::min(frame.x, std::max(0.0, grid_->layer().bounds().width - frame.width));
+        tile.layer().setFrame(frame);
+        grid_->content().add(tile.layer());
+        alternates_.emplace(id, &tile);
+        ++added;
+    }
+    return true;
+}
+void FileShelfCanvas::scheduleAlternates(double delay) {
+    cancel(alternateTimer_);
+    after(delay, alternateTimer_, [this] { fillAlternates(); });
+}
+void FileShelfCanvas::fillAlternates() {
+    if (!isActive() || transitioning() || clearing_) return;
+    if (buildAlternates(page(), 1)) alternatesReady_ = true;
+    else scheduleAlternates(1.0 / 30);
+}
+// The HUD closed (its artwork is released): the next session's first page
+// is the Mac's alone, and they are filled again after its entrance.
+void FileShelfCanvas::dropAlternates() {
+    cancel(alternateTimer_);
+    alternatesReady_ = false;
+    for (auto& [id, tile] : alternates_) if (tile->layer().parent()) tile->layer().removeFromParent();
+}
+bool FileShelfCanvas::alternatesInsideGridForTesting() const {
+    if (!grid_) return true;
+    const double width = grid_->layer().bounds().width;
+    return std::all_of(alternates_.begin(), alternates_.end(), [&](const auto& entry) {
+        const auto& l = entry.second->layer();
+        return !l.parent() || (l.frame().x >= 0 && l.frame().x + l.frame().width <= width + 1e-9);
+    });
+}
+std::size_t FileShelfCanvas::alternateTileCountForTesting() const {
+    std::size_t n{};
+    for (const auto& [id, tile] : alternates_) n += tile->layer().parent() != nullptr;
+    return n;
 }
 std::optional<d::Rect> FileShelfCanvas::tileRect(std::string_view id) const {
     const auto it = tiles_.find(id);
@@ -624,16 +714,17 @@ void FileShelfCanvas::reveal(std::string_view id) {
     toast(std::move(request));
 }
 // Removes references only (spec: removes at once and clears the selection) (:526-542).
+// The Mac saves once per id; here every id goes in one save, with the same
+// result (a failed save removes none, where the Mac kept the earlier ones
+// removed), and the save runs off the HUD thread (the service).
 void FileShelfCanvas::remove(std::vector<std::string> ids) {
     if (!services_.available) { reportUnavailable(); return; }
     if (ids.empty() || clearing_) return;
     try {
-        for (const auto& id : ids) {
-            std::optional<std::string> name;
-            for (const auto& i : services_.items()) if (i.id == id) { name = i.name; break; }
-            services_.remove(id);
-            if (name && services_.itemRemoved) services_.itemRemoved(*name);
-        }
+        std::vector<std::string> names;
+        for (const auto& id : ids) if (const auto* found = item(id)) names.push_back(found->name);
+        services_.remove(ids);
+        if (services_.itemRemoved) for (const auto& name : names) services_.itemRemoved(name);
         selected_.clear();
         reloadItems(); rerender();
         toast(d::Icon::x, "Removed from shelf", "从暂存架上移除");

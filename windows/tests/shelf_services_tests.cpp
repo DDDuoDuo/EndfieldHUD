@@ -42,6 +42,7 @@ using Failure = mod::FileShelfServices::Failure;
 namespace {
 unsigned checks{};
 void check(bool value, const char* why) { ++checks; if (!value) throw std::runtime_error(why); }
+void check(bool value, const std::string& why) { check(value, why.c_str()); }
 void ok(HRESULT value, const char* why) { check(SUCCEEDED(value), why); }
 std::string utf8(const std::filesystem::path& p) { const auto s = p.u8string(); return {reinterpret_cast<const char*>(s.data()), s.size()}; }
 struct Ole { Ole() { ok(OleInitialize(nullptr), "Owned OLE STA"); } ~Ole() { OleUninitialize(); } };
@@ -212,7 +213,9 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     write(report, "Synthetic report"); check(std::filesystem::create_directory(folder), "Synthetic folder");
     write(folder / "a.txt", "a"); write(folder / "b.txt", "b"); write(folder / "hidden.txt", "h"); check(SetFileAttributesW((folder / "hidden.txt").c_str(), FILE_ATTRIBUTE_HIDDEN) != FALSE, "Hide a child");
     const std::vector<std::string> paths{utf8(report), utf8(folder)};
-    check(shelf.importFiles(paths, hud.time) && events.size() == 2 && event(events, 0, mod::EventKind::shelfAdded, "filename", "Report.txt") && event(events, 1, mod::EventKind::shelfAdded, "filename", "Folder"),
+    // A change's Event Log records follow its save, which the service's worker writes.
+    const auto recorded = [&](std::size_t n) { for (unsigned k = 0; k < 200 && events.size() < n; ++k) { Sleep(5); hud.pump(); } return events.size() == n; };
+    check(shelf.importFiles(paths, hud.time) && recorded(2) && event(events, 0, mod::EventKind::shelfAdded, "filename", "Report.txt") && event(events, 1, mod::EventKind::shelfAdded, "filename", "Folder"),
           "Every new reference records shelfAdded with its filename");
     check(shelf.importFiles(paths, hud.time) && events.size() == 2, "Duplicates record nothing");
     check(hud.canvas().selectedIDs().empty(), "Adding files selects nothing");
@@ -228,7 +231,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     check(hud.canvas().inputLocked() && shelf.preservesFocusOnLoss(), "An incoming drag locks the Shelf (drop feedback) and keeps the HUD up");
     effect = DROPEFFECT_COPY; ok(target->Drop(source.Get(), MK_LBUTTON, point, &effect), "Drop");
     check(effect == DROPEFFECT_COPY, "The drop commits a copy-only reference"); hud.pump();
-    check(hud.item("Dropped photo.png") && events.size() == 3 && event(events, 2, mod::EventKind::shelfAdded, "filename", "Dropped photo.png"), "A drop records shelfAdded");
+    check(hud.item("Dropped photo.png") && recorded(3) && event(events, 2, mod::EventKind::shelfAdded, "filename", "Dropped photo.png"), "A drop records shelfAdded");
     check(hud.canvas().selectedIDs().empty() && !hud.canvas().inputLocked(), "The dropped reference is not selected; the feedback ends");
     const auto outside = hud.screen({300, 40});
     effect = DROPEFFECT_COPY; ok(target->DragEnter(source.Get(), MK_LBUTTON, {outside.x - 2000, outside.y}, &effect), "Drag enters off the canvas");
@@ -253,8 +256,11 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     shelf.refresh(hud.time); hud.pump();
     check(hud.item("Renamed report.txt") && hud.item("Renamed report.txt")->lastKnownPath == utf8(renamed) && !hud.item("Renamed report.txt")->availabilityError, "A renamed original is followed by identity");
     check(hud.item("Folder") && hud.item("Folder")->lastKnownPath == utf8(moved), "A moved folder is followed by identity");
-    { gpu::NativeFileShelfFiles files; data::FileShelfStore saved(temp.root / "metadata", files.platform());
-      check(std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }), "The renewed path is saved"); }
+    // The archive is saved on the service's utility worker: its completion arrives as the host's message loop delivers it.
+    const auto renewed = [&] { gpu::NativeFileShelfFiles files; data::FileShelfStore saved(temp.root / "metadata", files.platform());
+        return std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }); };
+    for (unsigned n = 0; n < 200 && !renewed(); ++n) { Sleep(5); hud.pump(); }
+    check(renewed(), "The renewed path is saved");
 
     // The properties card: its reads run on the utility worker, never the HUD thread.
     const auto folderID = hud.item("Folder")->id;
@@ -299,12 +305,12 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
 
     // Removal and clearing: references only, with their Event Log records.
     events.clear();
-    check(shelf.perform("shelf:" + reportID + ":remove", hud.time) && !hud.item("Renamed report.txt") && events.size() == 1 && event(events, 0, mod::EventKind::shelfRemoved, "filename", "Renamed report.txt"),
+    check(shelf.perform("shelf:" + reportID + ":remove", hud.time) && !hud.item("Renamed report.txt") && recorded(1) && event(events, 0, mod::EventKind::shelfRemoved, "filename", "Renamed report.txt"),
           "Removing a reference records shelfRemoved");
     check(hud.toast() == "Removed from shelf|", "One removal toast");
     check(shelf.perform("shelf:clear", hud.time) && hud.overlay->context().overlay().isConfirming(), "Clear asks through the confirm bar");
     hud.overlay->context().overlay().decide(d::ConfirmState::Decision::confirm);
-    check(hud.canvas().itemCount() == 0 && events.size() == 2 && event(events, 1, mod::EventKind::shelfCleared, "count", "2"), "Clearing records shelfCleared with the count");
+    check(hud.canvas().itemCount() == 0 && recorded(2) && event(events, 1, mod::EventKind::shelfCleared, "count", "2"), "Clearing records shelfCleared with the count");
     check(std::filesystem::exists(renamed) && std::filesystem::exists(moved) && std::filesystem::exists(dropped), "References never move or delete originals");
     hud.frame();
     hud.release();
@@ -350,8 +356,8 @@ void relink(HWND hwnd, gpu::Renderer& renderer) {
     const auto* relinked = hud.item("Report on this PC.pdf");
     check(relinked && relinked->id == reportID && !relinked->availabilityError && !relinked->awaitingRelink && hud.canvas().selectedIDs().contains(reportID),
           "The relinked reference keeps the imported identifier and its selection");
-    check(events.size() == 2 && event(events, 1, mod::EventKind::shelfAdded, "filename", "Report on this PC.pdf"), "Relinking records shelfAdded for the chosen file");
     settle();
+    check(events.size() == 2 && event(events, 1, mod::EventKind::shelfAdded, "filename", "Report on this PC.pdf"), "Relinking records shelfAdded for the chosen file");
     { gpu::NativeFileShelfFiles files; data::FileShelfStore saved(root, files.platform());
       const auto row = std::find_if(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.id == reportID; });
       check(row != saved.items().end() && row->createdAt == 700000000.5 && row->windowsPath == utf8(chosen), "The saved reference keeps the Mac identifier and date");
@@ -370,6 +376,88 @@ void relink(HWND hwnd, gpu::Renderer& renderer) {
     check(hud.canvas().itemCount() == 0 && shelf.pendingRelinks() == 0, "Clear removes references and imported items");
     { mig::MacRelinkLedger ledger(root); check(ledger.find(later.id)->state == mig::RelinkState::dismissed && ledger.find(note.id)->state == mig::RelinkState::unresolved, "Clear dismisses only Shelf entries"); }
     check(std::filesystem::exists(chosen) && std::filesystem::exists(kept), "Relinking and clearing never touch the files");
+    hud.frame();
+}
+
+// The archive's saves on the utility worker (FileShelfStore::Save): a change
+// shows at once; its Event Log records, its imported items' ledger writes and
+// its failure follow the save. A failed save (the archive's lock held) brings
+// the change back, records nothing, keeps the imported items and explains
+// itself as the change's own failure, when the Shelf is next active; a full
+// queue saves at once in order; another executor finishes the queued saves.
+void deferredSaves(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp; std::vector<Recorded> events;
+    const auto root = temp.root / "data";
+    tools::ShelfServiceOptions options{root, false, false};
+    options.recordEvent = [&](mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({kind, std::move(metadata)}); };
+    constexpr UINT utilityNotice = WM_APP + 300;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); }), single([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); }, 1);
+    Hud hud(hwnd, renderer, std::move(options));
+    auto& shelf = *hud.shelf; shelf.setUtility(&utility);
+    const auto settle = [&] { for (auto* executor : {&utility, &single}) { executor->waitIdle(); executor->drain(); } MSG m{}; while (PeekMessageW(&m, hwnd, utilityNotice, utilityNotice, PM_REMOVE)) {} hud.pump(); };
+    hud.frame(); settle();
+    using Names = std::vector<std::string>;
+    std::vector<std::string> files;
+    for (const auto* name : {"A.txt", "B.txt", "C.txt", "D.txt", "E.txt"}) { write(temp.root / name, name); files.push_back(utf8(temp.root / name)); }
+    const auto names = [&] { Names out; for (const auto& i : shelf.items()) out.push_back(i.name); return out; };
+    const auto saved = [&] { gpu::NativeFileShelfFiles f; data::FileShelfStore archive(root, f.platform()); Names out; for (const auto& r : archive.items()) out.push_back(r.name); return out; };
+    const auto added = [&](std::size_t at, std::string_view name) { return event(events, at, mod::EventKind::shelfAdded, "filename", name); };
+    check(shelf.importFiles(std::span(files).first(2), hud.time) && names() == Names{"A.txt", "B.txt"} && events.empty(), "An add shows its tiles at once; its records wait for its save");
+    shelf.setUtility(&single);
+    check(events.size() == 2 && added(0, "A.txt") && added(1, "B.txt") && saved() == Names{"A.txt", "B.txt"}, "Another executor: the queued save finishes and records first");
+    settle(); check(events.size() == 2, "Its completion ran once");
+    // One accepted task fills this executor: the next save waits for the queued one, then is made at once.
+    const auto atOnce = shelf.resources().savesAtOnce;
+    check(shelf.importFiles(std::span(files).subspan(2, 1), hud.time) && shelf.importFiles(std::span(files).subspan(3, 1), hud.time), "Two adds");
+    check(shelf.resources().savesAtOnce == atOnce + 1 && saved() == Names{"A.txt", "B.txt", "C.txt", "D.txt"} && events.size() == 2, "A full queue saves at once, after the queued save");
+    settle(); check(events.size() == 4 && added(2, "C.txt") && added(3, "D.txt"), "Their records keep the order of the changes");
+    shelf.setUtility(&utility);
+    // A Mac-imported item, then the archive's lock held by someone else: every save fails.
+    const auto macID = std::string("AAAAAAAA-0000-4000-8000-000000000009");
+    const auto mac = imported(macID, "Mac.pdf", false, 700000300);
+    std::filesystem::create_directories(root / "Migration"); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({mac}));
+    shelf.refresh(hud.time); settle(); settle();
+    check(shelf.pendingRelinks() == 1 && hud.canvas().itemCount() == 5, "The imported item is listed");
+    const auto unresolved = [&] { const mig::MacRelinkLedger ledger(root); const auto* entry = ledger.find(mac.id); return entry && entry->state == mig::RelinkState::unresolved; };
+    const auto lockPath = root / "FileShelf" / "shelf.json.lock";
+    const HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(lock != INVALID_HANDLE_VALUE, "Hold the archive's lock");
+    const std::string busy = "Notice|The file shelf could not be saved or opened: Saved data is busy in another instance";
+    const std::string chooseAvailable = "Notice|" + mod::shelfText(mod::ShelfText::chooseAvailable, core::Language::english);
+    events.clear();
+    const auto aID = hud.item("A.txt")->id;
+    check(shelf.perform("shelf:" + aID + ":remove", hud.time) && !hud.item("A.txt") && hud.toast() == "Removed from shelf|", "A removal shows at once");
+    settle();
+    check(hud.item("A.txt") && events.empty() && hud.toast() == busy, "Its failed save returns the tile, records nothing and shows the store's reason");
+    check(shelf.importFiles(std::span(files).subspan(4, 1), hud.time) && hud.item("E.txt"), "An add shows at once");
+    settle();
+    check(!hud.item("E.txt") && events.empty() && hud.toast() == chooseAvailable, "A failed add is explained as an import, as when it failed at once");
+    check(shelf.perform("shelf:clear", hud.time), "Clear asks");
+    hud.overlay->context().overlay().decide(d::ConfirmState::Decision::confirm);
+    check(hud.canvas().itemCount() == 0 && shelf.pendingRelinks() == 0, "Clear empties the Shelf at once");
+    settle();
+    check(hud.canvas().itemCount() == 5 && shelf.pendingRelinks() == 1 && events.empty() && unresolved() && hud.toast() == busy,
+          "A failed Clear keeps the references and the imported item (in the ledger too) and records nothing");
+    const auto chosen = temp.root / "Mac on this PC.pdf"; write(chosen, "pdf");
+    check(shelf.relink(macID, std::vector<std::string>{utf8(chosen)}, hud.time) && shelf.pendingRelinks() == 0 && hud.item("Mac on this PC.pdf"), "A relink shows at once");
+    settle();
+    check(shelf.pendingRelinks() == 1 && !hud.item("Mac on this PC.pdf") && hud.item("Mac.pdf") && hud.item("Mac.pdf")->awaitingRelink && events.empty() && unresolved() && hud.toast() == chooseAvailable,
+          "A failed relink keeps the imported item, its ledger entry unresolved, and is explained as an import");
+    // Switched away: the failure waits for the Shelf's next activation.
+    const auto bID = hud.item("B.txt")->id;
+    check(shelf.perform("shelf:" + bID + ":remove", hud.time) && !hud.item("B.txt"), "Another removal");
+    hud.frame(core::Module::fileShelf, core::Module::clipboard); hud.frame(core::Module::clipboard);
+    check(!hud.canvas().isActive(), "Another module shows");
+    settle();
+    std::string listed; for (const auto& name : names()) listed += " " + name;
+    check(names() == Names{"A.txt", "B.txt", "C.txt", "D.txt", "Mac.pdf"}, "The failure returns the tile (" + listed + ")");
+    check(hud.toast() != busy, "No toast over another module (" + hud.toast() + ")");
+    check(CloseHandle(lock) != FALSE, "Release the archive's lock");
+    hud.frame();
+    check(hud.canvas().isActive() && hud.toast() == busy, "Shown again, the Shelf explains the failure");
+    check(shelf.perform("shelf:" + aID + ":remove", hud.time), "Remove again"); settle();
+    check(!hud.item("A.txt") && events.size() == 1 && event(events, 0, mod::EventKind::shelfRemoved, "filename", "A.txt") && saved() == Names{"B.txt", "C.txt", "D.txt"},
+          "Once the lock is free the next change saves and records");
     hud.frame();
 }
 
@@ -393,6 +481,9 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     const auto shown = shelf.resources();
     check(shown.iconProvider && shown.iconRequests >= 1 && shown.sceneParts > 0 && shown.scenePixelBytes > 0, "The shown Shelf asks for its tiles' Shell icons (drag images) and holds its artwork");
     for (unsigned n = 0; n < 400 && shelf.resources().cachedIcons < 6; ++n) { Sleep(5); hud.pump(); }
+    // After the entrance the other layout's tiles are rasterized ahead, a tile
+    // per frame (FileShelfCanvas::buildAlternates); then the Shelf is idle.
+    for (unsigned n = 0; n < 90; ++n) hud.frame();
     const auto rasterized = hud.raster.stats().rasterizations;
     started = Clock::now(); for (unsigned n = 0; n < 30; ++n) hud.frame(); const double idle = ms(Clock::now() - started) / 30;
     const auto tile = hud.owner->core().clientRect({5, 86, 135, 124}); check(tile.has_value(), "A tile projects");
@@ -435,6 +526,7 @@ int wmain(int argc, wchar_t** argv) {
         text();
         services(window.hwnd, renderer);
         relink(window.hwnd, renderer);
+        deferredSaves(window.hwnd, renderer);
         resident(window.hwnd, renderer);
         std::cout << "File Shelf services: " << checks << " checks passed\n";
         return 0;

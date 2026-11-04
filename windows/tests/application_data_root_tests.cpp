@@ -170,8 +170,9 @@ void shelf(HWND hwnd) {
         check(service.items().size() == 1 && service.items().front().name == "earlier.txt", "The service loads the earlier run's reference");
         const std::array paths{utf8(laterFile)};
         check(service.importFiles(paths, 1), "The service adds a reference to the persistent root");
-        check(savedShelf(root).size() == 2, "The new reference is saved");
     });
+    // The archive is saved on the service's utility worker; its accepted saves finish when it stops.
+    check(savedShelf(root).size() == 2, "The new reference is saved");
     run(root, [&](tools::ShelfService& service) {
         const auto items = service.items();
         check(items.size() == 2 && std::any_of(items.begin(), items.end(), [](const auto& i) { return i.name == "later.txt"; }),

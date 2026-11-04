@@ -113,4 +113,31 @@ void adapterGuard(){
     if(!error)rejects(StoreErrorCode::invalid,[&]{FileShelfStore linked(link,f.platform());},"Explicit data root refuses symlink/reparse redirection");
 }
 }
-int main(){try{identityAndLease();importsAndRoundtrip();atomicImportAndPersistenceFailures();refreshAvailabilityAndReplacement();copyingAndIndependentLeaseLifetime();archiveGuardsAndUnknownFields();adapterGuard();std::cout<<"File shelf store: "<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"File shelf store failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+// Deferred saves (the Shelf service's utility worker): a change publishes at
+// once, its archive is written later in order, a batch remove is one save, a
+// failure returns memory to the archive on disk and a writer that cannot
+// queue makes the store save at once.
+void deferredSaves(){
+    Temporary temp;Fake f;for(unsigned i=1;i<=5;++i)f.add(i);FileShelfStore store(temp.root,f.platform(),f.creation());
+    std::vector<FileShelfStore::Save> queue;bool accept=true;
+    store.setWriter([&](const FileShelfStore::Save& save){if(!accept)return false;queue.push_back(save);return true;});
+    const auto run=[&]{auto saves=std::move(queue);queue.clear();for(const auto& save:saves){bool ok=true;try{FileShelfStore::write(save);}catch(const std::exception&){ok=false;}(void)store.saveFinished(save,ok);}};
+    check(store.add(tokens({"1","2","3","4"}))==4&&store.items().size()==4&&!std::filesystem::exists(store.path())&&queue.size()==1,"A deferred add publishes its records before the archive is written");
+    check(store.remove(std::vector<std::string>{store.items()[0].id,store.items()[2].id,uuid(999)})==2&&store.items().size()==2&&queue.size()==2,"A batch remove is one save and skips missing IDs");
+    run();FileShelfStore reopened(temp.root,f.platform(),f.creation());
+    const auto ids=[](const FileShelfStore& value){std::vector<std::string> out;for(const auto& row:value.items())out.push_back(row.id);return out;};
+    check(ids(reopened)==ids(store)&&reopened.items().size()==2&&queue.empty(),"Queued saves land in order, each on the archive of the one before");
+    const auto onDisk=read(store.path());const auto kept=store.items();
+    check(store.add(tokens({"5"}))==1&&store.clear()&&store.items().empty()&&queue.size()==2,"Later changes queue behind each other");
+    write(store.path(),"external corrupt bytes");
+    {auto saves=std::move(queue);queue.clear();bool first{},second{};
+        try{FileShelfStore::write(saves[0]);}catch(const std::exception&){first=store.saveFinished(saves[0],false);}
+        try{FileShelfStore::write(saves[1]);}catch(const std::exception&){second=store.saveFinished(saves[1],false);}
+        check(first&&!second,"Only the first failed save of a queue is reported");}
+    check(ids(store)==std::vector<std::string>{kept[0].id,kept[1].id}&&read(store.path())=="external corrupt bytes","A failed save returns the records to the archive known on disk and leaves the file");
+    rejects(StoreErrorCode::changedOnDisk,[&]{accept=false;store.clear();},"The next change compares against that archive, as after a synchronous failure");
+    check(ids(store)==std::vector<std::string>{kept[0].id,kept[1].id},"A rejected change leaves the records");
+    write(store.path(),onDisk);accept=false;
+    check(store.clear()&&store.items().empty()&&queue.empty()&&Json::parse(read(store.path()))["items"].array().empty(),"A writer that cannot queue makes the store save at once");
+}
+int main(){try{identityAndLease();importsAndRoundtrip();atomicImportAndPersistenceFailures();refreshAvailabilityAndReplacement();copyingAndIndependentLeaseLifetime();archiveGuardsAndUnknownFields();adapterGuard();deferredSaves();std::cout<<"File shelf store: "<<checks<<" checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"File shelf store failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

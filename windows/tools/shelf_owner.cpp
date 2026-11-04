@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <deque>
 #include <map>
 #include <set>
 #include <ole2.h>
@@ -104,8 +105,10 @@ struct ShelfService::Impl {
         // Commit can reenter a route transition. Its deferred notice still
         // belongs to the callback snapshot that completed the transaction.
         std::optional<bool> committedExternal;
-        // References a Shelf-route drop added (shelfAdded records, the reveal).
-        std::vector<std::string> addedNames, addedIDs;
+        // References a Shelf-route drop added (shelfAdded records, the reveal)
+        // and the archive save each waits for.
+        struct Added { std::string name, id; std::uint64_t save{}; };
+        std::vector<Added> added;
     };
     HWND hwnd; ShelfServiceOptions options;
     // Bookmark-equivalent resolution and Shell type names (FileShelfStore.swift).
@@ -160,6 +163,7 @@ struct ShelfService::Impl {
         // (FileShelfCanvas(store: nil, error:)), not a missing module.
         try { store = std::make_shared<data::FileShelfStore>(options.newDataRoot, files.platform(), relinkSlot.creation()); }
         catch (const data::StoreError& e) { storeError.emplace(e.code(), e.what()); }
+        if (store) store->setWriter([this](const data::FileShelfStore::Save& save) { return queueSave(save); });
         home = options.homeFolder ? *options.homeFolder : profileFolder();
         recordEvent = std::move(options.recordEvent);
         picker = std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{hwnd, pickerMessage, generation}, gpu::ShelfPickerLabels{"添加到文件暂存架", "添加引用", "添加引用"});
@@ -175,13 +179,13 @@ struct ShelfService::Impl {
                     const double scale = windowScale(shared->hwnd);
                     return shared->inside({double(point.x) / scale, double(point.y) / scale});
                 },
-                [shared, retainedStore](auto paths) {
+                [shared, retainedStore, changing = change](auto paths) {
                     const auto route = shared->external; shared->noticeExternal = bool(route);
                     if (route) { const bool committed = route->commit(paths); if (committed) shared->committedExternal = true; return committed; }
                     if (!retainedStore) return false;
                     std::set<std::string, std::less<>> before; for (const auto& item : retainedStore->items()) before.insert(item.id);
-                    retainedStore->add(paths); shared->committedExternal = false;
-                    for (const auto& item : retainedStore->items()) if (!before.contains(item.id)) { shared->addedNames.push_back(item.name); shared->addedIDs.push_back(item.id); }
+                    *changing = {Failure::importing}; retainedStore->add(paths); shared->committedExternal = false;
+                    for (const auto& item : retainedStore->items()) if (!before.contains(item.id)) shared->added.push_back({item.name, item.id, changing->save});
                     return true;
                 },
                 // Drag feedback belongs to an external route (the HUD's area owners); the Shelf's own drops read no payload while hovering.
@@ -195,7 +199,9 @@ struct ShelfService::Impl {
     }
     ~Impl() {
         *alive = false;
-        if (utility && sharedRoute) utility->invalidate(sharedRoute);
+        if (store) store->setWriter({});
+        // Accepted saves still finish (on the executor's shutdown barrier at the latest).
+        if (utility && sharedRoute) utility->invalidate(sharedRoute, false);
         ownUtility.reset();
         dropState->enabled = false; dropState->inside = nullptr; dropState->external.reset();
         if (drop) drop->stop();
@@ -241,6 +247,64 @@ struct ShelfService::Impl {
             catch (...) {}
             if (shared) changed();
         });
+    }
+
+    // ---- Shelf archive saves (FileShelfStore::Save) ----
+    // The store publishes a change at once and its archive is replaced here,
+    // off the HUD thread: one route of one FIFO executor keeps the saves in
+    // order, each expecting the bytes of the one before (the Mac writes
+    // .atomic synchronously; the durable replace with its flush took
+    // milliseconds per save on this thread). A failed save returns the
+    // records to the archive on disk and shows the store's reason, as a
+    // synchronous failure does. A full queue waits for the earlier saves;
+    // the store then saves at once.
+    // What a synchronous failure kept from happening waits for the save: the
+    // change's Event Log records (in the order they were made; dropped when
+    // it fails) and the ledger writes that follow it (afterSave). The
+    // failure is described as the change's own (an add's as an import).
+    struct Change { Failure failure{Failure::changing}; std::uint64_t save{}; }; // the change being made, the save it queued
+    struct Queued { Failure failure; std::shared_ptr<std::atomic<bool>> written; std::optional<bool> saved; };
+    struct Event { std::uint64_t save; mod::EventKind kind; mod::EventMetadata metadata; };
+    std::shared_ptr<Change> change = std::make_shared<Change>();
+    std::map<std::uint64_t, Queued> inFlight; std::deque<Event> events;
+    std::size_t savesQueued{};
+    std::uint64_t savesHanded{}, savesAtOnce{};
+    void beginChange(Failure failure) { *change = {failure}; }
+    bool queueSave(const data::FileShelfStore::Save& save) {
+        auto written = std::make_shared<std::atomic<bool>>(false);
+        const bool accepted = submit([save, written] { data::FileShelfStore::write(save); *written = true; }, [this, save](std::exception_ptr error) {
+            --savesQueued;
+            const auto found = inFlight.find(save.serial); const auto failure = found != inFlight.end() ? found->second.failure : Failure::changing;
+            if (found != inFlight.end()) found->second.saved = !error;
+            flushEvents(); inFlight.erase(save.serial);
+            if (!store || !store->saveFinished(save, !error)) return;
+            auto* c = at(time); if (!c) return;
+            c->storeChanged();
+            // A Shelf that is not active (switched away, the HUD closed) shows it when next active.
+            try { std::rethrow_exception(error); } catch (const std::exception& e) { c->deferError(shelfErrorText(e, failure, language())); } catch (...) {}
+        });
+        if (accepted) { ++savesQueued; ++savesHanded; inFlight.emplace(save.serial, Queued{change->failure, std::move(written), {}}); change->save = save.serial; return true; }
+        if (auto* executor = utility ? utility : ownUtility.get()) executor->waitIdle();
+        ++savesAtOnce; change->save = save.serial; // saved once the store returns: every earlier save was written
+        return false;
+    }
+    // An Event Log record of the change that queued `save` (0: none).
+    void logEvent(std::uint64_t save, mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({save, kind, std::move(metadata)}); flushEvents(); }
+    void flushEvents() {
+        while (!events.empty()) {
+            auto& next = events.front(); const auto found = inFlight.find(next.save);
+            if (found != inFlight.end() && !found->second.saved) return;
+            if (found == inFlight.end() || *found->second.saved) emit(next.kind, std::move(next.metadata));
+            events.pop_front();
+        }
+    }
+    // Ledger work after the current change's save, on the same FIFO route: it
+    // runs once that save was written (written false: it failed; nothing ran).
+    bool afterSave(app::UtilityExecutor::Work work, std::function<void(bool written, std::exception_ptr)> done) {
+        const auto found = inFlight.find(change->save); auto written = found != inFlight.end() ? found->second.written : nullptr;
+        auto ran = std::make_shared<bool>();
+        return submit([work = std::move(work), written, ran] { if (written && !*written) return; *ran = true; work(); },
+            [ran, done = std::move(done)](std::exception_ptr error) { done(*ran, error); });
     }
 
     // ---- References and Mac-imported items ----
@@ -295,29 +359,37 @@ struct ShelfService::Impl {
         // a full queue keeps the current list; the next activation reads again
     }
     // Dismisses the rows of records the user removed (dismissMacRelink by
-    // store and record id); they stay hidden until the write finished.
-    void dismissRelinks(std::vector<std::string> recordIDs) {
-        if (recordIDs.empty()) return;
-        for (const auto& id : recordIDs) dismissing.insert(id);
+    // store and record id) once the change's save was written; they stay
+    // hidden until the write finished, and come back when that save failed.
+    void dismissRelinks(std::vector<mig::MacRelinkItem> rows) {
+        if (rows.empty()) return;
+        std::vector<std::string> recordIDs; for (const auto& row : rows) { recordIDs.push_back(row.recordID); dismissing.insert(row.recordID); }
         const auto clear = [this, recordIDs] { for (const auto& id : recordIDs) dismissing.erase(id); };
-        if (!submit([root = options.newDataRoot, recordIDs] { for (const auto& id : recordIDs) (void)mig::dismissMacRelink(root, {mig::relinkShelfItem, id}); },
-                [clear](std::exception_ptr error) { clear(); if (error) std::rethrow_exception(error); })) {
+        if (!afterSave([root = options.newDataRoot, recordIDs] { for (const auto& id : recordIDs) (void)mig::dismissMacRelink(root, {mig::relinkShelfItem, id}); },
+                [this, clear, rows](bool written, std::exception_ptr error) { clear(); if (!written) restoreRelinks(rows); if (error) std::rethrow_exception(error); })) {
             clear(); throw std::runtime_error("Shelf references could not be committed");
         }
     }
-    void removeReference(std::string_view id) {
-        if (const auto* item = pending(id)) {
-            std::vector<std::string> ids{item->recordID};
-            std::erase_if(pendingRelinks, [&](const auto& row) { return sameID(row.recordID, ids.front()); });
-            dismissRelinks(std::move(ids)); return;
-        }
-        need(bool(store), "File shelf storage is unavailable");
-        store->remove(id);
+    // Imported items of a change whose save failed are listed again (as a
+    // synchronous failure left them), then in the ledger's order.
+    void restoreRelinks(const std::vector<mig::MacRelinkItem>& rows) {
+        for (const auto& row : rows) if (!pending(row.recordID)) pendingRelinks.push_back(row);
+        if (auto* c = at(time)) c->storeChanged();
+        readRelinks();
+    }
+    // Imported items awaiting relink leave the ledger; references leave the
+    // store in one save.
+    void removeReferences(std::span<const std::string> ids) {
+        std::vector<std::string> references; std::vector<mig::MacRelinkItem> imported;
+        for (const auto& id : ids) if (const auto* item = pending(id)) imported.push_back(*item); else references.push_back(id);
+        if (!references.empty()) { need(bool(store), "File shelf storage is unavailable"); (void)store->remove(std::span<const std::string>(references)); }
+        if (imported.empty()) return;
+        std::erase_if(pendingRelinks, [&](const auto& row) { return std::any_of(imported.begin(), imported.end(), [&](const auto& item) { return sameID(row.recordID, item.recordID); }); });
+        dismissRelinks(std::move(imported));
     }
     void clearReferences() {
         if (store) store->clear();
-        std::vector<std::string> ids; for (const auto& item : pendingRelinks) ids.push_back(item.recordID);
-        pendingRelinks.clear(); relinkTarget.reset(); dismissRelinks(std::move(ids));
+        auto rows = std::exchange(pendingRelinks, {}); relinkTarget.reset(); dismissRelinks(std::move(rows));
     }
     // Opens the picker for exactly this imported item (through the host's
     // choose action, which releases pointer capture first).
@@ -413,8 +485,9 @@ struct ShelfService::Impl {
             const bool external = dropState->committedExternal.value_or(dropState->noticeExternal); dropState->committedExternal.reset();
             if (!external) {
                 // importURLs: the new references enter from below, the grid at its bottom; nothing is selected.
-                const auto names = std::exchange(dropState->addedNames, {}); const auto ids = std::exchange(dropState->addedIDs, {});
-                for (const auto& name : names) emit(mod::EventKind::shelfAdded, {{"filename", name}});
+                // A reference whose save already failed left the shelf again: it records nothing.
+                std::vector<std::string> ids;
+                for (auto& item : std::exchange(dropState->added, {})) if (onShelf(item.id)) { logEvent(item.save, mod::EventKind::shelfAdded, {{"filename", std::move(item.name)}}); ids.push_back(std::move(item.id)); }
                 if (c) c->revealItems(ids, true);
             }
         }
@@ -440,10 +513,10 @@ struct ShelfService::Impl {
         mod::FileShelfServices s;
         s.available = bool(store);
         s.items = [this] { return items(); };
-        s.refresh = [this] { if (store) store->refresh(); readRelinks(); };
-        s.add = [this](std::span<const std::string> paths) { need(bool(store), "File shelf storage is unavailable"); (void)store->add(paths); };
-        s.remove = [this](std::string_view id) { removeReference(id); };
-        s.clear = [this] { clearReferences(); };
+        s.refresh = [this] { beginChange(Failure::refreshing); if (store) store->refresh(); readRelinks(); };
+        s.add = [this](std::span<const std::string> paths) { beginChange(Failure::importing); need(bool(store), "File shelf storage is unavailable"); (void)store->add(paths); };
+        s.remove = [this](std::span<const std::string> ids) { beginChange(Failure::changing); removeReferences(ids); };
+        s.clear = [this] { beginChange(Failure::changing); clearReferences(); };
         s.describe = [this](const std::exception& e, Failure failure) { return shelfErrorText(e, failure, language()); };
         // Add files is never a relink.
         s.chooseFiles = [this] { relinkTarget.reset(); (void)request({ShelfServiceAction::Kind::choose, {}}); };
@@ -470,9 +543,10 @@ struct ShelfService::Impl {
         s.relink = [this](std::string_view id) { requestRelink(id); };
         s.paste = [this] { return request({ShelfServiceAction::Kind::paste, {}}); };
         s.readProperties = [this](const mod::FileShelfItem& item) { return readProperties(item); };
-        s.itemsAdded = [this](const std::vector<std::string>& names) { for (const auto& name : names) emit(mod::EventKind::shelfAdded, {{"filename", name}}); };
-        s.itemRemoved = [this](const std::string& name) { emit(mod::EventKind::shelfRemoved, {{"filename", name}}); };
-        s.cleared = [this](std::size_t count) { emit(mod::EventKind::shelfCleared, {{"count", std::to_string(count)}}); };
+        // Right after the change: recorded once its save was written.
+        s.itemsAdded = [this](const std::vector<std::string>& names) { for (const auto& name : names) logEvent(change->save, mod::EventKind::shelfAdded, {{"filename", name}}); };
+        s.itemRemoved = [this](const std::string& name) { logEvent(change->save, mod::EventKind::shelfRemoved, {{"filename", name}}); };
+        s.cleared = [this](std::size_t count) { logEvent(change->save, mod::EventKind::shelfCleared, {{"count", std::to_string(count)}}); };
         s.iconsWanted = [this](const std::vector<std::string>& ids) { wantIcons(ids); };
         s.inputLocked = [this] { return externalDrag || nativeDrag || picking(); };
         s.presentingPanel = [this] { return picking(); };
@@ -515,6 +589,8 @@ mod::FileShelfCanvas* ShelfService::canvas() const noexcept { return impl_->canv
 DesignOwnerCore* ShelfService::core() const noexcept { return impl_->canvas() ? impl_->ownerCore : nullptr; }
 void ShelfService::setUtility(app::UtilityExecutor* value) {
     auto& i = *impl_; if (value == i.utility) return;
+    // Queued saves finish (and report) before later ones go to another executor.
+    if (i.savesQueued) if (auto* old = i.utility ? i.utility : i.ownUtility.get()) { old->waitIdle(); old->drain(); }
     if (i.utility && i.sharedRoute) i.utility->invalidate(i.sharedRoute, false);
     i.utility = value; i.sharedRoute = 0;
 }
@@ -617,8 +693,8 @@ bool ShelfService::importFiles(std::span<const std::string> paths, double t) {
     if (auto* c = i.at(t)) { const bool done = c->importPaths(paths); i.changed(); return done; }
     if (!i.store) return false;
     std::set<std::string, std::less<>> before; for (const auto& item : i.store->items()) before.insert(item.id);
-    i.store->add(paths);
-    for (const auto& item : i.store->items()) if (!before.contains(item.id)) i.emit(mod::EventKind::shelfAdded, {{"filename", item.name}});
+    i.beginChange(Failure::importing); i.store->add(paths);
+    for (const auto& item : i.store->items()) if (!before.contains(item.id)) i.logEvent(i.change->save, mod::EventKind::shelfAdded, {{"filename", item.name}});
     return true;
 }
 void ShelfService::showError(std::string message, double t) {
@@ -630,6 +706,7 @@ void ShelfService::showError(const std::exception& error, double t) { showError(
 void ShelfService::refresh(double t) {
     auto& i = *impl_;
     auto* c = i.at(t);
+    i.beginChange(Failure::refreshing);
     if (i.store) try { i.store->refresh(); } catch (const std::exception& error) { if (c) c->showError(shelfErrorText(error, Failure::refreshing, i.language())); }
     i.readRelinks();
     if (c) c->storeChanged();
@@ -652,18 +729,19 @@ bool ShelfService::relink(std::string_view id, std::span<const std::string> path
     const auto item = *found; std::size_t added{};
     // The chosen object becomes a reference with the imported identifier and
     // date; a duplicate of an existing reference adds nothing.
-    try { i.relinkSlot.arm(item); added = i.store->add(paths); i.relinkSlot.disarm(); }
+    try { i.beginChange(Failure::importing); i.relinkSlot.arm(item); added = i.store->add(paths); i.relinkSlot.disarm(); }
     catch (const std::exception& error) { i.relinkSlot.disarm(); show(shelfErrorText(error, Failure::importing, i.language())); return false; }
     std::string chosen(paths.front()); std::replace(chosen.begin(), chosen.end(), '/', '\\');
     if (const auto* row = i.record(item.recordID)) chosen = row->windowsPath;
-    // The ledger after the record, on the utility worker (resolveMacRelink by
-    // store and record id); a lost write is repaired by the next reconcile.
+    // The ledger after the record is saved, on the utility worker
+    // (resolveMacRelink by store and record id); a lost write is repaired by
+    // the next reconcile. A failed save keeps the imported item.
     std::erase_if(i.pendingRelinks, [&](const auto& row) { return sameID(row.recordID, item.recordID); });
     if (i.relinkTarget && sameID(i.relinkTarget->recordID, item.recordID)) i.relinkTarget.reset();
-    if (!i.submit([root = i.options.newDataRoot, recordID = item.recordID, chosen] { (void)mig::resolveMacRelink(root, {mig::relinkShelfItem, recordID}, chosen); },
-            [](std::exception_ptr error) { if (error) std::rethrow_exception(error); }))
+    if (!i.afterSave([root = i.options.newDataRoot, recordID = item.recordID, chosen] { (void)mig::resolveMacRelink(root, {mig::relinkShelfItem, recordID}, chosen); },
+            [impl = &i, item](bool written, std::exception_ptr error) { if (!written) impl->restoreRelinks({item}); if (error) std::rethrow_exception(error); }))
         show(shelfErrorText(std::runtime_error("Shelf references could not be committed"), Failure::changing, i.language()));
-    if (added) if (const auto* row = i.record(item.recordID)) i.emit(mod::EventKind::shelfAdded, {{"filename", row->name}});
+    if (added) if (const auto* row = i.record(item.recordID)) i.logEvent(i.change->save, mod::EventKind::shelfAdded, {{"filename", row->name}});
     if (c) c->storeChanged();
     i.changed();
     return true;
@@ -695,6 +773,7 @@ ShelfResourceStats ShelfService::resources() const {
     }
     if (i.icons) { const auto icons = i.icons->stats(); out.iconProvider = true; out.iconWorkers = icons.workers; out.iconWorkerStarts = icons.workerStarts; out.iconParks = icons.parks; out.iconRequests = icons.requests; }
     const auto cache = i.memoryImages.stats(); out.cachedIcons = cache.cachedImages; out.cachedIconBytes = cache.cachedBytes;
+    out.savesQueued = i.savesHanded; out.savesAtOnce = i.savesAtOnce;
     return out;
 }
 } // namespace endfield::tools

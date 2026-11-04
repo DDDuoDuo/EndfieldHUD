@@ -337,6 +337,13 @@ void ProfileCanvas::revertPreview(bool animated) {
     layoutGeometry(animated);
     if (services_.geometryPreview) services_.geometryPreview(profile_);
 }
+// Not shown: re-rendered when next shown (Canvas::renderScaleChanged). The
+// Mac rebuilt it at once at the new scale; its portrait for that scale is
+// asked now, so the owner's worker has it ready by then.
+void ProfileCanvas::renderScaleChanged() {
+    if (!isShown() && renderedLanguage() && services_.portrait && displayed().avatarFilename) (void)services_.portrait(portraitStep());
+    Canvas::renderScaleChanged();
+}
 void ProfileCanvas::recordingModeChanged() {
     if (editing_ && editing_->field == ProfileField::playerID) editing_->text->endEditing(false);
     if (!renderedLanguage()) return;

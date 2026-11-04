@@ -97,6 +97,8 @@ public:
     // the same batch. A duplicate-only batch is a successful no-op (returns 0).
     std::size_t add(std::span<const std::string> tokens);
     bool remove(std::string_view id); // references only, commit before UI mutation
+    // Every listed reference in ONE save (missing IDs are skipped); the count removed.
+    std::size_t remove(std::span<const std::string> ids);
     bool clear();
     void refresh(); // explicit activation call; no watcher/polling/service
     ShelfFileAccess access(std::string_view id);
@@ -105,11 +107,38 @@ public:
     // into an asynchronous copy-only data object and destroy this store. All
     // preparation guards finish before handoff; no native drag is started here.
     void copy(std::span<const std::string> ids,std::function<void(ShelfCopyBundle)>);
+
+    // Deferred saves (the owner's utility executor): with a writer, a change
+    // validates and encodes as before, hands the archive to the writer and
+    // publishes the new records at once; the save itself runs later. Saves
+    // are written in the order they were handed over, each expecting the
+    // bytes of the one before (the compare-and-replace of a synchronous
+    // save). A writer that cannot take one returns false once every earlier
+    // save finished: the store then saves at once, as without a writer.
+    struct Save {
+        std::filesystem::path path;
+        std::optional<std::string> expected; // the archive the save replaces
+        std::string bytes;
+        std::uint64_t serial{};
+    };
+    using Writer=std::function<bool(const Save&)>;
+    void setWriter(Writer value){writer_=std::move(value);}
+    static void write(const Save&); // the deferred save (any thread; touches no store)
+    // A deferred save finished. A failure returns the records to the last
+    // archive known on disk (later queued saves expected the failed one's
+    // bytes and fail too: only the first failure returns true, to be
+    // reported). The next change then compares against that archive, as a
+    // synchronous save that failed leaves it.
+    bool saveFinished(const Save&,bool succeeded);
 private:
     std::filesystem::path path_;Platform platform_;Creation creation_;
     std::vector<ShelfRecord> items_;Json envelope_{Json::Object{}};
     std::optional<std::string> persisted_;bool busy_{};
+    Writer writer_;
+    std::optional<std::string> confirmed_; // the archive known on disk (deferred saves)
+    std::uint64_t serial_{},abandoned_{},confirmedSerial_{};
     ShelfFileAccess resolve(const ShelfRecord&);
+    void load(const std::optional<std::string>& bytes);
     void commit(std::vector<ShelfRecord>);
 };
 } // namespace ehud::data
