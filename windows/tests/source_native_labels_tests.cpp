@@ -1,8 +1,10 @@
 #include "core/source_native_labels.hpp"
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <stdexcept>
 
@@ -59,7 +61,11 @@ void synthetic(){
     nodes[2].activeInHierarchy=true;nodes[3].activeInHierarchy=false;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);
     check(plan.placements()[1].visible,"Desktop replacement icon follows active button, even if original source icon is hidden");
     nodes[3].activeInHierarchy=true;alpha[2]=.375;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);close(plan.placements()[0].opacity,.375,0,"Inherited source alpha reaches the GPU placement");
-    alpha[2]=2;rejects([&]{plan.update(nodes,alpha,std::span(&button,1),camera,viewport);},"Invalid source alpha is rejected");close(plan.placements()[0].opacity,.375,0,"Rejected update leaves published placements unchanged");alpha[2]=1;
+    // An eased entrance can round its CanvasGroup alpha one step past 1 at its end (Core Animation clamps layer opacity).
+    alpha[2]=std::nextafter(1.,2.);plan.update(nodes,alpha,std::span(&button,1),camera,viewport);close(plan.placements()[0].opacity,1,0,"An inherited alpha rounded past 1 is clamped to 1");
+    alpha[2]=-1e-17;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);close(plan.placements()[0].opacity,0,0,"An inherited alpha rounded below 0 is clamped to 0");
+    alpha[2]=.375;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);
+    alpha[2]=std::numeric_limits<double>::quiet_NaN();rejects([&]{plan.update(nodes,alpha,std::span(&button,1),camera,viewport);},"A NaN source alpha is rejected");close(plan.placements()[0].opacity,.375,0,"Rejected update leaves published placements unchanged");alpha[2]=1;
     camera.worldRoot.values[14]=2;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);check(!plan.placements()[0].visible&&!plan.placements()[2].visible,"Depth-clipped source planes do not emit caption geometry");camera.worldRoot={};
     masks.push_back({{{-.5,-.25},{1,.5}}, {}});button.masks=masks;plan.update(nodes,alpha,std::span(&button,1),camera,viewport);
     check(plan.placements()[0].masks.size()==2&&plan.placements()[0].clippedPolygon.size()==4,"Source mask and viewport remain separate exact GPU planes");

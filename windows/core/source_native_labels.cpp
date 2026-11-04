@@ -135,7 +135,7 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
     require(nodes.size()==scene_->nodes().size()&&(alpha.empty()||alpha.size()==nodes.size())&&buttons.size()==buttonIDs_.size(),"Native projection input order/length mismatch");
     require(camera.view.finite()&&camera.projection.finite()&&camera.worldRoot.finite()&&valid(viewport),"Invalid native projection camera/viewport");
     const auto viewProjection=camera.projection*camera.view;require(viewProjection.finite(),"Invalid native view projection");
-    auto snapshot=[&](std::size_t i){return NodeSnapshot{nodes[i].worldMatrix,nodes[i].rect,nodes[i].activeInHierarchy,alpha.empty()?1:alpha[i]};};
+    auto snapshot=[&](std::size_t i){return NodeSnapshot{nodes[i].worldMatrix,nodes[i].rect,nodes[i].activeInHierarchy,alpha.empty()?1:std::clamp(alpha[i],0.,1.)};}; // a curve rounding past 0...1 is clamped, as Core Animation clamps layer opacity
     bool same=initialized_&&viewProjection==previousViewProjection_&&camera.worldRoot==previousWorldRoot_&&viewport==previousViewport_;
     for(std::size_t i=0;i<relevantNodes_.size();++i){const auto index=relevantNodes_[i];require(nodes[index].node==&scene_->nodes()[index],"Native projection nodes changed source ordering");const auto s=snapshot(index);
         require(s.world.finite()&&(!s.rect||finite(*s.rect))&&std::isfinite(s.alpha)&&s.alpha>=0&&s.alpha<=1,"Invalid native source node state");same=same&&(s==previousNodes_[i]);}
@@ -177,7 +177,7 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
                 if(validPoints&&(b.profileViewportClip||!clip.polygon.empty())){
                     const Vec2 contentSize=b.kind==NativeLabelKind::icon?Vec2{32,32}:size;
                     out.world=nativeProjectiveTextTransform(points,contentSize);out.contentBounds={0,0,contentSize[0],contentSize[1]};out.visible=out.world.finite();
-                    if(out.visible){out.opacity=static_cast<float>(alpha.empty()?1:alpha[c.node]);
+                    if(out.visible){out.opacity=static_cast<float>(alpha.empty()?1:std::clamp(alpha[c.node],0.,1.));
                         if(b.profileViewportClip){out.masks.push_back({{},viewport});out.clippedPolygon.assign(viewportPoints.begin(),viewportPoints.end());}
                         else{out.masks.assign(clip.masks.begin(),clip.masks.end());out.clippedPolygon.assign(clip.polygon.begin(),clip.polygon.end());}
                         // The wipe's growing mask: the surface's own plane, x up to the edge.
