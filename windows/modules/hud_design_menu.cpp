@@ -74,7 +74,7 @@ public:
         setTarget(bounds);
     }
     // A long list's resting row draws only its text: the highlight plate
-    // paints when it shows (one surface a row part, no group in the wipe).
+    // paints when it shows (one painting surface a row part).
     void restLazily() { if (plate_) plate_->setAnimatable(SurfaceRole::lazy); }
     // setHighlighted (:215-225).
     void setHighlighted(bool on) {
@@ -209,7 +209,9 @@ Menu::Menu(Environment& env, std::string id, std::vector<Item> items, double min
         row.layer().setFrame({0, y, rowWidth, rowHeight});
         // A long list (the Reader's installed fonts, 100-300 rows): each row is a
         // part of its own, so the scene rasterizes the rows near the list's
-        // viewport and the rest as they scroll in, not all of them on the click.
+        // viewport and the rest as they scroll in, not all of them on the click;
+        // the entrance's fade still draws the panel and its shown rows as one
+        // image (setGroupsParts below).
         if (long_) { row.layer().setPartRoot(true); row.restLazily(); }
         content_->add(row.layer()); rows_.push_back(&row);
         y += rowHeight;
@@ -219,6 +221,7 @@ Menu::Menu(Environment& env, std::string id, std::vector<Item> items, double min
     applyPanelChrome(b, *layer_, {width, listHeight + 8});
     layer_->setAnimatable();                             // the entrance wipe and fade
     layer_->setPartRoot(true);
+    layer_->setGroupsParts(long_);
     layer_->setZPosition(order::menu);
     list_->setFrame({0, 4, rowWidth, listHeight}); list_->setMasksToBounds(true);
     content_->setAnimatable();                           // the scroll offset

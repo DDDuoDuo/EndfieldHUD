@@ -89,6 +89,10 @@ struct NativeDesignScene::Impl {
         d::Affine groupWorld;
         float groupOpacity{1};
         bool wantsGroup{}, refused{}, prepared{}; // prepared: wanted for the coming fade (NativeDesignScenePose::prepareFade)
+        // Group opacity across parts (Layer::groupsParts): this frame, the part
+        // whose group draws this one (host), or the parts this one's group draws.
+        Part* host{};
+        std::vector<Part*> guests;
         std::vector<std::size_t> index;     // part surface -> scene surface (none: no drawing)
         std::vector<std::uint8_t> lazy, painted, wanted;
         std::uint64_t paintRevision{};
@@ -126,6 +130,7 @@ struct NativeDesignScene::Impl {
     // Detached groups keep their target until the list without them is
     // published (collectRetired); then they wait in the pool, target-free.
     std::vector<std::unique_ptr<NativeLayerGroup>> pool, draining;
+    std::vector<LayerScene*> sharing;                           // a shared group's guest scenes (attach)
     // This frame's pose (place() runs again when a group attaches).
     Matrix inverseBox;
     float moduleOpacity{1};
@@ -209,17 +214,42 @@ struct NativeDesignScene::Impl {
         ++statistics.groupSwitches;
         entriesChanged = true;
     }
+    // A group that draws other parts' scenes too: dropped before any of them
+    // is replaced, loaded or retired (it takes them again at the next upload).
+    void dropShared() { for (auto& p : parts) if (p->group && !p->group->moreScenes().empty()) dropGroup(*p); }
+    // Surfaces that paint (a resting lazy one holds its clear placeholder),
+    // counted up to two: one alone needs no group.
+    std::size_t painting(const Part& p) const {
+        std::size_t n{};
+        if (p.scene) for (std::size_t k = 0; k < p.kept && n < 2; ++k) {
+            const auto b = p.binding[k], surface = slots[b].second;
+            n += !p.lazy[surface] || p.painted[surface] || (poses[b].visible && poses[b].opacity > 0);
+        }
+        return n;
+    }
+    bool under(const Part& q, const d::Layer& layer) const {
+        for (const auto* l = q.root; l; l = l == root ? nullptr : l->parent()) if (l == &layer) return true;
+        return false;
+    }
+    // The group takes exactly the guests' scenes, in order.
+    static bool sameGuests(const Part& p) {
+        const auto more = p.group->moreScenes();
+        if (more.size() != p.guests.size()) return false;
+        for (std::size_t k = 0; k < more.size(); ++k) if (more[k] != p.guests[k]->scene.get()) return false;
+        return true;
+    }
     // One part's placements for this frame's poses: in the module world, or,
     // while a group draws the part, in its group layer's plane (the group's
     // output carries that layer's world, the group opacity and the owner masks).
     void place(Part& p) {
-        const bool grouped = p.group != nullptr;
-        const auto inverseGroup = grouped ? p.groupWorld.inverse() : std::nullopt;
+        const Part& owner = p.host ? *p.host : p; // a guest draws in its host's group plane
+        const bool grouped = owner.group != nullptr;
+        const auto inverseGroup = grouped ? owner.groupWorld.inverse() : std::nullopt;
         need(!grouped || inverseGroup, "A grouped design part needs an invertible group layer");
         const auto mask = [&](const d::PoseMask& m) -> std::optional<PlaneMask> {
             const auto inverse = m.world.inverse();
             if (!inverse || !(m.bounds.width > 0) || !(m.bounds.height > 0)) return std::nullopt;
-            return PlaneMask{grouped ? matrix(*inverse * p.groupWorld) : matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
+            return PlaneMask{grouped ? matrix(*inverse * owner.groupWorld) : matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
         };
         for (std::size_t k = 0; k < p.binding.size(); ++k) {
             const auto b = p.binding[k];
@@ -233,7 +263,7 @@ struct NativeDesignScene::Impl {
             placement.surface = p.index[surface];
             placement.world = grouped ? matrix(*inverseGroup * s.world) : boxWorld * matrix(s.world);
             // Inside a group: the surface's opacity below the group layer.
-            p.target[surface] = !shows ? 0.f : grouped ? std::min(1.f, s.opacity / p.groupOpacity) : moduleOpacity * s.opacity;
+            p.target[surface] = !shows ? 0.f : grouped ? std::min(1.f, s.opacity / owner.groupOpacity) : moduleOpacity * s.opacity;
             placement.opacity = !lazy || p.painted[surface] ? p.target[surface] : 0.f;
             placement.linearTint = linearTint(s.tint);
             std::size_t count{};
@@ -255,7 +285,7 @@ struct NativeDesignScene::Impl {
         // Surfaces without drawing (no index) sort last and stay out.
         p.scene->setPlacements(std::span<const LayerPlacement>(p.placements.data(), p.kept));
         p.scene->setGroupShutter(grouped ? std::nullopt : shutter);
-        if (grouped && p.group->holdsTarget())
+        if (grouped && p.group && p.group->holdsTarget())
             p.group->setPose(boxWorld * matrix(p.groupWorld), moduleOpacity * p.groupOpacity, std::span<const PlaneMask>(ownerMasks.data(), ownerMaskCount), shutter);
     }
     // Visibility window (LIBRARY-DESIGN.md section 5): scroll content parts are
@@ -272,6 +302,7 @@ struct NativeDesignScene::Impl {
         entries.clear();
         for (const auto& p : parts) {
             if (!p->scene) continue;
+            if (p->host && p->host->group) { if (insertion && p->root == insertionAfter) entries.push_back(*insertion); continue; } // in its host's group
             entries.push_back(p->group ? p->group->entry() : LayerCompositionEntry{p->scene.get(), {}});
             if (insertion && p->root == insertionAfter) entries.push_back(*insertion);
         }
@@ -330,6 +361,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
         std::size_t needed{};
         for (const auto& p : i.parts) if (!p->scene && Impl::within(*p, 1)) needed += p->needed();
         if (needed) need(i.entriesInUse() <= LayerRasterizer::maximumEntries && needed <= LayerRasterizer::maximumEntries - i.entriesInUse(), "Design scroll content exceeds the shared raster budget");
+        for (const auto& p : i.parts) if ((!p->scene && Impl::within(*p, 1)) || (p->scene && !Impl::within(*p, 2))) { i.dropShared(); break; }
         for (auto& p : i.parts) {
             if (!p->scene && Impl::within(*p, 1)) { i.load(*p); changed = true; }
             else if (p->scene && !Impl::within(*p, 2)) { i.retire(*p); changed = true; }
@@ -408,6 +440,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
     i.options = options;
     for (auto& plan : plans)
         if (plan.kind == Plan::Kind::load && Impl::within(*plan.part, plan.old && plan.old->scene ? 2 : 1)) i.load(*plan.part);
+    i.dropShared(); // before the scenes it draws move, update or retire
     for (auto& plan : plans) {
         auto& p = *plan.part;
         if (plan.kind == Plan::Kind::load) { if (plan.old) i.retire(*plan.old); continue; }
@@ -478,35 +511,53 @@ void NativeDesignScene::updatePose(const NativeDesignScenePose& pose) {
     std::copy(pose.ownerMasks.begin(), pose.ownerMasks.end(), i.ownerMasks.begin());
     i.ownerMaskCount = pose.ownerMasks.size();
     i.shutter = pose.shutter;
-    for (auto& part : i.parts) {
-        auto& p = *part;
+    for (auto& part : i.parts) { part->host = nullptr; part->guests.clear(); }
+    for (std::size_t n = 0; n < i.parts.size(); ++n) {
+        auto& p = *i.parts[n];
         // Group opacity (CALayer opacity composites the subtree as one image):
-        // a part of two or more drawn surfaces whose group layer (with the
-        // module) is translucent is drawn through a group; at rest directly.
+        // a part of two or more painting surfaces (a resting lazy one holds its
+        // clear placeholder) whose group layer (with the module) is translucent
+        // is drawn through a group; at rest directly.
         // A fade the host is about to start (prepareFade, the module still at
         // opacity 0) wants the group already: it is attached while nothing shows.
         p.wantsGroup = p.prepared = false;
-        if (p.scene && p.groupLayer && p.kept > 1) {
-            const auto g = d::sampleLayer(*p.groupLayer, *i.root, pose.time);
-            const double opacity = pose.opacity * g.opacity;
-            // Its own opacity may still be 0 while its entrance (a stagger, delay
-            // included) has not raised it yet: sampleLayer reports it invisible,
-            // and the module's fade-in takes the group either way. A part merely
-            // resting at opacity 0 takes none.
-            const bool waiting = !g.visible && !(g.opacity > 0) && entering(*p.groupLayer, *i.root, pose.time);
-            const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || waiting);
-            // While the module still fades in, a group already taken stays with
-            // its part until the part's own stagger shows it (no detach and
-            // attach again at the start of the fade).
-            const bool kept = p.group && pose.opacity < 1 - 1e-4 && waiting;
-            if ((prepared || kept || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse()) {
-                p.groupWorld = g.world;
-                p.groupOpacity = float(g.opacity);
-                p.wantsGroup = true;
-                p.prepared = prepared;
+        if (p.host || !p.scene || !p.groupLayer) continue;
+        const bool shares = p.groupLayer->groupsParts();
+        std::size_t painting = i.painting(p);
+        if (painting < 2 && !shares) continue;
+        const auto g = d::sampleLayer(*p.groupLayer, *i.root, pose.time);
+        const double opacity = pose.opacity * g.opacity;
+        // Its own opacity may still be 0 while its entrance (a stagger, delay
+        // included) has not raised it yet: sampleLayer reports it invisible,
+        // and the module's fade-in takes the group either way. A part merely
+        // resting at opacity 0 takes none.
+        const bool waiting = !g.visible && !(g.opacity > 0) && entering(*p.groupLayer, *i.root, pose.time);
+        const bool prepared = pose.prepareFade && pose.opacity <= 0 && (g.visible || waiting);
+        // While the module still fades in, a group already taken stays with
+        // its part until the part's own stagger shows it (no detach and
+        // attach again at the start of the fade).
+        const bool kept = p.group && pose.opacity < 1 - 1e-4 && waiting;
+        if (!((prepared || kept || (g.visible && opacity > 0 && opacity < 1 - 1e-4)) && g.world.inverse())) continue;
+        // Its group layer groups parts (a long menu): the parts under it that
+        // show in their clip (its rows, its ring after them) draw in this group
+        // too, the panel and its rows one image as on the Mac.
+        if (shares)
+            for (std::size_t m = n + 1; m < i.parts.size() && i.under(*i.parts[m], *p.groupLayer); ++m) {
+                auto& q = *i.parts[m];
+                if (!q.scene || !Impl::within(q, 0)) continue;
+                q.host = &p; p.guests.push_back(&q); painting += i.painting(q);
             }
-        }
+        if (painting < 2) { for (auto* q : p.guests) q->host = nullptr; p.guests.clear(); continue; }
+        p.groupWorld = g.world;
+        p.groupOpacity = float(g.opacity);
+        p.wantsGroup = true;
+        p.prepared = prepared;
+    }
+    for (auto& part : i.parts) {
+        auto& p = *part;
+        // At rest, or a group whose guests changed (it takes them again at the upload).
         if (!p.wantsGroup) { i.dropGroup(p); p.refused = false; }
+        else if (p.group && !Impl::sameGuests(p)) i.dropGroup(p);
         i.place(p);
     }
     if (i.entriesChanged) i.refreshEntries();
@@ -539,26 +590,34 @@ bool NativeDesignScene::uploadAnimations(Renderer& r) {
             for (std::size_t k = 0; k < p.kept; ++k) if (p.placements[k].surface == p.index[n]) p.placements[k].opacity = shows ? p.target[n] : 0.f;
             p.scene->setPlacements(std::span<const LayerPlacement>(p.placements.data(), p.kept));
         }
+    }
+    // A part and the guests its group draws (they follow it in its group plane).
+    const auto placeAll = [&](Impl::Part& p) { i.place(p); for (auto* q : p.guests) i.place(*q); };
+    for (auto& part : i.parts) {
+        auto& p = *part;
+        if (!p.scene) continue;
         // A fade starts: a pooled group takes the part (its target is
-        // allocated now). The renderer's group limits may refuse it (a part
-        // larger than its pixel budget): that fade draws directly.
+        // allocated now) and its guests' scenes. The renderer's group limits
+        // may refuse it (a part larger than its pixel budget): that fade draws directly.
         bool attached{};
         if (p.wantsGroup && !p.group && !p.refused && (!p.prepared || prepared++ < preparedPerFrame)) {
             if (i.pool.empty()) i.pool.push_back(std::make_unique<NativeLayerGroup>(i.raster, i.prefix + ".group"));
             p.group = std::move(i.pool.back());
             i.pool.pop_back();
-            i.place(p);
-            try { p.group->attach(r, *p.scene, i.density); attached = true; p.group->setRenderAhead(r, p.prepared); }
-            catch (const std::invalid_argument&) { i.pool.push_back(std::move(p.group)); p.refused = true; i.place(p); continue; }
-            catch (...) { i.pool.push_back(std::move(p.group)); i.place(p); throw; }
+            placeAll(p);
+            i.sharing.clear();
+            for (auto* q : p.guests) i.sharing.push_back(q->scene.get());
+            try { p.group->attach(r, *p.scene, i.density, std::nullopt, i.sharing); attached = true; p.group->setRenderAhead(r, p.prepared); }
+            catch (const std::invalid_argument&) { i.pool.push_back(std::move(p.group)); p.refused = true; placeAll(p); changed |= !p.guests.empty(); continue; }
+            catch (...) { i.pool.push_back(std::move(p.group)); placeAll(p); throw; }
             ++i.statistics.groupSwitches;
             changed = true;
-            i.place(p); // the group's pose, now that it has a target
+            placeAll(p); // the group's pose, now that it has a target
         }
         // Child constants (and a re-upload when a lazy surface painted or the
         // local ink left the target) before the frame is drawn.
         if (p.group && !attached) try { (void)p.group->updateLocal(r); }
-            catch (const std::invalid_argument&) { i.dropGroup(p); p.refused = true; i.place(p); changed = true; }
+            catch (const std::invalid_argument&) { i.dropGroup(p); p.refused = true; placeAll(p); changed = true; }
     }
     if (changed) i.refreshEntries();
     i.entriesChanged = false;

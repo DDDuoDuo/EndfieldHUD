@@ -168,6 +168,12 @@ public:
     // rows, and a module may mark a large composite explicitly.
     void setPartRoot(bool);
     bool partRoot() const noexcept { return partRoot_; }
+    // A part root whose subtree holds part roots of its own (a long menu's
+    // rows) and fades as one image (CALayer group opacity): while it fades,
+    // the native scene draws those parts through its part's group. A pose
+    // policy only (nothing emitted changes).
+    void setGroupsParts(bool v) noexcept { groupsParts_ = v; }
+    bool groupsParts() const noexcept { return groupsParts_; }
     // Clip this (lazy) layer's surfaces to the alpha of `source`'s own
     // surface: the sheen band inside its chamfered plate (LIB-28). The native
     // scene binds source's texture as the PlaneAlphaMask (no extra raster).
@@ -215,7 +221,7 @@ private:
     Point position_, anchor_;
     Affine base_;
     double z_{}, clipRadius_{}, presentedRadius_{};
-    bool hidden_{}, clips_{}, partRoot_{}, presentedClip_{};
+    bool hidden_{}, clips_{}, partRoot_{}, presentedClip_{}, groupsParts_{};
     std::array<double, channelCount> model_{0, 0, 1, 1, 0, 1, 1};
     std::optional<Color> tint_;
     std::optional<Json> content_;
