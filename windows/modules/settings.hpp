@@ -34,6 +34,8 @@ struct SettingsCredit {std::string name,role,url;};
 struct SettingsAbout {std::string name="EndfieldHUD",version="Development",author="DDDuoDuo",license="MIT",repository;};
 // HUDAboutInformation.current's credits in `language` (roles localized).
 std::vector<SettingsCredit> settingsCredits(core::Language);
+// HUDSettingsCanvas.feedbackURL: the Tencent questionnaire in Simplified Chinese, the Google form otherwise.
+std::string settingsFeedbackURL(core::Language);
 // HUDSettingsController.presetAccentHexes.
 inline constexpr std::array<std::string_view,5> settingsPresetAccents{"FAD41F","6EDFE8","A8E58B","C9A2FF","FF8F78"};
 struct SettingsCallbacks {

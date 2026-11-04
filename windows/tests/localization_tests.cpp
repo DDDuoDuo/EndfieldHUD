@@ -25,7 +25,7 @@ int main(){try{
     check(renderTranslation("{x} {} {-1}",{})=="{x} {} {-1}","Non-numeric braces remain literal");
     // Mac 1.3.0: 830 core + 453 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift); no
     // Windows-kept v1.2.0 pair is left (tools/localization_windows_kept.json). Adding a kept row changes this count.
-    const auto catalog=translationCatalog();check(catalog.size()==1283,"Full pinned five-language catalog");
+    const auto catalog=translationCatalog();check(catalog.size()==1284,"Full pinned five-language catalog");
     using Row=std::array<std::string_view,5>;
     const auto five=[&](const Row&r,const char*why){const auto*e=translationEntry(r[0],r[1]);check(e&&e->traditionalChinese==r[2]&&e->japanese==r[3]&&e->korean==r[4],why);};
     for(const auto&r:std::array<Row,6>{{

@@ -973,6 +973,9 @@ void SettingsCanvas::buildAbout(d::Page& page) {
         automatic.setEnabled(controller_->updateStatus().canSetAutomatic);
     });
     rows.push_back(&row("automaticUpdates", automaticTitle, {&automatic.layer()}, page, {}, {&automatic}));
+    const auto feedbackTitle = text("BUG Report/Suggestions", "BUG报告及反馈");
+    auto& feedback = linkButton(page, "feedback", feedbackTitle, settingsFeedbackURL(env().language));
+    rows.push_back(&row("feedback", feedbackTitle, {&feedback.layer()}, page, {}, {&feedback}));
     rows.push_back(&valueRow("author", text("Author", "作者"), about.author, page));
     if (!about.repository.empty()) {
         auto& open = linkButton(page, "github", "GitHub", about.repository);

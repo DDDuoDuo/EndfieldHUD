@@ -681,18 +681,34 @@ final class FileShelfCanvas: HUDDesignCanvas {
 
     static func isPackage(_ item: ShelfItem) -> Bool {
         let ext = URL(fileURLWithPath: item.lastKnownPath).pathExtension
-        return item.isDirectory && !ext.isEmpty && UTType(filenameExtension: ext)?.conforms(to: .package) == true
+        guard item.isDirectory, !ext.isEmpty else { return false }
+        if #available(macOS 11.0, *) { return UTType(filenameExtension: ext)?.conforms(to: .package) == true }
+        return legacyConforms(ext, to: kUTTypePackage)
     }
 
     /// The doc glyph's colour: pdf, img, zip, vid or txt.
     static func tileKind(_ item: ShelfItem) -> HUDArchiveTile.Extension {
         let ext = URL(fileURLWithPath: item.lastKnownPath).pathExtension
-        guard !item.isDirectory || isPackage(item), !ext.isEmpty, let type = UTType(filenameExtension: ext) else { return .txt }
-        if type.conforms(to: .pdf) { return .pdf }
-        if type.conforms(to: .image) { return .img }
-        if type.conforms(to: .audiovisualContent) { return .vid }
-        if type.conforms(to: .archive) || type.conforms(to: .diskImage) { return .zip }
+        guard !item.isDirectory || isPackage(item), !ext.isEmpty else { return .txt }
+        if #available(macOS 11.0, *) {
+            guard let type = UTType(filenameExtension: ext) else { return .txt }
+            if type.conforms(to: .pdf) { return .pdf }
+            if type.conforms(to: .image) { return .img }
+            if type.conforms(to: .audiovisualContent) { return .vid }
+            if type.conforms(to: .archive) || type.conforms(to: .diskImage) { return .zip }
+            return .txt
+        }
+        if legacyConforms(ext, to: kUTTypePDF) { return .pdf }
+        if legacyConforms(ext, to: kUTTypeImage) { return .img }
+        if legacyConforms(ext, to: kUTTypeAudiovisualContent) { return .vid }
+        if legacyConforms(ext, to: kUTTypeArchive) || legacyConforms(ext, to: "public.disk-image" as CFString) { return .zip }
         return .txt
+    }
+
+    /// UTType needs macOS 11; Intel Macs on 10.15 use the Core Services lookup.
+    private static func legacyConforms(_ ext: String, to type: CFString) -> Bool {
+        guard let identifier = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, ext as CFString, kUTTypeData)?.takeRetainedValue() else { return false }
+        return UTTypeConformsTo(identifier, type)
     }
 
     /// The doc glyph's label: the file's own extension, DIR for a folder.

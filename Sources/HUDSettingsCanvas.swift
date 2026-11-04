@@ -823,6 +823,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         automatic.onChange = { [weak self] _ in self?.controller.toggleAutomaticUpdates() }
         binders.append { [weak self, weak automatic] in guard let self else { return }; automatic?.setOn(self.controller.updateState.automaticallyInstalls, animated: true) }
         rows.append(row("automaticUpdates", L10n.text("Install updates automatically", "自动安装更新"), [automatic.layer], page, controls: [automatic]))
+        let feedbackTitle = L10n.text("BUG Report/Suggestions", "BUG报告及反馈")
+        let feedback = linkButton("feedback", feedbackTitle, Self.feedbackURL)
+        rows.append(row("feedback", feedbackTitle, [feedback.layer], page, controls: [feedback]))
         rows.append(valueRow("author", L10n.text("Author", "作者"), about.author, page))
         if let repository = about.repositoryURL {
             let open = linkButton("github", "GitHub", repository)
@@ -1072,6 +1075,12 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             layer.lineFrame = CGRect(x: 0, y: 0, width: ceil(layer.preferredWidth) + 2, height: 12)
         }
         env.applyScale(to: layer)
+    }
+
+    /// The feedback form: Tencent Questionnaire in Simplified Chinese, Google Forms otherwise.
+    private static var feedbackURL: URL {
+        URL(string: L10n.resolvedLanguage == .simplifiedChinese ? "https://wj.qq.com/s2/28548057/ejeu/"
+            : "https://docs.google.com/forms/d/e/1FAIpQLSeDwB4CzTp5kdT5ArjwIcQlvRS9UlVkQnMpGF3OHbYJ1_uBCg/viewform?usp=sharing&ouid=103818782106751591632")!
     }
 
     private func linkButton(_ id: String, _ label: String, _ url: URL) -> HUDIconButton {

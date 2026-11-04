@@ -1119,7 +1119,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
         panel.prompt = L10n.text("Choose", "选择")
         panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         panel.allowsOtherFileTypes = false; panel.resolvesAliases = true
-        panel.allowedContentTypes = [.image]
+        if #available(macOS 11.0, *) { panel.allowedContentTypes = [.image] } else { panel.allowedFileTypes = ["public.image"] }
         panel.level = NSWindow.Level(rawValue: max(panel.level.rawValue, window.level.rawValue + 1))
         dialogGeneration += 1
         let token = dialogGeneration
