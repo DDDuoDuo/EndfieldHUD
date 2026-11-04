@@ -38,25 +38,26 @@ constexpr LPARAM contentNotice = 1, openNotice = 2;
 // short-lived STA thread of its own, as NSWorkspace.open hands off to
 // LaunchServices; the result comes back through noticeMessage, and the
 // toast or notice follows exactly as before. A service that is gone takes
-// no result.
+// no result. `closings` is the HUD's close count at the click.
+struct OpenResult { std::string id; HRESULT result; std::uint64_t closings; };
 struct OpenResults {
     std::mutex mutex; HWND hwnd{}; UINT_PTR generation{}; bool alive{true}, posted{};
-    std::vector<std::pair<std::string, HRESULT>> done;
-    void finish(std::string id, HRESULT result) {
+    std::vector<OpenResult> done;
+    void finish(std::string id, HRESULT result, std::uint64_t closings) {
         std::lock_guard lock(mutex);
         if (!alive) return;
-        done.emplace_back(std::move(id), result);
+        done.push_back({std::move(id), result, closings});
         if (!posted) posted = PostMessageW(hwnd, ShelfService::noticeMessage, generation, openNotice) != FALSE;
     }
 };
-struct OpenJob { std::shared_ptr<OpenResults> results; std::string id; data::ShelfFileAccess lease; gpu::ShelfRevealOperation operation; };
+struct OpenJob { std::shared_ptr<OpenResults> results; std::string id; data::ShelfFileAccess lease; gpu::ShelfRevealOperation operation; std::uint64_t closings; };
 unsigned __stdcall openThread(void* opaque) noexcept {
     std::unique_ptr<OpenJob> job(static_cast<OpenJob*>(opaque));
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const HRESULT result = gpu::openShelfReference(std::move(job->lease), {}, std::move(job->operation));
     job->operation = nullptr;
     if (SUCCEEDED(com)) CoUninitialize();
-    try { job->results->finish(std::move(job->id), result); } catch (...) {}
+    try { job->results->finish(std::move(job->id), result, job->closings); } catch (...) {}
     return 0;
 }
 std::atomic<UINT_PTR> nextGeneration{1};
@@ -168,7 +169,7 @@ struct ShelfService::Impl {
     std::optional<ShelfServiceAction> action;
     std::vector<std::string> dragIDs; bool nativeDrag{};
     std::optional<std::pair<std::string, data::ShelfFileAccess>> heldReveal;
-    std::shared_ptr<OpenResults> openResults = std::make_shared<OpenResults>(); std::size_t opensPending{}; std::uint64_t opensQueued{}, opensAtOnce{};
+    std::shared_ptr<OpenResults> openResults = std::make_shared<OpenResults>(); std::size_t opensPending{}; std::uint64_t opensQueued{}, opensAtOnce{}, closings{};
     std::uint64_t propertyReads{}; std::size_t pendingReads{};
     UINT_PTR generation{nextGeneration++};
     std::string home;
@@ -552,7 +553,7 @@ std::unique_ptr<DesignModuleOwner> ShelfService::makeOwner(native::LayerRasteriz
     options.updated = [this](const app::ModuleFrame& frame) { impl_->time = std::max(impl_->time, frame.time); impl_->updateInput(); };
     // HUD closing: the picker is cancelled; the icon worker ends once every
     // wanted icon is cached (else it finishes them for the next opening).
-    options.closing = [this](double) { auto& s = *impl_; s.relinkTarget.reset(); s.picker->cancel(); s.heldReveal.reset(); if (!s.iconsMissing()) s.parkIcons(); };
+    options.closing = [this](double) { auto& s = *impl_; ++s.closings; s.relinkTarget.reset(); s.picker->cancel(); s.heldReveal.reset(); if (!s.iconsMissing()) s.parkIcons(); };
     auto ownerCore = std::make_unique<DesignOwnerCore>(raster, context, std::move(options));
     auto token = std::make_shared<int>(0);
     std::optional<std::string> error;
@@ -596,9 +597,9 @@ bool ShelfService::message(const app::NativeMessage& m, double t) {
     (void)i.at(t);
     if (m.message == noticeMessage && m.lParam == contentNotice) { i.contentPosted = false; return true; }
     if (m.message == noticeMessage && m.lParam == openNotice) {
-        std::vector<std::pair<std::string, HRESULT>> done;
+        std::vector<OpenResult> done;
         { std::lock_guard lock(i.openResults->mutex); done.swap(i.openResults->done); i.openResults->posted = false; }
-        for (const auto& [id, result] : done) { --i.opensPending; opened(id, result); }
+        for (const auto& result : done) { --i.opensPending; opened(result.id, result.result, result.closings); }
         return true;
     }
     if (m.message == workMessage) { if (i.ownUtility) i.ownUtility->drain(); return true; }
@@ -649,23 +650,25 @@ void ShelfService::open(std::string_view id, double t) {
     auto* c = i.at(t);
     if (i.nativeDrag || !i.store) return;
     std::unique_ptr<OpenJob> job;
-    try { job = std::make_unique<OpenJob>(OpenJob{i.openResults, std::string(id), i.store->access(id), i.options.openOperation}); }
+    try { job = std::make_unique<OpenJob>(OpenJob{i.openResults, std::string(id), i.store->access(id), i.options.openOperation, i.closings}); }
     catch (const std::exception& e) { if (c) c->showError(shelfErrorText(e, Failure::action, i.language())); return; }
     // Its own thread; none could start: the Shell on this thread, as before.
     if (const auto thread = _beginthreadex(nullptr, 0, openThread, job.get(), 0, nullptr)) {
         (void)job.release(); CloseHandle(reinterpret_cast<HANDLE>(thread)); ++i.opensPending; ++i.opensQueued; return;
     }
     ++i.opensAtOnce;
-    opened(job->id, gpu::openShelfReference(std::move(job->lease), {}, std::move(job->operation)));
+    opened(job->id, gpu::openShelfReference(std::move(job->lease), {}, std::move(job->operation)), job->closings);
 }
 bool ShelfService::opening() const noexcept { return impl_->opensPending > 0; }
-// The Mac toasts in the click's turn: a Shelf left meanwhile (another module,
-// the HUD closed) shows no toast, and a failure waits for its next showing.
-void ShelfService::opened(std::string_view id, HRESULT result) {
+// The Mac toasts in the click's turn, so a module switched to meanwhile still
+// shows it (the toast is the HUD's, not the Shelf's); a HUD closed since the
+// click drops it, as the close drops the Mac's. A failure waits for the
+// Shelf's next showing.
+void ShelfService::opened(std::string_view id, HRESULT result, std::uint64_t closings) {
     auto& i = *impl_;
     auto* c = i.canvas();
     if (!c) return;
-    if (result == S_OK) { if (c->isActive()) c->opened(id); }
+    if (result == S_OK) { if (closings == i.closings) c->opened(id); }
     else if (FAILED(result)) c->deferError(core::localized("This item could not be opened.", "无法打开此项目。", i.language()));
 }
 ehud::data::ShelfFileAccess ShelfService::access(std::string_view id) {

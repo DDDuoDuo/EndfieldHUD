@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -326,6 +327,30 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
         shelf.open(reportID, hud.time); settleOpen();
         check(toasts() == shown && opened.size() == 3, "A cancelled Shell choice shows nothing"); }
     { std::lock_guard lock(shell.mutex); shell.result = S_OK; }
+    // The Mac toasts in the click's turn: an Open whose Shell outlasts a module
+    // switch still toasts; one whose HUD closed meanwhile does not.
+    const auto gated = [&](const std::function<void()>& meanwhile) {
+        const auto gate = CreateEventW(nullptr, TRUE, FALSE, nullptr); check(gate != nullptr, "Gate");
+        const auto before = held();
+        { std::lock_guard lock(shell.mutex); shell.gate = gate; }
+        shelf.open(reportID, hud.time);
+        for (unsigned n = 0; n < 2000 && held() == before; ++n) Sleep(1);
+        check(held() == before + 1 && shelf.opening(), "The Shell holds the item");
+        meanwhile();
+        { std::lock_guard lock(shell.mutex); shell.gate = nullptr; } SetEvent(gate);
+        settleOpen(); CloseHandle(gate);
+    };
+    // (A module switch clears the shown toast: count from after it.)
+    {   std::uint64_t shown{};
+        gated([&] { hud.frame(core::Module::fileShelf, core::Module::clipboard); hud.frame(core::Module::clipboard); check(!hud.canvas().isActive(), "The HUD switched to another module"); shown = toasts(); });
+        check(toasts() == shown + 1 && hud.toast() == "Opened|Renamed report.txt", "An Open that outlasts a module switch still toasts");
+        for (int k = 0; k < 3; ++k) hud.frame();
+        check(hud.canvas().isActive(), "Back on the Shelf"); }
+    {   std::uint64_t shown{};
+        gated([&] { hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time); shown = toasts(); });
+        check(toasts() == shown, "An Open whose HUD closed before the Shell returned shows no toast");
+        hud.owner->setOverlayVisible(true, hud.time); for (int k = 0; k < 3; ++k) hud.frame();
+        check(hud.canvas().isActive(), "The HUD shown again on the Shelf"); }
     // Reveal: the lease is taken now and handed to the host, which closes the HUD first.
     check(shelf.perform("shelf:" + reportID + ":reveal", hud.time) && hud.toast() == "Revealed in File Explorer|~", "Reveal toasts the location");
     action = shelf.takeAction();

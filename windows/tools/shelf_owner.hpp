@@ -157,7 +157,7 @@ public:
     ShelfPanelState panels() const;
     ShelfResourceStats resources() const;
 private:
-    void opened(std::string_view id, HRESULT result);     // an Open's result: the toast or the notice
+    void opened(std::string_view id, HRESULT result, std::uint64_t closings); // an Open's result: the toast or the notice
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
