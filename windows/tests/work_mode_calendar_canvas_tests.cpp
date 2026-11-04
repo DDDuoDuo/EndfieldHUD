@@ -727,6 +727,28 @@ void calendar(Run& run) {
         check(w.state->events().size() == 7 && month() == rendered, "A new event's diamond joins its cell's ring surface");
     }
     {
+        // A surface whose node draws nothing gets no scene surface (LayerScene:
+        // no contents, fill, border, text, shape or gradient below it), so no
+        // in-place update either. Today without an event (no diamond in its
+        // ring's surface) and without its ring still draws each surface.
+        CalendarWorld w(run.measurer, run.data, false);
+        const std::function<bool(const Json&)> draws = [&](const Json& j) {
+            if (!j["contents"].isNull() || !j["backgroundColor"].isNull() || (j["borderWidth"].isNumber() && j["borderWidth"].number() > 0)) return true;
+            if (j["kind"].isString() && (j["kind"].string() == "text" || j["kind"].string() == "shape" || j["kind"].string() == "gradient")) return true;
+            return j["children"].isArray() && std::any_of(j["children"].array().begin(), j["children"].array().end(), draws);
+        };
+        const auto drawn = [&] {
+            std::size_t surfaces{};
+            for (auto& part : d::emit(w.canvas->root(), {&w.harness.context.env().text, "scene."}).parts)
+                if (part.id.find("calendar.month") != std::string::npos)
+                    for (const auto& node : part.layers["children"].array()) { if (!draws(node)) return false; ++surfaces; }
+            return surfaces > 0;
+        };
+        check(w.state->events().empty() && drawn(), "Every month surface draws with today selected");
+        w.canvas->perform("day:2026-10-15");
+        check(drawn(), "Today's cell without its ring or an event still draws each of its surfaces (a scene index: Today updates it in place)");
+    }
+    {
         // MODS-638: the Mac builds a new HUDCalendarCanvas at every HUD open
         // (:30-33, :13-16): today in its month, no event open, empty fields.
         CalendarWorld w(run.measurer, run.data, true);
