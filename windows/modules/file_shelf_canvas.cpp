@@ -181,6 +181,7 @@ void FileShelfCanvas::didDeactivate() {
 // No deadline runs while the HUD is hidden: a Clear still animating when the
 // shelf leaves finishes now (the Mac's asyncAfter fires 0.38 s after it began).
 void FileShelfCanvas::willLeave() { if (clearing_) { cancel(clearTimer_); finishClear(); } }
+void FileShelfCanvas::overlayClosing() { dropAlternates(); }
 void FileShelfCanvas::resetSession() {
     if (isActive()) return;
     dropAlternates();
@@ -392,8 +393,9 @@ void FileShelfCanvas::fillAlternates() {
     if (buildAlternates(page(), 1)) alternatesReady_ = true;
     else scheduleAlternates(1.0 / 30);
 }
-// The HUD closed (its artwork is released): the next session's first page
-// is the Mac's alone, and they are filled again after its entrance.
+// The HUD closes or closed: the next session's first page is the Mac's
+// alone, and they are filled again after its entrance (the scene keeps the
+// tiles that left a few seconds, until the close finishes).
 void FileShelfCanvas::dropAlternates() {
     cancel(alternateTimer_);
     alternatesReady_ = false;

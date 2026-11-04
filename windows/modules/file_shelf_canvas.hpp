@@ -187,6 +187,11 @@ public:
     // nothing selected or focused, the grid at its top, the store's opening
     // error shown again.
     void resetSession() override;
+    // The HUD closes (the owner's closing hook): the other layout's tiles
+    // leave the tree while the close's frames still sync, so the scene
+    // releases their artwork with the close (a switch inside the open HUD
+    // keeps them).
+    void overlayClosing();
     void playEntrance(design::Point, double now) override;
     void recordingModeChanged() override;
     void didInstall(design::Page&) override;      // the rerender override (:510-513)
