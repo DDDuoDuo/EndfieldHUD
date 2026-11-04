@@ -7,6 +7,21 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Signed EndfieldHUD updates</description>
         <language>en</language>
         <item>
+            <title>1.3.0</title>
+            <pubDate>Wed, 04 Nov 2026 10:47:35 -0800</pubDate>
+            <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+            <sparkle:version>19</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15.4</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"># EndfieldHUD 1.3.0
+
+- Redesigned every centre module and the shell in the Endfield style, with a Light theme, theme colours, and HarmonyOS Sans with Noto Sans for Chinese, Japanese and Korean.
+- Added Recording mode, an optional daily boot log and facility alerts, classified Archive documents, and Notes TEXT and TODO tabs with colours and formatting.
+- Improved Now Playing, Volume, E-Reader, Calendar, Map, Activity Monitor (GPU), Storage, App Shortcuts and Settings.
+</description>
+            <enclosure url="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-macOS.zip" length="61944365" type="application/octet-stream" sparkle:edSignature="teZ9QnPXjpGBpgMTgzpFzYc/Z2TTCelt1g4ekKS08zdahngcrq0OdHKC1DvenfA4Ru6geSZ1MI/P/b4Q+FAPDA=="></enclosure>
+        </item>
+        <item>
             <title>1.2.0</title>
             <pubDate>Tue, 06 Oct 2026 23:20:57 -0700</pubDate>
             <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
@@ -262,6 +277,6 @@ Original code: MIT. Game artwork belongs to its respective owners; see [credits]
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: zilNvbFOjH2O3cTCUNVTfpwXfgOTwutE08v32Alr+Pc6qwu+LSBawl5E1c6rDwjkLovAomPgTsJiLA0WadqBCA==
-length: 22408
+edSignature: MGVaUUDrowmEkkGVuTqE80nFqecU3MrDpczsRbRIu1Z0Dt7hOTaVrtaZS3PlKdcmZ4UW0v+qx6o3P9G8XjROCg==
+length: 23650
 -->
