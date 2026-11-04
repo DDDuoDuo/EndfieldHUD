@@ -9,12 +9,85 @@ data folder; RC 138 is the build published as Windows 1.2.0.
 
 ## Unreleased
 
-Windows 1.3.0 (build 19), the port of the Mac 1.3.0: release candidate 140
-below, which fixes the three problems the tester found in release candidate
-139. It has passed the automated tests; release candidate 139 was tried on
-the laptop's desktop, release candidate 140 not yet, and nothing is
-published. Its files are meant for the
-shared `v1.3.0` release, next to the Mac 1.3.0 downloads.
+Windows 1.3.0 (build 19), the port of the Mac 1.3.0: release candidate 141
+below, which removes the short freezes the tester felt on clicks in release
+candidate 140 and fixes RC 140's known opening issues. It has passed the
+automated tests; release candidates 139 and 140 were tried on the laptop's
+desktop, release candidate 141 not yet, and nothing is published. Its files
+are meant for the shared `v1.3.0` release, next to the Mac 1.3.0 downloads.
+
+## RC 141 — checkpoint 141
+
+The tester found that RC 140 froze briefly when Work Mode started, paused or
+resumed and when items were selected in the Temporary File Shelf, and on
+other clicks. Every click in the centre modules and the shell was checked for
+work that held the HUD up; the ones below no longer do. Times are from the
+hidden tests on the test laptop, which draw in software and run slower than
+the desktop. Everything else is as in RC 140 below.
+
+### Fixes
+
+- **Clicks no longer redraw whole pages.** A page that changes in place now
+  keeps what it already drew and draws again only what changed, where RC 140
+  drew the whole page again:
+  - Work Mode's start, pause, resume, reset, presets, custom time and laps:
+    15–27 ms instead of about 60 ms.
+  - Selecting, Ctrl-selecting and deselecting in the Temporary File Shelf:
+    36–100 ms instead of about 250 ms. The selection card opening or closing
+    no longer re-lays every tile out on the click.
+  - Clipboard pins and filters, the Event Log's filters and Home, Notes'
+    tabs and ticks, Settings' theme and icon picks and the language menu,
+    and App Shortcuts' drop target.
+  - Calendar: selecting a day, Today and the arrow keys draw the two changed
+    days instead of the whole month (about 25 ms instead of about 80 ms).
+  - Reopening a menu or pop-over (the month picker, How to play, the
+    E-Reader's Font menu) shows what it drew last time. The Font menu draws
+    only the rows near what you see (its first opening about 65 ms instead
+    of about 220 ms).
+  - Unlocking a classified document reveals the text without drawing the
+    locked panel again.
+  - Changing the clock style draws the status row once instead of four times.
+  - Settings rebuilds only the page on screen when a setting changes; the
+    other Settings pages catch up when they are next shown.
+- **Saving no longer holds up the click.** Notes' centre (ticks, tabs, the
+  fold, formatting), Map pins and the view, and the File Shelf now save in the
+  background, in order, with the same error messages if a save fails. If a
+  save fails the change is undone, the way the File Shelf already did. Every
+  pending save finishes before the app quits or the session ends.
+- **Opening a File Shelf item no longer waits for Windows to start its
+  program** (about 80 ms before).
+- **Other one-off pauses moved off the HUD:** the first visit to Media
+  Assembly's Stickers drawer (its 30 thumbnails decode in the background and
+  arrive with the slide-in), the account sign-in's clean-up of old browser
+  profiles, and starting the minigame's engine on its first showing.
+- **Opening and closing:** RC 140's three known opening issues are fixed. The
+  text sharpness for the display the HUD opens on is now worked out in about
+  1 ms before the opening (about 45 ms at the start of the opening before), so
+  an opening on a second display with other scaling, or one summoned before
+  the launch warm-up has run, no longer pauses. Reduce Motion's text
+  sharpness after a scaling change matches RC 139's. A Shelf drag-out and a
+  close that interrupts an opening start the next opening at the sharpness
+  RC 139 used.
+- Memory the HUD kept for menus, pop-overs, the File Shelf's prepared tiles
+  and an unused minigame engine is released when the HUD finishes closing.
+
+### Known issues in RC 141
+
+- Committing a Personal ID field or switching its date kind still redraws the
+  whole card (about 130–170 ms in the hidden tests, as in RC 140), so that
+  the card keeps fading as one image, as on the Mac.
+- The first switch to each module after an opening still draws its page on
+  the switch (Calendar about 85 ms in the hidden tests, as in RC 140). A
+  version that drew the most recent modules ahead while the HUD was idle was
+  left out because it added work to every opening.
+- Still slower than the rest: the Calendar month picker's first opening, the
+  Event Log's Page Down and End, adding or removing File Shelf items, and
+  opening a classified document's editor (40–150 ms in the hidden tests).
+- Reopening the HUD while it is still closing keeps the sharpness it had on
+  screen until the opening finishes.
+- The unreproduced RC 140 report (modules losing their interface after a
+  Work Mode countdown or an Event Log tab switch) was not seen again; the
+  hidden tests now check every page after both.
 
 ## RC 140 — checkpoint 140
 
@@ -63,7 +136,7 @@ desktop. Everything else is as in RC 139 below.
   tester could not make it happen again, and the hidden tests do not show
   it.
 
-The first three are fixed for the next release candidate.
+The first three are fixed in RC 141.
 
 ## RC 139 — checkpoint 139
 

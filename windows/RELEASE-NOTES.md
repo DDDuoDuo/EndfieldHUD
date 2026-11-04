@@ -230,7 +230,6 @@ These come from Windows itself, or from choices that keep your data and system s
 - **E-Reader and Map:** touchpad scrolling moves in mouse-wheel steps.
 - **Media Assembly:** the Highlights/Shadows slider has no effect yet (saved amounts are kept). 16-bit images are edited with 8-bit precision. Movies tagged with a color space other than BT.709 keep their decoded colors.
 - **Projection:** lifting the pen after a very long stroke takes about 13–15 ms to redraw it.
-- **Two displays with different scaling:** opening the HUD on a display whose scaling or resolution differs from the one it last closed on can pause the start of the opening animation for about 45 ms.
 
 ### Not yet checked on a real PC
 
@@ -261,6 +260,7 @@ These figures come from automated runs on the test laptop with sample data, with
 - **Map:** the terrain images are freed when the HUD closes, as on the Mac (about 12.6 MiB while closed, now none). The next opening shows its first frame in about 16 ms and decodes the terrain in the background, in about a third of a second, while the opening animation plays.
 - **Text and memory:** text is drawn at the Mac's 1.35× sharpness. With every module visited, the open HUD uses about 630 MiB instead of about 420 MiB, mostly for that sharper text; most of it is given back when the HUD closes. The bundled fonts add no measurable private memory.
 - **Opening and closing:** on the test laptop (2560 × 1600 at 150 %, 165 Hz), an opening on the Map misses about 23 of its refreshes against about 18 in Windows 1.2.0, mostly frames of 9–15 ms while the Map and the sharper text are drawn; the slowest frames are about as long as in 1.2.0. Turning Recording mode on or off takes about 30–65 ms with every module visited.
+- **Clicks:** a change in place draws only what changed, and saves run in the background. On the test laptop (drawing off-screen in software, so slower than the desktop) Work Mode's start and pause take about 15–27 ms, selecting in the File Shelf about 36–100 ms, selecting a Calendar day about 25 ms, and opening a File Shelf item about 2 ms. A Personal ID edit still redraws the card (about 130–170 ms there), and the first switch to each module after an opening draws its page.
 - **Confirmations:** the blur behind a confirmation is drawn only while the bar fades in or out, about 5 ms per frame with the software renderer.
 - **Closed HUD:** as in Windows 1.2.0, nothing is drawn while the HUD is closed, and the graphics device is released after ten minutes closed.
 

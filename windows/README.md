@@ -29,9 +29,11 @@ release build: the Windows files go onto the existing `v1.2.0` release, next
 to the Mac files. The build is not code-signed (see the checkpoint 137 and
 138 entries and `RELEASE-NOTES.md`). Checkpoint 139 ports the Mac 1.3.0
 (build 19) redesign; the tester tried it on the laptop's desktop and found
-three problems, which checkpoint 140 fixes. Checkpoint 140 is the release
-candidate for Windows 1.3.0 (build 19), verified hidden on the laptop and not
-yet tried live or published (see the entries at the end).
+three problems, which checkpoint 140 fixes; the tester confirmed those fixes
+and reported short freezes on clicks, which checkpoint 141 removes.
+Checkpoint 141 is the release candidate for Windows 1.3.0 (build 19),
+verified hidden on the laptop and not yet tried live or published (see the
+entries at the end).
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -5348,3 +5350,128 @@ RC 140 without waiting for the fix:
 - Not yet: the tester's check of the three fixes on the desktop, with real
   audio for Volume.
 
+## Checkpoint 141 (2026-11-04)
+
+**Not published.** The tester confirmed RC 140's three fixes and reported a
+slight freeze when Work Mode starts, pauses or resumes, when items are
+selected in the Temporary File Shelf, and on other clicks. A read-only sweep
+of every interactive action in the centre modules and the shell found 61
+click paths doing heavy work on the HUD thread
+(`build/windows-1.3`, not tracked); checkpoint 141 fixes them except those
+listed under known issues, and carries the opening and closing work that
+missed RC 140. The code is at `42645f1` on `codex/windows-migration`; it is
+still Windows 1.3.0 (build 19). Six fix branches were merged with merge
+commits; each went through its own review, and the merged result through a
+cross-group review in which two verifiers had to confirm each finding. User-facing changes are in `CHANGELOG.md` (RC 141).
+
+### The cause: whole pages drawn again (`128a969`: `123f5e9`, `dcb1ee8`, `1abc778`)
+
+- A design canvas that changed in place re-rendered its page with new layer
+  ids, so `NativeDesignScene::syncContent` reused no part and rasterized
+  every surface again (Work Mode 47–63, the File Shelf 213–259, Calendar
+  about 190, Settings' Display about 190). Every re-render now keeps the
+  serial of the page it replaces (`hud_design_page.*`), unless that page
+  holds an editing field or it is an install during a swap that is not the
+  swap landing; staged pages share the leaving page's ids (never both in the
+  tree). `renderScaleChanged` re-renders only the shown canvas and defers
+  the others (`deferRerender`).
+- The File Shelf also prepares both tile layouts (4 and 3 columns) so the
+  selection card's opening does not re-lay every tile out on the click; the
+  other layout's tiles are transparent, outside routing and accessibility,
+  added one per frame after the entrance and dropped when the HUD closes.
+  Its saves run on the utility worker, in order, one per action; ledger and
+  Event Log entries are recorded once the save succeeded, and a failure
+  rolls the records back to the archive on disk.
+
+### Module work off the click (`ecdab52`, `b36a7c5`, `f4071a0`, `1391c07`)
+
+- Notes centre and Map saves: `app/latest_file_save.*`, one write at a time
+  on the utility worker, the newest edit replacing a waiting one, the same
+  durable replace and error messages; `flushDocuments` waits for every
+  accepted utility job at quit and session end (Notes, Map and the Shelf).
+- File Shelf Open: `ShellExecuteEx` on a short-lived STA thread, the result
+  posted back (the "Opened" toast about 30 ms after the click).
+- Account binding: the `%TEMP%` sweep and the WebView2 profile deletes on
+  the utility worker, never deleting the live sign-in's profile.
+- Media Assembly: the Stickers drawer's 30 thumbnails decode on the worker
+  on the first visit and arrive with the slide-in.
+- Calendar day cells keep their surfaces with or without the today ring;
+  long menus (the Reader's Font menu) make each row a part, drawn near the
+  visible list; the Archive reveal no longer reloads the locked panel; the
+  minigame's QuickJS VM boots on its own thread on the first showing.
+- Departed parts (a closed pop-over or menu, rows a filter took away) are
+  kept by the module scenes for 8 s (at most 256 surfaces or 24 MiB) and
+  reused when they come back; they are released at once when the HUD finishes
+  closing (`releaseKept`), with a one-shot wake for an idle open HUD. Every
+  other design scene retires them at once, as before (`42645f1`).
+- Settings rebuilds only the shown page (hidden pages and pages changed
+  while closed rebuild when shown); a language pick rebuilds once, in the
+  new language. The clock's status row is rasterized once per style change.
+- Left out: an idle warm-up of the most recent modules (it cut the first
+  switch from 208 to 2 rasterizations but added 12 deadline wakes, about
+  180 ms of HUD-thread work and 13–22 MB to every opening, with one
+  50–62 ms step that input did not stop; removed in `0e25d6f`).
+
+### Opening and closing (`20710af`: rounds 4–7)
+
+- `DesktopChromeProjectionPlan::clipCenter` resolves only the centre's
+  ancestry and curves (about 45 ms → 0.6–1.0 ms per layout, four layouts
+  cached); the held density is derived before every opening from the applied
+  settings and the summon placement, never inside the hotkey handler or an
+  opening frame; Reduce Motion takes a single step.
+- A launch opening before the prewarm starts where RC 139 did; a Shelf drag
+  retracts the density once; a close that cuts a deploy replays to the eased
+  clip time of the opening's last frame. `--animation-trace-dpi` at 96, 144,
+  168 and 192 and `--animation-trace-launch` check every case against RC
+  139's live measurement.
+
+### Results (hidden, laptop, owner coverage; ms vary by about ±30 %)
+
+Click frame / worst frame of the next second, then rasterizations in that
+second, RC 140 → checkpoint 141:
+
+| Action | RC 140 | Checkpoint 141 |
+|---|---|---|
+| Work Mode start / pause / resume / reset | 57–66 ms, 63 | 15–27 ms, 3–6 |
+| Work Mode preset / custom / lap | 44–64 ms, 47–62 | 7–17 ms, 1–16 |
+| File Shelf select one / another | 244–245 ms, 214 | 36–88 ms, 10–21 |
+| File Shelf Ctrl-toggle / deselect | 271–273 ms, 259 | 36–52 ms, 4–14 |
+| File Shelf Open | 78 ms, 18 | 2 ms, 0 |
+| Notes tick / tab / fold (save) | 19–49 ms | 8–30 ms, saved on the worker |
+| Map pin / view (save) | 18–59 ms | 2–33 ms, saved on the worker |
+| Calendar day select / Today | 68–95 ms, 192 | 20–29 ms, 15–18 |
+| Event Log All (next-second frame) / Home | 51–54 / 63–72 ms, 118 / 90 | 10–12 / 14–17 ms, 26 / 0 |
+| Reader Font menu, first / again | 209–240 ms, 456 | 59–75 / 14–29 ms, 48 / 0 |
+| Archive unlock reveal frame | 143 ms | 35 ms |
+| Settings theme swatch | 155 ms, 5 pages | 48–66 ms, 2 pages |
+| Clipboard pin | 110 ms, 204 | 22–31 ms, 15 |
+
+Openings and closings, idle and memory against RC 140 on the same laptop:
+see the Verified section.
+
+### Known issues
+
+- Personal ID: a field commit or the date-kind flip still loads the whole
+  card (73 / 59 surfaces, about 130–170 ms), so it fades as one image.
+- The first switch to each module after an opening rasterizes its page
+  (Calendar 208, about 85 ms), as in RC 140.
+- Not reduced: the Calendar month picker's first opening (61), Event Log
+  Page Down / End (70–92 new rows' surfaces), File Shelf add / remove (the
+  Mac's re-layout), the classified editor built at the end of the wipe.
+- Reopening the HUD while it is still closing keeps the on-screen density
+  through the redeploy.
+- The unreproduced RC 140 report: `application_owner_coverage` now checks
+  every page and the shell parts after a countdown and a tab switch
+  (`66f219f`).
+
+### Verified
+
+- Portable: 207/207 suites at `42645f1`.
+- Laptop, hidden, slot `w13`: `ALL_BUILD` with 0 errors and 0 warnings;
+  340/342 suites. `projection_composition_contracts` and
+  `projection_workspace_contracts` need the interactive session (they
+  pass on CI's runner); `now_playing_netease_cost_contracts` failed once
+  under load and passed alone (no Now Playing code changed).
+- CI run 41776351206 at `42645f1`: portable and Windows suites with the
+  developer package.
+- Not yet: the tester's check on the desktop.
