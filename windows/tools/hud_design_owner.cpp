@@ -263,7 +263,10 @@ std::optional<double> DesignOwnerCore::nextWakeTime(double t) const {
     const auto take = [&](std::optional<double> v) { if (v && std::isfinite(*v)) next = next ? std::min(*next, *v) : *v; };
     if (i.options.nextWakeTime) take(i.options.nextWakeTime(t));   // the services run while the HUD is closed too
     if (!i.overlay) return next;
-    for (const auto& s : i.slots) if (s->shown) { take(s->canvas->nextWakeTime(t)); take(s->canvas->nextDeadline(t)); }
+    for (const auto& s : i.slots) {
+        if (s->shown) { take(s->canvas->nextWakeTime(t)); take(s->canvas->nextDeadline(t)); }
+        if (s->pose) take(s->scene->nextKeptExpiry());   // kept parts expire on an idle HUD too
+    }
     if (i.fields) take(i.fields->nextWakeTime(t));
     return next;
 }
@@ -286,6 +289,8 @@ bool DesignOwnerCore::deadline(double t) {
             s->canvas->wake(i.time);
             woke = true;
         }
+    // Expired kept parts are released here (no frame: they are not published).
+    if (i.renderer) for (auto& s : i.slots) if (s->pose) (void)s->scene->expireKept(i.time, *i.renderer);
     return woke;
 }
 void DesignOwnerCore::upload(gpu::Renderer& r) {

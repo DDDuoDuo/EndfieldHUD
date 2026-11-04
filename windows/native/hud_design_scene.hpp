@@ -121,6 +121,13 @@ public:
     // group detached in updatePose).
     bool uploadAnimations(Renderer&);
     bool requiresFrames(double now) const;
+    // Kept parts (a closed pop-over's or menu's scenes) expire after a few
+    // seconds without a frame too: the owner wakes at nextKeptExpiry, and
+    // expireKept releases the expired ones at once (they left the tree at
+    // least one published frame before: no list holds them). True when one
+    // expired.
+    std::optional<double> nextKeptExpiry() const noexcept;
+    bool expireKept(double now, Renderer&);
     std::span<const LayerCompositionEntry> entries() const noexcept;
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&);

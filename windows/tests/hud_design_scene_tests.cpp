@@ -214,9 +214,16 @@ void run(const std::filesystem::path& shader) {
         check(scene.stats().keptParts == 0 && scene.collectRetired(renderer), "Kept parts expire after a few seconds and release after publication");
         tree.root.insert(row, 1); ++revision; publish(9.5);
         row.removeFromParent(); ++revision; publish(9.6);
+        // An idle HUD presents no frame (no pose): the owner wakes at the expiry.
+        const auto expiry = scene.nextKeptExpiry();
+        check(expiry && *expiry > 9.6 + 7 && !scene.expireKept(9.7, renderer) && scene.stats().keptParts == 1, "A kept part names its expiry and stays until then");
+        check(scene.expireKept(*expiry, renderer) && scene.stats().keptParts == 0 && !scene.nextKeptExpiry() && scene.stats().retiredParts == 0,
+            "At its expiry, without a pose, it is released at once (it was not published)");
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .1);
+        row.removeFromParent(); ++revision; publish(*expiry + .2);
         composition.setEntries(renderer, {}); composition.present(renderer);
         check(scene.releaseResources(renderer) && scene.stats().keptParts == 0, "An uncomposed scene keeps no parts");
-        tree.root.insert(row, 1); ++revision; publish(9.7);
+        tree.root.insert(row, 1); ++revision; publish(*expiry + .3);
     }
     composition.detach(renderer);
     check(scene.releaseResources(renderer), "Detached scene releases everything");

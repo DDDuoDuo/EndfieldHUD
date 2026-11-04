@@ -195,7 +195,7 @@ struct NativeDesignScene::Impl {
         for (auto k = kept.rbegin(); k != kept.rend(); ++k) {
             if (!k->scene) continue;
             surfaces += k->scene->report().surfaces; bytes += k->scene->report().pixelBytes;
-            if (now - k->since > keptSeconds || surfaces > keptSurfaces || bytes > keptPixelBytes) retired.push_back(std::move(k->scene));
+            if (now >= k->since + keptSeconds || surfaces > keptSurfaces || bytes > keptPixelBytes) retired.push_back(std::move(k->scene));
         }
         std::erase_if(kept, [](const Kept& k) { return !k.scene; });
     }
@@ -569,6 +569,20 @@ bool NativeDesignScene::requiresFrames(double now) const {
     const auto& i = *impl_;
     i.time(now);
     return i.synced && d::requiresFrames(i.artwork, now);
+}
+std::optional<double> NativeDesignScene::nextKeptExpiry() const noexcept {
+    std::optional<double> next;
+    for (const auto& k : impl_->kept) if (k.scene) next = std::min(next.value_or(k.since + Impl::keptSeconds), k.since + Impl::keptSeconds);
+    return next;
+}
+bool NativeDesignScene::expireKept(double now, Renderer& r) {
+    auto& i = *impl_;
+    i.time(now);
+    const auto kept = i.kept.size(), before = i.retired.size();
+    i.trimKept(now);
+    for (auto n = i.retired.size(); n > before; --n)
+        if (i.retired[n - 1]->releaseResources(r)) i.retired.erase(i.retired.begin() + std::ptrdiff_t(n - 1));
+    return i.kept.size() != kept;
 }
 std::span<const LayerCompositionEntry> NativeDesignScene::entries() const noexcept { return impl_->entries; }
 bool NativeDesignScene::collectRetired(Renderer& r) {
