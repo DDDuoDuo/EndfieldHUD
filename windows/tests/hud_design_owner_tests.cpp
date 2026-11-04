@@ -265,6 +265,33 @@ void run(const std::filesystem::path& shader) {
         frame(sample(core::Module::volume), 3.4);
         check(skipped->builds == builds + 1, "The prewarmed canvas builds once when shown");
     }
+    // The open HUD's idle warm-up (Application::warmModules): a module not
+    // shown whose artwork went at the close builds and rasterizes its page,
+    // leaves at once, and its switch then rasterizes nothing again.
+    {
+        frame(sample(core::Module::clipboard), 3.5);
+        owner.setOverlayVisible(false, 3.6); overlay.setOverlayVisible(false, 3.6);
+        check(owner.core().warm(core::Module::volume, 3.65, 64) == tools::DesignOwnerCore::Warm::refused, "The closed HUD warms nothing");
+        owner.setOverlayVisible(true, 3.7); overlay.setOverlayVisible(true, 3.7);
+        frame(sample(core::Module::clipboard), 3.75);
+        check(owner.core().sceneStats(core::Module::volume)->rasterEntries == 0, "The close dropped the hidden canvas's artwork");
+        check(owner.core().warm(core::Module::clipboard, 3.8, 64) == tools::DesignOwnerCore::Warm::refused, "The shown canvas is not warmed");
+        const unsigned leaves = skipped->leaves;
+        // One surface per step: the page rasterizes over several steps (at least one part each).
+        unsigned steps{};
+        for (auto step = owner.core().warm(core::Module::volume, 3.8, 1); ++steps < 64 && step == tools::DesignOwnerCore::Warm::partial;) {
+            check(owner.core().sceneStats(core::Module::volume)->rasterEntries > 0 && !skipped->isShown(), "Each step leaves the canvas with part of its page rasterized");
+            step = owner.core().warm(core::Module::volume, 3.8 + steps * .001, 1);
+        }
+        check(steps > 1 && steps < 64, "A hidden canvas warms over its steps");
+        const auto warmed = *owner.core().sceneStats(core::Module::volume);
+        check(warmed.rasterEntries > 0 && !skipped->isShown() && !skipped->isActive() && skipped->leaves == leaves + steps, "It rasterizes its page and leaves after each step, never activated");
+        frame(sample(core::Module::clipboard), 3.85);
+        const auto rasters = raster.stats().rasterizations;
+        frame(sample(core::Module::volume), 3.9);
+        check(skipped->isActive() && owner.core().sceneStats(core::Module::volume)->partsLoaded == warmed.partsLoaded && raster.stats().rasterizations == rasters,
+            "Its switch then loads and rasterizes nothing again");
+    }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);
     check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");

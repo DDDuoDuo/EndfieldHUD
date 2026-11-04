@@ -229,6 +229,7 @@ void Application::Impl::onDeadline(double time){
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
+    if(moduleWarmAt&&*moduleWarmAt<=time)warmModules(time);
     // The tray icon was pointed at but no opening came: the device prepared
     // for it goes again (Renderer::discardPreparedDevice).
     if(preparedGraphicsUntil&&*preparedGraphicsUntil<=time){preparedGraphicsUntil.reset();

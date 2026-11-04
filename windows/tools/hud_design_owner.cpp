@@ -245,6 +245,19 @@ void DesignOwnerCore::prewarm(const app::ModuleFrame& frame) {
     s->canvas->show(i.time);
     i.sync(*s);
 }
+DesignOwnerCore::Warm DesignOwnerCore::warm(core::Module module, double t, std::size_t surfaces) {
+    auto& i = *impl_;
+    i.clock(t);
+    auto* s = i.slot(module);
+    if (!s || !i.overlay || s->shown || s->active || s->canvas->isShown()) return Warm::refused;
+    i.bind();
+    s->canvas->show(i.time);
+    s->scene->setLoadBudget(surfaces);
+    try { i.sync(*s); } catch (...) { s->scene->setLoadBudget(std::nullopt); s->canvas->prepareToLeave(i.time); throw; }
+    s->scene->setLoadBudget(std::nullopt);
+    s->canvas->prepareToLeave(i.time);
+    return s->scene->loadsPending() ? Warm::partial : Warm::done;
+}
 bool DesignOwnerCore::requiresFrames(double t) const {
     const auto& i = *impl_;
     if (!i.overlay) return false;

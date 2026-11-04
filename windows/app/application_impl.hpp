@@ -394,6 +394,7 @@ struct Application::Impl {
     void updateCalendarWake();
     // HUDCalendarController.refreshForSystemChange after a clock, zone, locale or wake change.
     void calendarSystemChanged();
+    void warmModules(double time);
     bool flushCalendar();
     void applyConfiguration(double time);
     core::FrameDemand demand(double time);
@@ -726,6 +727,17 @@ struct Application::Impl {
     bool calendarRefreshQueued{};
     double calendarTime{};
     std::optional<double> calendarNextWake;
+    // The first switch of an opening to a module visited before rasterizes
+    // its whole page (its artwork went at the close): the most recently
+    // selected design modules are warmed once the opened HUD is idle, one per
+    // deadline, two per opening (warmModules).
+    std::optional<double> moduleWarmAt;
+    std::array<core::Module,3> recentModules{};std::size_t recentCount{};
+    std::optional<core::Module> moduleWarming;
+    std::uint64_t modulesWarmed{};unsigned moduleWarms{},moduleWarmSteps{},moduleWarmRetries{};
+    static constexpr double moduleWarmDelay=1.5,moduleWarmGap=.05,moduleWarmRetry=.25;
+    static constexpr unsigned moduleWarmLimit=2,moduleWarmStepLimit=48,moduleWarmRetryLimit=8;
+    static constexpr std::size_t moduleWarmSurfaces=16; // about 8-13 ms of rasterization per step
     bool calendarWakeActive{};
     core::Language calendarLanguage{core::Language::system};
     std::unique_ptr<gpu::ReaderOwner> readerOwner;

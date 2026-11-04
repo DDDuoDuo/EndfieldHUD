@@ -126,6 +126,15 @@ struct NativeDesignScene::Impl {
     std::uint64_t revision{};
     double density{};
     bool synced{}, imagesDirty{}, posed{};
+    // setLoadBudget: surfaces the next syncContent may load (at least one
+    // part); the parts left load on later syncs.
+    std::optional<std::size_t> loadBudget;
+    bool admit(const Part& p) {
+        if (!loadBudget) return true;
+        if (!*loadBudget) return false;
+        *loadBudget -= std::min(*loadBudget, std::max<std::size_t>(p.needed(), 1));
+        return true;
+    }
     double lastTime{};
     Matrix boxWorld;
     const d::Layer* insertionAfter{};
@@ -302,7 +311,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
         for (const auto& p : i.parts) if (!p->scene && Impl::within(*p, 1)) needed += p->needed();
         if (needed) need(i.entriesInUse() <= LayerRasterizer::maximumEntries && needed <= LayerRasterizer::maximumEntries - i.entriesInUse(), "Design scroll content exceeds the shared raster budget");
         for (auto& p : i.parts) {
-            if (!p->scene && Impl::within(*p, 1)) { i.load(*p); changed = true; }
+            if (!p->scene && Impl::within(*p, 1)) { if (i.admit(*p)) { i.load(*p); changed = true; } }
             else if (p->scene && !Impl::within(*p, 2)) { i.retire(*p); changed = true; }
         }
         if (changed) i.refreshEntries();
@@ -374,7 +383,7 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
     // Execute: new loads first (they may throw; nothing retained changed yet).
     i.options = options;
     for (auto& plan : plans)
-        if (plan.kind == Plan::Kind::load && Impl::within(*plan.part, plan.old && plan.old->scene ? 2 : 1)) i.load(*plan.part);
+        if (plan.kind == Plan::Kind::load && Impl::within(*plan.part, plan.old && plan.old->scene ? 2 : 1) && i.admit(*plan.part)) i.load(*plan.part);
     for (auto& plan : plans) {
         auto& p = *plan.part;
         if (plan.kind == Plan::Kind::load) { if (plan.old) i.retire(*plan.old); continue; }
@@ -568,6 +577,11 @@ void NativeDesignScene::setInsertion(const d::Layer* after, std::optional<LayerC
 }
 core::Matrix4 designMatrix(const d::Affine& a) noexcept { return matrix(a); }
 const core::Matrix4& NativeDesignScene::boxWorld() const noexcept { return impl_->boxWorld; }
+void NativeDesignScene::setLoadBudget(std::optional<std::size_t> surfaces) noexcept { impl_->loadBudget = surfaces; }
+bool NativeDesignScene::loadsPending() const noexcept {
+    const auto& i = *impl_;
+    return !i.synced || std::any_of(i.parts.begin(), i.parts.end(), [](const auto& p) { return !p->scene && Impl::within(*p, 1); });
+}
 NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     const auto& i = *impl_;
     auto s = i.statistics;

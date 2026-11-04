@@ -1835,6 +1835,9 @@ void Application::Impl::selectModule(core::Module module,double time){
     if(readerOwner&&module!=core::Module::reader)isolate(readerModuleOwner,"select",[&]{readerOwner->cancelImport();});
     pendingReaderPicker.reset();pendingReaderAction.reset();
     if(notes)notes->select(module,hostTime(time));
+    if(notes){const auto end=recentModules.begin()+recentCount;auto at=std::find(recentModules.begin(),end,module);
+        if(at==end){if(recentCount<recentModules.size())++recentCount;at=recentModules.begin()+recentCount-1;}
+        std::move_backward(recentModules.begin(),at,at+1);recentModules[0]=module;}
     automationChanged();
 }
 void Application::Impl::open(double time){
@@ -1862,10 +1865,12 @@ void Application::Impl::open(double time){
     automationChanged();
     if(audio)audio->volume().setVisible(true);
     if(visibleMode()&&headerClock.setActive(true,time))updateClock();
+    // After the entrance (the deploy and the page stagger), when idle.
+    modulesWarmed=0;moduleWarms=moduleWarmSteps=moduleWarmRetries=0;moduleWarming.reset();moduleWarmAt=time+moduleWarmDelay;scheduleDeadline();
 }
 void Application::Impl::close(double time){
     if(closing)return;
-    time=hostTime(time);
+    time=hostTime(time);moduleWarmAt.reset();
     if(!production())std::cout<<"Preview close requested at "<<time<<std::endl;
     if(registry.first(ModuleRegistry::Chain::finishEditing,[&](ModuleOwner&o,const ModuleRouting&){return !o.finishEditing(hostTime(time));},"close")){pendingClose=true;return;}
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
@@ -2021,6 +2026,38 @@ bool Application::Impl::updateClock(){if(chrome){chromeContent.reading=headerClo
 // Same existing one-shot host deadline, armed only at explicit Calendar
 // state/system events. Civil midnight uses date arithmetic across DST.
 void Application::Impl::calendarSystemChanged(){calendarCivil->refreshSystemContext();calendarState->refreshForSystemChange();}
+// Mac 1.3.0 builds every module's views anew per opening too, but CALayers
+// draw lazily; here the first switch to a module whose artwork went at the
+// close rasterized its whole page on the switch frame (Calendar: about 190
+// surfaces, 90 ms). The opened, idle HUD builds and rasterizes the two most
+// recently selected other design modules ahead (DesignOwnerCore::warm:
+// nothing is activated, posed or drawn), a few surfaces per deadline, never
+// while an animation, a switch, a press or an editor runs, and only within
+// half the shared raster budget; their artwork is parked while the HUD stays
+// open and goes at the close as before. Same pages, shown the same way.
+void Application::Impl::warmModules(double time){
+    moduleWarmAt.reset();time=hostTime(time);
+    if(!ready||stopping||closing||!notes||session->phase()!=core::VisibilityPhase::visible||!session->inputEnabled()||moduleWarmSteps>=moduleWarmStepLimit)return;
+    const auto&sample=notes->modulePresentation();
+    if(sample.transitioning||sample.incoming||registry.pointerLocked()||registry.any([](ModuleOwner&o){return o.capturesKeys();},"warm")||demand(time).finiteAnimation){
+        if(++moduleWarmRetries<=moduleWarmRetryLimit){moduleWarmAt=time+moduleWarmRetry;scheduleDeadline();}return;}
+    if(const auto usage=rasterizer.stats();usage.entries>gpu::LayerRasterizer::maximumEntries/2||usage.resourceBytes>gpu::LayerRasterizer::maximumResourceBytes/2)return;
+    const auto next=[&]()->std::optional<core::Module>{
+        for(std::size_t n=0;n<recentCount&&moduleWarms<moduleWarmLimit;++n){const auto module=recentModules[n];const auto bit=std::uint64_t{1}<<static_cast<unsigned>(module);
+            if(module==notes->selected()||(modulesWarmed&bit))continue;modulesWarmed|=bit;
+            auto*owner=dynamic_cast<tools::DesignModuleOwner*>(registry.presenter(module));
+            // Visited in this opening (parked) or warm already: nothing to do.
+            if(!owner||!registry.enabled(*owner))continue;if(const auto stats=owner->core().sceneStats(module);!stats||stats->rasterEntries)continue;
+            ++moduleWarms;return module;}
+        return std::nullopt;};
+    if(!moduleWarming||*moduleWarming==notes->selected())moduleWarming=next();
+    if(!moduleWarming)return;
+    auto*owner=dynamic_cast<tools::DesignModuleOwner*>(registry.presenter(*moduleWarming));
+    auto step=tools::DesignOwnerCore::Warm::refused;++moduleWarmSteps;
+    if(owner)(void)registry.guard(*owner,[&]{step=owner->core().warm(*moduleWarming,hostTime(time),moduleWarmSurfaces);},"warm");
+    if(step!=tools::DesignOwnerCore::Warm::partial)moduleWarming.reset();
+    if(step==tools::DesignOwnerCore::Warm::partial||moduleWarms<moduleWarmLimit){moduleWarmAt=hostTime(time)+moduleWarmGap;scheduleDeadline();}
+}
 void Application::Impl::updateCalendarWake(){calendarWakeActive=calendarState&&calendarState->active();calendarNextWake.reset();if(!visibleMode()||!calendarState||!calendarState->loaded()||(!calendarState->active()&&calendarState->events().empty()))return;
     const auto zone=calendarCivil->timeZone();const auto utc=ehud::data::foundationNow();const auto tomorrow=zone.day(utc).advanced(1);if(!tomorrow)return;
     for(unsigned minute=0;minute<1440;++minute)if(const auto at=zone.timestamp(*tomorrow,minute/60,minute%60);at&&*at>utc){calendarNextWake=now()+(*at-utc);break;}
@@ -2081,7 +2118,7 @@ void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stoppin
     if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
        !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
         idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
-    include(calendarNextWake);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    include(calendarNextWake);include(moduleWarmAt);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
