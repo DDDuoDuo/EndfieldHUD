@@ -41,6 +41,17 @@ ModuleFailure startFailure(std::string_view owner, const std::exception&);
 // start (<type>)" or "... was disabled after a <type> during <operation>",
 // then ": <message>" and " (<stage>)".
 std::string failureLine(const ModuleFailure&);
+// The record's budget lines (Application::recordModuleFailure): the shared
+// raster cache's entries, the pixel bytes it holds against its budget
+// (LayerRasterizer::maximumResourceBytes bounds resourceBytes less the pixels
+// given back to GPU textures) and those given back; the renderer's resident
+// bytes and its parked copies against Renderer::maximumParkedBytes. Numbers
+// as "N of M": a slash would be redacted.
+struct FailureBudgets {
+    std::size_t rasterEntries{}, maximumRasterEntries{}, heldBytes{}, maximumHeldBytes{}, releasedBytes{};
+    std::size_t rendererBytes{}, maximumRendererBytes{}, parkedBytes{}, maximumParkedBytes{};
+};
+std::string budgetLines(const FailureBudgets&);
 // Appends `record` to the file at `path` (read and replaced with
 // ehud::data::detail::readFile / replaceFile, as last-fatal.txt), dropping
 // the oldest records (each starts with `header`) so the file stays within

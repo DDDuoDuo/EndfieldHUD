@@ -41,6 +41,14 @@ struct ProjectedEditorPose {
     // surface only. A change of nothing else is numeric: no TSF placement,
     // raster or layout work (LIBRARY-DESIGN.md R8).
     float caretOpacity{1};
+    // The caller's clips beside the editor's own viewport: a design canvas's
+    // masksToBounds ancestors and running wipes over the text (the Notes
+    // fold, NativeArchiveBodyEditor), in the world localToScreen maps into,
+    // on every surface. At most maximumClips; borrowed for the call only (the
+    // editor keeps a copy). A change of them alone places the surfaces again:
+    // numeric, no raster or layout.
+    std::span<const PlaneMask> clip;
+    static constexpr std::size_t maximumClips=7; // the leaves' viewport mask takes the renderer's eighth
 };
 // Reusable bounded plain/rich document with a fixed visible raster viewport.
 // Caller-owned Document, dedicated EMPTY LayerScene/rasterizer, HWND and shared

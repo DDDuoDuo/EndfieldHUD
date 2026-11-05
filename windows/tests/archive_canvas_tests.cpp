@@ -305,6 +305,13 @@ void editor() {
     w.body.type(*body, u"Field 记录");
     check(w.state.selected()->body == "Field 记录" && w.state.selected()->bodyStyle.fontSize == 14, "Typing (with CJK) updates the body at 14 pt");
     check(rootsPart(w, *body), "The body area roots the part the editor's glyphs are composed after");
+    // Its host clips the glyphs by the body's ancestors (d::samplePlacement,
+    // the Notes fold's wipe): none clips the Archive body, so it draws as before.
+    {
+        const auto placed = d::samplePlacement(body->layer(), c.root(), w.now);
+        const auto layer = d::sampleLayer(body->layer(), c.root(), w.now);
+        check(placed.visible && placed.maskCount == 0 && placed.world == layer.world && near(placed.opacity, layer.opacity), "Nothing above the Archive body clips its text");
+    }
     // The text view's auto-hiding scroll indicator (HUDProjectedTextEditor.swift:16-18, :180-183).
     {
         const auto* track = find(body->layer(), ".indicator");

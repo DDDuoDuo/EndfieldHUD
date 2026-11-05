@@ -9,6 +9,11 @@
 // the note is folded, while Notes is away, while the HUD is closed (the
 // session's new editor), and while it shows, each without an edit. The ink
 // is read back: the note's text rect has pixels on the ink's side of its fill.
+// The first showing lays the note out once (no restyle), a long (chunked)
+// note too. While the note unfolds (.32 s), its text is clipped by the fold's
+// wipe like the note's parts (Mac: the text view under the clip's
+// masksToBounds): the frame read back with and without the editor's glyphs
+// differs above the wipe's edge only.
 // No input injection, no visible window, no text service, no prompt.
 #include "tools/notes_centre_owner.hpp"
 #include "tools/hud_design_overlay_owner.hpp"
@@ -133,6 +138,10 @@ struct Harness {
         appearance.dark = !light;
         overlay->setAppearance(appearance, time); owner->setAppearance(appearance, time);
     }
+    void setReduceMotion(bool reduce) {
+        appearance.reduceMotion = reduce;
+        overlay->setAppearance(appearance, time); owner->setAppearance(appearance, time);
+    }
     void closeHUD() {
         owner->overlayClosing(time); overlay->overlayClosing(time); settle(30);
         owner->setOverlayVisible(false, time); overlay->setOverlayVisible(false, time);
@@ -180,6 +189,96 @@ struct Harness {
 };
 constexpr std::size_t drawn = 100; // inked pixels of the note's three words, at least
 
+// The unfolding note, read back mid-animation with and without the editor's
+// glyph entry (the same frame recomposed): their difference is the glyphs.
+// Below the fold's wipe edge the note's parts are clipped away, and so must
+// the glyphs be; above it they draw.
+void unfold(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
+    std::string lines;
+    for (unsigned n = 0; n < 40; ++n) lines += "MMMM WWWW MMMM\n";
+    Harness h(shader, notesFormat, lines);
+    auto& canvas = h.owner->canvas();
+    h.setReduceMotion(false);
+    h.modules.select(core::Module::notes, h.time);
+    h.settle(60);
+    check(h.composed() && h.owner->body().shown(), "The many-line note shows");
+    canvas.setFolded(true); h.settle(40);
+    canvas.setFolded(false);
+    const auto* area = canvas.noteArea();
+    check(area != nullptr, "The note shows its area");
+    // The fold's clip: an ancestor of the area with a wipe (top origin).
+    const d::Layer* clip{};
+    for (const auto* l = area->layer().parent(); l && !clip; l = l->parent())
+        if (l->animatable() && l->presented(d::Channel::wipe, h.time) < 1) clip = l;
+    check(clip && clip->wipeOrigin == d::WipeOrigin::top, "The note unfolds under a running top wipe");
+    // The wipe's edge and the text rows (presented: the content also rises
+    // 8 px) in client pixels at the last frame.
+    double wipe{};
+    int edge{}, x0{}, x1{}, top{}, bottom{};
+    const auto measure = [&] {
+        wipe = clip->presented(d::Channel::wipe, h.time);
+        const auto shown = h.owner->core().clientRect(d::convert(core::Rect{0, 0, clip->bounds().width, clip->bounds().height * wipe}, *clip, canvas.root()));
+        const auto placed = d::sampleLayer(area->layer(), canvas.root(), h.time);
+        const auto rect = area->textRect();
+        const auto a = placed.world.apply({rect.x, rect.y}), b = placed.world.apply({rect.x + rect.width, rect.y + rect.height});
+        const auto text = h.owner->core().clientRect({std::min(a.x, b.x), std::min(a.y, b.y), std::abs(b.x - a.x), std::abs(b.y - a.y)});
+        check(shown && text, "The wipe and the text rect map to the client");
+        edge = int(std::lround(shown->y + shown->height));
+        x0 = int(std::ceil(text->x)) + 2; x1 = int(std::floor(text->x + text->width)) - 2;
+        top = int(std::ceil(text->y)) + 2; bottom = int(std::floor(text->y + text->height)) - 2;
+    };
+    // Frames of 1/240 s until the edge reaches the middle of the text rows.
+    for (unsigned n = 0; n < 120; ++n) {
+        h.time += 1. / 240 - 1. / 60;
+        h.frame();
+        measure();
+        if (edge >= (top + bottom) / 2 || wipe >= 1) break;
+    }
+    check(h.owner->body().shown(), "The unfolding note's editor shows");
+    std::printf("  wipe %.3f: edge %d in the text rows %d-%d\n", wipe, edge, top, bottom);
+    check(wipe < 1 && edge - top > 20 && bottom - edge > 20, "Mid-unfold, the wipe's edge crosses the note's text rect");
+    h.renderer.draw(false);
+    const auto with = h.renderer.readback();
+    const auto glyphs = h.owner->body().entry();
+    check(glyphs.has_value(), "The editor's glyph entry is composed");
+    std::vector<gpu::LayerCompositionEntry> entries;
+    for (const auto& e : h.owner->entries(core::Module::notes)) if (e.scene != glyphs->scene) entries.push_back(e);
+    for (const auto& e : h.overlay->modalEntries()) entries.push_back(e);
+    h.composition.setEntries(h.renderer, entries);
+    h.composition.present(h.renderer);
+    h.renderer.draw(false);
+    const auto without = h.renderer.readback();
+    check(with.width == without.width && with.height == without.height && with.rowBytes == without.rowBytes, "Two reads of one frame");
+    const auto differs = [&](int y0, int y1) {
+        std::size_t n{};
+        for (int y = std::max(0, y0); y < std::min(int(with.height), y1); ++y)
+            for (int x = std::max(0, x0); x < std::min(int(with.width), x1); ++x) {
+                const auto at = std::size_t(y) * with.rowBytes + std::size_t(x) * 4;
+                int delta{};
+                for (int c = 0; c < 3; ++c) delta = std::max(delta, std::abs(int(with.pixels[at + c]) - int(without.pixels[at + c])));
+                n += delta > 24;
+            }
+        return n;
+    };
+    const auto above = differs(top, edge - 2), below = differs(edge + 2, bottom);
+    std::printf("  glyph pixels above the edge %zu, below %zu\n", above, below);
+    check(above >= drawn, "Above the wipe's edge the note's text draws");
+    check(below == 0, "Below the wipe's edge the note's text is clipped like its parts");
+    h.frame(); // the full list again
+}
+// A long note (chunked, past 4096 units) is laid out once at its first
+// showing: the editor is made with the palette's ink (setInk), not restyled.
+void longFirstShowing(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
+    std::string text;
+    while (text.size() < 6000) text += "MMMM WWWW MMMM\n";
+    Harness h(shader, notesFormat, text);
+    h.modules.select(core::Module::notes, h.time);
+    h.settle(40);
+    check(h.composed(), "The long note's glyph scene is composed");
+    check(h.owner->body().restyles() == 0, "The long note's first showing lays it out once (no restyle)");
+    check(h.inked() >= drawn, "The long note's first showing draws it in the pose's ink");
+}
+
 void run(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
     Harness h(shader, notesFormat, "MMMM WWWW MMMM");
     auto& canvas = h.owner->canvas();
@@ -189,6 +288,7 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     h.settle(40);
     check(canvas.document().tab == ehud::data::NotesCentreDocument::Tab::text && canvas.noteArea() && h.owner->body().attached(*canvas.noteArea()), "Notes opens on its TEXT note with the editor attached");
     check(h.composed(), "The note's glyph scene is composed after the note area's part");
+    check(h.owner->body().restyles() == 0, "The first showing lays the note out once (no restyle)");
     check(h.inked() >= drawn, "The first showing draws the note in the pose's ink");
     // Light: the note keeps its #1C1C1C box (NotesCanvas.swift:511) under the
     // #1A1A1A tone, so only the dark ink reads back. An edit there paints the
@@ -218,8 +318,10 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     check(h.composed() && h.inked() >= drawn, "A palette change while the HUD was closed inks the next session's note");
     // Shown: the next pose repaints it, without an edit.
     paintLight();
+    const auto restyled = h.owner->body().restyles();
     h.setLight(false); h.settle(20);
     check(h.composed() && h.inked() >= drawn, "A palette change while the note shows repaints its ink");
+    check(h.owner->body().restyles() == restyled + 1, "A palette change while the note shows restyles it once");
 }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -227,6 +329,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(SUCCEEDED(hr) && argc == 3, "Pass the shader and resources/notes-format");
         run(argv[1], argv[2]);
+        longFirstShowing(argv[1], argv[2]);
+        unfold(argv[1], argv[2]);
         CoUninitialize();
         std::cout << "PASS " << checks << " Notes centre owner checks\n";
         return 0;

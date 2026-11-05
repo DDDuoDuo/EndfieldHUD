@@ -39,14 +39,20 @@ struct NotesCentreOwner::Impl {
     bool free() const { return accepting() && !canvas->capturesPointer() && !context.overlay().capturesInput() && !canvas->transitioning(); }
     bool noteFocused() const { const auto* a = canvas->noteArea(); return a && a->isFocused(); }
     bool keysFree() const { return accepting() && noteFocused() && !context.overlay().capturesInput() && !canvas->capturesPointer(); }
+    // The note's ink (the Archive body's: the #EEEEEE tone, the accentInk
+    // caret, the yellow .35 selection), posed every frame and handed to the
+    // editor ahead of its first pose (it is made at the canvas's activation).
+    struct Ink { d::Color text, caret, selection; };
+    Ink ink() const { const auto& p = context.env().palette; return {p.tone(0xEEEEEE), p.accentInk(), d::withAlpha(p.yellow(), .35)}; }
+    void setInk() { const auto k = ink(); body->setInk(k.text, k.caret, k.selection); }
     // The note editor's pose and its insertion after the note's part.
     void compose() {
         const auto pose = core->pose(core::Module::notes);
         std::optional<gpu::LayerCompositionEntry> entry;
         Insertion wanted;
         if (pose && metrics.pixelWidth && metrics.pixelHeight) {
-            const auto& palette = context.env().palette;
-            route->pose(*pose, metrics, canvas->root(), focused, context.env().reduceMotion, time, palette.tone(0xEEEEEE), palette.accentInk(), d::withAlpha(palette.yellow(), .35));
+            const auto k = ink();
+            route->pose(*pose, metrics, canvas->root(), focused, context.env().reduceMotion, time, k.text, k.caret, k.selection);
             const auto glyphs = body->entry();
             if (glyphs && canvas->noteArea()) { wanted = {&canvas->noteArea()->layer(), glyphs->scene}; entry = *glyphs; }
         }
@@ -80,6 +86,7 @@ NotesCentreOwner::NotesCentreOwner(gpu::LayerRasterizer& r, d::Context& context,
     body.clipboard = opt.clipboard ? opt.clipboard : gpu::systemNotesClipboard();
     body.editMenu = opt.editMenu;
     i.body = std::make_unique<gpu::NativeArchiveBodyEditor>(r, std::move(body));
+    i.setInk();
     i.route = std::make_unique<DesignBodyRoute>(*i.body, opt.owner.fields.window, opt.bodyMessage);
     i.core = std::make_unique<DesignOwnerCore>(r, context, opt.owner);
     Impl* self = &i;
@@ -127,7 +134,10 @@ std::string_view NotesCentreOwner::name() const noexcept { return impl_->core->o
 app::ModuleRouting NotesCentreOwner::routing() const noexcept { return impl_->core->options().routing; }
 bool NotesCentreOwner::presents(core::Module module) const noexcept { return module == core::Module::notes; }
 void NotesCentreOwner::resize(const app::ClientMetrics& metrics) { impl_->metrics = metrics; impl_->core->resize(metrics); }
-void NotesCentreOwner::setAppearance(const app::ModuleAppearance& a, double t) { auto& i = *impl_; i.clock(t); i.core->setAppearance(a, t); }
+// The shared palette is the overlay's (DesignOverlayOwner, registered
+// first, applies it before any design owner): the editor takes its ink
+// before a rerender here could make it anew.
+void NotesCentreOwner::setAppearance(const app::ModuleAppearance& a, double t) { auto& i = *impl_; i.clock(t); i.setInk(); i.core->setAppearance(a, t); }
 void NotesCentreOwner::setOverlayVisible(bool value, double t) {
     auto& i = *impl_;
     i.clock(t);

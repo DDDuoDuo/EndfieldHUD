@@ -30,6 +30,12 @@ std::string failureLine(const ModuleFailure& f) {
     return "EndfieldHUD module " + f.owner + (f.operation == "start" ? " could not start (" + f.what + ")" : " was disabled after a " + f.what + " during " + f.operation) +
         (f.message.empty() ? std::string() : ": " + f.message) + " (" + f.stage + ")\n";
 }
+std::string budgetLines(const FailureBudgets& b) {
+    const auto of = [](std::size_t value, std::size_t maximum) { return std::to_string(value) + " of " + std::to_string(maximum); };
+    return "raster: entries " + of(b.rasterEntries, b.maximumRasterEntries) + ", held bytes " + of(b.heldBytes, b.maximumHeldBytes) +
+        ", released bytes " + std::to_string(b.releasedBytes) + "\n" +
+        "renderer: bytes " + of(b.rendererBytes, b.maximumRendererBytes) + ", parked bytes " + of(b.parkedBytes, b.maximumParkedBytes) + "\n";
+}
 
 bool appendBoundedRecord(const std::filesystem::path& path, std::string_view record, std::string_view header, std::size_t maximum) noexcept {
     try {

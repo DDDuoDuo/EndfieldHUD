@@ -247,9 +247,10 @@ struct NativeDesignScene::Impl {
         const auto inverseGroup = grouped ? owner.groupWorld.inverse() : std::nullopt;
         need(!grouped || inverseGroup, "A grouped design part needs an invertible group layer");
         const auto mask = [&](const d::PoseMask& m) -> std::optional<PlaneMask> {
+            if (!grouped) return designPlaneMask(m, inverseBox);
             const auto inverse = m.world.inverse();
             if (!inverse || !(m.bounds.width > 0) || !(m.bounds.height > 0)) return std::nullopt;
-            return PlaneMask{grouped ? matrix(*inverse * owner.groupWorld) : matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
+            return PlaneMask{matrix(*inverse * owner.groupWorld), m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
         };
         for (std::size_t k = 0; k < p.binding.size(); ++k) {
             const auto b = p.binding[k];
@@ -700,6 +701,11 @@ void NativeDesignScene::setInsertion(const d::Layer* after, std::optional<LayerC
     i.refreshEntries();
 }
 core::Matrix4 designMatrix(const d::Affine& a) noexcept { return matrix(a); }
+std::optional<PlaneMask> designPlaneMask(const d::PoseMask& m, const core::Matrix4& inverseBox) noexcept {
+    const auto inverse = m.world.inverse();
+    if (!inverse || !(m.bounds.width > 0) || !(m.bounds.height > 0)) return std::nullopt;
+    return PlaneMask{matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
+}
 const core::Matrix4& NativeDesignScene::boxWorld() const noexcept { return impl_->boxWorld; }
 NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     const auto& i = *impl_;

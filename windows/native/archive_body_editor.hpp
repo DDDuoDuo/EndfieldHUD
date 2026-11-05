@@ -20,8 +20,10 @@
 //
 // Pose: the owner passes the canvas's design pose every frame; the editor
 // follows the body layer's presented world (its entrance and the page
-// leave, modules::design::sampleLayer) and opacity; its ink (the palette's)
-// restyles the editor at the first shown pose after it changed. Composition: one entry,
+// leave) and opacity, clipped by its ancestors' masks and running wipes (the
+// Notes fold; modules::design::samplePlacement); its ink (the palette's,
+// setInk before the first pose) restyles the editor at the first shown pose
+// after it changed. Composition: one entry,
 // the editor's glyph scene, which the owner inserts into the canvas's
 // scene after the body (or the media strip) part (NativeDesignScene::
 // setInsertion), so menus and pop-overs draw over the text as on the Mac.
@@ -93,6 +95,9 @@ public:
     void layoutChanged(modules::ArchiveBodyArea&) override;
     // Owner routing (client points: physical for pointer and wheel, logical for the cursor).
     void setPose(const NativeArchiveBodyPose&);
+    // The pose's ink (text, caret, selection) before the first pose: the
+    // owner's palette at construction and at each appearance change.
+    void setInk(modules::design::Color text, modules::design::Color caret, modules::design::Color selection);
     bool shown() const noexcept;                          // attached, its layer visible, posed
     bool filterKeyMessage(std::uint32_t message, std::uintptr_t wParam, std::intptr_t lParam);
     bool key(const modules::design::KeyInput&);
@@ -113,6 +118,7 @@ public:
     bool collectRetired(Renderer&);
     bool releaseResources(Renderer&);
     std::size_t promotions() const noexcept;              // short bodies reopened in the chunked editor (tests)
+    std::size_t restyles() const noexcept;                // ink changes laid out again in a made editor (tests)
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

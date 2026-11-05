@@ -52,6 +52,12 @@ struct ArchiveOwner::Impl {
     // The canvas takes input and nothing above it takes the pointer.
     bool free() const { return accepting() && !canvas->capturesPointer() && !context.overlay().capturesInput() && !canvas->transitioning(); }
     bool keysToBody() const { return accepting() && bodyFocused() && !context.overlay().capturesInput() && !canvas->capturesPointer(); }
+    // The body's ink (ArchiveCanvas.swift:1561-1566: the #EEEEEE tone, the
+    // accentInk caret, the yellow .35 selection), posed every frame and
+    // handed to the editor ahead of its first pose.
+    struct Ink { d::Color text, caret, selection; };
+    Ink ink() const { const auto& p = context.env().palette; return {p.tone(0xEEEEEE), p.accentInk(), d::withAlpha(p.yellow(), .35)}; }
+    void setInk() { const auto k = ink(); body->setInk(k.text, k.caret, k.selection); }
     // The body editor's pose, the media record and their insertion into the
     // canvas's scene (after the media strip's part, else the body's, so the
     // top layer's menus and pop-overs draw above both).
@@ -60,9 +66,8 @@ struct ArchiveOwner::Impl {
         std::optional<gpu::LayerCompositionEntry> entry;
         Insertion wanted;
         if (pose && metrics.pixelWidth && metrics.pixelHeight) {
-            const auto& palette = context.env().palette;
-            route->pose(*pose, metrics, canvas->root(), focused, context.env().reduceMotion, time,
-                palette.tone(0xEEEEEE), palette.accentInk(), d::withAlpha(palette.yellow(), .35));
+            const auto k = ink();
+            route->pose(*pose, metrics, canvas->root(), focused, context.env().reduceMotion, time, k.text, k.caret, k.selection);
             const auto* preview = canvas->mediaPreview();
             const auto frame = media->frame();
             std::size_t draws{};
@@ -149,6 +154,7 @@ ArchiveOwner::ArchiveOwner(gpu::LayerRasterizer& r, d::Context& context, app::Ar
     body.clipboard = opt.clipboard ? opt.clipboard : gpu::systemNotesClipboard();
     body.editMenu = opt.editMenu;
     i.body = std::make_unique<gpu::NativeArchiveBodyEditor>(r, std::move(body));
+    i.setInk();
     i.route = std::make_unique<DesignBodyRoute>(*i.body, opt.owner.fields.window, opt.bodyMessage);
     // Recovery's owner proof (DOCS-336): Windows Hello or the account password.
     if (opt.ownerAuthentication) service.state().setOwnerAuthentication(opt.ownerAuthentication);
@@ -216,7 +222,10 @@ std::string_view ArchiveOwner::name() const noexcept { return impl_->core->optio
 app::ModuleRouting ArchiveOwner::routing() const noexcept { return impl_->core->options().routing; }
 bool ArchiveOwner::presents(core::Module module) const noexcept { return module == core::Module::archive; }
 void ArchiveOwner::resize(const app::ClientMetrics& metrics) { impl_->metrics = metrics; impl_->core->resize(metrics); }
-void ArchiveOwner::setAppearance(const app::ModuleAppearance& a, double t) { auto& i = *impl_; i.clock(t); i.core->setAppearance(a, t); }
+// The shared palette is the overlay's (DesignOverlayOwner, registered
+// first, applies it before any design owner): the editor takes its ink
+// before a rerender here could make it anew.
+void ArchiveOwner::setAppearance(const app::ModuleAppearance& a, double t) { auto& i = *impl_; i.clock(t); i.setInk(); i.core->setAppearance(a, t); }
 void ArchiveOwner::setOverlayVisible(bool value, double t) {
     auto& i = *impl_;
     i.clock(t);

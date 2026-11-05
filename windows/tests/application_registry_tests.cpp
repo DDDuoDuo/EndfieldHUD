@@ -190,6 +190,14 @@ struct Thrower final : app::ModuleOwner {
     bool hostEvent(const app::HostEvent&, double) override { ++calls; throw std::runtime_error("second failure"); }
 };
 std::string text(const std::filesystem::path& path) { return ehud::data::detail::readFile(path, 64 * 1024).value_or(std::string()); }
+// A new temporary folder, removed however the test leaves.
+struct TemporaryFolder {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / ("ehud-module-failures-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    TemporaryFolder() { std::error_code ignored; std::filesystem::remove_all(root, ignored); }
+    ~TemporaryFolder() { std::error_code ignored; std::filesystem::remove_all(root, ignored); }
+    TemporaryFolder(const TemporaryFolder&) = delete;
+    TemporaryFolder& operator=(const TemporaryFolder&) = delete;
+};
 void failureRecords() {
     check(app::redacted("Cannot open C:\\Users\\someone\\notes.txt now") == "Cannot open <path> now" && app::redacted("bad\x01\xe6\x96\x87 /x") == "bad???? <path>",
           "redacted() removes path-like words and non-ASCII bytes");
@@ -219,17 +227,24 @@ void failureRecords() {
     registry.forEach([&](app::ModuleOwner& o) { (void)o.hostEvent({}, 1); }, "event");
     check(observed.size() == 3 && registry.failures().size() == 3, "One report per owner and run");
 
-    const auto root = std::filesystem::temp_directory_path() / ("ehud-module-failures-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::remove_all(root);
+    const TemporaryFolder folder;
+    const auto& root = folder.root;
+    // The host's budget lines: the raster cache's held bytes (its budget's
+    // measure, released pixels excluded) and released bytes, the renderer's
+    // resident and parked bytes, each "N of M" (a slash would be redacted).
+    const auto budgets = app::budgetLines({900, 4096, 200000000, 268435456, 68000000, 300000000, 536870912, 12000000, 268435456});
+    check(budgets == "raster: entries 900 of 4096, held bytes 200000000 of 268435456, released bytes 68000000\nrenderer: bytes 300000000 of 536870912, parked bytes 12000000 of 268435456\n",
+          "The budget lines name held, released and parked bytes against their bounds");
     // The Diagnostics folder does not exist yet: it is created.
     const auto file = root / "v1" / "Diagnostics" / "module-failures.txt";
     app::ModuleFailureLog log(file);
-    check(log.record(observed[0], "density: 2.5\nraster: entries 900 of 4096, bytes 268000000 of 268435456\nabout: main, update current\n"), "A record is written into a missing folder");
+    check(log.record(observed[0], "density: 2.5\n" + budgets + "about: main, update current\n"), "A record is written into a missing folder");
     check(!log.record(observed[0], "density: 2.5\n"), "One record per owner and run");
     const auto first = text(file);
     check(first.starts_with(app::ModuleFailureLog::header) && first.find("utc: ") != std::string::npos && first.find("owner: settings\n") != std::string::npos &&
           first.find("message: Retained layer resource budget exceeded\n") != std::string::npos && first.find("operation: frame\n") != std::string::npos &&
-          first.find("stage: frame [settings] > scene sync\n") != std::string::npos && first.find("raster: entries 900 of 4096, bytes 268000000 of 268435456\n") != std::string::npos &&
+          first.find("stage: frame [settings] > scene sync\n") != std::string::npos && first.find("raster: entries 900 of 4096, held bytes 200000000 of 268435456, released bytes 68000000\n") != std::string::npos &&
+          first.find("renderer: bytes 300000000 of 536870912, parked bytes 12000000 of 268435456\n") != std::string::npos &&
           first.find("about: main, update current\n") != std::string::npos, "The record names the owner, exception, message, operation, stage and the host's numbers");
     // Paths in a message or in the context lines are redacted in the file.
     app::ModuleFailure leaked{"leaky", "class std::runtime_error", "frame", "Cannot open C:\\Users\\someone\\notes.txt", "frame [leaky]"};
@@ -274,8 +289,6 @@ void failureRecords() {
     bool threw{};
     try { check(!blocked.record(observed[1]), "An impossible folder reports no record"); } catch (const std::exception&) { threw = true; }
     check(!threw, "A failed write never throws");
-    std::error_code ignored;
-    std::filesystem::remove_all(root, ignored);
 }
 
 // The ONE host time (ModuleRegistry::hostTime / HostClock). Owners need()

@@ -750,9 +750,12 @@ void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
     try{
         const auto number=[](double v){char text[32]{};std::snprintf(text,sizeof text,"%.3g",v);return std::string(text);};
         if(designOverlay)context+="density: "+number(designOverlay->context().boxScale())+"\n";
-        const auto raster=rasterizer.stats();
-        context+="raster: entries "+std::to_string(raster.entries)+" of "+std::to_string(gpu::LayerRasterizer::maximumEntries)+", bytes "+std::to_string(raster.resourceBytes)+" of "+std::to_string(gpu::LayerRasterizer::maximumResourceBytes)+"\n";
-        context+="renderer: bytes "+std::to_string(renderer.stats().resourceBytes)+" of "+std::to_string(gpu::Renderer::maximumResourceBytes)+"\n";
+        // The raster budget bounds the bytes the cache holds (resourceBytes
+        // less the pixels given back to their textures); those live on in
+        // the renderer's textures and parked copies.
+        const auto raster=rasterizer.stats();const auto drawn=renderer.stats();
+        context+=budgetLines({raster.entries,gpu::LayerRasterizer::maximumEntries,raster.resourceBytes-std::min(raster.releasedPixelBytes,raster.resourceBytes),gpu::LayerRasterizer::maximumResourceBytes,raster.releasedPixelBytes,
+            drawn.resourceBytes,gpu::Renderer::maximumResourceBytes,drawn.parkedBytes,gpu::Renderer::maximumParkedBytes});
         if(notes){const auto&p=notes->modulePresentation();context+="module: "+std::string(core::moduleIdentifier(p.requested))+(p.transitioning?" (switching)":"")+"\n";}
         if(f.owner=="settings"&&settingsUI){
             constexpr std::array phases{"idle","checking","current","available","downloading","ready","installing","failed"};

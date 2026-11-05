@@ -107,6 +107,11 @@ struct NativeDesignSceneStats {
 // A box-px affine (samplePoses, sampleLayer) as the plane matrix the scene
 // composes with boxWorld (owner-drawn records follow the same rule).
 core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
+// A sampled mask (samplePoses, samplePlacement: mask-local -> box px) as the
+// plane mask of a draw in the module world (box px -> world: boxWorld, whose
+// inverse is `inverseBox`), as the scene clips a part outside a group.
+// Nullopt when the mask shows nothing (a singular world or empty bounds).
+std::optional<PlaneMask> designPlaneMask(const modules::design::PoseMask&, const core::Matrix4& inverseBox) noexcept;
 class NativeDesignScene final {
 public:
     NativeDesignScene(LayerRasterizer&, LayerRasterOptions, std::string sourcePrefix, DesignImages = {});

@@ -86,6 +86,7 @@ struct PlaneMask {
     // Circular source corner radius in the mask's own logical coordinates.
     // Zero preserves the exact rectangle path; no per-frame mask texture.
     double cornerRadius{};
+    bool operator==(const PlaneMask&)const=default;
 };
 // The two original mask topologies share a fixed-size retained value. A
 // variant stores only the active path; there is no heap or duplicate geometry.

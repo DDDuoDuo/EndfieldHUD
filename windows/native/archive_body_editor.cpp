@@ -1,6 +1,7 @@
 #include "native/archive_body_editor.hpp"
 #ifdef _WIN32
 #include "native/hud_design_scene.hpp"
+#include "core/source_camera.hpp"
 #include "modules/archive_rich_text.hpp"
 #include "native/notes_text_navigation.hpp"
 #ifndef NOMINMAX
@@ -53,7 +54,11 @@ struct NativeArchiveBodyEditor::Impl {
     NotesClickCount clicks;
     Matrix local;                       // text rect -> screen this frame
     float opacity{1};
-    std::size_t promoted{};
+    // The body layer's ancestor clips this frame (samplePlacement: the
+    // Notes fold's wipe, masksToBounds ancestors) as plane masks.
+    std::array<PlaneMask, ProjectedEditorPose::maximumClips> clips{};
+    std::size_t clipCount{};
+    std::size_t promoted{}, restyles{};
     Impl(LayerRasterizer& r, NativeArchiveBodyEditorOptions o) : raster(r), options(std::move(o)) {
         need(!options.threadManager || options.clientID != TF_CLIENTID_NULL, "A borrowed TSF manager needs its client id");
         need(options.ownerMessage >= WM_APP && options.ownerMessage <= 0xbfff, "The Archive body needs a private change message");
@@ -135,7 +140,8 @@ struct NativeArchiveBodyEditor::Impl {
     float caretOpacity() const { return float(blink.opacity(pose.time, pose.reduceMotion)); }
     void applyPose() {
         if (!editing() || !visible) return;
-        active->editor->setPose({local, pose.screenToClip, pose.pixelWidth, pose.pixelHeight, opacity, true, pose.windowForeground && windowFocused && focused, true, caretOpacity()});
+        active->editor->setPose({local, pose.screenToClip, pose.pixelWidth, pose.pixelHeight, opacity, true, pose.windowForeground && windowFocused && focused, true, caretOpacity(),
+            std::span<const PlaneMask>(clips.data(), clipCount)});
         // The area's indicator follows the text view's scroll (numbers only;
         // the area ignores a report that changes nothing).
         area->editorScrolled(active->editor->scrollOffset(), active->editor->maximumScrollOffset());
@@ -148,7 +154,7 @@ struct NativeArchiveBodyEditor::Impl {
     void restyle() {
         auto& e = *active;
         if (e.text == pose.text && e.caret == pose.caret && e.selection == pose.selection) return;
-        if (e.editor->setStyle(style(e.frame))) (void)e.editor->syncContent();
+        if (e.editor->setStyle(style(e.frame))) { (void)e.editor->syncContent(); ++restyles; }
         e.text = pose.text; e.caret = pose.caret; e.selection = pose.selection;
     }
     bool insidePhysical(core::Point physical) const {
@@ -314,12 +320,23 @@ void NativeArchiveBodyEditor::setPose(const NativeArchiveBodyPose& p) {
     i.pose = p; i.posed = true;
     i.visible = false;
     if (!i.editing() || !p.root || !d::isVisible(i.area->layer(), *p.root)) { i.shownCaret = false; return; }
-    const auto layer = d::sampleLayer(i.area->layer(), *p.root, p.time);
+    // Posed and clipped as the canvas's scene poses the body's parts: the
+    // Mac text view lies under its superlayers' masks (NotesCanvas.swift:
+    // 207-208, the fold's clip), so the unfolding note shows only its text
+    // above the wipe's edge. Archive's body has none above it.
+    const auto layer = d::samplePlacement(i.area->layer(), *p.root, p.time);
     if (!layer.visible) { i.shownCaret = false; return; }
     i.restyle();
     const auto text = i.area->textRect();
     i.local = p.boxWorld * designMatrix(layer.world) * Matrix::translation(text.x, text.y);
     i.opacity = float(std::clamp(double(p.opacity) * layer.opacity, 0.0, 1.0));
+    i.clipCount = 0;
+    if (layer.maskCount) {
+        const auto inverseBox = core::source::inverseSourceMatrix(p.boxWorld);
+        for (std::size_t m = 0; m < layer.maskCount && i.clipCount < i.clips.size(); ++m)
+            if (const auto mask = designPlaneMask(layer.masks[m], inverseBox)) i.clips[i.clipCount++] = *mask;
+            else i.opacity = 0; // clipped away entirely (as the scene's parts)
+    }
     i.visible = true;
     const bool caret = i.focused && p.windowForeground && i.windowFocused;
     if (caret && !i.shownCaret) i.blink.restart(p.time);
@@ -327,6 +344,15 @@ void NativeArchiveBodyEditor::setPose(const NativeArchiveBodyPose& p) {
     i.applyPose();
 }
 bool NativeArchiveBodyEditor::shown() const noexcept { return impl_->editing() && impl_->visible; }
+// The owner's palette ink ahead of any pose: an editor made before the first
+// pose (Notes attaches at activation) paints with it, so its first showing
+// lays the text out once. A made editor takes a change at its next shown
+// pose (restyle), as a posed one: never while it is hidden or away (the last
+// pose's `visible` is stale then).
+void NativeArchiveBodyEditor::setInk(d::Color text, d::Color caret, d::Color selection) {
+    auto& i = *impl_;
+    i.pose.text = text; i.pose.caret = caret; i.pose.selection = selection;
+}
 bool NativeArchiveBodyEditor::filterKeyMessage(std::uint32_t message, std::uintptr_t wParam, std::intptr_t lParam) {
     auto& i = *impl_;
     return i.editing() && i.focused && i.windowFocused && i.active->editor->filterKeyMessage(message, wParam, lParam);
@@ -508,5 +534,6 @@ bool NativeArchiveBodyEditor::releaseResources(Renderer& r) {
     return ok;
 }
 std::size_t NativeArchiveBodyEditor::promotions() const noexcept { return impl_->promoted; }
+std::size_t NativeArchiveBodyEditor::restyles() const noexcept { return impl_->restyles; }
 } // namespace endfield::native
 #endif
