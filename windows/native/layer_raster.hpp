@@ -135,7 +135,13 @@ private:
 enum class LayerRasterRetention { pixels, releasable };
 struct LayerRasterStats {
     // resourceBytes: the pixel bytes the cache answers for (held now, or
-    // released and repaintable) plus decoded intrinsic images; the budget.
+    // released and repaintable) plus decoded intrinsic images. The budget
+    // (maximumResourceBytes) bounds what it holds: resourceBytes less
+    // releasedPixelBytes. Released pixels live on as GPU textures and parked
+    // copies, which the renderer bounds (Renderer::maximumResourceBytes,
+    // Renderer::maximumParkedBytes); counted here too, every module a user
+    // visits in one opening filled the shared budget with pixels it no
+    // longer held, and the next raster of any owner threw.
     std::size_t entries{}, resourceBytes{}, decodedImages{};
     std::uint64_t rasterizations{}, cacheHits{}, textLayoutsCreated{}, imageDecodes{}, nodesDrawn{};
     std::size_t textMetadataBytes{}, typographyDescriptorBytes{};

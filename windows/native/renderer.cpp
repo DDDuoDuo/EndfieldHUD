@@ -454,8 +454,12 @@ struct RendererParkedTexture::Impl {
     TextureColorSpace colorSpace{};TextureFilter filter{};bool encodedSRGB{},alphaOnly{},updatable{};std::string owner;
     ComPtr<ID3D11Texture2D>staging;
     std::weak_ptr<const int>epoch;bool held{true};
+    // The renderer's count of the parked copies held (maximumParkedBytes):
+    // given back when the copy goes (restored, dropped or its owner done).
+    std::shared_ptr<std::atomic<std::size_t>>budget;
     std::size_t bytes()const noexcept{return held&&staging?gpuBytes:0;}
-    void drop()noexcept{staging.Reset();held=false;}
+    void drop()noexcept{if(budget)budget->fetch_sub(bytes(),std::memory_order_relaxed);budget.reset();staging.Reset();held=false;}
+    ~Impl(){drop();}
 };
 RendererParkedTexture::RendererParkedTexture(std::shared_ptr<Impl>impl):impl_(std::move(impl)){}
 RendererParkedTexture::~RendererParkedTexture()=default;
@@ -586,8 +590,10 @@ struct Renderer::Impl {
     std::map<std::string,std::shared_ptr<RendererMediaTexture>>media;
     std::shared_ptr<const int>epoch=std::make_shared<const int>(0);
     std::shared_ptr<RendererCompositionSurface>compositionSurface;bool compositionSuspended{};
-    // Parked textures this renderer copied (their owners hold them).
+    // Parked textures this renderer copied (their owners hold them), oldest
+    // first, and the bytes of those still held (maximumParkedBytes).
     std::vector<std::weak_ptr<RendererParkedTexture::Impl>>parked;
+    std::shared_ptr<std::atomic<std::size_t>>parkedBytes=std::make_shared<std::atomic<std::size_t>>(0);
     std::shared_ptr<MediaBudget>mediaBudget=std::make_shared<MediaBudget>();
     std::size_t groupBytes{};
     bool targetsReleased{}; // releaseFrameTargets(): linear (and offscreen output) targets dropped
@@ -1901,8 +1907,14 @@ std::shared_ptr<RendererParkedTexture> Renderer::parkTexture(const std::string &
     auto &r = *impl_; r.thread(); const auto item = r.textures.find(sourceID);
     if (r.suspended || !r.device || item == r.textures.end()) return nullptr;
     auto &texture = item->second;
-    if (texture.groupOwned || texture.mediaOwned || !texture.view || r.textureReferenced(&texture)) return nullptr;
+    if (texture.groupOwned || texture.mediaOwned || !texture.view || r.textureReferenced(&texture) || texture.bytes > maximumParkedBytes) return nullptr;
     const auto begin = qpcNow();
+    // Within the parked bound: the oldest copies go first (their owners paint
+    // them again when shown), never this module's newer ones.
+    for (auto& entry : r.parked) {
+        if (r.parkedBytes->load(std::memory_order_relaxed) <= maximumParkedBytes - texture.bytes) break;
+        if (auto old = entry.lock(); old && old->held) { old->drop(); ++r.counters.parkedDrops; }
+    }
     auto copy = std::make_shared<RendererParkedTexture::Impl>();
     try {
         ComPtr<ID3D11Texture2D> resource;
@@ -1915,7 +1927,7 @@ std::shared_ptr<RendererParkedTexture> Renderer::parkTexture(const std::string &
     } catch (const RendererError &) { return nullptr; } // removed the ordinary way by the caller
     copy->revision = texture.revision; copy->gpuBytes = texture.bytes; copy->colorSpace = texture.colorSpace; copy->filter = texture.filter;
     copy->encodedSRGB = texture.encodedSRGB; copy->alphaOnly = texture.alphaOnly; copy->updatable = texture.updatable; copy->owner = texture.owner;
-    copy->epoch = r.epoch;
+    copy->epoch = r.epoch; copy->budget = r.parkedBytes; r.parkedBytes->fetch_add(copy->gpuBytes, std::memory_order_relaxed);
     r.context->ClearState(); r.counters.resourceBytes -= texture.bytes;
     r.textures.erase(item); r.touch(); ++r.resourceEpoch; ++r.counters.textureParks; r.counters.parkSeconds += qpcNow() - begin;
     return std::shared_ptr<RendererParkedTexture>(new RendererParkedTexture(std::move(copy)));
