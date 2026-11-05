@@ -138,6 +138,10 @@ if(BUILD_TESTING)
   add_executable(application_persistence_tests tests/application_persistence_tests.cpp)
   target_include_directories(application_persistence_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME application_persistence_contracts COMMAND application_persistence_tests)
+  # Impl::cleanup drops every module adapter before the shared design Context.
+  add_executable(application_teardown_tests tests/application_teardown_tests.cpp)
+  add_test(NAME application_teardown_contracts COMMAND application_teardown_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/application_impl.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/app/application_lifetime.cpp")
 endif()
 
 # Runtime resources of EndfieldHUD.exe, staged into <exe dir>/resources with a

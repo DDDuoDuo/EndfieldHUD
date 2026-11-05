@@ -260,7 +260,9 @@ Application::Impl::Impl(ApplicationOptions options)
     // before the HWND, renderer and COM members are destroyed.
     try{construct();}catch(...){try{cleanup();}catch(...){}throw;}
 }
-Application::Impl::~Impl(){try{cleanup();}catch(...){}}
+// A cleanup that threw part-way still drops the area owners before the area
+// host, executor and presenter declared after them would die first.
+Application::Impl::~Impl(){try{cleanup();}catch(...){for(auto it=externalModules.rbegin();it!=externalModules.rend();++it)unregisterModule(it->owner);externalModules.clear();}}
 
 // A design owner registered here gets the current client metrics first (its
 // projection needs them before the first frame) and marks its modules as

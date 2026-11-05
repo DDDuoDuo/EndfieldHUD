@@ -1,5 +1,8 @@
 #include "tools/notes_desktop_controls.hpp"
 #ifdef _WIN32
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <stdexcept>
 
@@ -18,6 +21,10 @@ struct NotesDesktopControls::Impl {
         modules::NotesCardControls model;
         gpu::NativeDesignScene scene;
         std::uint64_t synced{}; bool posed{};
+        // The scene's clock: content syncs at the shared clock (env->now, a
+        // hover may already have moved it to the event time), poses at the
+        // workspace's stored frame, which an event re-applies (older).
+        double time{-std::numeric_limits<double>::infinity()};
         Card(d::Environment& env, std::string id, gpu::LayerRasterizer& r, const gpu::LayerRasterOptions& o, std::uint64_t key)
             : model(env, std::move(id)), scene(r, o, "notes.card." + std::to_string(key)) {}
     };
@@ -42,10 +49,13 @@ struct NotesDesktopControls::Impl {
     bool deletionPosed{};
     Impl(gpu::LayerRasterizer& r, gpu::LayerRasterOptions o) : raster(r), options(std::move(o)), deletionScene(r, options, "notes.deletion") {}
     Card* find(std::uint64_t key) const { const auto it = cards.find(key); return it == cards.end() ? nullptr : it->second.get(); }
+    // NativeNotesCardScene::at: clamp at the owner boundary, the retained
+    // scene's own clock stays strict.
+    static double at(Card& c, double t) noexcept { if (std::isfinite(t) && t > c.time) c.time = t; return std::isfinite(t) ? c.time : t; }
     void sync(Card& c, double time) {
         const auto key = c.model.revision();
         if (c.synced == key) return;
-        if (c.scene.syncContent(c.model.root(), env->text, key, options.pixelsPerPoint, time)) ++revision;
+        if (c.scene.syncContent(c.model.root(), env->text, key, options.pixelsPerPoint, at(c, time))) ++revision;
         c.synced = key;
     }
 };
@@ -71,8 +81,9 @@ void NotesDesktopControls::cardPosed(std::uint64_t key, const core::Matrix4& wor
     auto& i = *impl_;
     auto* c = i.find(key);
     if (!c) return;
-    i.sync(*c, time);
-    c->scene.updatePose({world, opacity, time, {}, {}});
+    const double t = i.at(*c, time);
+    i.sync(*c, t);
+    c->scene.updatePose({world, opacity, t, {}, {}});
     c->posed = true;
 }
 void NotesDesktopControls::cardRemoved(std::uint64_t key) {
@@ -168,7 +179,7 @@ std::span<const gpu::LayerCompositionEntry> NotesDesktopControls::deletionEntrie
 
 bool NotesDesktopControls::requiresFrames(double time) const {
     const auto& i = *impl_;
-    for (const auto& [key, c] : i.cards) if (c->posed && (c->model.requiresFrames(time) || c->scene.requiresFrames(time))) return true;
+    for (const auto& [key, c] : i.cards) if (c->posed && (c->model.requiresFrames(time) || c->scene.requiresFrames(std::max(time, c->time)))) return true;
     return i.confirmation && i.deletionPosed && (i.confirmation->root->animating(time) || i.deletionScene.requiresFrames(time));
 }
 std::uint64_t NotesDesktopControls::compositionRevision() const noexcept { return impl_->revision; }
