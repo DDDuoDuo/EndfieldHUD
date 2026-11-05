@@ -2637,6 +2637,10 @@ int Application::Impl::runHiddenVerification(){
         report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
+        // Teardown check: Projection's centre page (otherwise built only with
+        // the visible workspace, which stays off here) is one more design owner
+        // on the shared Context; cleanup's guard requires it dropped before it.
+        if(args.moduleCoverage&&designOverlay&&!projectionModuleOwner&&!cleaned){constructProjection();need(bool(projectionModuleOwner)&&!designOverlay->context().canvases().empty(),"The teardown check's Projection page is on the shared Context");}
     shutdownVisible();
     return 0;
 }
