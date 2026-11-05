@@ -97,6 +97,9 @@ struct NativeDesignSceneStats {
     std::uint64_t generations{}, emits{}, partsReused{}, surfacesUpdated{}, partsLoaded{}, poses{}, lazyPaints{}, lazyReleases{};
     std::uint64_t groupSwitches{}, parks{};   // groupSwitches: group attaches and detaches
     std::uint64_t partsKept{};                // parts back in the tree that took their kept scene (no rasterization)
+    // Entry refreshes that dropped the owner's insertion: its anchor is in the
+    // tree but roots no part (a nested layer not setPartRoot). Owner tests assert 0.
+    std::uint64_t unanchoredInsertions{};
     std::size_t parts{}, surfaces{}, retiredParts{}, keptParts{}, rasterEntries{}, residentPixelBytes{};
     std::size_t keptPixelBytes{};             // of residentPixelBytes: the kept parts' (they expire a few seconds after leaving)
     std::size_t groups{}, groupTargets{};      // parts drawn through a group; group targets held (incl. awaiting collectRetired)

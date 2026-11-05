@@ -20,7 +20,8 @@
 //
 // Pose: the owner passes the canvas's design pose every frame; the editor
 // follows the body layer's presented world (its entrance and the page
-// leave, modules::design::sampleLayer) and opacity. Composition: one entry,
+// leave, modules::design::sampleLayer) and opacity; its ink (the palette's)
+// restyles the editor at the first shown pose after it changed. Composition: one entry,
 // the editor's glyph scene, which the owner inserts into the canvas's
 // scene after the body (or the media strip) part (NativeDesignScene::
 // setInsertion), so menus and pop-overs draw over the text as on the Mac.

@@ -348,6 +348,10 @@ struct EmitOptions { const TextServices* text{}; std::string partPrefix; };
 // surface id in a part, more than 64 nesting levels, or a part above the
 // rasterizer's 4096 nodes (LayerRasterizer::maximumNodes).
 Artwork emit(const Layer& root, const EmitOptions&);
+// Each part's root, as NativeDesignScene takes it: the shallowest layer
+// placing one of its surfaces (null without one). The scene composes an
+// owner's insertion (setInsertion) right after the part rooted at its anchor.
+std::vector<const Layer*> partRoots(const Artwork&, const Layer& root);
 
 struct PoseMask { Affine world; Rect bounds; double cornerRadius{}; }; // world: mask-local -> box px
 struct SurfacePose {
