@@ -114,11 +114,11 @@
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-mac.zh-cn.png" alt="Mac" width="112"></td>
-<td>苹果 M 系列芯片：<b>macOS 11+</b>。Intel：<b>macOS 10.15.4+</b>。部分功能需要更新的系统或支持的硬件。</td>
+<td>苹果 M 系列芯片：<b>macOS 11+</b>。Intel：<b>macOS 10.15.4+</b>。部分功能需要更新的系统或支持的硬件</td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-windows.zh-cn.png" alt="Windows" width="112"></td>
-<td><b>Windows 11 64 位（x64）</b>，不支持 Windows 10 和 ARM64。需要支持 Direct3D 11 的显卡，以及大约 64 MiB 磁盘空间。</td>
+<td><b>Windows 11 64 位（x64）</b>，不支持 Windows 10 和 ARM64。需要支持 Direct3D 11 的显卡，以及大约 64 MiB 磁盘空间</td>
 </tr>
 </table>
 
