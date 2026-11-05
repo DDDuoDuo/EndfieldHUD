@@ -510,8 +510,8 @@ void Application::Impl::construct(){
     // essential (module selection and the shared text services).
     const auto optional=[&](const char*name,auto&&build){
         if(!production()){build();return;}
-        try{build();}
-        catch(const std::exception&e){const auto line=std::string("EndfieldHUD module ")+name+" could not start ("+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
+        const FatalStage starting("start",name);
+        try{build();}catch(const std::exception&e){startFailed(name,e);}
     };
     // The source navigation's accessibility buttons lie beneath every module
     // canvas (HUDSourceWatchView under the module views): registered first,
@@ -665,10 +665,11 @@ void Application::Impl::constructAreas(){
         const auto stage="area:"+name;
         if(!production()){build();startup.mark(stage.c_str());continue;}
         // Production isolates each area's startup like the optional built-ins.
+        const FatalStage starting("start",name);
         try{build();}
         catch(const std::exception&e){
             areaHost->constructing({});areaHost->abandon(name);absentModules.push_back(name);
-            const auto line=std::string("EndfieldHUD module ")+name+" could not start ("+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+            startFailed(name,e);
         }
         startup.mark(stage.c_str());
     }
@@ -679,7 +680,8 @@ void Application::Impl::connectAreas(){
     if(!areaHost)return;
     const auto optional=[&](const char*name,auto&&build){
         if(!production()){build();return;}
-        try{build();}catch(const std::exception&e){const auto line=std::string("EndfieldHUD module ")+name+" could not start ("+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
+        const FatalStage starting("start",name);
+        try{build();}catch(const std::exception&e){startFailed(name,e);}
     };
     // Bottom-left ID card (HUDSourceWatchView.setDesktopProfile): the profile
     // area publishes the feed; the host owns the label scene, SourceScene and
@@ -756,6 +758,11 @@ void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
             context+="about: "+std::string(settingsUI->canvas(core::Module::about).section())+", update "+(phase<phases.size()?phases[phase]:"unknown")+"\n";}
     }catch(...){}
     (void)failureLog->record(f,context);
+}
+// A module whose isolated production startup threw (inside its
+// FatalStage("start",name)): the same line and record as a disabled owner.
+void Application::Impl::startFailed(std::string_view name,const std::exception&e)noexcept{
+    try{const auto f=startFailure(name,e);const auto line=failureLine(f);std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());recordModuleFailure(f);}catch(...){}
 }
 power::PowerAreaService* Application::Impl::powerArea()const noexcept{return areaHost?areaHost->find<power::PowerAreaService>(power::PowerAreaService::key):nullptr;}
 AppShortcutNavigation* Application::Impl::appNavigation()const noexcept{return areaHost?areaHost->find<AppShortcutNavigation>(appShortcutNavigationService):nullptr;}
@@ -1539,10 +1546,11 @@ void Application::Impl::constructSettings(){
     settingsSaves=std::make_unique<SettingsSaveQueue>(args.dataRoot,*utility,SettingsSaveCallbacks{[this](const ehud::data::Settings&loaded){
         if(!production()){createSettings(loaded);return;}
         // A Settings UI failure must not cancel first-run launch or the HUD.
-        try{createSettings(loaded);}catch(const std::exception&e){
-            const auto line=std::string("EndfieldHUD module settings could not start (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
-            settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}
-        }},[this]{refresh(now());}});settingsSaves->start();
+        // The launch work runs after the start stage has closed (and cleared).
+        bool failed{};
+        {const FatalStage starting("start","settings");try{createSettings(loaded);}catch(const std::exception&e){startFailed("settings",e);failed=true;}}
+        if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}}
+        },[this]{refresh(now());}});settingsSaves->start();
     // Hidden integration owns no frame/message loop. This explicit test
     // preparation barrier drains the same asynchronous read before input.
     if(!visibleMode()){utility->waitIdle();utility->drain();need(settingsSaves->status().loaded,"Hidden Settings initial read failed");}
@@ -1647,9 +1655,10 @@ void Application::Impl::ensureGame(double time){
     if(game||stopping||!gameEnabled)return;
     if(!production()){constructGame(hostTime(time));return;}
     // Production isolates the lazy Minigame start like the optional built-ins.
+    const FatalStage starting("start","minigame");
     try{constructGame(hostTime(time));}catch(const std::exception&e){
         gameEnabled=false;unregisterModule(gameModuleOwner);game=nullptr;gameSession.reset();
-        const auto line=std::string("EndfieldHUD module minigame could not start (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
+        startFailed("minigame",e);}
 }
 void Application::Impl::constructGame(double time){
     need(bool(designOverlay),"The minigame needs the shared design overlay");

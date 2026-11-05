@@ -1,7 +1,9 @@
 #include "app/module_failure_log.hpp"
+#include "app/fatal_stage.hpp"
 #include "core/data/file_io.hpp"
 #include <algorithm>
 #include <ctime>
+#include <typeinfo>
 
 namespace endfield::app {
 std::string redacted(std::string_view message) {
@@ -20,6 +22,14 @@ std::string redacted(std::string_view message) {
     return out;
 }
 std::string failureMessage(std::string_view message) { return redacted(message.substr(0, message.find(": ")).substr(0, 160)); }
+ModuleFailure startFailure(std::string_view owner, const std::exception& e) {
+    const auto stage = FatalStage::last();
+    return {std::string(owner), typeid(e).name(), "start", failureMessage(e.what()), stage.empty() ? "start [" + std::string(owner) + "]" : std::string(stage)};
+}
+std::string failureLine(const ModuleFailure& f) {
+    return "EndfieldHUD module " + f.owner + (f.operation == "start" ? " could not start (" + f.what + ")" : " was disabled after a " + f.what + " during " + f.operation) +
+        (f.message.empty() ? std::string() : ": " + f.message) + " (" + f.stage + ")\n";
+}
 
 bool appendBoundedRecord(const std::filesystem::path& path, std::string_view record, std::string_view header, std::size_t maximum) noexcept {
     try {
@@ -52,7 +62,7 @@ bool ModuleFailureLog::record(const ModuleFailure& f, std::string_view context) 
         if (converted && std::strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) text += "utc: " + std::string(stamp) + "\n";
         text += "owner: " + redacted(std::string_view(f.owner).substr(0, 64)) + "\n";
         text += "exception: " + redacted(std::string_view(f.what).substr(0, 160)) + "\n";
-        text += "message: " + (f.message.empty() ? std::string("(none)") : redacted(std::string_view(f.message).substr(0, 160))) + "\n";
+        text += "message: " + (f.message.empty() ? std::string("(none)") : redacted(f.message)) + "\n";
         text += "operation: " + redacted(std::string_view(f.operation).substr(0, 64)) + "\n";
         text += "stage: " + redacted(std::string_view(f.stage).substr(0, 384)) + "\n";
         for (auto rest = context.substr(0, 1024); !rest.empty();) {

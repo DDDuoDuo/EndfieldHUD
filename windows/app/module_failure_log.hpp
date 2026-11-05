@@ -2,6 +2,7 @@
 // Module failure diagnostics. An isolated owner that throws is disabled
 // (ModuleRegistry, app/module_owner.hpp): its HUD modules stop presenting.
 // The failure is reported once per owner, on stderr and OutputDebugString,
+// and so is a module whose isolated production startup threw (Application),
 // and production appends one bounded record per owner and run to
 // <data root>/v1/Diagnostics/module-failures.txt (app/application.cpp),
 // beside main.cpp's last-fatal.txt and through the same writer.
@@ -12,6 +13,7 @@
 // path-like words redacted and non-ASCII bytes replaced. Operations, stages
 // and owner names are code literals; the host adds numbers only.
 #include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -31,6 +33,14 @@ std::string redacted(std::string_view message);
 // The static prefix of an exception message (up to the first ": "), cut to
 // 160 bytes, then redacted.
 std::string failureMessage(std::string_view message);
+// A module whose isolated production startup threw (Application's start
+// sites, each inside FatalStage("start", owner)): reported like a disabled
+// owner, with operation "start". Called inside the catch.
+ModuleFailure startFailure(std::string_view owner, const std::exception&);
+// The stderr / OutputDebugString line: "EndfieldHUD module <owner> could not
+// start (<type>)" or "... was disabled after a <type> during <operation>",
+// then ": <message>" and " (<stage>)".
+std::string failureLine(const ModuleFailure&);
 // Appends `record` to the file at `path` (read and replaced with
 // ehud::data::detail::readFile / replaceFile, as last-fatal.txt), dropping
 // the oldest records (each starts with `header`) so the file stays within

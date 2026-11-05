@@ -1041,6 +1041,7 @@ struct Application::Impl {
     std::unique_ptr<MemoryTrace> memoryTrace;
     std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
     void recordModuleFailure(const ModuleFailure&) noexcept;
+    void startFailed(std::string_view name, const std::exception&) noexcept; // a production start site's catch
     std::unique_ptr<StartupTrace> startupTrace;
     bool startupTraceWritten{};
     double diagnosticStart{};

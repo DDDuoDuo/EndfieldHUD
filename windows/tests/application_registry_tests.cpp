@@ -235,6 +235,31 @@ void failureRecords() {
     app::ModuleFailure leaked{"leaky", "class std::runtime_error", "frame", "Cannot open C:\\Users\\someone\\notes.txt", "frame [leaky]"};
     check(log.record(leaked, "folder: /Users/someone/Documents\n") && text(file).find("someone") == std::string::npos && text(file).find("message: Cannot open <path>\n") != std::string::npos,
           "Paths never reach the file");
+    // A message redaction lengthened (each "a/b" becomes "<path>") is kept whole, never cut inside a marker.
+    std::string paths;
+    for (unsigned n = 0; n < 40; ++n) paths += "a/b ";
+    app::ModuleFailure lengthened{"lengthened", "class std::runtime_error", "frame", app::failureMessage(paths), "frame [lengthened]"};
+    check(lengthened.message.size() > 160 && log.record(lengthened) && text(file).find("message: " + lengthened.message + "\n") != std::string::npos,
+          "A redacted message is recorded whole");
+    // A module whose isolated startup threw (Application's production start
+    // sites): reported and recorded like a disabled owner, operation "start".
+    const auto started = [](std::string_view owner, auto&& build) {
+        const app::FatalStage starting("start", owner);
+        try { build(); } catch (const std::exception& e) { return app::startFailure(owner, e); }
+        return app::ModuleFailure{};
+    };
+    const auto settingsStart = started("settings", [] { const app::FatalStage inner("scene sync"); throw std::invalid_argument("Retained layer resource budget exceeded: 268435457"); });
+    check(settingsStart.owner == "settings" && settingsStart.operation == "start" && settingsStart.what.find("invalid_argument") != std::string::npos &&
+          settingsStart.message == "Retained layer resource budget exceeded" && settingsStart.stage == "start [settings] > scene sync" && app::FatalStage::last().empty(),
+          "A startup failure carries its message and the stage it left");
+    check(app::failureLine(settingsStart) == "EndfieldHUD module settings could not start (" + settingsStart.what + "): Retained layer resource budget exceeded (start [settings] > scene sync)\n" &&
+          app::failureLine(observed[0]) == "EndfieldHUD module settings was disabled after a " + observed[0].what + " during frame: Retained layer resource budget exceeded (frame [settings] > scene sync)\n",
+          "The stderr line names a start failure and a disable");
+    const auto areaStart = started("battery", [] { throw std::runtime_error("Cannot open C:\\Users\\someone\\area.dll"); });
+    check(areaStart.stage == "start [battery]" && areaStart.message == "Cannot open <path>" && app::failureLine(areaStart).find("someone") == std::string::npos,
+          "A startup failure without an inner stage names its start");
+    check(log.record(areaStart, "density: 1.8\n") && text(file).find("owner: battery\nexception: " + app::redacted(areaStart.what) + "\nmessage: Cannot open <path>\noperation: start\nstage: start [battery]\n") != std::string::npos,
+          "A module that never started leaves a record");
     // Bounded to 16 KiB: the oldest records go first, whole.
     for (unsigned n = 0; n < 60; ++n) {
         app::ModuleFailure f{"owner" + std::to_string(n), "class std::invalid_argument", "upload", "Design artwork still published", "upload [owner" + std::to_string(n) + "]"};

@@ -75,8 +75,7 @@ void ModuleRegistry::disable(Slot& slot, const char* what, const char* message, 
     // Diagnostic contains the module, the exception type and the message's
     // static prefix only (failureMessage); never document text, file names
     // or account values.
-    const auto line = "EndfieldHUD module " + failure.owner + " was disabled after a " + failure.what + " during " + failure.operation +
-        (failure.message.empty() ? std::string() : ": " + failure.message) + " (" + failure.stage + ")\n";
+    const auto line = failureLine(failure);
     std::fputs(line.c_str(), stderr);
 #ifdef _WIN32
     OutputDebugStringA(line.c_str());

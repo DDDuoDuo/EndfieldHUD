@@ -378,6 +378,8 @@ void aboutTour(const std::filesystem::path& shader, const std::filesystem::path&
     } catch (const std::exception& e) {
         std::cerr << "Settings About tour: " << e.what() << std::endl;
         try { composition.detach(renderer); owner.release(renderer); overlay.release(renderer); } catch (...) {}
+        std::error_code ignored;
+        std::filesystem::remove_all(data, ignored);
         throw;
     }
     composition.detach(renderer);
