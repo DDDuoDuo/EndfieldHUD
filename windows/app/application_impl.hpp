@@ -1039,6 +1039,8 @@ struct Application::Impl {
     void projectionFailed();
     LiveProbe probe;
     std::unique_ptr<MemoryTrace> memoryTrace;
+    std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
+    void recordModuleFailure(const ModuleFailure&) noexcept;
     std::unique_ptr<StartupTrace> startupTrace;
     bool startupTraceWritten{};
     double diagnosticStart{};

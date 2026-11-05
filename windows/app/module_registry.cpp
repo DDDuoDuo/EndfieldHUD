@@ -64,13 +64,19 @@ void ModuleRegistry::rebuild() {
         });
     }
 }
-void ModuleRegistry::disable(Slot& slot, const char* what, std::string_view operation) {
+void ModuleRegistry::disable(Slot& slot, const char* what, const char* message, std::string_view operation) {
     if (slot.failed) return;
     slot.failed = true;
-    ModuleFailure failure{std::string(slot.owner->name()), what ? what : "unknown", std::string(operation)};
-    // Diagnostic contains the module and exception type only; never the
-    // exception message, document text, file names or account values.
-    const auto line = "EndfieldHUD module " + failure.owner + " was disabled after a " + failure.what + " during " + failure.operation + "\n";
+    // Called inside run()'s catch: the scopes the exception left recorded
+    // their path (FatalStage); none inside the owner call names the call.
+    const auto stage = FatalStage::last();
+    ModuleFailure failure{std::string(slot.owner->name()), what ? what : "unknown", std::string(operation), failureMessage(message ? message : ""),
+        stage.empty() ? std::string(operation) + " [" + std::string(slot.owner->name()) + "]" : std::string(stage)};
+    // Diagnostic contains the module, the exception type and the message's
+    // static prefix only (failureMessage); never document text, file names
+    // or account values.
+    const auto line = "EndfieldHUD module " + failure.owner + " was disabled after a " + failure.what + " during " + failure.operation +
+        (failure.message.empty() ? std::string() : ": " + failure.message) + " (" + failure.stage + ")\n";
     std::fputs(line.c_str(), stderr);
 #ifdef _WIN32
     OutputDebugStringA(line.c_str());

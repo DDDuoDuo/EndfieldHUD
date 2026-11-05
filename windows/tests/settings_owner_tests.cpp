@@ -18,10 +18,14 @@
 #include <objbase.h>
 #include "native/watch_appearance.hpp"
 #include "core/data/file_io.hpp"
+#include "core/module_presentation.hpp"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <deque>
 #include <iostream>
 #include <stdexcept>
+#include <typeinfo>
 using namespace endfield;
 namespace d = modules::design;
 namespace m = modules;
@@ -177,12 +181,217 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& resou
     std::filesystem::remove_all(data);
     check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");
 }
+// The left group on the released 1.3.0 settings (Simplified Chinese, motion
+// on, update status "Up to date": the stamp) at a held design density: the
+// real switches (core::ModulePresentation, directional leave and entrance)
+// System -> Display -> Hotkeys -> About, the update check moving checking ->
+// current while About is shown, Credits and a credit link, back, the feedback
+// and GitHub links, Check (published synchronously, as the windowsUpdates
+// area does), away and back; then a close and a fresh opening straight on
+// About. Every owner call runs each frame at 60 Hz with upload and collected,
+// and none may throw; every settled page composes.
+void aboutTour(const std::filesystem::path& shader, const std::filesystem::path& resources, const std::filesystem::path& wordmark, double density) {
+    using Phase = m::SettingsUpdatePhase;
+    Window window;
+    gpu::Renderer renderer;
+    renderer.initialize(window.hwnd, 1000, 640, {gpu::Driver::warpForTests, shader, gpu::RenderTarget::offscreenForTests});
+    gpu::LayerRasterizer raster;
+    (void)raster.setDefaultFontLanguage(core::TextRegion::simplifiedChinese);
+    gpu::LayerComposition composition;
+    tools::DesignOverlayOptions overlayOptions;
+    overlayOptions.raster.pixelsPerPoint = 1; overlayOptions.window = window.hwnd;
+    tools::DesignOverlayOwner overlay(raster, overlayOptions);
+    auto& context = overlay.context();
+    const auto manifestBytes = ehud::data::detail::readFile(resources / "watch-appearance" / "manifest.json", 4 * 1024 * 1024);
+    check(manifestBytes.has_value(), "Read the right-hand list's appearance templates");
+    const gpu::WatchAppearanceTemplates appearanceTemplates(ehud::data::Json::parse(*manifestBytes, 8u * 1024 * 1024));
+    const auto data = std::filesystem::temp_directory_path() / ("ehud-settings-about-" + std::to_string(GetCurrentProcessId()));
+    std::filesystem::remove_all(data); std::filesystem::create_directories(data);
+    std::deque<std::pair<std::function<void()>, std::function<void(std::exception_ptr)>>> queue;
+    const auto status = [](Phase phase) {
+        m::SettingsUpdateStatus s;
+        s.phase = phase; s.latestVersion = phase == Phase::idle || phase == Phase::checking ? "" : "1.3.0";
+        s.title = phase == Phase::current ? "已是最新版本" : phase == Phase::checking ? "正在检查更新…" : "";
+        s.releaseURL = "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0";
+        s.automaticallyInstalls = true; s.canCheck = phase != Phase::installing; s.canSetAutomatic = true;
+        s.automaticTitle = "每日检查更新";
+        return s;
+    };
+    tools::SettingsPreview* self{};
+    std::vector<std::string> links;
+    unsigned checksAsked{};
+    tools::SettingsPreviewOptions options;
+    options.language = core::Language::simplifiedChinese;
+    options.initial.set("language", "simplifiedChinese"); options.initial.set("launchAtLogin", false); options.initial.set("reduceMotion", false);
+    options.initial.set("hudScale", 1.2);
+    options.callbacks.persist = [](const ehud::data::Settings&) {};
+    options.callbacks.registerShortcut = [](m::SettingsShortcut) -> std::optional<std::string> { return std::nullopt; };
+    options.callbacks.openLink = [&](std::string_view url) { links.emplace_back(url); };
+    // The windowsUpdates area publishes "checking" inside activate (application.cpp checkUpdates -> refreshUpdateStatus).
+    options.callbacks.checkUpdates = [&] { ++checksAsked; if (self) self->controller().setUpdateStatus(status(Phase::checking)); };
+    options.callbacks.automaticUpdates = [](bool) {};
+    options.hooks.displays = [] { return std::vector<m::SettingsDisplay>{{"DISPLAY-A", "Fixture Display"}}; };
+    options.hooks.about.version = "1.3.0 (19)"; options.hooks.about.repository = "https://github.com/DDDuoDuo/EndfieldHUD";
+    options.resources = resources; options.appearance = &appearanceTemplates;
+    options.logoPresets = resources / "center-logos"; options.endfieldWordmark = wordmark; options.logoStore = data / "CenterLogo";
+    options.submit = [&](std::function<void()> work, std::function<void(std::exception_ptr)> done) { queue.emplace_back(std::move(work), std::move(done)); return true; };
+    options.owner.name = "settings";
+    options.owner.routing.pointerCapture = 1; options.owner.routing.pointer = 2; options.owner.routing.keyCapture = 1; options.owner.routing.key = 2;
+    options.owner.raster.pixelsPerPoint = 1;
+    options.owner.fields.window = window.hwnd; options.owner.fields.ownerMessage = WM_APP + 0x47; options.owner.fields.raster.pixelsPerPoint = 1;
+    tools::SettingsPreview settings(raster, context, std::move(options));
+    self = &settings;
+    settings.controller().setUpdateStatus(status(Phase::current));
+    auto ownerPtr = settings.takeOwner();
+    auto& owner = *ownerPtr;
+    const app::ClientMetrics metrics{1000, 640, 96, 1, 1000, 640};
+    owner.resize(metrics); overlay.resize(metrics);
+    app::ModuleAppearance appearance; appearance.language = core::Language::simplifiedChinese;
+    appearance.accentSRGB = {250. / 255, 212. / 255, 31. / 255}; appearance.reduceMotion = false;
+    overlay.setAppearance(appearance, 0); owner.setAppearance(appearance, 0);
+    overlay.holdDensity(density);
+    core::source::DesktopChromeSettings chrome; chrome.viewport = {0, 0, 1000, 640};
+    const auto center = core::Matrix4{};
+    constexpr std::array left{core::Module::system, core::Module::display, core::Module::hotkeys, core::Module::about};
+    std::optional<core::ModulePresentation> presentation;
+    double t{}, opened{};
+    std::size_t peakRaster{}, peakRenderer{};
+    std::string where = "open";
+    // Names the call, the page and the time of any failure (the bug left no record).
+    const auto call = [&](const char* what, auto&& f) {
+        try { return f(); }
+        catch (const std::exception& e) {
+            throw std::runtime_error("density " + std::to_string(density) + " at " + where + " t=" + std::to_string(t) + " " + what + " threw " + typeid(e).name() + ": " + e.what());
+        } catch (...) {
+            throw std::runtime_error("density " + std::to_string(density) + " at " + where + " t=" + std::to_string(t) + " " + what + " threw a non-standard exception");
+        }
+    };
+    const auto frame = [&] {
+        while (!queue.empty()) {
+            auto [work, done] = std::move(queue.front()); queue.pop_front();
+            std::exception_ptr error;
+            try { work(); } catch (...) { error = std::current_exception(); }
+            call("utility completion", [&] { done(error); });
+        }
+        if (const auto w = call("nextWakeTime", [&] { return owner.nextWakeTime(t); }); w && *w <= t) call("deadline", [&] { return owner.deadline(t); });
+        if (const auto w = overlay.nextWakeTime(t); w && *w <= t) call("overlay deadline", [&] { return overlay.deadline(t); });
+        const auto sample = presentation->sample(t).presentation;
+        chrome.module = sample.requested;
+        const app::ModuleFrame f{center, chrome, sample, static_cast<float>(std::clamp((t - opened) / .3, 0., 1.)), t, true};
+        call("overlay update", [&] { overlay.update(f); });
+        call("update", [&] { owner.update(f); });
+        (void)call("requiresFrames", [&] { return owner.requiresFrames(t); });
+        call("overlay upload", [&] { overlay.upload(renderer); });
+        call("upload", [&] { owner.upload(renderer); });
+        std::vector<gpu::LayerCompositionEntry> entries;
+        std::size_t moduleEntries{};
+        call("publish", [&] {
+            for (const auto& e : owner.entries(sample.current.module)) entries.push_back(e);
+            if (sample.incoming) for (const auto& e : owner.entries(sample.incoming->module)) entries.push_back(e);
+            moduleEntries = entries.size();
+            for (const auto& e : overlay.modalEntries()) entries.push_back(e);
+        });
+        const auto fontRevision = raster.fontRevision();
+        for (const auto& e : entries) if (e.scene->fontRevision() != fontRevision) e.scene->refreshTypography();
+        call("compose", [&] { composition.setEntries(renderer, entries); composition.present(renderer); renderer.draw(false); });
+        call("collected", [&] { owner.collected(renderer); overlay.collected(renderer); });
+        peakRaster = std::max(peakRaster, raster.stats().resourceBytes);
+        peakRenderer = std::max(peakRenderer, renderer.stats().resourceBytes);
+        return moduleEntries;
+    };
+    // Plays `seconds` at 60 Hz; a settled page must compose.
+    const auto play = [&](double seconds) {
+        std::size_t last{};
+        for (const double end = t + seconds; t < end;) { t += 1. / 60; last = frame(); }
+        check(!presentation->isTransitioning(), "The switch settles");
+        check(last > 0, ("The settled page composes: " + where).c_str());
+        return last;
+    };
+    const auto select = [&](core::Module module, const char* name) {
+        where = name;
+        (void)presentation->select(module, t, true, false);
+        play(1.2);
+    };
+    const auto act = [&](core::Module module, std::string_view id, const char* name) {
+        where = name;
+        check(call("action", [&] { return settings.canvas(module).performAccessibilityAction(id, t); }), name);
+    };
+    const auto open = [&](core::Module module) {
+        presentation.emplace(module);
+        for (const auto m : left) presentation->setDesignScreen(m, true);
+        opened = t;
+        call("open", [&] { overlay.setOverlayVisible(true, t); owner.setOverlayVisible(true, t); });
+        (void)presentation->beginEntrance(t, false);
+        const auto sample = presentation->sample(t).presentation;
+        call("prewarm", [&] { owner.prewarm({center, chrome, sample, 0.f, t, false}); });
+    };
+    const auto close = [&] {
+        where = "close";
+        call("close", [&] { owner.overlayClosing(t); overlay.overlayClosing(t); });
+        t += .5; frame();
+        call("concealed", [&] { owner.hostEvent({app::HostEvent::Kind::overlayConcealed}, t); overlay.hostEvent({app::HostEvent::Kind::overlayConcealed}, t); });
+        t += .1; frame();
+    };
+    auto& about = settings.canvas(core::Module::about);
+    // A failure still detaches and releases before the renderer goes (teardown
+    // with published scenes would fault and hide the message).
+    try {
+    // --- The left group in one opened HUD ---------------------------------------------
+    open(core::Module::system);
+    where = "System"; play(1.2);
+    select(core::Module::display, "Display");
+    select(core::Module::hotkeys, "Hotkeys");
+    select(core::Module::about, "About");
+    check(about.section() == "main" && settings.inputModule() == core::Module::about, "About shows and takes input");
+    // The daily check runs while About is shown: checking, then the stamp again.
+    where = "About checking"; settings.controller().setUpdateStatus(status(Phase::checking)); play(.8);
+    where = "About current"; settings.controller().setUpdateStatus(status(Phase::current)); play(1.2);
+    act(core::Module::about, "credits", "Credits"); play(1.2);
+    check(about.section() == "credits", "Credits opens");
+    act(core::Module::about, "credit:1:open", "Credit link"); play(.6);
+    where = "Credits back"; call("back", [&] { const auto back = about.page().back; back(); }); play(1.2);
+    check(about.section() == "main", "Back returns to About");
+    act(core::Module::about, "feedback:open", "Feedback link"); play(.6);
+    act(core::Module::about, "github:open", "GitHub link"); play(.6);
+    check(links.size() == 3 && links[1].find("qq.com") != std::string::npos, "The links open (the questionnaire in Simplified Chinese)");
+    act(core::Module::about, "updates", "Check"); play(1.5);
+    check(checksAsked == 1, "Check asks the area");
+    where = "Check current"; settings.controller().setUpdateStatus(status(Phase::current)); play(1.5);
+    select(core::Module::system, "System again");
+    select(core::Module::about, "About again");
+    where = "About failed"; { auto s = status(Phase::failed); s.title = "检查失败"; s.detail = "GitHub 暂时无法访问"; settings.controller().setUpdateStatus(s); } play(1.2);
+    where = "About available"; { auto s = status(Phase::available); s.latestVersion = "1.3.1"; s.title = "发现新版本"; settings.controller().setUpdateStatus(s); } play(1.2);
+    where = "About current again"; settings.controller().setUpdateStatus(status(Phase::current)); play(1.2);
+    const auto group = raster.stats();
+    close();
+    // --- A fresh opening straight on About (tray "About") ---------------------------
+    open(core::Module::about);
+    where = "Fresh About"; play(1.5);
+    where = "Fresh About checking"; settings.controller().setUpdateStatus(status(Phase::checking)); play(.8);
+    where = "Fresh About current"; settings.controller().setUpdateStatus(status(Phase::current)); play(1.5);
+    select(core::Module::display, "Display after fresh About");
+    select(core::Module::about, "About after Display");
+    close();
+    std::cout << "  density " << density << ": raster " << group.entries << " entries, " << group.resourceBytes / (1024 * 1024) << " MiB after the tour (peak "
+              << peakRaster / (1024 * 1024) << " of " << gpu::LayerRasterizer::maximumResourceBytes / (1024 * 1024) << " MiB); renderer peak "
+              << peakRenderer / (1024 * 1024) << " MiB\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Settings About tour: " << e.what() << std::endl;
+        try { composition.detach(renderer); owner.release(renderer); overlay.release(renderer); } catch (...) {}
+        throw;
+    }
+    composition.detach(renderer);
+    owner.release(renderer); overlay.release(renderer);
+    std::filesystem::remove_all(data);
+    check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "The fixture never shows a window");
+}
 }
 int wmain(int argc, wchar_t** argv) {
     const auto com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         check(SUCCEEDED(com) && argc == 4, "Pass the shader, windows/resources and Resources/EndfieldIndustriesSource.png");
         run(argv[1], argv[2], argv[3]);
+        for (const double density : {1.5, 1.8, 2.4}) aboutTour(argv[1], argv[2], argv[3], density);
         CoUninitialize();
         std::cout << "Settings owner: " << checks << " checks passed\n";
         return 0;

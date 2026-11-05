@@ -256,6 +256,8 @@ Application::Impl::Impl(ApplicationOptions options)
     probe.enabled=!args.liveDiagnostics.empty();
     if(!args.startupTrace.empty())startupTrace=std::make_unique<StartupTrace>(preparation);
     if(!args.memoryTrace.empty())memoryTrace=std::make_unique<MemoryTrace>(args.memoryTrace);
+    // A disabled owner leaves its record at once (the registry reports each owner once).
+    if(!args.moduleFailureLog.empty()){failureLog=std::make_unique<ModuleFailureLog>(args.moduleFailureLog);registry.setFailureObserver([this](const ModuleFailure&f){recordModuleFailure(f);});}
     // A failed startup still tears owners down in the established order
     // before the HWND, renderer and COM members are destroyed.
     try{construct();}catch(...){try{cleanup();}catch(...){}throw;}
@@ -733,6 +735,27 @@ void Application::Impl::refreshUpdateStatus(){
         need(value.automaticTitle.size()<=16*1024&&Json::validUtf8(value.automaticTitle),"Invalid bounded Settings status");
         status=std::move(value);});
     settingsUI->controller().setUpdateStatus(status?std::move(*status):updateStatus(l));
+}
+// The module failure record's numbers (ApplicationOptions::moduleFailureLog):
+// the design density, the shared raster cache and renderer budgets, the
+// module presented and, for Settings, About's section and update phase.
+// Runs inside the registry's catch, once per owner: synchronous, never throws.
+void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
+    if(!failureLog)return;
+    std::string context;
+    try{
+        const auto number=[](double v){char text[32]{};std::snprintf(text,sizeof text,"%.3g",v);return std::string(text);};
+        if(designOverlay)context+="density: "+number(designOverlay->context().boxScale())+"\n";
+        const auto raster=rasterizer.stats();
+        context+="raster: entries "+std::to_string(raster.entries)+" of "+std::to_string(gpu::LayerRasterizer::maximumEntries)+", bytes "+std::to_string(raster.resourceBytes)+" of "+std::to_string(gpu::LayerRasterizer::maximumResourceBytes)+"\n";
+        context+="renderer: bytes "+std::to_string(renderer.stats().resourceBytes)+" of "+std::to_string(gpu::Renderer::maximumResourceBytes)+"\n";
+        if(notes){const auto&p=notes->modulePresentation();context+="module: "+std::string(core::moduleIdentifier(p.requested))+(p.transitioning?" (switching)":"")+"\n";}
+        if(f.owner=="settings"&&settingsUI){
+            constexpr std::array phases{"idle","checking","current","available","downloading","ready","installing","failed"};
+            const auto phase=static_cast<std::size_t>(settingsUI->controller().updateStatus().phase);
+            context+="about: "+std::string(settingsUI->canvas(core::Module::about).section())+", update "+(phase<phases.size()?phases[phase]:"unknown")+"\n";}
+    }catch(...){}
+    (void)failureLog->record(f,context);
 }
 power::PowerAreaService* Application::Impl::powerArea()const noexcept{return areaHost?areaHost->find<power::PowerAreaService>(power::PowerAreaService::key):nullptr;}
 AppShortcutNavigation* Application::Impl::appNavigation()const noexcept{return areaHost?areaHost->find<AppShortcutNavigation>(appShortcutNavigationService):nullptr;}

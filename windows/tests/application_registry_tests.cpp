@@ -1,6 +1,11 @@
 // ModuleRegistry contracts: routing order, capture chains, failure isolation
-// and release order. Synthetic owners only; no window, renderer or GPU.
+// and its bounded record (app/module_failure_log.hpp, in a new temporary
+// folder), and release order. Synthetic owners only; no window, renderer or
+// GPU, never the user's data root.
 #include "app/module_owner.hpp"
+#include "core/data/file_io.hpp"
+#include <chrono>
+#include <filesystem>
 #include "native/renderer.hpp"
 #include <cmath>
 #include <functional>
@@ -137,7 +142,9 @@ void isolation() {
     registry.forEach([&](app::ModuleOwner& o) { o.update(frame); }, "frame");
     check(notes.updates == 1 && clipboard.updates == 1 && !registry.enabled(map), "A throwing owner is disabled; the others still update");
     check(observed.size() == 1 && observed[0].owner == "map" && observed[0].operation == "frame" &&
-          observed[0].what.find("/private/path") == std::string::npos, "Failure report names the owner without the exception message");
+          observed[0].what.find("/private/path") == std::string::npos, "Failure report names the owner; the type carries no message");
+    check(observed[0].message == "synthetic failure with <path>" && observed[0].stage == "frame [map]",
+          "The report carries the message with its path redacted, and the call when no inner stage was recorded");
     registry.forEach([&](app::ModuleOwner& o) { o.update(frame); }, "frame");
     check(observed.size() == 1 && clipboard.updates == 2, "A disabled owner is skipped afterwards");
     check(!registry.covers({0, 0}) && registry.presenter(core::Module::map) == nullptr, "A disabled owner neither covers input nor presents content");
@@ -161,6 +168,89 @@ void isolation() {
     threw = false;
     try { strict.forEach([&](app::ModuleOwner& o) { o.update(frame); }); } catch (const std::out_of_range&) { threw = true; }
     check(threw && strict.enabled(failing), "Development registries keep failures fatal");
+}
+
+// A disabled owner is never silent (Windows 1.3.0: the whole Settings group
+// went blank with no trace): the report carries the exception's static
+// message and the stage it left, once per owner; production appends it to a
+// bounded Diagnostics/module-failures.txt that a missing folder or a write
+// error never turns into a second failure.
+struct Thrower final : app::ModuleOwner {
+    std::string id, message; bool inner{}, foreign{};
+    unsigned calls{};
+    Thrower(std::string name, std::string text, bool stage) : id(std::move(name)), message(std::move(text)), inner(stage) {}
+    std::string_view name() const noexcept override { return id; }
+    void update(const app::ModuleFrame&) override {
+        ++calls;
+        if (foreign) throw 7;
+        if (!inner) throw std::invalid_argument(message);
+        const app::FatalStage scene("scene sync");
+        throw std::invalid_argument(message);
+    }
+    bool hostEvent(const app::HostEvent&, double) override { ++calls; throw std::runtime_error("second failure"); }
+};
+std::string text(const std::filesystem::path& path) { return ehud::data::detail::readFile(path, 64 * 1024).value_or(std::string()); }
+void failureRecords() {
+    check(app::redacted("Cannot open C:\\Users\\someone\\notes.txt now") == "Cannot open <path> now" && app::redacted("bad\x01\xe6\x96\x87 /x") == "bad???? <path>",
+          "redacted() removes path-like words and non-ASCII bytes");
+    check(app::failureMessage("unsupported text language: zh-Hans-x-private") == "unsupported text language" &&
+          app::failureMessage(std::string(400, 'a')).size() == 160 && app::failureMessage("Cannot read /Users/someone/file.txt") == "Cannot read <path>",
+          "Only the static prefix of a message is kept, bounded");
+    Thrower settings("settings", "Retained layer resource budget exceeded", true), area("area", "unsupported text language: zh-Hans-x /Users/someone", false), odd("odd", "", false);
+    odd.foreign = true;
+    std::vector<app::ModuleFailure> observed;
+    app::ModuleRegistry registry(true);
+    registry.setFailureObserver([&](const app::ModuleFailure& f) { observed.push_back(f); });
+    registry.add(settings); registry.add(area); registry.add(odd);
+    const core::Matrix4 center;
+    const core::source::DesktopChromeSettings chrome{};
+    const core::ModulePresentationSample presentation{};
+    const app::ModuleFrame frame{center, chrome, presentation, 1, 0, true};
+    registry.forEach([&](app::ModuleOwner& o) { o.update(frame); }, "frame");
+    check(observed.size() == 3 && !registry.enabled(settings) && !registry.enabled(area) && !registry.enabled(odd), "Every throwing owner is disabled and reported");
+    check(observed[0].owner == "settings" && observed[0].what.find("invalid_argument") != std::string::npos && observed[0].operation == "frame" &&
+          observed[0].message == "Retained layer resource budget exceeded" && observed[0].stage == "frame [settings] > scene sync",
+          "The report carries the message and the stage the exception left");
+    check(observed[1].message == "unsupported text language" && observed[1].stage == "frame [area]", "A dynamic suffix (tags, paths) never reaches the report");
+    check(observed[2].what == "unknown" && observed[2].message.empty() && observed[2].stage == "frame [odd]", "A non-standard exception is reported without a message");
+    check(app::FatalStage::last().empty(), "The handled failure leaves no fatal stage behind");
+    const auto calls = settings.calls;
+    check(!registry.guard(settings, [&] { (void)settings.hostEvent({}, 1); }, "message") && settings.calls == calls, "A disabled owner is not called again");
+    registry.forEach([&](app::ModuleOwner& o) { (void)o.hostEvent({}, 1); }, "event");
+    check(observed.size() == 3 && registry.failures().size() == 3, "One report per owner and run");
+
+    const auto root = std::filesystem::temp_directory_path() / ("ehud-module-failures-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::remove_all(root);
+    // The Diagnostics folder does not exist yet: it is created.
+    const auto file = root / "v1" / "Diagnostics" / "module-failures.txt";
+    app::ModuleFailureLog log(file);
+    check(log.record(observed[0], "density: 2.5\nraster: entries 900 of 4096, bytes 268000000 of 268435456\nabout: main, update current\n"), "A record is written into a missing folder");
+    check(!log.record(observed[0], "density: 2.5\n"), "One record per owner and run");
+    const auto first = text(file);
+    check(first.starts_with(app::ModuleFailureLog::header) && first.find("utc: ") != std::string::npos && first.find("owner: settings\n") != std::string::npos &&
+          first.find("message: Retained layer resource budget exceeded\n") != std::string::npos && first.find("operation: frame\n") != std::string::npos &&
+          first.find("stage: frame [settings] > scene sync\n") != std::string::npos && first.find("raster: entries 900 of 4096, bytes 268000000 of 268435456\n") != std::string::npos &&
+          first.find("about: main, update current\n") != std::string::npos, "The record names the owner, exception, message, operation, stage and the host's numbers");
+    // Paths in a message or in the context lines are redacted in the file.
+    app::ModuleFailure leaked{"leaky", "class std::runtime_error", "frame", "Cannot open C:\\Users\\someone\\notes.txt", "frame [leaky]"};
+    check(log.record(leaked, "folder: /Users/someone/Documents\n") && text(file).find("someone") == std::string::npos && text(file).find("message: Cannot open <path>\n") != std::string::npos,
+          "Paths never reach the file");
+    // Bounded to 16 KiB: the oldest records go first, whole.
+    for (unsigned n = 0; n < 60; ++n) {
+        app::ModuleFailure f{"owner" + std::to_string(n), "class std::invalid_argument", "upload", "Design artwork still published", "upload [owner" + std::to_string(n) + "]"};
+        (void)log.record(f, "padding: " + std::string(200, 'x') + "\n");
+    }
+    const auto bounded = text(file);
+    check(bounded.size() <= app::ModuleFailureLog::maximumBytes && bounded.size() > app::ModuleFailureLog::maximumBytes / 2 && bounded.starts_with(app::ModuleFailureLog::header) &&
+          bounded.find("owner: owner59\n") != std::string::npos && bounded.find("owner: settings\n") == std::string::npos, "The file keeps the newest records within 16 KiB");
+    check(!app::appendBoundedRecord(file, std::string(app::ModuleFailureLog::maximumBytes, 'y'), app::ModuleFailureLog::header, 64), "A file over the bound is never rewritten");
+    // A folder that cannot exist (its parent is a file) fails quietly.
+    app::ModuleFailureLog blocked(file / "module-failures.txt");
+    bool threw{};
+    try { check(!blocked.record(observed[1]), "An impossible folder reports no record"); } catch (const std::exception&) { threw = true; }
+    check(!threw, "A failed write never throws");
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
 }
 
 // The ONE host time (ModuleRegistry::hostTime / HostClock). Owners need()
@@ -230,6 +320,7 @@ int main() {
         routing();
         isolation();
         broadcasts();
+        failureRecords();
         hostClock();
         std::cout << "Module registry: " << checks << " checks passed\n";
         return 0;
