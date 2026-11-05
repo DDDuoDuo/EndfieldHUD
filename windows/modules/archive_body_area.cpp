@@ -23,6 +23,10 @@ ArchiveBodyArea::ArchiveBodyArea(d::Builder& b, std::string id, std::string labe
       bar_(std::make_unique<d::ScrollBarDriver>(b.env, *track_, b.layers.token())) {
     auto& l = layer();
     l.setMasksToBounds(true);
+    // The host composes the editor's glyphs right after this layer's part
+    // (NativeDesignScene::setInsertion matches part roots only): nested in
+    // the Notes note, it is no page child the canvas would make one.
+    l.setPartRoot(true);
     l.add(*frame_);
     l.add(*placeholder_);
     // The indicator is its own part above the host's glyph insertion (the Mac

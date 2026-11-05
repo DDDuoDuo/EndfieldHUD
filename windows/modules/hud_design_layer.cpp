@@ -622,6 +622,17 @@ private:
 }
 
 Artwork emit(const Layer& root, const EmitOptions& options) { return Emitter(root, options).run(root); }
+std::vector<const Layer*> partRoots(const Artwork& artwork, const Layer& root) {
+    std::vector<const Layer*> roots(artwork.parts.size());
+    std::vector<std::size_t> depth(artwork.parts.size(), std::size_t(-1));
+    for (const auto& binding : artwork.bindings) {
+        need(binding.part < roots.size() && binding.placement, "Design binding has no part");
+        std::size_t level{};
+        for (auto* l = binding.placement; l && l != &root; l = l->parent()) ++level;
+        if (level < depth[binding.part]) { roots[binding.part] = binding.placement; depth[binding.part] = level; }
+    }
+    return roots;
+}
 
 // ---------------------------------------------------------------------------
 // Sampling (allocation-free)

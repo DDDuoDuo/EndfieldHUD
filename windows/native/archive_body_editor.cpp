@@ -36,6 +36,7 @@ struct NativeArchiveBodyEditor::Impl {
         std::unique_ptr<NativeNotesEditor> editor;
         UINT_PTR generation{nextGeneration()};
         core::Rect frame;               // the text rect it was made for (area layer coordinates)
+        d::Color text, caret, selection; // the ink its style was made with
         bool published{};
         explicit Editor(LayerRasterizer& r) : glyphs(r) {}
     };
@@ -80,6 +81,7 @@ struct NativeArchiveBodyEditor::Impl {
         need(options.window && IsWindow(static_cast<HWND>(options.window)), "The Archive body needs the HUD window");
         auto e = std::make_unique<Editor>(raster);
         e->frame = frame;
+        e->text = pose.text; e->caret = pose.caret; e->selection = pose.selection;
         auto& doc = document();
         const auto hwnd = static_cast<HWND>(options.window);
         if (chunked) {
@@ -137,6 +139,17 @@ struct NativeArchiveBodyEditor::Impl {
         // The area's indicator follows the text view's scroll (numbers only;
         // the area ignores a report that changes nothing).
         area->editorScrolled(active->editor->scrollOffset(), active->editor->maximumScrollOffset());
+    }
+    // The ink follows the pose (the palette), compared with what the editor
+    // was made with: an editor made before the first pose (Notes activated on
+    // its TEXT tab), at a new session from the last one, or a change posed
+    // while hidden is restyled at its next shown pose. setStyle only marks
+    // the layout dirty: syncContent repaints it, once per change.
+    void restyle() {
+        auto& e = *active;
+        if (e.text == pose.text && e.caret == pose.caret && e.selection == pose.selection) return;
+        if (e.editor->setStyle(style(e.frame))) (void)e.editor->syncContent();
+        e.text = pose.text; e.caret = pose.caret; e.selection = pose.selection;
     }
     bool insidePhysical(core::Point physical) const {
         if (!editing() || !visible) return false;
@@ -298,13 +311,12 @@ void NativeArchiveBodyEditor::layoutChanged(modules::ArchiveBodyArea& a) {
 void NativeArchiveBodyEditor::setPose(const NativeArchiveBodyPose& p) {
     auto& i = *impl_;
     need(p.boxWorld.finite() && p.screenToClip.finite() && p.pixelWidth && p.pixelHeight && std::isfinite(p.time), "Invalid Archive body pose");
-    const bool restyle = i.posed && (p.text != i.pose.text || p.caret != i.pose.caret || p.selection != i.pose.selection);
     i.pose = p; i.posed = true;
     i.visible = false;
     if (!i.editing() || !p.root || !d::isVisible(i.area->layer(), *p.root)) { i.shownCaret = false; return; }
-    if (restyle) (void)i.active->editor->setStyle(i.style(i.active->frame));
     const auto layer = d::sampleLayer(i.area->layer(), *p.root, p.time);
     if (!layer.visible) { i.shownCaret = false; return; }
+    i.restyle();
     const auto text = i.area->textRect();
     i.local = p.boxWorld * designMatrix(layer.world) * Matrix::translation(text.x, text.y);
     i.opacity = float(std::clamp(double(p.opacity) * layer.opacity, 0.0, 1.0));

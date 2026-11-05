@@ -66,6 +66,18 @@ if(WIN32 AND TARGET hud_archive_owner AND TARGET hud_notes_preview)
   if(TARGET hud_application)
     target_link_libraries(hud_application PUBLIC hud_notes_centre_owner)
   endif()
+  if(BUILD_TESTING)
+    # The TEXT note drawn: its glyph scene composed, its ink the pose's (hidden window, WARP).
+    add_executable(notes_centre_owner_tests tests/notes_centre_owner_tests.cpp)
+    target_compile_definitions(notes_centre_owner_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_centre_owner_tests PRIVATE hud_notes_centre_owner ole32 user32)
+    if(MSVC)
+      target_compile_options(notes_centre_owner_tests PRIVATE /EHsc)
+    endif()
+    add_test(NAME notes_centre_owner_contracts COMMAND notes_centre_owner_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
+    set_tests_properties(notes_centre_owner_contracts PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "PASS [0-9]+ Notes centre owner checks")
+    list(APPEND EHUD_NOTES_TARGETS notes_centre_owner_tests)
+  endif()
 endif()
 # Portable Mac-to-Windows font name table for imported rich runs
 # (core/notes_font_names.hpp); part of the rich text model library.

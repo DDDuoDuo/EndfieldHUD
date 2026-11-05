@@ -300,12 +300,22 @@ struct NativeDesignScene::Impl {
     }
     void refreshEntries() {
         entries.clear();
+        bool anchored = !insertion;
         for (const auto& p : parts) {
+            anchored |= insertion && p->root == insertionAfter;
             if (!p->scene) continue;
             if (p->host && p->host->group) { if (insertion && p->root == insertionAfter) entries.push_back(*insertion); continue; } // in its host's group
             entries.push_back(p->group ? p->group->entry() : LayerCompositionEntry{p->scene.get(), {}});
             if (insertion && p->root == insertionAfter) entries.push_back(*insertion);
         }
+        // Only when the entries change, and only a miss walks the tree (an
+        // anchor that already left it is the owner's to withdraw next).
+        if (!anchored && root && holds(*root, insertionAfter)) ++statistics.unanchoredInsertions;
+    }
+    static bool holds(const d::Layer& l, const d::Layer* x) {
+        if (&l == x) return true;
+        for (const auto* c : l.children()) if (holds(*c, x)) return true;
+        return false;
     }
     void rebuildSlots() {
         slots.assign(artwork.bindings.size(), {none, none});
@@ -416,13 +426,8 @@ bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices&
     {
         // The part root: the shallowest layer placing one of its surfaces
         // (it places the part's static content or is the boundary itself).
-        std::vector<std::size_t> depth(plans.size(), none);
-        for (const auto& binding : artwork.bindings) {
-            need(binding.part < plans.size() && binding.placement, "Design binding has no part");
-            std::size_t level{};
-            for (auto* l = binding.placement; l && l != &root; l = l->parent()) ++level;
-            if (level < depth[binding.part]) { plans[binding.part].part->root = binding.placement; depth[binding.part] = level; }
-        }
+        const auto roots = d::partRoots(artwork, root);
+        for (std::size_t n = 0; n < plans.size(); ++n) plans[n].part->root = roots[n];
         for (auto& plan : plans) {
             auto& p = *plan.part;
             if (!p.root) continue;
