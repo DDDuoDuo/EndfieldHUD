@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <new>
@@ -942,6 +943,46 @@ void imagePaste(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&for
     f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.preview->dropPoint({400,300}),"Another module does not take Notes drops");
     f.release();
 }
+// An idle HUD draws no frame between events: the workspace's stored pose (the
+// last frame's) is older than the event, while the event's hover already moved
+// the shared design clock. A card's controls synced at that clock and re-posed
+// at the stored frame never see time run backwards (the Design scene's
+// monotonic owner time). Fixture::pointer is not used: it frames at the event
+// time first, so the stored pose is never older there.
+void idleCardEvents(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;tools::DesignOverlayOptions o;o.raster.pixelsPerPoint=1;o.window=hwnd;tools::DesignOverlayOwner overlay(raster,o);
+    Fixture f(hwnd,renderer,raster,formats);f.preview->setDesignContext(&overlay.context());f.tick(.05);const auto note=savedNotes(f.root.path).front();
+    const auto drawn=[&](std::string_view part){return std::any_of(f.composition.draws().begin(),f.composition.draws().end(),[&](const auto&d){return d.sourceID.find(part)!=std::string::npos&&d.opacity>0;});};
+    const auto idle=[&](app::PointerKind kind,core::Point p){f.time+=2;return f.preview->pointer({kind,kind==app::PointerKind::move?app::PointerButton::none:app::PointerButton::left,p.x,p.y,0},f.time);};
+    const auto press=[&](core::Point p){const bool taken=idle(app::PointerKind::down,p);(void)idle(app::PointerKind::up,p);f.frame();return taken;};
+    const core::Point header{note.x+32,note.y+12};
+    check(press(header),"An idle press on a card's header selects it");
+    check(press(pinPoint(note))&&savedNotes(f.root.path).front().isPinned,"An idle press on the pin button pins the card");
+    check(press(pinPoint(note))&&!savedNotes(f.root.path).front().isPinned,"A second idle press unpins it");
+    check(press(deletePoint(note)),"An idle press on the delete button asks for confirmation");f.tick(.3);
+    check(press(confirmationPoint(note,false))&&savedNotes(f.root.path).size()==1,"An idle press on Cancel keeps the note");f.tick(.3);
+    // A key after an idle hover: Escape ends the edit (the card's editing state changes).
+    const core::Point body{note.x+30,note.y+45};
+    check(f.pointer(app::PointerKind::doubleClick,body)&&f.preview->textCursorAt(body),"Open the note for editing");f.tick(.05);
+    (void)idle(app::PointerKind::move,header);f.time+=2;
+    check(f.preview->key({app::KeyKind::down,VK_ESCAPE},f.time)&&!f.preview->textCursorAt(body),"Escape after an idle hover finishes the edit");f.frame();
+    check(drawn("notes.card."),"The card's controls are still drawn");
+    // Media: the import's inspection and its card's decode complete through
+    // posted notices, each handled after an idle hover and no frame
+    // (acceptMedia/readMedia re-apply the stored pose after a content change).
+    TempRoot media;check(std::filesystem::create_directory(media.path),"Create the owned import directory");const auto file=media.path/"idle.bmp";
+    {const auto bytes=bitmapFile(64,32);std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(bool(out),"Write the owned fixture image");}
+    for(MSG stale{};PeekMessageW(&stale,hwnd,tools::NotesPreview::mediaNoticeMessage,tools::NotesPreview::mediaNoticeMessage,PM_REMOVE);){}
+    const auto u8=file.u8string();const std::array paths{std::string(reinterpret_cast<const char*>(u8.data()),u8.size())};
+    f.time+=.01;check(f.preview->importMedia(paths,{400,300},f.time),"Import the owned image file");f.frame();
+    const auto loaded=[&]{for(const auto&e:f.preview->entries())if(e.after.size()==4&&!e.after[0].textureID.empty()&&e.after[0].sourceID.find("media")!=std::string::npos)return true;return false;};
+    unsigned notices{};const auto deadline=GetTickCount64()+10000;
+    while(!loaded()){check(GetTickCount64()<deadline,"The import and its decode complete");MSG m{};
+        if(!PeekMessageW(&m,hwnd,tools::NotesPreview::mediaNoticeMessage,tools::NotesPreview::mediaNoticeMessage,PM_REMOVE)){Sleep(5);f.tick(.05);continue;}
+        (void)idle(app::PointerKind::move,{1270,790});f.time+=2;++notices;(void)f.preview->message({m.hwnd,m.message,m.wParam,m.lParam},f.time);f.frame();}
+    check(notices>=2&&savedNotes(f.root.path).size()==2,"The inspection and the decode notices both arrived after an idle hover");
+    f.release();
+}
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto original=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
@@ -1179,6 +1220,7 @@ int wmain(int argc, wchar_t** argv) {
         clipboardKeys(window.hwnd,renderer,formats);
         wordSelection(window.hwnd,renderer,formats);
         imagePaste(window.hwnd,renderer,formats);
+        idleCardEvents(window.hwnd,renderer,formats);
         relinkLedger(window.hwnd,renderer,formats);
         formattingPreview(window.hwnd,renderer,formats);
         desktopControls(window.hwnd,renderer,formats);

@@ -169,10 +169,15 @@ struct Harness {
         throw std::runtime_error(std::string("Timed out: ") + what);
     }
     std::vector<std::uint8_t> capture() { renderer.draw(false); return renderer.readback().pixels; }
+    // The body's glyph scene is among the owner's entries, after a part the
+    // scene found its anchor on.
     bool insertedBody() const {
         auto& o = *owner;
-        const auto entries = o.core().sceneStats(core::Module::archive);
-        return entries.has_value() && o.body().shown();
+        const auto stats = o.core().sceneStats(core::Module::archive);
+        const auto glyphs = o.body().entry();
+        if (!stats || stats->unanchoredInsertions || !glyphs || !o.body().shown()) return false;
+        const auto entries = o.entries(core::Module::archive);
+        return std::any_of(entries.begin(), entries.end(), [&](const auto& e) { return e.scene == glyphs->scene; });
     }
 };
 

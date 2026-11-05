@@ -38,12 +38,19 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     if(longWork){longWork->waitIdle();longWork->drain();longWork.reset();}
     archive=nullptr;drop(archiveModuleOwner);
     calendar=nullptr;drop(calendarModuleOwner);calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
-    drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
+    // Projection's page borrows Notes' TSF manager and the shared Context too.
+    drop(projectionModuleOwner);drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
     drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
     reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapSaves.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // The shared design Context outlives every design owner (they borrow it).
-    if(designOverlay){registry.remove(*designOverlay);designOverlay.reset();}designClipboard.reset();
+    // A canvas still registered is an owner missing above: the Context then
+    // stays to member destruction (every owner is declared after it).
+    bool designKept{};
+    if(designOverlay){registry.remove(*designOverlay);
+        if(designOverlay->context().canvases().empty())designOverlay.reset();
+        else{designKept=true;const char*line="EndfieldHUD teardown: a design canvas outlived its owner's drop; the shared design Context is kept\n";std::fputs(line,stderr);OutputDebugStringA(line);}}
+    designClipboard.reset();
     // Retire state routes before the shared file executor; accepted immutable
     // writes finish on its existing shutdown barrier, with callbacks dead.
     // The audio worker restores owned per-app levels and joins before the HWND
@@ -55,6 +62,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     if(mediaBroker){try{mediaBroker->collectRetired();if(archiveMediaClient)mediaBroker->detachClient(archiveMediaClient);if(notesMediaClient)mediaBroker->detachClient(notesMediaClient);}catch(...){}mediaBroker.reset();}
     mediaVideos.reset();mediaImages.reset();if(mediaDecoder)mediaDecoder->stop();mediaDecoder.reset();
     backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
+    need(production()||!designKept,"Every design owner is dropped before the shared design Context");
 }
 
 int Application::Impl::runVisible(){

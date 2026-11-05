@@ -86,6 +86,7 @@ struct PlaneMask {
     // Circular source corner radius in the mask's own logical coordinates.
     // Zero preserves the exact rectangle path; no per-frame mask texture.
     double cornerRadius{};
+    bool operator==(const PlaneMask&)const=default;
 };
 // The two original mask topologies share a fixed-size retained value. A
 // variant stores only the active path; there is no heap or duplicate geometry.
@@ -211,7 +212,8 @@ struct RendererStats {
     std::uint64_t preparedTextureInstalls{}; // setWorkerTexture: textures created on a worker
     // parkTexture/restoreTexture: copies held now (textures and their bytes),
     // textures parked, restored, copies dropped (ten-minute release, clear,
-    // reset, new device), and the CPU seconds parking and restoring took.
+    // reset, new device, room within maximumParkedBytes), and the CPU
+    // seconds parking and restoring took.
     std::size_t parkedTextures{},parkedBytes{};
     std::uint64_t textureParks{},parkedRestores{},parkedDrops{};
     double parkSeconds{},parkedRestoreSeconds{};
@@ -306,7 +308,8 @@ private:
 // staging copy the GPU writes without the CPU waiting, and copies back into a
 // new texture when restored. The owner holds it; the renderer drops its
 // contents at the ten-minute release (suspendDevice), on a clear, a reset and
-// a new device, after which restoreTexture declines it.
+// a new device, and the oldest first when newer copies need room within
+// Renderer::maximumParkedBytes, after which restoreTexture declines it.
 class RendererParkedTexture final {
 public:
     ~RendererParkedTexture();
@@ -355,6 +358,10 @@ class Renderer final {
 public:
     static constexpr std::size_t maximumMeshes = 4096, maximumTextures = 2048, maximumObjects = 16384;
     static constexpr std::size_t maximumResourceBytes = 512 * 1024 * 1024;
+    // Parked copies (parkTexture) held at once: system memory outside
+    // maximumResourceBytes, and no longer in the raster cache's budget (their
+    // pixels were given back), so bounded here at that budget's size.
+    static constexpr std::size_t maximumParkedBytes = 256 * 1024 * 1024;
     static constexpr std::size_t maximumRenderPixels = 4096 * 4096;
     static constexpr std::size_t maximumNativeGroups=256,maximumNativeGroupPixels=4*1024*1024,
         maximumNativeGroupBytes=64*1024*1024;
@@ -586,7 +593,10 @@ public:
     // as a GPU copy: same bytes, format, revision and identity, no CPU
     // upload, conversion or raster. Null (nothing removed) when the texture
     // is missing, still referenced or owned by a group or media, or the
-    // device is suspended. Never waits for the GPU.
+    // device is suspended. Never waits for the GPU. Within
+    // maximumParkedBytes: the oldest copies still held are dropped first
+    // (restoreTexture then declines them; their owners paint them again);
+    // a texture larger than the bound is not parked.
     std::shared_ptr<RendererParkedTexture> parkTexture(const std::string &sourceID);
     // Installs a parked texture again under its ID (true). False, changing
     // nothing, when its copy was dropped or another texture holds the ID.

@@ -348,6 +348,10 @@ struct EmitOptions { const TextServices* text{}; std::string partPrefix; };
 // surface id in a part, more than 64 nesting levels, or a part above the
 // rasterizer's 4096 nodes (LayerRasterizer::maximumNodes).
 Artwork emit(const Layer& root, const EmitOptions&);
+// Each part's root, as NativeDesignScene takes it: the shallowest layer
+// placing one of its surfaces (null without one). The scene composes an
+// owner's insertion (setInsertion) right after the part rooted at its anchor.
+std::vector<const Layer*> partRoots(const Artwork&, const Layer& root);
 
 struct PoseMask { Affine world; Rect bounds; double cornerRadius{}; }; // world: mask-local -> box px
 struct SurfacePose {
@@ -369,6 +373,14 @@ struct SurfacePose {
 // the placement's presented tint. A placement detached since emission, a
 // hidden chain, zero opacity or a wipe at 0 gives visible = false.
 void samplePoses(const Artwork&, double now, std::span<SurfacePose> out);
+// One layer posed as samplePoses poses a placement, up to `root`
+// (allocation-free; no tint): its presented world and opacity, the masks of
+// every masksToBounds ancestor strictly above it and of every running wipe on
+// its chain, its own included. For content a host draws over the layer
+// itself (the body editor's glyphs, native/archive_body_editor.hpp), clipped
+// as the scene clips the layer's parts (the Mac text view under its
+// superlayer's mask).
+SurfacePose samplePlacement(const Layer&, const Layer& root, double now) noexcept;
 // One layer composed as samplePoses composes a placement's chain (no masks):
 // the presented world (layer-local -> root) and the presented opacity product
 // of the layer and its ancestors up to `root`; visible false when detached,

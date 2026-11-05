@@ -10,8 +10,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <new>
 #include <stdexcept>
+#include <vector>
 
 namespace {std::atomic<bool>counting{},failNextAllocation{};std::atomic<std::size_t>allocations{};}
 void*operator new(std::size_t n){if(failNextAllocation.exchange(false))throw std::bad_alloc();if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
@@ -268,7 +270,7 @@ void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& 
     const auto first=renderer.readback().pixels;const auto bytes=scene.report().pixelBytes;
     check(bytes>0&&raster.stats().releasedPixelBytes==bytes&&raster.stats().pixelReleases>=2,"Uploaded surfaces give their CPU pixels back to their GPU textures");
     std::size_t held{};raster.forEachEntry([&](const LayerRasterEntryUsage&e){held+=e.pixelBytes;});
-    check(held==0&&raster.stats().resourceBytes>=bytes,"No retained entry holds pixels its texture holds; the cache budget still answers for them");
+    check(held==0&&raster.stats().resourceBytes>=bytes,"No retained entry holds pixels its texture holds; the cache still answers for them (outside its budget)");
     const auto repaints=raster.stats().pixelRepaints;const auto rasters=raster.stats().rasterizations;
     scene.uploadResources(renderer);check(raster.stats().pixelRepaints==repaints,"Resident textures are never painted again");
     // Dropped from the composition (another module shown) and shown again.
@@ -318,6 +320,34 @@ void releasedPixels(Renderer& renderer,HWND window,const std::filesystem::path& 
                  <<" ms ("<<parkedBytes/1024<<" KiB parked), switch-back restore "<<restored<<" ms; after the ten-minute release: painted again "<<repainted<<" ms\n";
         rows.detach(renderer);check(rows.releaseResources(renderer),"The page releases");
     }
+}
+// Every module visited in one opening (RC 142: after a tour of all modules a
+// Settings switch threw "Retained layer resource budget exceeded" and blanked
+// System, Display, Hotkeys and About): each page is uploaded, gives its pixels
+// back and is parked when the next one shows. Pages beyond the shared raster
+// budget keep rasterizing, for that budget bounds the pixels the cache holds;
+// the parked copies stay within their own bound, the oldest dropped first, and
+// a page whose copy went is painted again identically.
+void moduleTour(Renderer& renderer,LayerRasterizer& raster,LayerRasterOptions options){
+    options.pixelsPerPoint=2; // a 1000 pt page: 2004 x 2004 px, 16 MiB of pixels
+    constexpr unsigned pages=20;
+    std::vector<std::unique_ptr<LayerScene>> scenes;LayerComposition composition;std::vector<Readback> shown;
+    const auto show=[&](LayerScene& scene){LayerScene* order[]{&scene};composition.setScenes(renderer,order);composition.present(renderer);renderer.draw(false);return renderer.readback();};
+    const auto held=[&]{const auto s=raster.stats();return s.resourceBytes-s.releasedPixelBytes;};
+    const auto drops=renderer.stats().parkedDrops;std::size_t pixels{};
+    for(unsigned n=0;n<pages;++n){
+        auto page=leaf("page-"+std::to_string(n),double(n)/pages,.5,1-double(n)/pages);page["bounds"]=Json::Array{0,0,1000,1000};page["position"]=Json::Array{0,0};
+        scenes.push_back(std::make_unique<LayerScene>(raster));scenes.back()->load(root({page}),options);pixels+=scenes.back()->report().pixelBytes;
+        shown.push_back(show(*scenes.back()));
+        check(held()<LayerRasterizer::maximumResourceBytes/8&&renderer.stats().parkedBytes<=Renderer::maximumParkedBytes,"A visited page holds no pixels its texture holds; parked copies stay within their bound");
+    }
+    check(pixels>LayerRasterizer::maximumResourceBytes&&raster.stats().resourceBytes>LayerRasterizer::maximumResourceBytes,"The tour answers for more pixels than the shared raster budget holds");
+    check(renderer.stats().parkedDrops>drops&&renderer.stats().parkedBytes+scenes.front()->report().pixelBytes>Renderer::maximumParkedBytes,"The oldest parked copies made room for the newest");
+    const auto repaints=raster.stats().pixelRepaints;
+    check(show(*scenes.front()).pixels==shown.front().pixels&&raster.stats().pixelRepaints==repaints+1,"The first page, its copy dropped, is painted again identically");
+    check(show(*scenes[pages-2]).pixels==shown[pages-2].pixels&&raster.stats().pixelRepaints==repaints+1,"A recent page is restored from its parked copy without painting");
+    composition.detach(renderer);for(auto&scene:scenes)check(scene->releaseResources(renderer),"Every page releases");
+    scenes.clear();check(renderer.stats().parkedBytes==0,"Released pages hold no parked copies");
 }
 // LIBRARY-DESIGN.md R4: a white-authored surface recoloured by its placement
 // tint, and the row sheen clipped by its rounded plate's alpha (no rect leak
@@ -426,6 +456,7 @@ void run(const std::filesystem::path& shader){
     retainedResourceComposition(renderer,raster,options);
     roundedComposition(renderer,raster,options);
     releasedPixels(renderer,window.hwnd,shader,raster,options);
+    moduleTour(renderer,raster,options);
     check(raster.stats().entries==0,"Sibling scene destruction releases only its own retained local rasters");
     check(!IsWindowVisible(window.hwnd),"The fixture never shows or captures a desktop window");
 }

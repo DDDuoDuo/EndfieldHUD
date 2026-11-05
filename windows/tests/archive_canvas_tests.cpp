@@ -173,6 +173,15 @@ bool hasText(const d::Layer& l, std::string_view text) {
     for (const auto* c : l.children()) if (hasText(*c, text)) return true;
     return false;
 }
+// The body editor's glyphs are composed right after the part the body area
+// roots (NativeDesignScene::setInsertion, d::partRoots): one, with a surface.
+bool rootsPart(World& w, const m::ArchiveBodyArea& area) {
+    const auto artwork = d::emit(w.canvas->root(), {&w.context.env().text, "test."});
+    const auto roots = d::partRoots(artwork, w.canvas->root());
+    std::size_t parts{};
+    for (std::size_t n = 0; n < roots.size(); ++n) parts += roots[n] == &area.layer() && !artwork.parts[n].surfaces.empty();
+    return parts == 1;
+}
 m::ArchiveJson png(std::string name) {
     return J::Object{{"version", 1}, {"kind", "image"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
         {"duration", J{}}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 1}};
@@ -295,6 +304,14 @@ void editor() {
     check(body && w.body.focused(*body) && !title->editing(), "Tab moves from the title to the body");
     w.body.type(*body, u"Field 记录");
     check(w.state.selected()->body == "Field 记录" && w.state.selected()->bodyStyle.fontSize == 14, "Typing (with CJK) updates the body at 14 pt");
+    check(rootsPart(w, *body), "The body area roots the part the editor's glyphs are composed after");
+    // Its host clips the glyphs by the body's ancestors (d::samplePlacement,
+    // the Notes fold's wipe): none clips the Archive body, so it draws as before.
+    {
+        const auto placed = d::samplePlacement(body->layer(), c.root(), w.now);
+        const auto layer = d::sampleLayer(body->layer(), c.root(), w.now);
+        check(placed.visible && placed.maskCount == 0 && placed.world == layer.world && near(placed.opacity, layer.opacity), "Nothing above the Archive body clips its text");
+    }
     // The text view's auto-hiding scroll indicator (HUDProjectedTextEditor.swift:16-18, :180-183).
     {
         const auto* track = find(body->layer(), ".indicator");

@@ -622,6 +622,17 @@ private:
 }
 
 Artwork emit(const Layer& root, const EmitOptions& options) { return Emitter(root, options).run(root); }
+std::vector<const Layer*> partRoots(const Artwork& artwork, const Layer& root) {
+    std::vector<const Layer*> roots(artwork.parts.size());
+    std::vector<std::size_t> depth(artwork.parts.size(), std::size_t(-1));
+    for (const auto& binding : artwork.bindings) {
+        need(binding.part < roots.size() && binding.placement, "Design binding has no part");
+        std::size_t level{};
+        for (auto* l = binding.placement; l && l != &root; l = l->parent()) ++level;
+        if (level < depth[binding.part]) { roots[binding.part] = binding.placement; depth[binding.part] = level; }
+    }
+    return roots;
+}
 
 // ---------------------------------------------------------------------------
 // Sampling (allocation-free)
@@ -652,37 +663,48 @@ void addPresentedMask(SurfacePose& pose, const Layer& layer, const Affine& world
     addMask(pose, world * Affine::translation(a.x * b.width, a.y * b.height) * Affine::scale(1 / sx, 1 / sy), r,
         std::min(layer.presentedClipRadius(), std::min(r.width, r.height) * .5));
 }
+// One placement's chain up to `root` composed into `pose` (reset first):
+// false when it is detached from `root`.
+bool poseChain(const Layer& placement, const Layer& root, double now, SurfacePose& pose) noexcept {
+    pose = {};
+    std::array<const Layer*, maximumDepth + 1> chain{};
+    std::size_t n{};
+    for (const Layer* l = &placement; l && n < chain.size(); l = l == &root ? nullptr : l->parent()) chain[n++] = l;
+    if (!n || chain[n - 1] != &root) { pose.visible = false; return false; }
+    Affine world;
+    double opacity = 1;
+    for (std::size_t k = n; k-- > 0;) {
+        const auto& layer = *chain[k];
+        if (layer.hidden()) pose.visible = false;
+        opacity *= layer.presented(Channel::opacity, now);
+        if (&layer != &root) world = world * presentedLocal(layer, now);
+        if (k > 0 && layer.masksToBounds()) addMask(pose, world, {0, 0, layer.bounds().width, layer.bounds().height}, layer.maskCornerRadius());
+        if (k == 0 && layer.clipsPresentedBounds()) addPresentedMask(pose, layer, world, now);
+        if (layer.animatable()) {
+            const double w = std::clamp(layer.presented(Channel::wipe, now), 0.0, 1.0);
+            if (w < 1) { if (w <= 0) pose.visible = false; addMask(pose, world, wipeRect(layer, w), 0); }
+        }
+    }
+    pose.world = world;
+    pose.opacity = float(std::clamp(opacity, 0.0, 1.0));
+    if (!(pose.opacity > 0)) pose.visible = false;
+    return true;
+}
 }
 void samplePoses(const Artwork& art, double now, std::span<SurfacePose> out) {
     need(out.size() == art.bindings.size(), "One pose per surface binding");
-    std::array<const Layer*, maximumDepth + 1> chain{};
     for (std::size_t i = 0; i < out.size(); ++i) {
         auto& pose = out[i];
-        pose = {};
         const auto* p = art.bindings[i].placement;
-        std::size_t n{};
-        const Layer* l = p;
-        for (; l && n < chain.size(); l = l == art.root ? nullptr : l->parent()) chain[n++] = l;
-        if (!n || chain[n - 1] != art.root) { pose.visible = false; continue; } // detached since emission
-        Affine world;
-        double opacity = 1;
-        for (std::size_t k = n; k-- > 0;) {
-            const auto& layer = *chain[k];
-            if (layer.hidden()) pose.visible = false;
-            opacity *= layer.presented(Channel::opacity, now);
-            if (&layer != art.root) world = world * presentedLocal(layer, now);
-            if (k > 0 && layer.masksToBounds()) addMask(pose, world, {0, 0, layer.bounds().width, layer.bounds().height}, layer.maskCornerRadius());
-            if (k == 0 && layer.clipsPresentedBounds()) addPresentedMask(pose, layer, world, now);
-            if (layer.animatable()) {
-                const double w = std::clamp(layer.presented(Channel::wipe, now), 0.0, 1.0);
-                if (w < 1) { if (w <= 0) pose.visible = false; addMask(pose, world, wipeRect(layer, w), 0); }
-            }
-        }
-        pose.world = world;
-        pose.opacity = float(std::clamp(opacity, 0.0, 1.0));
-        if (!(pose.opacity > 0)) pose.visible = false;
+        if (!p || !art.root) { pose = {}; pose.visible = false; continue; }
+        if (!poseChain(*p, *art.root, now, pose)) continue; // detached since emission
         pose.tint = p->presentedTint(now);
     }
+}
+SurfacePose samplePlacement(const Layer& layer, const Layer& root, double now) noexcept {
+    SurfacePose pose;
+    (void)poseChain(layer, root, now, pose);
+    return pose;
 }
 LayerPose sampleLayer(const Layer& layer, const Layer& root, double now) noexcept {
     std::array<const Layer*, maximumDepth + 1> chain{};

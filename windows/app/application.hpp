@@ -152,6 +152,11 @@ struct ApplicationOptions {
     // hidden through launch, a cold opening, a visit of every module, closing
     // and ten more open/close cycles instead of the module coverage.
     std::filesystem::path memoryTrace;
+    // A disabled module owner's record (app/module_failure_log.hpp): one per
+    // owner and run, appended to this bounded file (16 KiB, oldest records
+    // dropped) on the failure path. Production always sets it
+    // (Diagnostics/module-failures.txt in the data root); empty: none.
+    std::filesystem::path moduleFailureLog;
     // Hidden idle trace (watch_session_preview --idle-trace): the same owner
     // on the REAL clock through the production frame scheduling (OverlayHost
     // presents the never-shown window for scheduling; offscreen hardware

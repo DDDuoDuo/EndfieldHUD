@@ -92,6 +92,116 @@ void rules() {
     const auto length = std::uint32_t(canvas.noteArea()->document().text().size());
     check(canvas.noteArea()->document().selection().range == endfield::core::text::Range{length, length}, "A new HUD session puts the caret at the note's end");
 }
+// The TEXT note's editor is drawn by its host right after the note area's
+// part (NativeDesignScene::setInsertion keys on part roots, d::partRoots):
+// the area, nested in the note box, roots a part with a surface in every
+// state the note shows, or the scene drops the typed text.
+struct NoteHost final : m::ArchiveBodyEditorHost {
+    int attaches{};
+    bool attach(m::ArchiveBodyArea&) override { ++attaches; return true; }
+    void suspend(m::ArchiveBodyArea&) override {}
+    void dispose(m::ArchiveBodyArea&) noexcept override {}
+    bool attached(const m::ArchiveBodyArea&) const noexcept override { return attaches > 0; }
+    bool focused(const m::ArchiveBodyArea&) const noexcept override { return false; }
+    void focus(m::ArchiveBodyArea&, endfield::core::text::Range) override {}
+    void blur(m::ArchiveBodyArea&) override {}
+    bool hasMarkedText(const m::ArchiveBodyArea&) const noexcept override { return false; }
+    bool applyFormat(m::ArchiveBodyArea&, const endfield::core::notes::FormatChange&, endfield::core::text::Range, bool) override { return false; }
+    bool replace(m::ArchiveBodyArea&, endfield::core::text::Range, std::u16string_view) override { return false; }
+    void scroll(m::ArchiveBodyArea&, double) override {}
+    void layoutChanged(m::ArchiveBodyArea&) override {}
+};
+void noteEditorPart(const char* body) {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english);
+    data::NotesCentreDocument doc; doc.tab = data::NotesCentreDocument::Tab::text; doc.text = body;
+    auto store = storeOf(doc);
+    NoteHost host;
+    m::NotesCanvasOptions options; options.noteEditor = &host;
+    m::NotesCanvas canvas(w.context, *store, options);
+    const auto composed = [&](const std::string& when) {
+        const auto* area = canvas.noteArea();
+        check(area && area->layer().parent(), "The TEXT note shows its area " + when);
+        const auto artwork = d::emit(canvas.root(), {&w.context.env().text, "test."});
+        const auto roots = d::partRoots(artwork, canvas.root());
+        std::size_t parts{};
+        for (std::size_t n = 0; n < roots.size(); ++n) parts += roots[n] == &area->layer() && !artwork.parts[n].surfaces.empty();
+        check(parts == 1, "The note area roots one part with a surface (the editor's insertion anchor) " + when);
+    };
+    canvas.show(w.now);
+    check(host.attaches == 0, "Shown but inactive, the note has no editor yet");
+    canvas.setActive(true, w.now);
+    // The owner's first pose of the editor follows this attach.
+    check(host.attaches == 1, "Activated on the TEXT tab, the note attaches its editor");
+    composed("when opened");
+    auto& area = *canvas.noteArea();
+    const auto typing = area.document().typingStyle(); // load disposes the document it lives in
+    area.load(u"Typed field note", {}, typing);
+    composed("after typing (no placeholder)");
+    canvas.selectTab(data::NotesCentreDocument::Tab::todo, -1);
+    canvas.selectTab(data::NotesCentreDocument::Tab::text, -1);
+    composed("after a tab round trip");
+    canvas.setFolded(true); canvas.setFolded(false);
+    composed("after folding and unfolding");
+    w.appearance(Language::simplifiedChinese);
+    composed("after a language rerender");
+    w.appearance(Language::english, true);
+    composed("in Light");
+    canvas.setActive(false, w.now);
+}
+// The TEXT note's editor is drawn by its host over the note's parts, clipped
+// as they are (Mac: the text view lies under the body clip's masksToBounds,
+// NotesCanvas.swift:207-208): d::samplePlacement hands the host the fold's
+// running wipe, whose edge crosses the text while the note unfolds (.32 s),
+// and nothing once it is open.
+void noteEditorClip() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    d::Context::Appearance a; a.language = Language::english; a.reduceMotion = false; w.context.apply(a, w.now);
+    const auto at = [&](double t) { w.now = t; w.context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, t); };
+    data::NotesCentreDocument doc; doc.tab = data::NotesCentreDocument::Tab::text; doc.text = "Field note";
+    auto store = storeOf(doc);
+    NoteHost host;
+    m::NotesCanvasOptions options; options.noteEditor = &host;
+    m::NotesCanvas canvas(w.context, *store, options);
+    w.show(canvas);
+    at(w.now + 2);
+    auto* area = canvas.noteArea();
+    check(area != nullptr, "The TEXT note shows its area");
+    const auto text = d::convert(area->textRect(), area->layer(), canvas.root());
+    check(text.height > 100, "The note's text rect is tall");
+    // The lowest edge the sampled masks leave (root px; none: unbounded).
+    const auto edge = [&](const d::SurfacePose& pose) {
+        double bottom = 1e9;
+        for (std::size_t n = 0; n < pose.maskCount; ++n) {
+            const auto& mask = pose.masks[n];
+            bottom = std::min(bottom, mask.world.apply({mask.bounds.x, mask.bounds.y + mask.bounds.height}).y);
+        }
+        return bottom;
+    };
+    const auto sample = [&](double t) { return d::samplePlacement(area->layer(), canvas.root(), t); };
+    {
+        const auto open = sample(w.now);
+        const auto layer = d::sampleLayer(area->layer(), canvas.root(), w.now);
+        check(open.visible && open.world == layer.world && std::abs(open.opacity - layer.opacity) < 1e-6, "Placed as sampleLayer places the area");
+        check(edge(open) >= text.y + text.height - .5, "Open, no mask cuts the note's text");
+    }
+    canvas.setFolded(true);
+    at(w.now + 1);
+    check(!sample(w.now).visible || edge(sample(w.now)) <= text.y + 1, "Folded, the note's text is hidden or clipped away");
+    canvas.setFolded(false);
+    const double start = w.now;
+    std::size_t crossing{};
+    for (const double t : {.08, .12, .16, .2}) {
+        const auto mid = sample(start + t);
+        const auto bottom = edge(mid);
+        crossing += mid.visible && bottom > text.y && bottom < text.y + text.height - 1;
+    }
+    check(crossing >= 2, "Unfolding, the fold's wipe edge crosses the note's text and reaches its host");
+    at(start + 1);
+    check(sample(w.now).visible && edge(sample(w.now)) >= text.y + text.height - .5, "Unfolded, no mask cuts the note's text again");
+    canvas.setActive(false, w.now);
+}
 // The redaction wipe of a build in Recording mode (:250): the shown Notes
 // rebuilds at the switch and wipes its bars in; a Notes page the switch found
 // hidden was rebuilt and wiped unseen on the Mac (HUDDesignScreen.swift:82),
@@ -275,6 +385,7 @@ void notesOracle(Oracle& o) {
 int main(int argc, char** argv) {
     try {
         rules();
+        noteEditorPart(""); noteEditorPart("Field note"); noteEditorClip();
         recordingWipe(); unavailable(); cardControls();
         if (const auto oracleData = loadOracle(argc > 1 ? argv[1] : nullptr, {"notes"}, {"text", "layerDefaults", "formatBar"})) {
             Oracle oracle(*oracleData);

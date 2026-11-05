@@ -28,6 +28,7 @@
 #include "app/application_modules.hpp"
 #include "app/application_package.hpp"
 #include "app/fatal_stage.hpp"
+#include "app/module_failure_log.hpp"
 #include "app/single_instance.hpp"
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
@@ -190,24 +191,6 @@ int verifyPackage() {
 // fatal record goes to its Diagnostics folder. Empty before the root opens.
 fs::path fatalDataFolder;
 
-// Exception text can carry file paths (std::filesystem_error, Windows API
-// wrappers): words with a path separator are redacted, non-ASCII bytes and
-// control characters replaced, and the result bounded.
-std::string redacted(std::string_view message) {
-    std::string out;
-    std::size_t start = 0;
-    while (start < message.size() && out.size() < 512) {
-        std::size_t end = start;
-        while (end < message.size() && message[end] != ' ') ++end;
-        const auto word = message.substr(start, end - start);
-        if (word.find_first_of("\\/") != std::string_view::npos) out += "<path>";
-        else for (const char c : word) out.push_back(c >= 0x20 && c < 0x7f ? c : '?');
-        if (end < message.size()) out.push_back(' ');
-        start = end + 1;
-    }
-    if (out.size() > 512) out.resize(512);
-    return out;
-}
 // Best effort: never throws, never replaces the message box below.
 void writeFatal(std::string_view type, std::string_view message, std::optional<std::uint32_t> hresult) noexcept {
     try {
@@ -216,8 +199,8 @@ void writeFatal(std::string_view type, std::string_view message, std::optional<s
         const auto now = std::time(nullptr);
         std::tm utc{};
         if (!gmtime_s(&utc, &now) && std::strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) text += "utc: " + std::string(stamp) + "\n";
-        text += "exception: " + redacted(type.substr(0, 160)) + "\n";
-        text += "message: " + redacted(message) + "\n";
+        text += "exception: " + app::redacted(type.substr(0, 160)) + "\n";
+        text += "message: " + app::redacted(message) + "\n";
         if (hresult) {
             char code[16]{};
             std::snprintf(code, sizeof code, "%08X", static_cast<unsigned>(*hresult));
@@ -332,6 +315,9 @@ int run(const std::vector<std::string>& values) {
         // prewarm and each of the first eight openings and closings.
         if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_MEMORY_TRACE", flag, 8) == 1 && flag[0] == L'1')
             options.memoryTrace = root->data / "Diagnostics" / "memory-trace.json";
+        // Always: a disabled module owner leaves one bounded record
+        // (app/module_failure_log.hpp) beside last-fatal.txt.
+        options.moduleFailureLog = root->data / "Diagnostics" / "module-failures.txt";
         // Factory-added module areas resolve their own verified resources (the
         // locator outlives the Application and is used on its UI thread only).
         options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };

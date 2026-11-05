@@ -97,6 +97,9 @@ struct NativeDesignSceneStats {
     std::uint64_t generations{}, emits{}, partsReused{}, surfacesUpdated{}, partsLoaded{}, poses{}, lazyPaints{}, lazyReleases{};
     std::uint64_t groupSwitches{}, parks{};   // groupSwitches: group attaches and detaches
     std::uint64_t partsKept{};                // parts back in the tree that took their kept scene (no rasterization)
+    // Entry refreshes that dropped the owner's insertion: its anchor is in the
+    // tree but roots no part (a nested layer not setPartRoot). Owner tests assert 0.
+    std::uint64_t unanchoredInsertions{};
     std::size_t parts{}, surfaces{}, retiredParts{}, keptParts{}, rasterEntries{}, residentPixelBytes{};
     std::size_t keptPixelBytes{};             // of residentPixelBytes: the kept parts' (they expire a few seconds after leaving)
     std::size_t groups{}, groupTargets{};      // parts drawn through a group; group targets held (incl. awaiting collectRetired)
@@ -104,6 +107,11 @@ struct NativeDesignSceneStats {
 // A box-px affine (samplePoses, sampleLayer) as the plane matrix the scene
 // composes with boxWorld (owner-drawn records follow the same rule).
 core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
+// A sampled mask (samplePoses, samplePlacement: mask-local -> box px) as the
+// plane mask of a draw in the module world (box px -> world: boxWorld, whose
+// inverse is `inverseBox`), as the scene clips a part outside a group.
+// Nullopt when the mask shows nothing (a singular world or empty bounds).
+std::optional<PlaneMask> designPlaneMask(const modules::design::PoseMask&, const core::Matrix4& inverseBox) noexcept;
 class NativeDesignScene final {
 public:
     NativeDesignScene(LayerRasterizer&, LayerRasterOptions, std::string sourcePrefix, DesignImages = {});
