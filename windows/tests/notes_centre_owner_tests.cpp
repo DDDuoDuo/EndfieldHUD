@@ -123,6 +123,12 @@ struct Harness {
         chrome.module = s.requested;
         const app::ModuleFrame f{center, chrome, s, 1, time, true};
         overlay->update(f); owner->update(f);
+        publish();
+    }
+    // The publication of the owners' current entries and the collection
+    // after it (the app's publishNative), with or without an update before.
+    void publish() {
+        const auto s = modules.sample(time).presentation;
         overlay->upload(renderer); owner->upload(renderer);
         std::vector<gpu::LayerCompositionEntry> entries;
         for (const auto& e : owner->entries(s.current.module)) entries.push_back(e);
@@ -322,6 +328,21 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     h.setLight(false); h.settle(20);
     check(h.composed() && h.inked() >= drawn, "A palette change while the note shows repaints its ink");
     check(h.owner->body().restyles() == restyled + 1, "A palette change while the note shows restyles it once");
+    // The concealment's session reset reloads the note (its editor ends)
+    // after the owner's last pose; a publication with no update between (a
+    // hidden frame of the quit's drain) still composes the ended editor's
+    // glyphs: they are collected only after a publication without them.
+    h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(30);
+    h.owner->setOverlayVisible(false, h.time); h.overlay->setOverlayVisible(false, h.time);
+    const auto ended = h.owner->body().entry();
+    check(ended.has_value(), "The closed note's editor is still composed before the concealment");
+    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time);
+    check(!h.owner->body().entry(), "The concealment's session reset ends the note's editor");
+    h.composition.detach(h.renderer);
+    h.publish();
+    h.settle(10);
+    h.openHUD();
+    check(h.composed() && h.inked() >= drawn, "The next session's note shows after an ended editor was collected late");
 }
 }
 int wmain(int argc, wchar_t** argv) {

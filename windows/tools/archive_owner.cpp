@@ -265,7 +265,7 @@ std::span<const gpu::LayerCompositionEntry> ArchiveOwner::entries(core::Module m
 void ArchiveOwner::collected(gpu::Renderer& r) {
     auto& i = *impl_;
     i.core->collected(r);
-    (void)i.body->collectRetired(r);
+    (void)i.body->collectRetired(r, i.inserted ? i.inserted->scene : nullptr);
     (void)i.media->collectRetired();
     // The HUD finished closing: the media go once no publication names them.
     if (i.releasePending && i.media->releaseResources(i.time)) i.releasePending = false;

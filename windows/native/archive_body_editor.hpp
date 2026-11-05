@@ -115,7 +115,12 @@ public:
     std::optional<double> nextWakeTime(double now) const;
     // The insertion entry (the glyph scene) while shown; nullopt otherwise.
     std::optional<LayerCompositionEntry> entry() const;
-    bool collectRetired(Renderer&);
+    // After a publication: frees the ended editors' glyph scenes, except the
+    // one the owner's insertion still names (`inserted`): an editor can end
+    // after the owner's last pose (a quit's drain), so that publication still
+    // composed its scene. It goes after a publication without it. False while
+    // one waits.
+    bool collectRetired(Renderer&, const LayerScene* inserted = nullptr);
     bool releaseResources(Renderer&);
     std::size_t promotions() const noexcept;              // short bodies reopened in the chunked editor (tests)
     std::size_t restyles() const noexcept;                // ink changes laid out again in a made editor (tests)

@@ -521,11 +521,15 @@ std::optional<LayerCompositionEntry> NativeArchiveBodyEditor::entry() const {
     i.active->published = true;
     return LayerCompositionEntry{&i.active->glyphs, {}};
 }
-bool NativeArchiveBodyEditor::collectRetired(Renderer& r) {
+bool NativeArchiveBodyEditor::collectRetired(Renderer& r, const LayerScene* inserted) {
     auto& i = *impl_;
-    for (auto& e : i.retired) if (!e->glyphs.releaseResources(r)) return false;
-    i.retired.clear();
-    return true;
+    bool done = true;
+    for (auto it = i.retired.begin(); it != i.retired.end();) {
+        if (&(*it)->glyphs == inserted) { done = false; ++it; continue; }
+        if (!(*it)->glyphs.releaseResources(r)) return false;
+        it = i.retired.erase(it);
+    }
+    return done;
 }
 bool NativeArchiveBodyEditor::releaseResources(Renderer& r) {
     auto& i = *impl_;

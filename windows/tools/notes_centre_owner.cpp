@@ -162,7 +162,7 @@ std::optional<double> NotesCentreOwner::nextWakeTime(double t) const {
 bool NotesCentreOwner::deadline(double t) { auto& i = *impl_; i.clock(t); return i.core->deadline(t); }
 void NotesCentreOwner::upload(gpu::Renderer& r) { impl_->core->upload(r); }
 std::span<const gpu::LayerCompositionEntry> NotesCentreOwner::entries(core::Module module) { return impl_->core->entries(module); }
-void NotesCentreOwner::collected(gpu::Renderer& r) { auto& i = *impl_; i.core->collected(r); (void)i.body->collectRetired(r); }
+void NotesCentreOwner::collected(gpu::Renderer& r) { auto& i = *impl_; i.core->collected(r); (void)i.body->collectRetired(r, i.inserted ? i.inserted->scene : nullptr); }
 void NotesCentreOwner::release(gpu::Renderer& r) {
     auto& i = *impl_;
     i.core->setInsertion(core::Module::notes, nullptr, std::nullopt);
