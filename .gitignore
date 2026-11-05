@@ -62,3 +62,6 @@ __pycache__/
 /docs/watch-motion.md
 /docs/watch-source.md
 /docs/reference/
+
+# Release history is kept locally.
+/CHANGELOG.md
