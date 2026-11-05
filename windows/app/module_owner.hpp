@@ -148,6 +148,7 @@
 //      appearance, open/close, frames, upload, the host broadcasts and exactly
 //      one release, and the CMake test checks every registered name reported.
 #include "app/fatal_stage.hpp"
+#include "app/module_failure_log.hpp"
 #include "app/overlay_host.hpp"
 #include "core/localization.hpp"
 #include "core/module_presentation.hpp"
@@ -426,10 +427,6 @@ public:
     virtual ModuleResidency residency() const { return {}; }
 };
 
-// Failure report delivered once per disabled owner. `what` is the exception's
-// dynamic type name only, never its message (messages can contain paths).
-struct ModuleFailure { std::string owner, what, operation; };
-
 // The ONE host time (app/application.cpp): every owner call, deadline,
 // utility completion, message, pointer/key event and coverage step receives
 // a sample clamped to the latest time any owner was already handed. Owners
@@ -545,7 +542,7 @@ private:
     Slot* find(const ModuleOwner&) noexcept;
     const Slot* find(const ModuleOwner&) const noexcept;
     void rebuild();
-    void disable(Slot&, const char* what, std::string_view operation);
+    void disable(Slot&, const char* what, const char* message, std::string_view operation);
     struct Current {
         ModuleRegistry& registry; ModuleOwner* previous;
         // Memory trace attribution of the retained rasters this call creates.
@@ -562,8 +559,8 @@ private:
         const Current current(*this, slot.owner);
         if (!isolate_ || slot.owner->essential()) { f(); return; }
         try { f(); }
-        catch (const std::exception& e) { disable(slot, typeid(e).name(), operation); }
-        catch (...) { disable(slot, "unknown", operation); }
+        catch (const std::exception& e) { disable(slot, typeid(e).name(), e.what(), operation); }
+        catch (...) { disable(slot, "unknown", nullptr, operation); }
     }
 };
 } // namespace endfield::app

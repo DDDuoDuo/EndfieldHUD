@@ -78,7 +78,7 @@ if(WIN32)
   set(EHUD_APP_DEFINITIONS _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   # The module-owner registry is independent of the concrete module set, so
   # other areas and tests can link it alone.
-  add_library(hud_module_registry app/module_registry.cpp)
+  add_library(hud_module_registry app/module_registry.cpp app/module_failure_log.cpp)
   target_include_directories(hud_module_registry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_module_registry PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_module_registry PUBLIC hud_native hud_overlay_host hud_settings hud_localization)
