@@ -1,4 +1,4 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.png" alt="ENDFIELD HUD：适用于 Mac 和 Windows 的桌面 HUD，v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.zh-cn.png" alt="ENDFIELD HUD：适用于 Mac 和 Windows 的桌面 HUD，v1.3.0" width="100%"></a>
 
 <p align="center">
   <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="最新版本 v1.3.0" height="36"></a>

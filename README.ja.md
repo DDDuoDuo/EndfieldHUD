@@ -1,4 +1,4 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.png" alt="ENDFIELD HUD：Mac と Windows のためのデスクトップ HUD、v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.ja.png" alt="ENDFIELD HUD：Mac と Windows のためのデスクトップ HUD、v1.3.0" width="100%"></a>
 
 <p align="center">
   <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="最新リリース v1.3.0" height="36"></a>
