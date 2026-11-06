@@ -2248,8 +2248,9 @@ void Application::Impl::publishNative(){
     if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size(),e.cut});
         registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(moduleContrast)(void)moduleContrast->scene.collectRetired(renderer);if(mediaBroker)mediaBroker->collectRetired();
         // Once every owner gave its replaced parts back, a crowded shared
-        // cache parks the pages of modules switched away, least recently
-        // shown first (no walk while it has room).
+        // cache parks the pages of modules switched away, the page left
+        // longest ago first; the page left last only near the hard bounds
+        // (no walk while it has room).
         rasterizer.relieve(renderer);}
     publishedNotesRevision=notesRevision;
 }
