@@ -228,8 +228,10 @@ struct LayerRasterizer::Impl {
     // The four shared bounds' use (entries, held pixel bytes, text metadata,
     // typography descriptors), and the bounds past `eighths`/8 of their
     // maximum as bits in that order (crowded: 6; relieved at 5; the page
-    // left last parks past 7).
+    // left last parks past 7). `heldBound`: the held pixel bytes' index.
+    static constexpr std::size_t heldBound=1;
     static constexpr std::array<std::size_t,4> maxima{maximumEntries,maximumResourceBytes,maximumTextMetadataBytes,maximumTypographyDescriptorBytes};
+    static_assert(maxima[heldBound]==maximumResourceBytes);
     std::array<std::size_t,4> load()const noexcept{return {entries.size(),heldBytes(),counts.textMetadataBytes,counts.typographyDescriptorBytes};}
     unsigned over(std::size_t eighths)const noexcept{
         const auto used=load();unsigned bits{};for(std::size_t n=0;n<4;++n)if(used[n]>maxima[n]/8*eighths)bits|=1u<<n;return bits;}
@@ -239,20 +241,23 @@ struct LayerRasterizer::Impl {
     struct Tenant {LayerRasterTenant*page{};std::uint64_t left{};LayerRasterTenant::State state{};};
     std::vector<Tenant> tenants;std::uint64_t leavings{};
     // The bounds past five eighths that a park gave next to nothing back of
-    // (relieve): no page parks for them again while each stays past five
-    // eighths, until another bound passes five eighths or one passes seven
-    // eighths. A bound that falls to five eighths leaves it (passing again,
-    // it is tried again once). A page switch keeps it: what is over is still
-    // what the pages hold next to nothing of, and each switch would
-    // otherwise park the oldest page away, the next one opened when cycling
-    // modules (a cold rebuild 1.3.0 never did). The cost: a page away that
-    // does hold a share of such a bound (unreleased pixels without a recipe,
-    // documents, memory images) keeps it until one of those, the bound's
-    // fall to five eighths or the close, where a page switch would have
-    // tried the next oldest page. The pages keep no per-bound accounting to
-    // tell that page from the others without parking it; it only keeps the
-    // cache between three quarters and seven eighths, and past seven eighths
-    // every away page is tried, so the hard bounds stay guarded.
+    // (relieve; next to nothing: under a sixty-fourth of the held pixel
+    // bytes, which a design page keeps a few KiB of after upload; none at
+    // all of the entries, text metadata or typography descriptors, which a
+    // park gives back whole): no page parks for them again while each stays
+    // past five eighths, until another bound passes five eighths or one
+    // passes seven eighths. A bound that falls to five eighths leaves it
+    // (passing again, it is tried again once). A page switch keeps it: what
+    // is over is still what the pages hold next to nothing of, and each
+    // switch would otherwise park the oldest page away, the next one opened
+    // when cycling modules (a cold rebuild 1.3.0 never did). The cost: a page
+    // away that does hold a share of such a bound (unreleased pixels without
+    // a recipe, documents, memory images) keeps it until one of those, the
+    // bound's fall to five eighths or the close, where a page switch would
+    // have tried the next oldest page. The pages keep no per-bound accounting
+    // to tell that page from the others without parking it; it only keeps
+    // the cache between three quarters and seven eighths, and past seven
+    // eighths every away page is tried, so the hard bounds stay guarded.
     unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
@@ -1333,15 +1338,20 @@ std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread
     // the bounds past `eighths`/8 while the cache is at or below seven
     // eighths: what is over is likely not the pages' (renderer resources,
     // intrinsic images, editors), and parking more would rebuild them for
-    // nothing. Next to nothing is under a sixty-fourth of the bound (an
-    // eighth of what the relief sheds from three quarters to five eighths):
-    // a design page keeps a few pixels held after upload (small surfaces
-    // whose description outweighs them keep no recipe and stay held, a
-    // scroll bar's track and thumb), and parking it for those frees nothing
-    // that matters. One page giving nothing back proves nothing of the
-    // others (a page whose pixels went to the GPU holds no held bytes; a
-    // newer one may), so past seven eighths the walk goes on, the page left
-    // last included, as it must before the hard bounds fail the shown owner.
+    // nothing. Of the held pixel bytes, next to nothing is under a
+    // sixty-fourth of the bound (an eighth of what the relief sheds from
+    // three quarters to five eighths): a design page keeps a few pixels held
+    // after upload (small surfaces whose description outweighs them keep no
+    // recipe and stay held, a scroll bar's track and thumb), and parking it
+    // for those frees nothing that matters. The other bounds have no such
+    // leftovers: a page's entries, text metadata and typography descriptors
+    // count only while it holds them and its park gives them all back, so
+    // any decrease of one is the page's own share (a page of a few entries
+    // still parks for an entries crowd, and the newer pages after it). One
+    // page giving nothing back proves nothing of the others (a page whose
+    // pixels went to the GPU holds no held bytes; a newer one may), so past
+    // seven eighths the walk goes on, the page left last included, as it
+    // must before the hard bounds fail the shown owner.
     // Four counters compared per park.
     const auto relieves=[&](Impl::Tenant&t,std::size_t eighths){
         const auto bounds=r.over(eighths);const auto before=r.load();
@@ -1349,7 +1359,7 @@ std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread
         if(!t.page->park(renderer))return true;
         ++parked;
         const auto after=r.load();
-        for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n]&&before[n]-after[n]>=Impl::maxima[n]/64)return true;
+        for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n]&&(n!=Impl::heldBound||before[n]-after[n]>=Impl::maxima[n]/64))return true;
         if(r.above(7))return true;
         r.futile=bounds;return false;};
     while(r.above(5)){

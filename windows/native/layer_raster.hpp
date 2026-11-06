@@ -346,16 +346,22 @@ public:
     // warm (the cache keeps at most that one page beyond what cannot park,
     // and the close parks it); near the hard bounds it parks too, so the
     // shown page's next rasters fit. A page parks once (it then holds
-    // nothing). At or below seven eighths, a park that gives back under a
-    // sixty-fourth of every bound that is over (held pixels of renderer
-    // resources, intrinsic images or editors; a design page's few held
-    // pixels, such as its scroll bar's, do not count) ends the pass, and no
-    // page parks for those bounds again while they stay past five eighths,
-    // until a bound outside them passes five eighths or one passes seven
-    // eighths; page switches keep that (cycling modules over such a crowd
+    // nothing). At or below seven eighths, a park that gives back nothing of
+    // the bounds that are over (held pixels of renderer resources, intrinsic
+    // images or editors) ends the pass, and no page parks for those bounds
+    // again while they stay past five eighths, until a bound outside them
+    // passes five eighths or one passes seven eighths. Of the held pixels,
+    // under a sixty-fourth of the bound counts as nothing: a design page
+    // keeps a few pixels held after upload (its scroll bar's), and parking
+    // it for those frees nothing that matters. The other bounds have no such
+    // leftovers (a park gives back a page's entries, text metadata and
+    // typography descriptors whole), so any decrease of those counts: a page
+    // of a few entries parks for an entries crowd, and the pass goes on.
+    // Page switches keep what was learnt (cycling modules over such a crowd
     // parks and rebuilds nothing after its first park, as in 1.3.0). A page
-    // away holding a share of such a bound waits for one of those too (the
-    // pages keep no per-bound accounting to find it without a park). Past
+    // away holding a share of such a bound waits as well, until the bound
+    // falls to five eighths, another passes it or one passes seven eighths
+    // (the pages keep no per-bound accounting to find it without a park). Past
     // seven eighths every away page is tried, the page left last included.
     // Not crowded, or crowded only by those bounds: counter comparisons
     // only, no walk. Returns the pages parked.
