@@ -482,6 +482,8 @@ final class NotesDesktopPopup: NSView {
     private let panel: CALayer
     private let env: HUDDesignEnvironment
     private var list: HUDMenu?
+    /// The colour pop-over: its close button reaches `onClose` through it.
+    private let popover: HUDPopover?
     private let router = HUDInteractionRouter()
     private var standIns: HUDAccessibilityStandIns?
     /// The desktop notes' button side and pitch (their bottom buttons, this style bar).
@@ -542,7 +544,7 @@ final class NotesDesktopPopup: NSView {
             }
             HUDPanelChrome.apply(to: panel, size: CGSize(width: inset * 2 + CGFloat(controls.count - 1) * pitch + side, height: inset * 2 + side))
         }
-        self.chrome = chrome; self.panel = panel; self.list = menu; self.controls = controls; selectedValue = selected
+        self.chrome = chrome; self.panel = panel; self.list = menu; self.popover = popover; self.controls = controls; selectedValue = selected
         super.init(frame: .zero)
         emit = { [weak self] in self?.onChange?($0) }
         menu?.onPick = { [weak self] item in self?.pick(item.id) }

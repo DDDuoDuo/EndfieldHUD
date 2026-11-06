@@ -23,8 +23,9 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     private let chrome = HUDLayer.plain("projection.chrome")
     private let router = HUDInteractionRouter()
     private var standIns: HUDAccessibilityStandIns?
-    /// The open menu or pop-over: the action that opened it and its controls.
-    private var popup: (id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?)?
+    /// The open menu or pop-over: the action that opened it, its controls and
+    /// the menu or pop-over itself (its close button reaches `onClose` through it).
+    private var popup: (id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, popover: HUDPopover?)?
     var popupID: String? { popup?.id }
     private var chromeTracking = false
     private let background = CALayer(), dots = CAShapeLayer(), strokes = HUDDecorativeContentLayer()
@@ -342,7 +343,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
 
     private func showPopover(_ id: String, _ popover: HUDPopover, controls: [HUDControl], anchor: String) {
         popover.onClose = { [weak self] in self?.closePopup() }
-        open(id, layer: popover.layer, controls: controls + (popover.close.map { [$0] } ?? []), menu: nil, anchor: anchor)
+        open(id, layer: popover.layer, controls: controls + (popover.close.map { [$0] } ?? []), menu: nil, popover: popover, anchor: anchor)
         positionPopup()
         if !reduceMotion { popover.playEntrance() }
     }
@@ -351,16 +352,16 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         let menu = HUDMenu(id: id, items: items, minimumWidth: 200, env: env)
         menu.onPick = pick
         menu.onClose = { [weak self] in self?.closePopup() }
-        open(id, layer: menu.layer, controls: menu.controls, menu: menu, anchor: anchor)
+        open(id, layer: menu.layer, controls: menu.controls, menu: menu, popover: nil, anchor: anchor)
         positionPopup()
         if !reduceMotion { menu.playEntrance() }
     }
 
     private var popupAnchor: String?
 
-    private func open(_ id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, anchor: String) {
+    private func open(_ id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, popover: HUDPopover?, anchor: String) {
         if popup != nil { closePopup(animated: false) }
-        popup = (id, layer, controls, menu); popupAnchor = anchor
+        popup = (id, layer, controls, menu, popover); popupAnchor = anchor
         HUDMotion.perform { layer.zPosition = 1; chrome.addSublayer(layer) }
         toolbar.setOpen(id)
         refreshRouter(); updateCursor(); refreshControlHighlights()
