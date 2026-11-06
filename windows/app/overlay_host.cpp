@@ -124,6 +124,8 @@ constexpr UINT frameMessage = WM_APP + 0x31d;
 // While a frame waits for the presentation gate, a nested modal loop (a file
 // dialog, a drag, a menu) dispatches messages instead of pumpOnce: this
 // short-lived timer lets it admit (or after 50 ms run) the waiting frame.
+// WM_TIMER comes only while no other message is queued, so pumpOnce asks the
+// same question (Impl::gateDue) between the input it dispatches.
 constexpr UINT_PTR gateTimer = 0x45484744;
 constexpr double gateBound = .05;
 constexpr wchar_t windowClass[] = L"EndfieldSourceOverlayHost.v1";
@@ -382,6 +384,22 @@ struct OverlayHost::Impl {
         if (gateObject(callbacks)) postFrame();
         else if (const auto period = pacing.interval(plan)) { deadlines.setFrame(monotonicSeconds() + *period); syncTimer(); }
     }
+    // Whether the held frame may run now (the gate timer, and pumpOnce
+    // between dispatched messages): admitted, or held for gateBound (an
+    // occluded or suspended target; counted as a fallback). A stale hold is
+    // dropped.
+    bool gateDue(const std::shared_ptr<OverlayCallbacks>& handlers) {
+        if (!gated || !frames.current(*gated)) { clearGate(); return false; }
+        if (admitFrame(handlers)) return true;
+        if (gatedSince + gateBound > monotonicSeconds()) return false;
+        ++counts.presentationFallbacks;
+        return true;
+    }
+    // How long a frame that became due keeps sampling input before it runs:
+    // half a display refresh. Everything queued with its admission (a posted
+    // burst, a release with its last move) is dispatched in far less, and the
+    // frame keeps half a refresh to draw and present.
+    double sampleWindow() const { return pacing.refreshPeriod().value_or(1.0 / 60) / 2; }
     void runGated() {
         if (!gated) return;
         const auto ticket = *gated; clearGate();
@@ -595,9 +613,7 @@ struct OverlayHost::Impl {
         }
         case WM_TIMER:
             if (w != gateTimer) break;
-            if (!gated || !frames.current(*gated)) { clearGate(); return 0; }
-            if (admitFrame(handlers)) runGated();
-            else if (gatedSince + gateBound <= monotonicSeconds()) { ++counts.presentationFallbacks; runGated(); }
+            if (gateDue(handlers)) runGated();
             return 0;
         case WM_SHOWWINDOW:
             visible = w != 0;
@@ -958,7 +974,9 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     if (!p.window || p.stopped) return false;
     // A frame waiting for the swap chain's admission waits here, with the
     // input: its ticket stays pending, so new requests coalesce into it, and
-    // it runs after the input that arrived with its admission.
+    // it runs after the input that arrived with its admission (at most
+    // sampleWindow() more of it, so input that never stops - a Notes resize
+    // whose every move outlasts the mouse's report interval - cannot hold it).
     HANDLE gate = nullptr; bool runGated = false;
     if (p.gated) {
         if (!p.frames.current(*p.gated)) p.clearGate();
@@ -986,10 +1004,14 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
         ++p.counts.presentationFallbacks; runGated = true;
     }
     p.rethrow();
+    // When the held frame became due: from then on it samples input for at
+    // most sampleWindow(), then runs before the rest.
+    double dueAt = runGated ? monotonicSeconds() : 0;
     MSG message{};
     // A finite batch prevents a producer from starving the one animation clock.
     // Another pump immediately observes remaining input through INPUTAVAILABLE.
-    for (unsigned dispatched = 0; dispatched < 256 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++dispatched) {
+    for (unsigned dispatched = 0; dispatched < 256 && !(runGated && monotonicSeconds() - dueAt >= p.sampleWindow()) &&
+        PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++dispatched) {
         if (message.message == WM_QUIT) {
             p.exitCode = static_cast<int>(message.wParam); p.stopped = true; p.cancelFrames(); break;
         }
@@ -1012,6 +1034,13 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
         p.ownFrameDispatch = false;
         p.rethrow();
         if (!p.window || p.stopped) break;
+        // A frame held while this batch runs (WM_TIMER never comes while
+        // input is queued) becomes due here: admitted, or past gateBound.
+        if (!runGated && p.gated) {
+            try { runGated = p.gateDue(p.callbacks); }
+            catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
+            if (runGated) dueAt = monotonicSeconds();
+        }
     }
     if (runGated && p.window && !p.stopped) {
         try { p.runGated(); }

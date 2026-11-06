@@ -734,6 +734,101 @@ void offscreenCadence() {
     check(frames == 0 && !host.stats().timerArmed && !host.stats().framePending && !IsWindowVisible(window), "A hidden window gets no frame and no timer");
     host.destroy();
 }
+// The never-shown fixture lies under no cursor, so Windows answers the host's
+// leave tracking (at once or later); those notices, and only those, are
+// dropped, as projection_capture_route_tests does, so every frame below comes
+// from the posted moves.
+HWND leaveFixture{};
+LRESULT CALLBACK dropFixtureLeaves(int code, WPARAM remove, LPARAM value) {
+    if (code == HC_ACTION && remove == PM_REMOVE) { auto& m = *reinterpret_cast<MSG*>(value); if (m.hwnd == leaveFixture && m.message == WM_MOUSELEAVE) m.message = WM_NULL; }
+    return CallNextHookEx(nullptr, code, remove, value);
+}
+// A frame held for the swap chain's admission while input keeps arriving.
+// Enlarging a Notes card rebuilds the card on every move, so with a fast mouse
+// a move is always queued: the HUD froze until the button was released (the
+// held frame waited for a whole input batch, and the gate timer's WM_TIMER
+// never comes while input is queued). The held frame runs once admitted, or
+// 50 ms after it was held, after sampling the input that came with its
+// admission. Hidden: posted moves to a never-shown window, an auto-reset event
+// standing in for the swap chain's frame latency object.
+void gatedFrameUnderContinuousInput() {
+    const HANDLE gate = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    check(gate != nullptr, "Create the stand-in frame latency object");
+    struct Gate { HANDLE h; ~Gate() { CloseHandle(h); } } owned{gate};
+    unsigned moves{}, limit{}, signalAt{};
+    double cost{};
+    std::vector<unsigned> frameAtMove; std::vector<double> frameTimes;
+    HWND window{};
+    OverlayCallbacks callbacks;
+    callbacks.frame = [&](double now) { frameAtMove.push_back(moves); frameTimes.push_back(now); };
+    callbacks.presentationWaitable = [&] { return static_cast<void*>(gate); };
+    callbacks.presentationHeld = [] { return false; };
+    callbacks.presentationAdmitted = [] {};
+    // One resize step: a move that costs `cost` seconds and, while the drag
+    // lasts, queues the next move before it returns (the mouse moved again).
+    callbacks.pointer = [&](const PointerEvent& event) {
+        if (event.kind != PointerKind::move) return false;
+        ++moves;
+        for (const auto end = OverlayHost::clockNow() + cost; OverlayHost::clockNow() < end;) {}
+        if (moves == signalAt) SetEvent(gate);
+        if (moves < limit) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(moves % 16, 1));
+        return true;
+    };
+    OverlayOptions options{L"Hidden gated input fixture", 0, 0, 16, 16, nullptr};
+    options.offscreenScheduling = true; options.refreshRate = 60;
+    OverlayHost host; host.create(options, callbacks);
+    window = static_cast<HWND>(host.hwnd());
+    leaveFixture = window;
+    struct Hook { HHOOK h{}; ~Hook() { if (h) UnhookWindowsHookEx(h); leaveFixture = nullptr; } } hook;
+    hook.h = SetWindowsHookExW(WH_GETMESSAGE, dropFixtureLeaves, nullptr, GetCurrentThreadId());
+    check(hook.h != nullptr, "Thread-local hook for the fixture's leave notices");
+    host.setFrameDemand(visibleDemand()); host.show(false);
+    check(!IsWindowVisible(window) && host.stats().visible, "The gated input fixture is never shown");
+    const auto settle = [&] {
+        for (unsigned i = 0; i < 40 && (host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(20); }
+        ResetEvent(gate);
+        check(!host.stats().presentationGated && !host.stats().framePending && !host.stats().timerArmed, "No gate, timer or frame is left pending");
+    };
+    const auto hold = [&] {
+        settle(); frameAtMove.clear(); frameTimes.clear(); moves = 0;
+        const auto since = OverlayHost::clockNow();
+        host.invalidate(); host.pumpOnce(0);
+        check(host.stats().presentationGated && frameAtMove.empty(), "The frame waits for the swap chain's admission");
+        return since;
+    };
+    const auto drag = [&](unsigned until, double seconds, unsigned signal) {
+        limit = until; cost = seconds; signalAt = signal;
+        PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 1));
+        for (unsigned i = 0; i < 256 && moves < limit; ++i) host.pumpOnce(0);
+        limit = 0;
+    };
+    // The swap chain accepts a frame at the third 2 ms resize step: the held
+    // frame runs within about half a refresh of input, not after the batch.
+    hold(); drag(300, .002, 3);
+    std::cout << "Gated frame under continuous input: admitted at move 3, first frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() >= 3 && frameAtMove.front() <= 15,
+        "A held frame runs within about half a refresh of input after its admission while input keeps arriving");
+    // The swap chain never accepts one (an occluded target): the 50 ms bound
+    // still runs the frame while the moves keep arriving.
+    auto before = host.stats();
+    auto held = hold(); drag(300, .002, 0);
+    std::cout << "Gated frame under continuous input: never admitted, first frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
+        host.stats().presentationFallbacks > before.presentationFallbacks,
+        "A held frame the swap chain never admits runs 50 ms after it was held while input keeps arriving");
+    // A burst queued while the frame is held, then admitted at once (the
+    // Projection contract): the one frame samples the whole burst.
+    hold();
+    for (unsigned k = 0; k < 6; ++k) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(k, 2));
+    SetEvent(gate); host.pumpOnce(0);
+    check(frameAtMove.size() == 1 && frameAtMove.front() == 6, "A frame admitted with a queued burst runs once, after every move of it");
+    settle();
+    before = host.stats(); frameAtMove.clear();
+    for (const auto end = OverlayHost::clockNow() + .3; OverlayHost::clockNow() < end;) host.pumpOnce(100);
+    check(frameAtMove.empty() && host.stats().timerWakes == before.timerWakes && host.stats().presentationWaits == before.presentationWaits,
+        "After the drag, the idle HUD runs no frame and wakes nothing");
+    host.destroy();
+}
 void nativeWindow() {
     OverlayHost host;
     std::vector<PointerEvent> pointer;
@@ -981,7 +1076,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence();
+        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else
