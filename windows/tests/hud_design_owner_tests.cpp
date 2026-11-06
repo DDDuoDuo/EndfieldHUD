@@ -46,13 +46,16 @@ struct FakeCanvas final : d::Canvas {
     unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{};
     bool striped{};   // the press gains a surface of its own: the page part loads again, its old scene retires
     std::size_t tiles{}; // 1x1 page children: one part, one raster entry each (a page's weight in the shared cache)
+    bool bare{};         // no list: every surface's pixels go to the GPU at upload (the scroll bar's small ones stay held)
     d::ScrollArea* rows{};
     void buildPage(d::Page& page) override {
         ++builds;
         // A long list whose bar is drawn (Event Log's log grows every cycle).
-        rows = &page.scrollArea("rows", {0, 300, 400, 100});
-        rows->setContentHeight(400);
-        rows->track().setValue(d::Channel::opacity, 1);
+        if (!bare) {
+            rows = &page.scrollArea("rows", {0, 300, 400, 100});
+            rows->setContentHeight(400);
+            rows->track().setValue(d::Channel::opacity, 1);
+        }
         auto& press = page.make<Press>("press");
         press.layer().setFrame({100, 200, 200, 50});
         press.layer().setContent(d::solid("plate", {0, 0, 200, 50}, d::rgb(0x2A2A2A)));
@@ -352,11 +355,11 @@ void run(const std::filesystem::path& shader) {
             {"anchorPoint", ehud::data::Json::Array{0, 0}}, {"backgroundColor", ehud::data::Json::Object{{"sRGB", ehud::data::Json::Array{1, 1, 1, 1}}}}, {"children", ehud::data::Json::Array{}}};
         gpu::LayerRasterOptions plain; plain.pixelsPerPoint = 1;
         const auto line = gpu::LayerRasterizer::maximumEntries / 4 * 3, lowMark = gpu::LayerRasterizer::maximumEntries / 8 * 5;
-        const auto make = [&](gpu::LayerRasterizer& cache, const char* name, std::initializer_list<std::pair<core::Module, std::size_t>> pages, std::vector<FakeCanvas*>& out) {
+        const auto make = [&](gpu::LayerRasterizer& cache, const char* name, std::initializer_list<std::pair<core::Module, std::size_t>> pages, std::vector<FakeCanvas*>& out, bool bare = false) {
             tools::DesignOwnerOptions o;
             o.name = name; o.raster.pixelsPerPoint = 1;
             auto c = std::make_unique<tools::DesignOwnerCore>(cache, context, o);
-            for (const auto& [m, tiles] : pages) { auto canvas = std::make_unique<FakeCanvas>(context, m); canvas->tiles = tiles; out.push_back(canvas.get()); c->add(std::move(canvas)); }
+            for (const auto& [m, tiles] : pages) { auto canvas = std::make_unique<FakeCanvas>(context, m); canvas->tiles = tiles; canvas->bare = bare; out.push_back(canvas.get()); c->add(std::move(canvas)); }
             return c;
         };
         bool crowdedBeforeCollect{};
@@ -543,6 +546,60 @@ void run(const std::filesystem::path& shader) {
             check(relieved == 1 && b1.rasterEntries == 0 && b1.parks == b0.parks + 1, "The skipped page (B, shown but never seen) parks first");
             for (const auto& id : crowd) (void)cache.remove(id);
             unpublish({x, y});
+        }
+        // 4) Cycling modules over held pixels no page holds (renderer
+        // resources, intrinsic images, editors), past three quarters and
+        // under seven eighths. The pages' own pixels went to the GPU at
+        // upload (bare pages: no scroll bar, whose few pixels stay held), so
+        // a park frees none of the held pixels: the first crowded pass parks
+        // the oldest page away, learns that and stops. Switching A, B, C, A,
+        // ... after it parks and rebuilds nothing, as in 1.3.0.
+        {
+            gpu::LayerRasterizer cache;
+            std::vector<FakeCanvas*> canvases;
+            const core::Module pageO = core::Module::calendar, pageA = core::Module::eventLog, pageB = core::Module::about, pageC = core::Module::display;
+            auto coreO = make(cache, "cycleO", {{pageO, 0}}, canvases, true);
+            auto coreA = make(cache, "cycleA", {{pageA, 0}}, canvases, true);
+            auto coreB = make(cache, "cycleB", {{pageB, 0}}, canvases, true);
+            auto coreC = make(cache, "cycleC", {{pageC, 0}}, canvases, true);
+            const Withdrawn withdrawn{composition, renderer};
+            for (auto* c : {coreO.get(), coreA.get(), coreB.get(), coreC.get()}) { c->resize(metrics); c->setOverlayVisible(true, 40); }
+            auto* o = coreO.get(); auto* a = coreA.get(); auto* b = coreB.get(); auto* c = coreC.get();
+            std::size_t parkedSince{};
+            const auto go = [&](core::Module m, double t) { const auto n = tour(cache, {o, a, b, c}, m, t); parkedSince += relieved; return n; };
+            const auto of = [&](core::Module m) { return stats(m == pageO ? *o : m == pageA ? *a : m == pageB ? *b : *c, m); };
+            const auto held = [&] { const auto s = cache.stats(); return s.resourceBytes - s.releasedPixelBytes; };
+            const auto empty = held();
+            double t = 40;
+            for (const auto m : {pageO, pageA, pageB, pageC}) { go(m, t += .1); go(m, t += .05); }
+            for (const auto m : {pageO, pageA, pageB, pageC}) check(of(m).rasterEntries > 0 && of(m).parks == 0, "With room, every module visited keeps its page");
+            check(held() == empty && !cache.crowded(), "The pages hold no pixels in the cache (given to the GPU at upload)");
+            auto plate = tiny; plate["bounds"] = ehud::data::Json::Array{0, 0, 4096, 4096};
+            gpu::LayerRasterOptions flat; flat.pixelsPerPoint = 1; flat.paddingPoints = 0;
+            // 3 x 64 MiB + 4096 x 257 x 4: past three quarters of the held
+            // pixel budget, under seven eighths; the entries are few.
+            std::vector<std::string> crowd;
+            for (unsigned n = 0; n < 3; ++n) { crowd.push_back("held." + std::to_string(n)); (void)cache.rasterize(crowd.back(), 1, plate, flat); }
+            plate["bounds"] = ehud::data::Json::Array{0, 0, 4096, 257};
+            crowd.push_back("held.3"); (void)cache.rasterize(crowd.back(), 1, plate, flat);
+            const auto maximum = gpu::LayerRasterizer::maximumResourceBytes;
+            check(cache.crowded() && held() > maximum / 4 * 3 && held() <= maximum / 8 * 7 && cache.stats().entries < lowMark,
+                "Held pixels no page holds crowd the cache, between three quarters and seven eighths");
+            go(pageA, t += .1);
+            check(relieved == 1 && of(pageO).parks == 1 && of(pageO).rasterEntries == 0 && of(pageB).parks == 0 && of(pageC).parks == 0,
+                "The first crowded pass parks the oldest page away; it frees nothing and the pass stops");
+            go(pageA, t += .05);
+            const auto a0 = of(pageA), b0 = of(pageB), c0 = of(pageC);
+            parkedSince = 0;
+            for (unsigned round = 0; round < 2; ++round) for (const auto m : {pageB, pageC, pageA}) { go(m, t += .1); go(m, t += .05); }
+            go(pageB, t += .1); go(pageB, t += .05);
+            const auto a1 = of(pageA), b1 = of(pageB), c1 = of(pageC);
+            check(parkedSince == 0 && a1.parks == a0.parks && b1.parks == b0.parks && c1.parks == c0.parks && of(pageO).parks == 1,
+                "Cycling three modules over a crowd no page holds parks nothing at any switch");
+            check(a1.partsLoaded == a0.partsLoaded && b1.partsLoaded == b0.partsLoaded && c1.partsLoaded == c0.partsLoaded &&
+                a1.rasterEntries > 0 && b1.rasterEntries > 0 && c1.rasterEntries > 0, "Every return is warm: no page rebuilds");
+            for (const auto& id : crowd) (void)cache.remove(id);
+            unpublish({o, a, b, c});
         }
     }
     composition.detach(renderer);

@@ -349,10 +349,12 @@ public:
     // nothing). At or below seven eighths, a park that lowers none of the
     // bounds that are over (held pixels of renderer resources, intrinsic
     // images or editors) ends the pass, and no page parks for those bounds
-    // again until the cache has room, another page is left or it passes
-    // seven eighths; past seven eighths every away page is tried, the page
-    // left last included. Not crowded: four counter comparisons, no walk.
-    // Returns the pages parked.
+    // again until the cache has room, a bound outside them passes five
+    // eighths or one passes seven eighths; page switches keep that (cycling
+    // modules over such a crowd parks and rebuilds nothing, as in 1.3.0).
+    // Past seven eighths every away page is tried, the page left last
+    // included. Not crowded, or crowded only by those bounds: counter
+    // comparisons only, no walk. Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the

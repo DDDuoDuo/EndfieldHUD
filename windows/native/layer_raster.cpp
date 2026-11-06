@@ -239,8 +239,14 @@ struct LayerRasterizer::Impl {
     struct Tenant {LayerRasterTenant*page{};std::uint64_t left{};LayerRasterTenant::State state{};};
     std::vector<Tenant> tenants;std::uint64_t leavings{};
     // The bounds past five eighths that a park gave nothing back of: no page
-    // parks for them again until the cache has room, another page is left or
-    // a bound passes seven eighths.
+    // parks for them again until the cache has room, another bound passes
+    // five eighths or one passes seven eighths. A page switch keeps it (what
+    // is over is still what no page holds, and each switch would otherwise
+    // park the oldest page away, the next one opened when cycling modules).
+    // A page away that does hold its own pixels of such a bound (no recipe:
+    // documents, memory images) then waits for one of those or the close;
+    // the pass that set it stopped at the oldest page anyway, and past seven
+    // eighths every page is tried, so the hard bounds stay guarded.
     unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
@@ -1296,12 +1302,14 @@ bool LayerRasterizer::crowded()const{const auto&r=*impl_;r.onThread();return r.a
 void LayerRasterizer::enlist(LayerRasterTenant&page){auto&r=*impl_;r.onThread();
     if(std::none_of(r.tenants.begin(),r.tenants.end(),[&](const auto&t){return t.page==&page;}))r.tenants.push_back({&page});}
 void LayerRasterizer::withdraw(LayerRasterTenant&page)noexcept{std::erase_if(impl_->tenants,[&](const auto&t){return t.page==&page;});}
-void LayerRasterizer::left(LayerRasterTenant&page)noexcept{auto&r=*impl_;r.futile=0;for(auto&t:r.tenants)if(t.page==&page)t.left=++r.leavings;}
+void LayerRasterizer::left(LayerRasterTenant&page)noexcept{auto&r=*impl_;for(auto&t:r.tenants)if(t.page==&page)t.left=++r.leavings;}
 std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
     if(!r.above(6)){r.futile=0;return 0;}
     // Parks already found to give back nothing of what is over: none again
-    // (each would only cost its page a cold rebuild), unless the cache is
-    // past seven eighths: near the hard bounds every page is tried.
+    // (each would only cost its page a cold rebuild) while every bound over
+    // is one of them, page switches included, unless the cache is past seven
+    // eighths: near the hard bounds every page is tried. Counter
+    // comparisons only, no walk.
     if(r.futile&&!(r.over(5)&~r.futile)&&!r.above(7))return 0;
     r.futile=0;
     // The page left most recently stays (a quick return) unless the cache
