@@ -229,24 +229,30 @@ struct LayerRasterizer::Impl {
     // typography descriptors), and the bounds past `eighths`/8 of their
     // maximum as bits in that order (crowded: 6; relieved at 5; the page
     // left last parks past 7).
+    static constexpr std::array<std::size_t,4> maxima{maximumEntries,maximumResourceBytes,maximumTextMetadataBytes,maximumTypographyDescriptorBytes};
     std::array<std::size_t,4> load()const noexcept{return {entries.size(),heldBytes(),counts.textMetadataBytes,counts.typographyDescriptorBytes};}
     unsigned over(std::size_t eighths)const noexcept{
-        static constexpr std::array<std::size_t,4> maxima{maximumEntries,maximumResourceBytes,maximumTextMetadataBytes,maximumTypographyDescriptorBytes};
         const auto used=load();unsigned bits{};for(std::size_t n=0;n<4;++n)if(used[n]>maxima[n]/8*eighths)bits|=1u<<n;return bits;}
     bool above(std::size_t eighths)const noexcept{return over(eighths)!=0;}
     // Crowd relief: the enlisted pages and the order in which each was last
     // left after the user saw it.
     struct Tenant {LayerRasterTenant*page{};std::uint64_t left{};LayerRasterTenant::State state{};};
     std::vector<Tenant> tenants;std::uint64_t leavings{};
-    // The bounds past five eighths that a park gave nothing back of: no page
-    // parks for them again until the cache has room, another bound passes
-    // five eighths or one passes seven eighths. A page switch keeps it (what
-    // is over is still what no page holds, and each switch would otherwise
-    // park the oldest page away, the next one opened when cycling modules).
-    // A page away that does hold its own pixels of such a bound (no recipe:
-    // documents, memory images) then waits for one of those or the close;
-    // the pass that set it stopped at the oldest page anyway, and past seven
-    // eighths every page is tried, so the hard bounds stay guarded.
+    // The bounds past five eighths that a park gave next to nothing back of
+    // (relieve): no page parks for them again while each stays past five
+    // eighths, until another bound passes five eighths or one passes seven
+    // eighths. A bound that falls to five eighths leaves it (passing again,
+    // it is tried again once). A page switch keeps it: what is over is still
+    // what the pages hold next to nothing of, and each switch would
+    // otherwise park the oldest page away, the next one opened when cycling
+    // modules (a cold rebuild 1.3.0 never did). The cost: a page away that
+    // does hold a share of such a bound (unreleased pixels without a recipe,
+    // documents, memory images) keeps it until one of those, the bound's
+    // fall to five eighths or the close, where a page switch would have
+    // tried the next oldest page. The pages keep no per-bound accounting to
+    // tell that page from the others without parking it; it only keeps the
+    // cache between three quarters and seven eighths, and past seven eighths
+    // every away page is tried, so the hard bounds stay guarded.
     unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
@@ -1304,35 +1310,46 @@ void LayerRasterizer::enlist(LayerRasterTenant&page){auto&r=*impl_;r.onThread();
 void LayerRasterizer::withdraw(LayerRasterTenant&page)noexcept{std::erase_if(impl_->tenants,[&](const auto&t){return t.page==&page;});}
 void LayerRasterizer::left(LayerRasterTenant&page)noexcept{auto&r=*impl_;for(auto&t:r.tenants)if(t.page==&page)t.left=++r.leavings;}
 std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
-    if(!r.above(6)){r.futile=0;return 0;}
-    // Parks already found to give back nothing of what is over: none again
-    // (each would only cost its page a cold rebuild) while every bound over
-    // is one of them, page switches included, unless the cache is past seven
-    // eighths: near the hard bounds every page is tried. Counter
+    // What was learnt holds for the bounds still past five eighths (the
+    // relief's mark): one back at or below it is forgotten, so passing again
+    // it counts as newly over, and a cache that only dips under three
+    // quarters (not crowded) keeps it rather than parking a page again for
+    // each crossing.
+    const auto past=r.over(5);r.futile&=past;
+    if(!r.above(6))return 0;
+    // Parks already found to give back next to nothing of what is over:
+    // none again (each would only cost its page a cold rebuild) while every
+    // bound over is one of them, page switches included, unless the cache is
+    // past seven eighths: near the hard bounds every page is tried. Counter
     // comparisons only, no walk.
-    if(r.futile&&!(r.over(5)&~r.futile)&&!r.above(7))return 0;
+    if(r.futile&&!(past&~r.futile)&&!r.above(7))return 0;
     r.futile=0;
     // The page left most recently stays (a quick return) unless the cache
     // is still past seven eighths without it.
     Impl::Tenant*last{};
     for(auto&t:r.tenants){t.state=t.page->tenancy();if(t.state!=LayerRasterTenant::State::shown&&t.left&&(!last||t.left>last->left))last=&t;}
     std::size_t parked{};
-    // One park; false (the pass stops) when it lowered none of the bounds
-    // past `eighths`/8 while the cache is at or below seven eighths: what is
-    // over is likely not the pages' (renderer resources, intrinsic images,
-    // editors), and parking more would rebuild them for nothing. One page
-    // giving nothing back proves nothing of the others (a page whose pixels
-    // went to the GPU holds no held bytes; a newer one may), so past seven
-    // eighths the walk goes on, the page left last included, as it must
-    // before the hard bounds fail the shown owner. Four counters compared
-    // per park.
+    // One park; false (the pass stops) when it gave back next to nothing of
+    // the bounds past `eighths`/8 while the cache is at or below seven
+    // eighths: what is over is likely not the pages' (renderer resources,
+    // intrinsic images, editors), and parking more would rebuild them for
+    // nothing. Next to nothing is under a sixty-fourth of the bound (an
+    // eighth of what the relief sheds from three quarters to five eighths):
+    // a design page keeps a few pixels held after upload (small surfaces
+    // whose description outweighs them keep no recipe and stay held, a
+    // scroll bar's track and thumb), and parking it for those frees nothing
+    // that matters. One page giving nothing back proves nothing of the
+    // others (a page whose pixels went to the GPU holds no held bytes; a
+    // newer one may), so past seven eighths the walk goes on, the page left
+    // last included, as it must before the hard bounds fail the shown owner.
+    // Four counters compared per park.
     const auto relieves=[&](Impl::Tenant&t,std::size_t eighths){
         const auto bounds=r.over(eighths);const auto before=r.load();
         t.state=LayerRasterTenant::State::empty; // tried once: a refused park is not retried in this pass
         if(!t.page->park(renderer))return true;
         ++parked;
         const auto after=r.load();
-        for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n])return true;
+        for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n]&&before[n]-after[n]>=Impl::maxima[n]/64)return true;
         if(r.above(7))return true;
         r.futile=bounds;return false;};
     while(r.above(5)){

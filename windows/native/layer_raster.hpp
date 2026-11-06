@@ -346,15 +346,19 @@ public:
     // warm (the cache keeps at most that one page beyond what cannot park,
     // and the close parks it); near the hard bounds it parks too, so the
     // shown page's next rasters fit. A page parks once (it then holds
-    // nothing). At or below seven eighths, a park that lowers none of the
-    // bounds that are over (held pixels of renderer resources, intrinsic
-    // images or editors) ends the pass, and no page parks for those bounds
-    // again until the cache has room, a bound outside them passes five
-    // eighths or one passes seven eighths; page switches keep that (cycling
-    // modules over such a crowd parks and rebuilds nothing, as in 1.3.0).
-    // Past seven eighths every away page is tried, the page left last
-    // included. Not crowded, or crowded only by those bounds: counter
-    // comparisons only, no walk. Returns the pages parked.
+    // nothing). At or below seven eighths, a park that gives back under a
+    // sixty-fourth of every bound that is over (held pixels of renderer
+    // resources, intrinsic images or editors; a design page's few held
+    // pixels, such as its scroll bar's, do not count) ends the pass, and no
+    // page parks for those bounds again while they stay past five eighths,
+    // until a bound outside them passes five eighths or one passes seven
+    // eighths; page switches keep that (cycling modules over such a crowd
+    // parks and rebuilds nothing after its first park, as in 1.3.0). A page
+    // away holding a share of such a bound waits for one of those too (the
+    // pages keep no per-bound accounting to find it without a park). Past
+    // seven eighths every away page is tried, the page left last included.
+    // Not crowded, or crowded only by those bounds: counter comparisons
+    // only, no walk. Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the

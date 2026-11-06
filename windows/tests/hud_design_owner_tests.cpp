@@ -547,21 +547,23 @@ void run(const std::filesystem::path& shader) {
             for (const auto& id : crowd) (void)cache.remove(id);
             unpublish({x, y});
         }
-        // 4) Cycling modules over held pixels no page holds (renderer
-        // resources, intrinsic images, editors), past three quarters and
-        // under seven eighths. The pages' own pixels went to the GPU at
-        // upload (bare pages: no scroll bar, whose few pixels stay held), so
-        // a park frees none of the held pixels: the first crowded pass parks
-        // the oldest page away, learns that and stops. Switching A, B, C, A,
-        // ... after it parks and rebuilds nothing, as in 1.3.0.
-        {
+        // 4) Cycling modules over held pixels the pages hold next to nothing
+        // of (renderer resources, intrinsic images, editors), past three
+        // quarters and under seven eighths. A page's pixels went to the GPU
+        // at upload but for its scroll bar's track and thumb (small surfaces
+        // whose description outweighs them: no recipe, held), a few KiB; a
+        // bare page (no list) holds none. Either way the first crowded pass
+        // parks the oldest page away, which gives back next to nothing, and
+        // stops; switching A, B, C, A, ... after it parks and rebuilds
+        // nothing, as in 1.3.0.
+        for (const bool bare : {false, true}) {
             gpu::LayerRasterizer cache;
             std::vector<FakeCanvas*> canvases;
             const core::Module pageO = core::Module::calendar, pageA = core::Module::eventLog, pageB = core::Module::about, pageC = core::Module::display;
-            auto coreO = make(cache, "cycleO", {{pageO, 0}}, canvases, true);
-            auto coreA = make(cache, "cycleA", {{pageA, 0}}, canvases, true);
-            auto coreB = make(cache, "cycleB", {{pageB, 0}}, canvases, true);
-            auto coreC = make(cache, "cycleC", {{pageC, 0}}, canvases, true);
+            auto coreO = make(cache, "cycleO", {{pageO, 0}}, canvases, bare);
+            auto coreA = make(cache, "cycleA", {{pageA, 0}}, canvases, bare);
+            auto coreB = make(cache, "cycleB", {{pageB, 0}}, canvases, bare);
+            auto coreC = make(cache, "cycleC", {{pageC, 0}}, canvases, bare);
             const Withdrawn withdrawn{composition, renderer};
             for (auto* c : {coreO.get(), coreA.get(), coreB.get(), coreC.get()}) { c->resize(metrics); c->setOverlayVisible(true, 40); }
             auto* o = coreO.get(); auto* a = coreA.get(); auto* b = coreB.get(); auto* c = coreC.get();
@@ -573,7 +575,9 @@ void run(const std::filesystem::path& shader) {
             double t = 40;
             for (const auto m : {pageO, pageA, pageB, pageC}) { go(m, t += .1); go(m, t += .05); }
             for (const auto m : {pageO, pageA, pageB, pageC}) check(of(m).rasterEntries > 0 && of(m).parks == 0, "With room, every module visited keeps its page");
-            check(held() == empty && !cache.crowded(), "The pages hold no pixels in the cache (given to the GPU at upload)");
+            const auto maximum = gpu::LayerRasterizer::maximumResourceBytes;
+            if (bare) check(held() == empty && !cache.crowded(), "Bare pages hold no pixels in the cache (given to the GPU at upload)");
+            else check(held() > empty && held() - empty < maximum / 64 && !cache.crowded(), "The pages hold a few pixels of their own in the cache (their scroll bars')");
             auto plate = tiny; plate["bounds"] = ehud::data::Json::Array{0, 0, 4096, 4096};
             gpu::LayerRasterOptions flat; flat.pixelsPerPoint = 1; flat.paddingPoints = 0;
             // 3 x 64 MiB + 4096 x 257 x 4: past three quarters of the held
@@ -582,12 +586,11 @@ void run(const std::filesystem::path& shader) {
             for (unsigned n = 0; n < 3; ++n) { crowd.push_back("held." + std::to_string(n)); (void)cache.rasterize(crowd.back(), 1, plate, flat); }
             plate["bounds"] = ehud::data::Json::Array{0, 0, 4096, 257};
             crowd.push_back("held.3"); (void)cache.rasterize(crowd.back(), 1, plate, flat);
-            const auto maximum = gpu::LayerRasterizer::maximumResourceBytes;
             check(cache.crowded() && held() > maximum / 4 * 3 && held() <= maximum / 8 * 7 && cache.stats().entries < lowMark,
-                "Held pixels no page holds crowd the cache, between three quarters and seven eighths");
+                "Held pixels the pages hold next to nothing of crowd the cache, between three quarters and seven eighths");
             go(pageA, t += .1);
             check(relieved == 1 && of(pageO).parks == 1 && of(pageO).rasterEntries == 0 && of(pageB).parks == 0 && of(pageC).parks == 0,
-                "The first crowded pass parks the oldest page away; it frees nothing and the pass stops");
+                "The first crowded pass parks the oldest page away; it frees next to nothing and the pass stops");
             go(pageA, t += .05);
             const auto a0 = of(pageA), b0 = of(pageB), c0 = of(pageC);
             parkedSince = 0;
