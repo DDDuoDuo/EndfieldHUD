@@ -755,7 +755,8 @@ void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
         // the renderer's textures and parked copies.
         const auto raster=rasterizer.stats();const auto drawn=renderer.stats();
         context+=budgetLines({raster.entries,gpu::LayerRasterizer::maximumEntries,raster.resourceBytes-std::min(raster.releasedPixelBytes,raster.resourceBytes),gpu::LayerRasterizer::maximumResourceBytes,raster.releasedPixelBytes,
-            drawn.resourceBytes,gpu::Renderer::maximumResourceBytes,drawn.parkedBytes,gpu::Renderer::maximumParkedBytes});
+            drawn.resourceBytes,gpu::Renderer::maximumResourceBytes,drawn.parkedBytes,gpu::Renderer::maximumParkedBytes,
+            raster.textMetadataBytes,gpu::LayerRasterizer::maximumTextMetadataBytes,raster.typographyDescriptorBytes,gpu::LayerRasterizer::maximumTypographyDescriptorBytes});
         if(notes){const auto&p=notes->modulePresentation();context+="module: "+std::string(core::moduleIdentifier(p.requested))+(p.transitioning?" (switching)":"")+"\n";}
         if(f.owner=="settings"&&settingsUI){
             constexpr std::array phases{"idle","checking","current","available","downloading","ready","installing","failed"};
