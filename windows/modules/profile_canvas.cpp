@@ -437,7 +437,7 @@ void ProfileCanvas::imagesChanged() {
 
 // --- Page (:282-313) ------------------------------------------------------------------------
 void ProfileCanvas::buildPage(d::Page& page) {
-    refs_ = Refs{}; accentBinders_.clear(); editorsMade_ = 0;
+    refs_ = Refs{}; accentBinders_.clear();
     const auto& p = displayed();
     header().configure({"PERSONAL ID"}, "MOD-15", title("Personal ID", "个人名片"), loaded_ ? "#" + p.tag : std::string(), false);
     if (!loaded_) return;     // the record is still being read
@@ -907,52 +907,65 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     const auto anchorField = field == ProfileField::tag ? ProfileField::name : field;
     if (textHidden_ || !canEdit(field) || (field == ProfileField::playerID && env().recordingMode) || !refs_.card || !refs_.editables.contains(anchorField)) return;
     endEditing(true); closePopups();
-    // Every open makes a new "edit:<field>" editor, as the Mac makes a new
-    // HUDDesignTextField; the page's arena refuses an id it already made, so
-    // a field edited before on this page (closed without a save that
-    // re-rendered it: Esc, an unchanged, invalid or refused value) opens on
-    // the page built again. It keeps its ids: the scene reuses every part.
-    static_assert(unsigned(ProfileField::avatarOffsetY) < 32, "editorsMade_ keeps one bit per ProfileField (avatarOffsetY is the last)");
-    const auto made = std::uint32_t{1} << unsigned(field);
-    if (editorsMade_ & made) rerender();
-    // A save, or that re-render, replaced the card: the card and the element
-    // are looked up on the page shown now.
+    // A save re-rendered the card: the card and the element are looked up on
+    // the page shown now.
     const auto anchorIt = refs_.editables.find(anchorField);
     if (!refs_.card || anchorIt == refs_.editables.end()) return;
     const Rect rect = anchorIt->second->layer().frame();
     const bool wide = field == ProfileField::name || field == ProfileField::tag, intro = field == ProfileField::introduction;
     const d::Size size{std::max(rect.width, wide ? 220. : 60.), rect.height};
-    d::TextFieldOptions options;
-    options.multiline = intro;
-    options.maximumLength = profileTextLimit(field);
-    options.selectsAllOnBegin = true;
-    options.style = d::TextStyle{intro ? 13 : std::min(22., std::max(12., rect.height * .55)), d::FontWeight::bold, ink, intro ? 1.5 : 1};
-    options.inset = {8, intro ? 6. : 0.};
-    options.accent = accent(); options.background = d::rgb(0x212121);
-    options.alignment = profileNumericField(field) ? d::TextAlignment::right : d::TextAlignment::left;
+    const d::TextStyle style{intro ? 13 : std::min(22., std::max(12., rect.height * .55)), d::FontWeight::bold, ink, intro ? 1.5 : 1};
+    const auto label = profileFieldTitle(field, env().language);
     const auto initial = field == ProfileField::tag ? displayed().tag : value(field, displayed());
-    auto& editor = page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), profileFieldTitle(field, env().language), initial, "", size, options);
-    editorsMade_ |= made;
-    editor.layer().setOrigin({rect.x, rect.y});
-    editor.layer().setZPosition(d::order::menu);
-    // Its own part: joining the card does not load the card again. The card
-    // plate and everything on it stay one part, so a module or HUD fade
-    // composites them as one image (CALayer group opacity); the editor is
-    // never on the card during a fade (leaving ends editing first).
-    editor.layer().setAnimatable(); editor.layer().setPartRoot(true);
-    editor.layer().setValue(d::Channel::opacity, 0);
-    refs_.card->add(editor.layer());
-    d::motion::animate(editor.layer(), d::Channel::opacity, 1, .14, clock(), d::easing::easeOut);
-    editor.onChange = [this, field, &editor](const std::string& t) { editor.setInvalid(!isValid(field, t)); };
-    editor.onCommit = [this, field](const std::string& t) { finishEdit(field, t); };
-    editor.onCancel = [this, field] { finishEdit(field, std::nullopt); };
-    editing_ = Editing{field, &editor};
-    registerField(editor);
+    // The Mac makes a new HUDDesignTextField "edit:<field>" at every open.
+    // The page's arena makes an id once, so the page makes the field's editor
+    // at its first open and every later open on the page (after Esc, an
+    // unchanged, invalid or refused value) takes it again with this open's
+    // text, size, style and card colour: nothing else on the page is built
+    // again, so what it is playing (the entrance, the eye's fade, vChg) plays on.
+    d::TextField* editor{};
+    if (const auto made = refs_.editors.find(field); made != refs_.editors.end()) {
+        editor = made->second;
+        editor->layer().removeAllMotion();
+        editor->clearInteractionState();
+        editor->label = label;
+        editor->setInvalid(false);
+        editor->setAccent(accent());
+        editor->setStyle(style);
+        editor->setSize(size);
+        editor->setText(initial);
+    } else {
+        d::TextFieldOptions options;
+        options.multiline = intro;
+        options.maximumLength = profileTextLimit(field);
+        options.selectsAllOnBegin = true;
+        options.style = style;
+        options.inset = {8, intro ? 6. : 0.};
+        options.accent = accent(); options.background = d::rgb(0x212121);
+        options.alignment = profileNumericField(field) ? d::TextAlignment::right : d::TextAlignment::left;
+        editor = &page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), label, initial, "", size, options);
+        refs_.editors.emplace(field, editor);
+        editor->layer().setZPosition(d::order::menu);
+        // Its own part: joining the card does not load the card again. The
+        // card plate and everything on it stay one part, so a module or HUD
+        // fade composites them as one image (CALayer group opacity); the
+        // editor is never on the card during a fade (leaving ends editing first).
+        editor->layer().setAnimatable(); editor->layer().setPartRoot(true);
+    }
+    editor->layer().setOrigin({rect.x, rect.y});
+    editor->layer().setValue(d::Channel::opacity, 0);
+    refs_.card->add(editor->layer());
+    d::motion::animate(editor->layer(), d::Channel::opacity, 1, .14, clock(), d::easing::easeOut);
+    editor->onChange = [this, field, editor](const std::string& t) { editor->setInvalid(!isValid(field, t)); };
+    editor->onCommit = [this, field](const std::string& t) { finishEdit(field, t); };
+    editor->onCancel = [this, field] { finishEdit(field, std::nullopt); };
+    editing_ = Editing{field, editor};
+    registerField(*editor);
     refreshRouter();
-    editor.beginEditing();
+    editor->beginEditing();
     // No editor could start (no host, or the host refused one): nothing is
     // being edited, so the editor leaves as if cancelled.
-    if (!editor.editing() && editing_ && editing_->text == &editor) finishEdit(field, std::nullopt);
+    if (!editor->editing() && editing_ && editing_->text == editor) finishEdit(field, std::nullopt);
 }
 // Enter, Tab and a press elsewhere commit; Esc cancels. Invalid values are
 // discarded; a saved value re-renders the card and plays vChg.

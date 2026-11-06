@@ -989,6 +989,48 @@ void textFields() {
     check(field.frame().state() == d::FieldFrame::State::focused, "An edit clears the invalid state");
     field.endEditing(false);
 
+    // setAccent / setStyle (an owner opening one field again with this open's
+    // card colour and style, Personal ID): the ring, the 3 px bar and the
+    // caret of the next edit agree; during an edit both are refused, so the
+    // ring and bar never leave the caret's colour.
+    {
+        const Color first = d::rgb(0xFF6A00), second = d::rgb(0x6EDFE8), third = d::rgb(0x9B5CFF);
+        d::TextField::Options accented; accented.accent = first; accented.background = d::rgb(0x212121);
+        auto& tinted = w.b.make<d::TextField>("tinted", "Tinted", "Talos", "", d::Size{220, 30}, accented);
+        tinted.setEditorHost(&host); w.host(tinted.layer());
+        const auto& bar = must(tinted.layer(), "field.bar");
+        check(tinted.frame().focusColor && near(*tinted.frame().focusColor, first), "The option's accent is the frame's focus colour");
+        check(tinted.setAccent(second) && tinted.frame().focusColor && near(*tinted.frame().focusColor, second) && tinted.options().accent && near(*tinted.options().accent, second),
+            "setAccent on an idle field takes the new colour");
+        check(tinted.frame().state() == d::FieldFrame::State::normal && near(*border(tinted.layer()), w.env.palette.token(d::ThemeToken::ringField)) && bar.hidden()
+            && near(*fill(tinted.layer()), d::rgb(0x212121)), "An idle field keeps its rest ring, background and hidden bar");
+        tinted.beginEditing();
+        check(tinted.editing() && host.request && near(host.request->caretColor, second), "The next edit's caret takes the new accent");
+        check(near(*border(tinted.layer()), second) && !bar.hidden() && near(*fill(bar), second), "Its ring and bar take the new accent");
+        check(!tinted.setAccent(third) && near(*tinted.frame().focusColor, second) && near(*tinted.options().accent, second)
+            && near(*border(tinted.layer()), second) && near(*fill(bar), second) && near(host.request->caretColor, second),
+            "During an edit setAccent is refused: ring, bar and caret keep one colour");
+        const d::TextStyle bigger{18, d::FontWeight::bold, d::rgb(0xFFFFFF), 1};
+        check(!tinted.setStyle(bigger) && !tinted.options().style, "During an edit setStyle is refused");
+        tinted.setInvalid(true);
+        check(near(*border(tinted.layer()), d::fixed::red) && near(*fill(bar), d::fixed::red), "Invalid mid-edit: red ring and bar");
+        tinted.setInvalid(false);
+        check(near(*border(tinted.layer()), second) && near(*fill(bar), second), "Valid again: the edit's accent, not a refused one");
+        tinted.endEditing(true);
+        check(tinted.setStyle(bigger) && tinted.options().style && near(d::textOf(must(tinted.layer(), "field.idle")).style().size, 18),
+            "setStyle on an idle field redraws the idle label in the new style");
+        check(tinted.setAccent(third), "Idle again: setAccent applies");
+        tinted.beginEditing();
+        check(host.request && near(host.request->style.size, 18) && near(host.request->caretColor, third) && near(*border(tinted.layer()), third) && near(*fill(bar), third),
+            "The next edit takes the new style and colour");
+        tinted.endEditing(false);
+        check(tinted.setAccent(std::nullopt) && !tinted.frame().focusColor, "No accent: the frame's default");
+        tinted.beginEditing();
+        check(near(host.request->caretColor, w.env.palette.accentInk()) && near(*border(tinted.layer()), w.env.palette.accentInk()) && near(*fill(bar), w.env.palette.accentInk()),
+            "Without an accent the ring, bar and caret are accentInk");
+        tinted.endEditing(false);
+    }
+
     d::TextField::Options limited; limited.maximumLength = 5;
     auto& code = w.b.make<d::TextField>("code", "Code", "line\nbreak", "", d::Size{200, 34}, limited);
     check(code.text() == "line\nbreak", "The initial text is taken as given (init, :66)");
