@@ -21,7 +21,7 @@ class LayerRasterizer;
 class Renderer;
 // A retained module page in the shared cache that can give its artwork back
 // while its module is switched away (DesignOwnerCore's pages): the crowd
-// relief (LayerRasterizer::relieve) parks the least recently shown first.
+// relief (LayerRasterizer::relieve) parks the one left longest ago first.
 class LayerRasterTenant {
 public:
     enum class State { shown, held, empty }; // shown or composed; away holding artwork; away holding none
@@ -328,22 +328,30 @@ public:
     // Crowd relief. Every module visited in one HUD opening keeps its page
     // (a quick return), so their entries add up across all owners sharing
     // this cache until the HUD closes. Owners enlist their pages once (and
-    // withdraw them before they go) and stamp a page when its module is
-    // shown (a monotonic count shared by every owner, no clock).
+    // withdraw them before they go) and stamp a page when it stops being
+    // shown after the user saw it (left: a monotonic count shared by every
+    // owner, no clock), so a page shown but never seen (an incoming screen a
+    // superseding switch skipped, a prewarm never presented) is not newer
+    // than the page the user was looking at.
     void enlist(LayerRasterTenant&);
     void withdraw(LayerRasterTenant&) noexcept;
-    void shown(LayerRasterTenant&) noexcept;
+    void left(LayerRasterTenant&) noexcept;
     // After every owner collected its retired scenes (one composition
     // change; Application, after ModuleOwner::collected): when crowded, the
-    // pages switched away park one at a time, least recently shown first,
-    // until every bound is at or below five eighths or none is left. The
-    // page shown most recently of those switched away (the module just left)
-    // parks only when the cache is still past seven eighths of a bound once
-    // every older page parked: between three quarters and seven eighths a
-    // return to it stays warm (the cache keeps at most that one page beyond
-    // what cannot park, and the close parks it); near the hard bounds it
-    // parks too, so the shown page's next rasters fit. A page parks once (it
-    // then holds nothing). Not crowded: four counter comparisons, no walk.
+    // pages switched away park one at a time, the one left longest ago
+    // first, until every bound is at or below five eighths or none is left.
+    // The page left most recently (the module just left) parks only when the
+    // cache is still past seven eighths of a bound once every older page
+    // parked: between three quarters and seven eighths a return to it stays
+    // warm (the cache keeps at most that one page beyond what cannot park,
+    // and the close parks it); near the hard bounds it parks too, so the
+    // shown page's next rasters fit. A page parks once (it then holds
+    // nothing). At or below seven eighths, a park that lowers none of the
+    // bounds that are over (held pixels of renderer resources, intrinsic
+    // images or editors) ends the pass, and no page parks for those bounds
+    // again until the cache has room, another page is left or it passes
+    // seven eighths; past seven eighths every away page is tried, the page
+    // left last included. Not crowded: four counter comparisons, no walk.
     // Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
