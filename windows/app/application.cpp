@@ -1824,12 +1824,13 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
         case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
-        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);break;
+        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);
+            if(memoryTrace&&production()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);break;
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
-        case K::terminate:finishQuit(time);break;
+        case K::terminate:if(memoryTrace&&production()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;
         case K::shelfRetract:case K::shelfHide:case K::shelfRestore:case K::shelfClose:shelfDragEffect(e,time);break;
         }

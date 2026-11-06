@@ -298,6 +298,10 @@ struct OverlayHostStats {
     // waits for the band, and the retries that entered it.
     bool bandPending{};
     std::uint64_t bandRequests{}, bandRefusals{}, deferredBands{};
+    // The frame gate's inputs now (diagnostics only): whether the stored
+    // demand may present, the minimized and stopped states, and that demand.
+    bool canPresent{}, minimized{}, stopped{};
+    core::FrameDemand demand{};
 };
 
 // All methods and destruction belong to the creating UI thread. This is an

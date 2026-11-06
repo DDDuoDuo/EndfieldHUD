@@ -1003,6 +1003,7 @@ OverlayHostStats OverlayHost::stats() const {
     result.visible = p.visible; result.focused = p.focused;
     result.presentationGated = p.gated.has_value();
     result.topmost = p.topmost(); result.activationPending = p.activationPending; result.bandPending = p.bandPending;
+    result.canPresent = p.plan.canPresent(); result.minimized = p.minimized; result.stopped = p.stopped; result.demand = p.demand;
     return result;
 }
 } // namespace endfield::app

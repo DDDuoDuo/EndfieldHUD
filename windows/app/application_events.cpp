@@ -310,6 +310,7 @@ void Application::Impl::finishConcealment(double time){
 // source and completes, through the same ends a frame reaches.
 void Application::Impl::transitionDeadlineExpired(double time){
     transitionDeadline.reset();
+    if(memoryTrace&&production()&&memoryTrace->deadlines<8)recordMemory("transition-deadline-"+std::to_string(++memoryTrace->deadlines),false);
     if(lifecycleClosing&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing){
         if(session->phase()!=core::VisibilityPhase::concealed)session->conceal(time);
         host.setFrameDemand(demand(time));finishConcealment(time);

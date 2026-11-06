@@ -204,7 +204,7 @@ private:
 // bounded stage rows and, in the hidden run, one row per module visit.
 class MemoryTrace final {
 public:
-    static constexpr std::size_t rowLimit = 40, visitLimit = 64;
+    static constexpr std::size_t rowLimit = 48, visitLimit = 64;
     explicit MemoryTrace(fs::path path) : path_(std::move(path)) {}
     bool accepts() const noexcept { return rows_.size() < rowLimit; }
     void add(Json row) { if (accepts()) rows_.push_back(std::move(row)); }
@@ -212,7 +212,9 @@ public:
     const fs::path& path() const noexcept { return path_; }
     const Json::Array& rows() const noexcept { return rows_; }
     const Json::Array& visits() const noexcept { return visits_; }
-    unsigned openings{}, closings{};
+    // Production rows: openings and closings finished, close requests that
+    // reached the presentation, transition deadlines that expired, quits.
+    unsigned openings{}, closings{}, closes{}, deadlines{}, quits{};
 private:
     fs::path path_;
     Json::Array rows_, visits_;
