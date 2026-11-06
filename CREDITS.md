@@ -67,7 +67,7 @@ The Windows package ships `THIRD-PARTY-NOTICES.txt` next to `EndfieldHUD.exe`, i
 
 ## Map data
 
-Terrain is a simplified derivative of NOAA NCEI's [ETOPO 2022](https://doi.org/10.25921/fd45-gt74), under CC0/public-domain terms. Country outlines use [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) public-domain data. The map is a decorative overview, not a navigation or survey map.
+Terrain is a simplified derivative of NOAA NCEI's [ETOPO 2022](https://doi.org/10.25921/fd45-gt74), under CC0/public-domain terms. Country outlines use [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) public-domain data; China's outline follows its official boundary in Southern Tibet. The map is a decorative overview, not a navigation or survey map.
 
 [Terrain provenance](Resources/WorldMap/SOURCES.json) · [Country provenance](Resources/WorldMap/Countries-SOURCES.json)
 
