@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import QuartzCore
 
 /// One confirm-bar question (spec §2.18). `countdown` replaces the description
@@ -336,6 +337,15 @@ final class HUDCenterOverlay {
     /// light, where that is about −2.2 EV (checked on screen against the
     /// radial dim's share of the darkening).
     private static let darkening: CGFloat = -2.2
+    /// The module content's blurred, darkened picture while it is dimmed: a
+    /// sibling with the content's geometry, holding the picture of the area
+    /// the content draws.
+    private let still = HUDLayer.plain("center.dim.still")
+    private let picture = HUDLayer.plain("center.dim.picture")
+    private var stillRestoreOpacity: Float = 1
+    /// Bumped by every dim change: a picture still due for an older one is dropped.
+    private var stillRequest = 0
+    private static let stillContext = CIContext(options: [.cacheIntermediates: false])
     let router = HUDInteractionRouter()
     /// Presses outside the bar, which cancel a request whose pills both confirm.
     private lazy var outside: HUDControl = {
@@ -357,6 +367,7 @@ final class HUDCenterOverlay {
         confirmBar = HUDConfirmBar(env: env)
         toast = HUDToast(env: env)
         HUDMotion.perform {
+            still.addSublayer(picture)
             layer.bounds = CGRect(origin: .zero, size: HUDMetric.box)
             // The 850 px dim circle centred on the disc (stage 975, 575 → box 295, 305).
             dim.type = .radial
@@ -481,7 +492,9 @@ final class HUDCenterOverlay {
 
     /// Radial dim (.22 s E), the content's brightness .5 and blur (.25 s E).
     private func setDimmed(_ on: Bool) {
-        guard on != dimmed else { return }
+        // A hint replacing a hint pictures the module again: under a hint it
+        // still takes input, and the picture shows what that input changed.
+        guard on != dimmed else { if on { setContentDimmed(true) }; return }
         dimmed = on
         HUDMotion.animate(dim, "opacity", to: Float(on ? 1 : 0), duration: HUDDuration.dim, env: env)
         setContentDimmed(on)
@@ -489,10 +502,82 @@ final class HUDCenterOverlay {
 
     /// The demo's `#center.dimmed{filter: brightness(.5) blur(1.5px)}` on the
     /// module content itself, so empty areas stay clear (no darkened box).
-    /// The filters exist only while a confirm needs them: added at their
-    /// neutral values, eased in, and removed once eased out.
+    /// The content is filtered once into a still picture that cross-fades
+    /// with it: live filters under the HUD's moving tilt make WindowServer
+    /// filter the whole module again on every frame. The picture is taken on
+    /// the next turn, after the change that asked for the dim (a deleted pin,
+    /// a cleared list, a flipped switch), from where the content is settling
+    /// rather than the frame in flight, and again on every new dim. Content a still cannot follow (video, Metal, a mask the
+    /// shell moves every frame) keeps the live filters.
     private func setContentDimmed(_ on: Bool) {
         guard let target = blurTarget else { return }
+        stillRequest += 1
+        if on, target.filters == nil, target.opacity > 0 || still.superlayer != nil, !target.isHidden {
+            let request = stillRequest
+            DispatchQueue.main.async { [weak self] in self?.captureStill(request) }
+            return
+        }
+        if !on, still.superlayer != nil {
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in
+                guard let self, !self.dimmed else { return }
+                HUDMotion.perform { self.still.removeFromSuperlayer(); self.picture.contents = nil }
+            }
+            // The content returns in the first half under the still, so the
+            // module never thins out to the stage behind it mid-fade.
+            HUDMotion.animate(still, "opacity", to: Float(0), duration: HUDDuration.dimFilter, env: env)
+            HUDMotion.animate(target, "opacity", to: stillRestoreOpacity, duration: HUDDuration.dimFilter / 2, env: env)
+            CATransaction.commit()
+            return
+        }
+        setLiveFilters(on, on: target)
+    }
+
+    /// Takes the picture for dim `request` once no page is still leaving (the
+    /// page replacing it is built when the leave ends), or the live filters
+    /// when it cannot. One transaction: the layers hidden for the capture are
+    /// never shown hidden, and the still arrives with its fade.
+    private func captureStill(_ request: Int, waits: Int = 0) {
+        guard stillRequest == request, dimmed, let target = blurTarget else { return }
+        if waits < 4, Self.heldOut(in: target).contains(where: Self.stillLeaving) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + HUDDuration.leave) { [weak self] in
+                self?.captureStill(request, waits: waits + 1)
+            }
+            return
+        }
+        CATransaction.begin()
+        if !showStill(of: target) { setLiveFilters(true, on: target) }
+        CATransaction.commit()
+    }
+
+    /// Draws `target` into the still and fades it in over the live content
+    /// (again over a still that is still fading out); false when it cannot.
+    private func showStill(of target: CALayer) -> Bool {
+        guard target.mask == nil, let parent = target.superlayer, let drawn = Self.dimmedStill(of: target) else {
+            if still.superlayer != nil { HUDMotion.perform { still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil } }
+            return false
+        }
+        if still.superlayer == nil { stillRestoreOpacity = target.opacity }
+        HUDMotion.perform {
+            picture.contents = drawn.image; picture.contentsScale = drawn.scale; picture.contentsGravity = .resize
+            // Drawn y-up (so Core Graphics casts shadows the right way); a flipped tree shows it mirrored back.
+            picture.transform = CATransform3DIdentity
+            picture.bounds = CGRect(origin: .zero, size: drawn.rect.size)
+            picture.position = CGPoint(x: drawn.rect.midX, y: drawn.rect.midY)
+            if target.contentsAreFlipped() { picture.setAffineTransform(CGAffineTransform(scaleX: 1, y: -1)) }
+            still.bounds = target.bounds; still.anchorPoint = target.anchorPoint; still.position = target.position
+            still.transform = target.transform; still.zPosition = target.zPosition
+            if still.superlayer == nil { still.opacity = 0; parent.insertSublayer(still, above: target) }
+        }
+        // The content leaves in the second half, once the still covers it.
+        HUDMotion.animate(still, "opacity", to: stillRestoreOpacity, duration: HUDDuration.dimFilter, env: env)
+        HUDMotion.animate(target, "opacity", to: Float(0), duration: HUDDuration.dimFilter / 2,
+                          delay: HUDDuration.dimFilter / 2, env: env)
+        return true
+    }
+
+    /// The live filters: added at their neutral values, eased in, and removed once eased out.
+    private func setLiveFilters(_ on: Bool, on target: CALayer) {
         if on, target.filters == nil {
             guard let blur = CIFilter(name: "CIGaussianBlur"), let dark = CIFilter(name: "CIExposureAdjust") else { return }
             blur.setDefaults(); blur.name = "confirmBlur"; blur.setValue(0, forKey: kCIInputRadiusKey)
@@ -514,12 +599,115 @@ final class HUDCenterOverlay {
         CATransaction.commit()
     }
 
+    /// `target` as it settles, drawn once with the dim's blur and darkening
+    /// (the same filters and values, in its own units), and the rect it
+    /// covers in `target`'s space: its bounds plus what its visible sublayers
+    /// draw outside them (redesigned screens do not clip), up to half its
+    /// size on each side. At most 2 px per unit: the blur hides more. The
+    /// layer tree holds every animation's end (render(in:) ignores
+    /// animations), except what an animation keeps faded out after it ends
+    /// (a page that left, a hold): those are left out. Nil when part of it
+    /// cannot be drawn into an image.
+    static func dimmedStill(of target: CALayer) -> (image: CGImage, rect: CGRect, scale: CGFloat)? {
+        let shown = target
+        let leftOut = heldOut(in: shown)
+        HUDMotion.perform { leftOut.forEach { $0.isHidden = true } }
+        defer { HUDMotion.perform { leftOut.forEach { $0.isHidden = false } } }
+        func live(_ layer: CALayer) -> Bool {
+            layer is CAMetalLayer || layer is AVPlayerLayer || layer is AVSampleBufferDisplayLayer
+                || (layer.sublayers ?? []).contains(where: live)
+        }
+        func extent(_ layer: CALayer) -> CGRect {
+            (layer.sublayers ?? []).reduce(CGRect.null) { area, sublayer in
+                guard !sublayer.isHidden, sublayer.opacity > 0 else { return area }
+                var drawn = sublayer.convert(sublayer.bounds, to: shown)
+                if !sublayer.masksToBounds { drawn = drawn.union(extent(sublayer)) }
+                return area.union(drawn)
+            }
+        }
+        let bounds = shown.bounds
+        let reach = bounds.insetBy(dx: -bounds.width / 2, dy: -bounds.height / 2)
+        let overflow = shown.masksToBounds ? CGRect.null : extent(shown).intersection(reach)
+        let rect = (overflow.isNull ? bounds : bounds.union(overflow)).integral
+        let scale = min(2, max(1, target.contentsScale))
+        let width = Int(ceil(rect.width * scale)), height = Int(ceil(rect.height * scale))
+        guard !live(target), width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let raster = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                     space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let blur = CIFilter(name: "CIGaussianBlur"), let dark = CIFilter(name: "CIExposureAdjust") else { return nil }
+        raster.scaleBy(x: scale, y: scale)
+        raster.translateBy(x: -rect.minX, y: -rect.minY)
+        // render(in:) applies the layer's own opacity, which is 0 or part way
+        // there while it is dimmed: draw its sublayers in place instead
+        // (sorted as Core Animation stacks them).
+        let sublayers = (shown.sublayers ?? []).enumerated().sorted { ($0.element.zPosition, $0.offset) < ($1.element.zPosition, $1.offset) }
+        if shown.isGeometryFlipped || !CATransform3DIsIdentity(shown.sublayerTransform)
+            || sublayers.contains(where: { !CATransform3DIsAffine($0.element.transform) }) {
+            shown.render(in: raster)
+        } else {
+            for (_, sublayer) in sublayers where !sublayer.isHidden {
+                let b = sublayer.bounds, anchor = sublayer.anchorPoint
+                raster.saveGState()
+                raster.concatenate(CGAffineTransform(translationX: -b.minX - anchor.x * b.width, y: -b.minY - anchor.y * b.height)
+                    .concatenating(sublayer.affineTransform())
+                    .concatenating(CGAffineTransform(translationX: sublayer.position.x, y: sublayer.position.y)))
+                sublayer.render(in: raster)
+                raster.restoreGState()
+            }
+        }
+        guard let drawn = raster.makeImage() else { return nil }
+        let input = CIImage(cgImage: drawn)
+        blur.setValue(input, forKey: kCIInputImageKey); blur.setValue(blurRadius * scale, forKey: kCIInputRadiusKey)
+        dark.setValue(blur.outputImage?.cropped(to: input.extent), forKey: kCIInputImageKey)
+        dark.setValue(darkening, forKey: kCIInputEVKey)
+        guard let output = dark.outputImage,
+              let image = stillContext.createCGImage(output, from: input.extent, format: .RGBA8, colorSpace: space) else { return nil }
+        return (image, rect, scale)
+    }
+
+    /// The layers under `root` that an animation keeps faded out after it
+    /// ends (a page leaving or left, a hold).
+    private static func heldOut(in root: CALayer) -> [CALayer] {
+        func fadesOut(_ animation: CAAnimation) -> Bool {
+            if let group = animation as? CAAnimationGroup { return (group.animations ?? []).contains(where: fadesOut) }
+            if let basic = animation as? CABasicAnimation, basic.keyPath == "opacity" { return (basic.toValue as? NSNumber)?.floatValue == 0 }
+            if let frames = animation as? CAKeyframeAnimation, frames.keyPath == "opacity" { return (frames.values?.last as? NSNumber)?.floatValue == 0 }
+            return false
+        }
+        func held(_ layer: CALayer) -> [CALayer] {
+            let out = (layer.animationKeys() ?? []).compactMap(layer.animation(forKey:))
+                .contains { !$0.isRemovedOnCompletion && fadesOut($0) }
+            return out && !layer.isHidden ? [layer] : (layer.sublayers ?? []).flatMap(held)
+        }
+        return (root.sublayers ?? []).flatMap(held)
+    }
+
+    /// A held fade that started visible (a leave, not a hold) and has not ended yet.
+    private static func stillLeaving(_ layer: CALayer) -> Bool {
+        let now = layer.convertTime(CACurrentMediaTime(), from: nil)
+        func visibleAtStart(_ animation: CAAnimation) -> Bool {
+            if let group = animation as? CAAnimationGroup { return (group.animations ?? []).contains(where: visibleAtStart) }
+            if let basic = animation as? CABasicAnimation, basic.keyPath == "opacity" { return ((basic.fromValue as? NSNumber)?.floatValue ?? 1) > 0 }
+            if let frames = animation as? CAKeyframeAnimation, frames.keyPath == "opacity" { return ((frames.values?.first as? NSNumber)?.floatValue ?? 1) > 0 }
+            return false
+        }
+        return (layer.animationKeys() ?? []).compactMap(layer.animation(forKey:)).contains {
+            !$0.isRemovedOnCompletion && visibleAtStart($0) && ($0.beginTime == 0 || now < $0.beginTime + $0.duration)
+        }
+    }
+
     var isDimmed: Bool { dimmed }
 
     /// Everything off at once (HUD close).
     func reset() {
-        dismissConfirm(); clearToast()
-        HUDMotion.perform { dim.opacity = 0; blurTarget?.filters = nil }
+        dismissConfirm(); clearToast(); stillRequest += 1
+        HUDMotion.perform {
+            dim.opacity = 0; blurTarget?.filters = nil
+            if still.superlayer != nil {
+                blurTarget?.removeAnimation(forKey: "hud.opacity"); blurTarget?.opacity = stillRestoreOpacity
+                still.removeAllAnimations(); still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
+            }
+        }
         dimmed = false
     }
 }
