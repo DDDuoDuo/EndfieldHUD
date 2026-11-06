@@ -406,6 +406,64 @@ int Application::Impl::runIdleTrace(){
         {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
+    // After the report (its numbers stay those of the windows above), the
+    // close and opening ends on the same real scheduling (the HUD is closed).
+    using P=core::SystemOverlayPhase;
+    const auto reduceMotion=[&](bool on){configuration.set("reduceMotion",on);configurationPending=true;applyConfiguration(clock());};
+    // A normal close ends on its frames, before its transition deadline.
+    openHUD();
+    {const auto at=OverlayHost::clockNow();closeHUD();const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace normal close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(elapsed<closingTransitionBound,"A normal close ends on its frames before its transition deadline");}
+    // Reduce Motion (the preference, or Windows "Animation effects" off):
+    // the close conceals the source at once and, as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), finishes there
+    // without a frame - the window hides and the lifecycle closes, so the
+    // next summon opens the HUD again.
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows on the transitions below,
+    // kept in memory (never written): where each lands and what it records.
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});memoryTraceRows=true;
+    const auto row=[&](std::string_view stage)->std::optional<std::size_t>{const auto&rows=memoryTrace->rows();
+        for(std::size_t n=0;n<rows.size();++n)if(const auto&name=rows[n]["stage"];name.isString()&&name.string()==stage)return n;return std::nullopt;};
+    const auto traced=[&](std::string_view stage,std::string_view field)->const Json&{static const Json none;const auto n=row(stage);return n?memoryTrace->rows()[*n]["scheduling"][field]:none;};
+    const auto tracedIs=[&](std::string_view stage,std::string_view field,std::string_view value){const auto&v=traced(stage,field);return v.isString()&&v.string()==value;};
+    const auto tracedTrue=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isBool()&&v.boolean();};
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
+          "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
+     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");
+     need(row("close-1")&&row("closed-1")&&*row("close-1")<*row("closed-1")&&tracedIs("close-1","lifecycle","closing")&&tracedIs("close-1","session","visible")&&
+          tracedTrue("close-1","closePending")&&tracedTrue("close-1","reduceMotion")&&traced("close-1","host")["visible"].isBool()&&traced("close-1","host")["visible"].boolean(),
+          "The memory trace's close row records the request, before the Reduce Motion close finishes");}
+    openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
+    {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    reduceMotion(false);
+    // OverlayController.transitionDeadline: an opening and a close no frame
+    // finishes (the window stays hidden under them, so the host's frame gate
+    // stays shut) end on the host's deadline wake. Escape during that opening
+    // waits for it, then closes.
+    {const auto framesBefore=host.stats().frames;const auto at=OverlayHost::clockNow();
+     perform(lifecycle.toggle(),clock());(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
+     pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
+     need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes an opening no frame finished, and the close queued during it starts");
+     pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&ended>=openedAfter+closingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s\n";
+     need(tracedIs("transition-deadline-1","lifecycle","opening")&&tracedTrue("transition-deadline-1","closeAfterOpening")&&tracedIs("transition-deadline-2","lifecycle","closing")&&
+          traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
+          "The memory trace records the expired opening and close deadlines");}
+    // The tray's Quit under Reduce Motion ends the run without a frame.
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
+     const auto request="close-"+std::to_string(memoryTrace->closes);
+     need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
+          "The memory trace records Quit's close request, then the quit");}
     shutdownVisible();
     return 0;
 }

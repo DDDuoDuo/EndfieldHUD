@@ -790,7 +790,7 @@ void Application::Impl::concealed(double time){
     designDensityRetracted=false;
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
 }
 // Nothing is drawn until the next opening. One publication lets the owners
 // that released their artwork on the overlayConcealed broadcast retire its GPU
@@ -849,7 +849,7 @@ void Application::Impl::releaseIdleGraphics(double time){
         const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics device (")+typeid(e).name()+")\n";
         std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     }
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
 }
 void Application::Impl::prepareGraphics(bool anticipated){
     if(!ready||stopping||!renderer.stats().initialized||!renderer.deviceSuspended())return;
@@ -1823,13 +1823,16 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     using K=core::SystemOverlayEffect::Kind;
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
-        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();openPresentation(e.module,time);break;
-        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);break;
+        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
+        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();
+            // At the request, before the close runs (a Reduce Motion close finishes inside it).
+            if(lifecycleTraced()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);
+            close(time);break;
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
-        case K::terminate:finishQuit(time);break;
+        case K::terminate:if(lifecycleTraced()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;
         case K::shelfRetract:case K::shelfHide:case K::shelfRestore:case K::shelfClose:shelfDragEffect(e,time);break;
         }
@@ -1948,7 +1951,14 @@ void Application::Impl::close(double time){
         // RC 139 measured on the frames: up to the deploy's last frame, posed at its eased clip time.
         if(const double length=chromePlan->entranceSeconds();length>0&&designDensityFrameTime)
             designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,core::VisibilityClock::clipTime(std::max(0.,*designDensityFrameTime-canvasOpenedAt),length)/length);
-    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
+    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);
+    // The lifecycle's close plays now (an editor that declined above leaves no deadline).
+    if(lifecycleClosing)transitionDeadline=time+closingTransitionBound;
+    refresh(time);
+    // Reduce Motion conceals the source at once: as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), the close
+    // finishes here. No frame would: the concealed demand presents nothing.
+    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time);
 }
 void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
@@ -1963,7 +1973,7 @@ void Application::Impl::forceConceal(double time){
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
         closing=false;session->conceal(time);if(notes)notes->setMediaActive(false,hostTime(time));
     }
-    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();
+    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();transitionDeadline.reset();
     host.hide();concealed(time);if(!stopping){host.setFrameDemand(demand(time));scheduleDeadline();}
 }
 bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
@@ -2166,7 +2176,7 @@ void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stoppin
     if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
        !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
         idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
-    include(calendarNextWake);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    include(calendarNextWake);include(graphicsIdleAt);if(lifecycleOpening||lifecycleClosing)include(transitionDeadline);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
@@ -2847,8 +2857,8 @@ std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::
 }
 void Application::Impl::moveProjection(const gpu::DisplayDescriptor&display){
     hudDisplay=display.handle;projectionWorkTopPixels=std::max(0,display.workArea.top-display.bounds.top);
-    // Geometry only: the HUD hidden for the hand-off stays out of the topmost
-    // band until Projection's show() enters it; a shown Projection keeps its place.
+    // Geometry only: the HUD hidden for the hand-off and a shown Projection
+    // both keep their place in the topmost band.
     const auto&bounds=display.bounds;need(host.place(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),"Position Projection on its retained display");
     (void)projectionCall("resize",[&]{projection->resize(host.metrics(),projectionWorkTopPixels/host.metrics().scale);});
 }

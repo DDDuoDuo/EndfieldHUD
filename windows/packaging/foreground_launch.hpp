@@ -14,12 +14,12 @@
 // ID, and only then lets it run: the grant is in place before the program's
 // first instruction, so its first window can use it. Windows ignores the
 // grant when the launcher holds no right itself, and drops it at the user's
-// next input elsewhere. Without the right Windows also keeps the HUD out of
-// the topmost band (it places it just behind the foreground window), so the
-// grant is what brings it to the front; the HUD enters the band and takes
-// the activation at its next activation, such as a click on a visible part
-// of it (app/overlay_host.hpp). Nothing here injects input or attaches
-// thread input.
+// next input elsewhere. The HUD window holds the topmost band from its
+// creation on, so it appears above normal windows either way; the grant is
+// what activates it on opening. Without it the HUD takes the activation at
+// its next activation, such as a click on a visible part of it
+// (app/overlay_host.hpp). Nothing here injects input or attaches thread
+// input.
 #ifdef _WIN32
 #include <cstdint>
 #include <filesystem>

@@ -31,6 +31,7 @@
 #include "native/event_log_time.hpp"
 #include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
+#include "modules/charge_badge.hpp"
 #include "core/application_event_recorder.hpp"
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
@@ -203,7 +204,7 @@ private:
 // bounded stage rows and, in the hidden run, one row per module visit.
 class MemoryTrace final {
 public:
-    static constexpr std::size_t rowLimit = 40, visitLimit = 64;
+    static constexpr std::size_t rowLimit = 48, visitLimit = 64;
     explicit MemoryTrace(fs::path path) : path_(std::move(path)) {}
     bool accepts() const noexcept { return rows_.size() < rowLimit; }
     void add(Json row) { if (accepts()) rows_.push_back(std::move(row)); }
@@ -211,7 +212,10 @@ public:
     const fs::path& path() const noexcept { return path_; }
     const Json::Array& rows() const noexcept { return rows_; }
     const Json::Array& visits() const noexcept { return visits_; }
-    unsigned openings{}, closings{};
+    // Lifecycle rows (production; the idle trace checks them in memory):
+    // openings and closings finished, close requests as they reach the
+    // presentation, transition deadlines that expired, quits.
+    unsigned openings{}, closings{}, closes{}, deadlines{}, quits{};
 private:
     fs::path path_;
     Json::Array rows_, visits_;
@@ -350,6 +354,17 @@ struct Application::Impl {
     void prepareGraphics(bool anticipated);
     static constexpr double preparedGraphicsLifetime = 15;
     std::optional<double> preparedGraphicsUntil;
+    // OverlayController.transitionDeadline: an opening or a close the frames
+    // never finished is finished by the host's deadline wake. Armed only while
+    // a transition runs (no wake while idle or hidden): at an opening for
+    // HUDSourceWatchView.backdropPreparationTimeout (3 s) +
+    // SystemHUDView.entranceDuration + 0.2 s, and where a close starts its
+    // animation for SystemHUDView.exitDuration (HUDChargeBadge.exitDuration)
+    // + 0.2 s. Cleared when the transition finishes or is forced.
+    static constexpr double openingTransitionBound=3+core::SystemOverlayLifecycle::entranceDuration+.2;
+    static constexpr double closingTransitionBound=modules::ChargeBadgeState::exitDuration+.2;
+    std::optional<double> transitionDeadline;
+    void transitionDeadlineExpired(double time);
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
     // The hidden idle and animation traces run on the real clock through the production scheduling.
@@ -373,6 +388,12 @@ struct Application::Impl {
     void selectModule(core::Module, double time);
     void open(double time);
     void close(double time);
+    // OverlayController.finishSystemOpening / finishSystemClosing: the end of
+    // an opening (the session visible) and of a close (the session concealed),
+    // reached by a frame, by a close that concealed the session at once
+    // (Reduce Motion) or by the transition deadline.
+    void finishOpening(double time);
+    void finishConcealment(double time);
     void finishQuit(double time);
     void forceConceal(double time);
     // The Shelf drag-out (application_events.cpp): the drag loop with the
@@ -1039,6 +1060,11 @@ struct Application::Impl {
     void projectionFailed();
     LiveProbe probe;
     std::unique_ptr<MemoryTrace> memoryTrace;
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows (opened, close request,
+    // closed, transition deadline, quit): production, or the hidden idle
+    // trace, which keeps them in memory (never written) to check them.
+    bool memoryTraceRows{};
+    bool lifecycleTraced() const noexcept { return memoryTrace && (production() || memoryTraceRows); }
     std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
     void recordModuleFailure(const ModuleFailure&) noexcept;
     void startFailed(std::string_view name, const std::exception&) noexcept; // a production start site's catch
