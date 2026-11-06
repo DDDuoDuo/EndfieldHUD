@@ -437,7 +437,7 @@ void ProfileCanvas::imagesChanged() {
 
 // --- Page (:282-313) ------------------------------------------------------------------------
 void ProfileCanvas::buildPage(d::Page& page) {
-    refs_ = Refs{}; accentBinders_.clear();
+    refs_ = Refs{}; accentBinders_.clear(); editorsMade_ = 0;
     const auto& p = displayed();
     header().configure({"PERSONAL ID"}, "MOD-15", title("Personal ID", "个人名片"), loaded_ ? "#" + p.tag : std::string(), false);
     if (!loaded_) return;     // the record is still being read
@@ -904,10 +904,21 @@ void ProfileCanvas::toggleDateKind() {
 // Opens the inline editor exactly over the element: #212121, accent ring and
 // bar, at least 220 wide for name and #, 60 otherwise.
 void ProfileCanvas::beginEdit(ProfileField field) {
-    if (textHidden_ || !canEdit(field) || (field == ProfileField::playerID && env().recordingMode) || !refs_.card) return;
-    const auto anchorIt = refs_.editables.find(field == ProfileField::tag ? ProfileField::name : field);
-    if (anchorIt == refs_.editables.end()) return;
+    const auto anchorField = field == ProfileField::tag ? ProfileField::name : field;
+    if (textHidden_ || !canEdit(field) || (field == ProfileField::playerID && env().recordingMode) || !refs_.card || !refs_.editables.contains(anchorField)) return;
     endEditing(true); closePopups();
+    // Every open makes a new "edit:<field>" editor, as the Mac makes a new
+    // HUDDesignTextField; the page's arena refuses an id it already made, so
+    // a field edited before on this page (closed without a save that
+    // re-rendered it: Esc, an unchanged, invalid or refused value) opens on
+    // the page built again. It keeps its ids: the scene reuses every part.
+    static_assert(unsigned(ProfileField::avatarOffsetY) < 32, "editorsMade_ keeps one bit per ProfileField (avatarOffsetY is the last)");
+    const auto made = std::uint32_t{1} << unsigned(field);
+    if (editorsMade_ & made) rerender();
+    // A save, or that re-render, replaced the card: the card and the element
+    // are looked up on the page shown now.
+    const auto anchorIt = refs_.editables.find(anchorField);
+    if (!refs_.card || anchorIt == refs_.editables.end()) return;
     const Rect rect = anchorIt->second->layer().frame();
     const bool wide = field == ProfileField::name || field == ProfileField::tag, intro = field == ProfileField::introduction;
     const d::Size size{std::max(rect.width, wide ? 220. : 60.), rect.height};
@@ -921,6 +932,7 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     options.alignment = profileNumericField(field) ? d::TextAlignment::right : d::TextAlignment::left;
     const auto initial = field == ProfileField::tag ? displayed().tag : value(field, displayed());
     auto& editor = page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), profileFieldTitle(field, env().language), initial, "", size, options);
+    editorsMade_ |= made;
     editor.layer().setOrigin({rect.x, rect.y});
     editor.layer().setZPosition(d::order::menu);
     // Its own part: joining the card does not load the card again. The card
@@ -938,6 +950,9 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     registerField(editor);
     refreshRouter();
     editor.beginEditing();
+    // No editor could start (no host, or the host refused one): nothing is
+    // being edited, so the editor leaves as if cancelled.
+    if (!editor.editing() && editing_ && editing_->text == &editor) finishEdit(field, std::nullopt);
 }
 // Enter, Tab and a press elsewhere commit; Esc cancels. Invalid values are
 // discarded; a saved value re-renders the card and plays vChg.
