@@ -44,6 +44,7 @@ struct Press final : d::Control {
 struct FakeCanvas final : d::Canvas {
     FakeCanvas(d::Context& c, core::Module m) : Canvas(m, c) {}
     unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{};
+    bool striped{};   // the press gains a surface of its own: the page part loads again, its old scene retires
     d::ScrollArea* rows{};
     void buildPage(d::Page& page) override {
         ++builds;
@@ -56,6 +57,13 @@ struct FakeCanvas final : d::Canvas {
         press.layer().setContent(d::solid("plate", {0, 0, 200, 50}, d::rgb(0x2A2A2A)));
         press.setTarget({0, 0, 200, 50});
         press.onActivate = [this] { ++pressed; };
+        if (striped) {
+            auto& stripe = page.makeLayer("stripe");
+            stripe.setFrame({0, 0, 200, 4});
+            stripe.setContent(d::solid("stripe", {0, 0, 200, 4}, d::rgb(0xFAD41F)));
+            stripe.setAnimatable();
+            press.layer().add(stripe);
+        }
         page.layer().add(press.layer());
         page.add(press);
     }
@@ -264,6 +272,58 @@ void run(const std::filesystem::path& shader) {
         check(context.pagesBuilt() == pages + 1 && skipped->builds == builds, "A Recording mode switch then builds only the shown page");
         frame(sample(core::Module::volume), 3.4);
         check(skipped->builds == builds + 1, "The prewarmed canvas builds once when shown");
+    }
+    // --- a crowded shared raster cache -------------------------------------------------------
+    // Every module visited in one opening keeps its scenes, their entries
+    // counted in the shared cache until the HUD closes. Past three quarters of
+    // a shared bound the modules switched away park at the next composition
+    // change, so the shown module's next page and other owners' entries still
+    // fit; with room they stay for a quick return.
+    {
+        frame(sample(core::Module::clipboard), 3.5);
+        const auto kept = core0.sceneStats(core::Module::volume);
+        check(kept && kept->rasterEntries > 0 && !raster.crowded(), "With room, a module switched away keeps its scene");
+        const auto tiny = ehud::data::Json::Object{{"id", "f"}, {"bounds", ehud::data::Json::Array{0, 0, 1, 1}}, {"position", ehud::data::Json::Array{0, 0}},
+            {"anchorPoint", ehud::data::Json::Array{0, 0}}, {"backgroundColor", ehud::data::Json::Object{{"sRGB", ehud::data::Json::Array{1, 1, 1, 1}}}}, {"children", ehud::data::Json::Array{}}};
+        gpu::LayerRasterOptions plain; plain.pixelsPerPoint = 1;
+        std::vector<std::string> crowd;
+        while (raster.stats().entries <= gpu::LayerRasterizer::maximumEntries / 4 * 3) { crowd.push_back("crowd." + std::to_string(crowd.size())); (void)raster.rasterize(crowd.back(), 1, tiny, plain); }
+        check(raster.crowded(), "Other owners' entries crowd the shared cache");
+        const auto shown = core0.sceneStats(core::Module::clipboard)->rasterEntries;
+        const auto full = raster.stats().entries;
+        frame(sample(core::Module::volume), 3.6);
+        frame(sample(core::Module::volume), 3.65);
+        const auto parked = core0.sceneStats(core::Module::clipboard);
+        check(shown > 0 && parked && parked->rasterEntries == 0 && parked->parts == 0 && raster.stats().entries + shown <= full + kept->rasterEntries,
+            "Crowded, the module switched away parks: its entries leave the shared cache");
+        check(core0.sceneStats(core::Module::volume)->rasterEntries > 0 && frame(sample(core::Module::volume), 3.7) > 0, "The shown module keeps its page");
+        for (const auto& id : crowd) (void)raster.remove(id);
+        check(!raster.crowded() && frame(sample(core::Module::clipboard), 3.8) > 0 && core0.sceneStats(core::Module::clipboard)->rasterEntries > 0,
+            "Shown again, the parked module rasterizes its page again");
+        frame(sample(core::Module::clipboard), 3.85);
+        check(core0.sceneStats(core::Module::volume)->rasterEntries > 0, "With room again, the module switched away keeps its scene");
+        // The shown module's replaced parts (retired scenes, still holding
+        // their entries until collected) do not count: collected first, they
+        // leave the cache at exactly three quarters, which is not crowded,
+        // and the module switched away keeps its scene.
+        const auto restyle = [&](bool striped, double t) { fake->striped = striped; fake->rerender(); return frame(sample(core::Module::clipboard), t); };
+        const auto loads = core0.sceneStats(core::Module::clipboard)->partsLoaded;
+        restyle(true, 3.9);
+        const auto stripedEntries = raster.stats().entries;
+        check(core0.sceneStats(core::Module::clipboard)->partsLoaded > loads && core0.sceneStats(core::Module::clipboard)->retiredParts == 0,
+            "A new surface in the page loads the page part again and retires the old one");
+        restyle(false, 3.95);
+        const auto line = gpu::LayerRasterizer::maximumEntries / 4 * 3;
+        check(stripedEntries < line && core0.sceneStats(core::Module::volume)->rasterEntries > 0, "The restyled page leaves room");
+        std::vector<std::string> filler;
+        for (std::size_t n = 0; n < line - stripedEntries; ++n) { filler.push_back("filler." + std::to_string(n)); (void)raster.rasterize(filler.back(), 1, tiny, plain); }
+        const auto again = core0.sceneStats(core::Module::clipboard)->partsLoaded;
+        restyle(true, 4.0);
+        check(core0.sceneStats(core::Module::clipboard)->partsLoaded > again && core0.sceneStats(core::Module::volume)->rasterEntries > 0,
+            "Retired parts of the shown module never park the module switched away");
+        check(raster.stats().entries == line && !raster.crowded(), "Collected, the restyled page and the crowd fill exactly three quarters");
+        for (const auto& id : filler) (void)raster.remove(id);
+        restyle(false, 4.05);
     }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);

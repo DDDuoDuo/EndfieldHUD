@@ -44,12 +44,15 @@ std::string failureLine(const ModuleFailure&);
 // The record's budget lines (Application::recordModuleFailure): the shared
 // raster cache's entries, the pixel bytes it holds against its budget
 // (LayerRasterizer::maximumResourceBytes bounds resourceBytes less the pixels
-// given back to GPU textures) and those given back; the renderer's resident
-// bytes and its parked copies against Renderer::maximumParkedBytes. Numbers
-// as "N of M": a slash would be redacted.
+// given back to GPU textures) and those given back; its retained editor text
+// metadata and typography descriptors against their bounds
+// (LayerRasterizer::maximumTextMetadataBytes, maximumTypographyDescriptorBytes);
+// the renderer's resident bytes and its parked copies against
+// Renderer::maximumParkedBytes. Numbers as "N of M": a slash would be redacted.
 struct FailureBudgets {
     std::size_t rasterEntries{}, maximumRasterEntries{}, heldBytes{}, maximumHeldBytes{}, releasedBytes{};
     std::size_t rendererBytes{}, maximumRendererBytes{}, parkedBytes{}, maximumParkedBytes{};
+    std::size_t textMetadataBytes{}, maximumTextMetadataBytes{}, typographyBytes{}, maximumTypographyBytes{};
 };
 std::string budgetLines(const FailureBudgets&);
 // Appends `record` to the file at `path` (read and replaced with
