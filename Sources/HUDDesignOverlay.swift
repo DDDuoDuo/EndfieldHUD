@@ -551,7 +551,7 @@ final class HUDCenterOverlay {
         }
         CATransaction.begin()
         // Replacing a still that shows, the live filters arrive already at full strength.
-        let replacing = still.superlayer != nil
+        let replacing = still.superlayer != nil && (still.presentation()?.opacity ?? still.opacity) > stillRestoreOpacity / 2
         if !showStill(of: target) { setLiveFilters(true, on: target, immediately: replacing) }
         CATransaction.commit()
     }
@@ -631,13 +631,24 @@ final class HUDCenterOverlay {
             (layer.shadowOpacity > 0 ? [layer] : []) + (layer.sublayers ?? []).flatMap(shadowed)
         }
         let shadows = scale == 1 ? [] : shadowed(shown).map { ($0, $0.shadowOffset, $0.shadowRadius) }
+        // render(in:) stacks siblings in array order; Core Animation by zPosition. Sort them for the capture.
+        func stacked(_ layer: CALayer) -> [(CALayer, [CALayer])] {
+            let children = layer.sublayers ?? []
+            let own = Set(children.map(\.zPosition)).count > 1 ? [(layer, children)] : []
+            return own + children.flatMap(stacked)
+        }
+        let restacked = stacked(shown)
         HUDMotion.perform {
+            for (layer, children) in restacked {
+                layer.sublayers = children.enumerated().sorted { ($0.element.zPosition, $0.offset) < ($1.element.zPosition, $1.offset) }.map(\.element)
+            }
             leftOut.forEach { $0.isHidden = true }
             for (layer, offset, radius) in shadows {
                 layer.shadowOffset = CGSize(width: offset.width * scale, height: offset.height * scale); layer.shadowRadius = radius * scale
             }
         }
         defer { HUDMotion.perform {
+            for (layer, children) in restacked { layer.sublayers = children }
             leftOut.forEach { $0.isHidden = false }
             for (layer, offset, radius) in shadows { layer.shadowOffset = offset; layer.shadowRadius = radius }
         } }
