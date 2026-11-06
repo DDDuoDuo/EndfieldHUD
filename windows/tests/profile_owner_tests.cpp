@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <wincodec.h>
+#include <uiautomation.h>
 #include <wrl/client.h>
 namespace {
 using namespace endfield;namespace m=modules;namespace gpu=native;namespace d=modules::design;using J=ehud::data::Json;using Microsoft::WRL::ComPtr;
@@ -69,6 +70,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;o.timeZone=u"UTC";
     o.design.name="profile";o.design.raster.pixelsPerPoint=1;o.design.now=[&]{return time;};o.design.changed=[&]{++changes;};
     o.design.routing.pointer=30;o.design.routing.key=30;o.design.routing.message=30;
+    o.design.fields.window=w.hwnd;o.design.fields.ownerMessage=WM_APP+0x48;o.design.fields.raster=o.design.raster; // the inline editors (native, hidden)
     o.requestImage=[&](m::ProfileImageKind,tools::ProfileOwnerOptions::ImageCompletion done){++imageAsks;chooser=std::move(done);return true;};
     o.cancelPicker=[&]{++cancels;if(chooser){auto c=std::exchange(chooser,{});c(std::nullopt);}};
     o.chooseColor=[&](std::array<double,3>initial,const std::function<void(std::array<double,3>)>&live){++colorAsks;colorStarts.push_back(initial);return colorScript?colorScript(live):std::nullopt;};
@@ -118,6 +120,33 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(!core.entries(core::Module::profile).empty()&&canvas.isActive(),"Personal ID is published as the active design page");
     check(canvas.bestText()=="3,262"&&canvas.hoursText()=="1.05","The best plate reads the minigame best once per visit; the hours plate max(stored, live)/3600");
     check(context.nextWakeTime().has_value()&&*context.nextWakeTime()<=time+30,"The 30 s hours refresh is a deadline on the shared clock (the overlay owner runs it)");
+    // 2b. Reopening an inline editor on the native editors (Windows 11: after
+    // editing the name or the bio everything in the dial disappeared). Opened
+    // as UI Automation (and a click) opens them, through the owner; Esc, Enter
+    // on the shown value and another field's invoke, each followed by the same
+    // field again: every open makes "edit:<field>" on the page.
+    {const auto invoke=[&](std::string_view id){
+        (void)core.automationRefresh(nullptr);check(core.automationCount()>0,"The page is listed for UI Automation");
+        const std::wstring wanted(id.begin(),id.end());
+        for(std::size_t n=0;n<core.automationCount();++n){
+            ComPtr<IRawElementProviderFragment>element;if(FAILED(core.automationChild(n,&element))||!element)continue;
+            ComPtr<IRawElementProviderSimple>simple;element.As(&simple);VARIANT v;VariantInit(&v);
+            const bool match=simple&&SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId,&v))&&v.vt==VT_BSTR&&wanted==v.bstrVal;VariantClear(&v);
+            if(!match)continue;
+            ComPtr<IUnknown>unknown;ComPtr<IInvokeProvider>provider;
+            const bool done=SUCCEEDED(simple->GetPatternProvider(UIA_InvokePatternId,&unknown))&&unknown&&SUCCEEDED(unknown.As(&provider))&&SUCCEEDED(provider->Invoke());
+            paint();return done;
+        }
+        return false;};
+     const auto press=[&](std::uint32_t vk){app::KeyEvent k;k.kind=app::KeyKind::down;k.value=vk;check(core.key(k,time),"The open editor takes the key");paint();};
+     for(const char*id:{"profile:name","profile:introduction","profile:name","profile:introduction"})for(const std::uint32_t vk:{std::uint32_t(VK_ESCAPE),std::uint32_t(VK_RETURN)}){
+        check(invoke(id)&&canvas.editingField().has_value(),std::string("The native editor opens for ")+id);
+        press(vk);check(!canvas.editingField(),std::string("Esc or Enter closes ")+id);}
+     check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens");
+     check(invoke("profile:introduction")&&canvas.editingField()==m::ProfileField::introduction,"Invoking the bio ends the name and opens the bio");
+     press(VK_ESCAPE);
+     check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens again after the bio");press(VK_ESCAPE);
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published and nothing was saved");}
     const auto frameImages=owner->stats();
     // 3. Avatar chooser from the ⋯ menu: the host's queued dialog, imported on the worker.
     const auto photo=t.root/"portrait.png";encode(photo,300,200);

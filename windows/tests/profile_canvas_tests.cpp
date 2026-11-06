@@ -362,6 +362,19 @@ void hiddenScaleChange() {
     check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
 }
 
+// The inline editor host: records the open request (its field) and the typed text.
+struct FieldHost final : d::TextEditorHost {
+    std::optional<d::TextEditRequest> request; std::string value;
+    bool refuses{};
+    unsigned begins{};
+    bool begin(const d::TextEditRequest& r) override { if (refuses) return false; request = r; value = r.text; ++begins; return true; }
+    void end(d::TextField&) override { request.reset(); }
+    std::string text(const d::TextField&) const override { return value; }
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> selection(const d::TextField&) const override { return std::nullopt; }
+    bool hasMarkedText(const d::TextField&) const override { return false; }
+    void setText(d::TextField&, std::string_view v) override { value = v; }
+    void reproject(d::TextField&, d::Rect) override {}
+};
 // The design scene's plan over two emissions (native/hud_design_scene.cpp
 // syncContent): a part whose JSON is unchanged is reused, one with the same
 // surfaces rasterizes only the changed ones, any other loads every surface.
@@ -384,6 +397,7 @@ std::size_t rasterized(const d::Artwork& before, const d::Artwork& after) {
 void partsKept() {
     FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
     Owner o; o.avatar = true; auto store = o.store(sample());
+    FieldHost host; w.context.setEditorHost(&host);
     m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
     canvas.setStore(store.get()); w.show(canvas);
     const d::TextServices& text = w.context.env().text;
@@ -410,6 +424,126 @@ void partsKept() {
     check(partOf(after, "edit:name") && partOf(after, "edit:name") != partOf(after, "profile:name"), "The inline editor is its own part");
     oneCard(after, "while editing");
     check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
+    // Esc only removes the editor. Opening it again builds the page again
+    // (its arena keeps the first editor's id); the page keeps its ids, so
+    // the reopened editor rasterizes no more than the first one.
+    d::KeyInput esc; esc.virtualKey = d::key::escape;
+    check(host.request && host.request->field->handleEditingKey(esc) && !canvas.editingField(), "Esc closes the editor");
+    const auto closed = artwork();
+    check(rasterized(before, closed) == 0 && closed.parts.size() == before.parts.size(), "Closing the editor rasterizes " + std::to_string(rasterized(before, closed)) + " surfaces (bound 0)");
+    oneCard(closed, "after editing");
+    canvas.perform("profile:name", w.now);
+    check(canvas.editingField() == m::ProfileField::name, "The name's editor opens again");
+    const auto reopened = artwork();
+    check(rasterized(closed, reopened) <= 4, "The reopened editor rasterizes " + std::to_string(rasterized(closed, reopened)) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
+    oneCard(reopened, "while editing again");
+}
+
+// Reopening an inline editor (the Windows 11 report: after editing the name
+// or the bio the whole Profile dial went blank). Every open makes the editor
+// "edit:<field>" on the page, as the Mac makes a new HUDDesignTextField each
+// time; the page's arena refuses an id it already made, so an editor that
+// ended without a re-render (Esc, an unchanged, normalized-equal, invalid or
+// refused value) threw on the next open and the owner disabled the module.
+void reopenEditors() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const auto field = [&]() -> d::TextField& { check(host.request && host.request->field, "An editor is open"); return *host.request->field; };
+    const auto attached = [&](const d::TextField& f) { return f.layer().isDescendant(canvas.page().layer()); };
+    const auto open = [&](std::string_view id, m::ProfileField expected, const std::string& when) -> d::TextField& {
+        try { canvas.perform(id, w.now); }
+        catch (const std::exception& e) { throw std::runtime_error("Opening " + std::string(id) + " " + when + " threw: " + e.what()); }
+        check(canvas.editingField() == expected && host.request && host.request->field->editing() && attached(*host.request->field),
+              "The " + std::string(id) + " editor opens " + when);
+        return field();
+    };
+    const auto press = [&](d::TextField& f, std::uint32_t key) { d::KeyInput k; k.virtualKey = key; check(f.handleEditingKey(k), "The editor takes the key"); };
+    const auto escape = [&](d::TextField& f) { press(f, d::key::escape); check(!canvas.editingField() && !attached(f), "Esc closes the editor"); };
+    const auto enter = [&](d::TextField& f, std::string typed) { host.value = std::move(typed); press(f, d::key::enter); check(!canvas.editingField(), "Enter closes the editor"); };
+
+    // Esc, then the same field again (twice more: the dial stayed blank on the second open).
+    escape(open("profile:name", m::ProfileField::name, "the first time"));
+    escape(open("profile:name", m::ProfileField::name, "after Esc"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "the first time"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after Esc"));
+    // Committing the shown value, or one the record normalizes to it, saves nothing and re-renders nothing.
+    enter(open("profile:name", m::ProfileField::name, "again"), "Endministrator");
+    enter(open("profile:name", m::ProfileField::name, "after an unchanged commit"), "Endministrator ");
+    check(store->profile().name == "Endministrator" && o.commits.empty(), "A trailing space saves nothing");
+    enter(open("profile:name", m::ProfileField::name, "after a normalized-equal commit"), "");
+    check(store->profile().name == "Endministrator", "An empty name is discarded");
+    escape(open("profile:name", m::ProfileField::name, "after an invalid value"));
+    enter(open("profile:explorationLevel", m::ProfileField::explorationLevel, "the first time"), "05");
+    check(store->profile().explorationLevel == 5 && o.commits.empty(), "'05' saves nothing");
+    escape(open("profile:explorationLevel", m::ProfileField::explorationLevel, "after '05'"));
+    enter(open("profile:introduction", m::ProfileField::introduction, "again"), "Talos-II field engineer. Prefers tea.  ");
+    escape(open("profile:introduction", m::ProfileField::introduction, "after a normalized-equal bio"));
+    // The ⋯ menu's Edit # and Edit name (# with its sign is the same tag).
+    canvas.perform("profile:menu", w.now);
+    enter(open("profile.more:tag", m::ProfileField::tag, "from the menu"), "#1018");
+    check(store->profile().tag == "1018" && o.commits.empty(), "'#1018' saves nothing");
+    canvas.perform("profile:menu", w.now);
+    escape(open("profile.more:tag", m::ProfileField::tag, "from the menu again"));
+    canvas.perform("profile:menu", w.now);
+    escape(open("profile.more:name", m::ProfileField::name, "from the menu after the name editor"));
+    // A refused save toasts and keeps the field editable.
+    o.refuseCommit = true;
+    enter(open("profile:name", m::ProfileField::name, "before a refused save"), "Refused");
+    check(store->profile().name == "Endministrator" && w.toast() && w.toast()->title == "Notice", "A refused save toasts Notice");
+    o.refuseCommit = false;
+    escape(open("profile:name", m::ProfileField::name, "after a refused save"));
+    // An editor that cannot start (no host, or the host refused it) leaves nothing open.
+    host.refuses = true;
+    canvas.perform("profile:name", w.now);
+    check(!canvas.editingField(), "A refused editor leaves no field editing");
+    store->update([](m::PersonalProfile& p) { p.name = "Elsewhere"; });
+    check(control(canvas, "profile:name") && control(canvas, "profile:name")->label.find("Elsewhere") != std::string::npos,
+          "and a store change re-renders at once (no editor holds it back)");
+    host.refuses = false;
+    escape(open("profile:name", m::ProfileField::name, "after a refused editor"));
+    // Another field invoked (UIA) while one is edited: the first commits and
+    // re-renders the card; the second opens over the new card's element.
+    open("profile:name", m::ProfileField::name, "before invoking the bio");
+    host.value = "Renamed";
+    {
+        const auto commits = o.commits.size();
+        auto& bio = open("profile:introduction", m::ProfileField::introduction, "while the name is edited");
+        check(store->profile().name == "Renamed" && o.commits.size() == commits + 1, "The edited name commits first");
+        const auto anchor = control(canvas, "profile:introduction");
+        check(anchor && bio.layer().parent() && bio.layer().parent()->isDescendant(canvas.page().layer())
+              && bio.layer().frame().x == anchor->layer().frame().x && bio.layer().frame().y == anchor->layer().frame().y,
+              "The bio's editor lies over the re-rendered card's element");
+        escape(bio);
+    }
+    open("profile:name", m::ProfileField::name, "before invoking the bio unchanged");
+    escape(open("profile:introduction", m::ProfileField::introduction, "while the name is edited unchanged"));
+    escape(open("profile:name", m::ProfileField::name, "after being ended by the bio"));
+    // A card colour chosen between two opens: the new editor carries it.
+    const auto before = open("profile:name", m::ProfileField::name, "before a colour change").layer().id();
+    const auto caretBefore = host.request->caretColor;
+    escape(field());
+    canvas.perform("profile:backgroundMenu", w.now); canvas.perform("theme:6EDFE8", w.now); canvas.closePopover();
+    auto& recoloured = open("profile:name", m::ProfileField::name, "after a colour change");
+    check(recoloured.layer().id() == before, "The editor keeps its id (the page keeps its ids)");
+    check(host.request->caretColor != caretBefore, "The reopened editor takes the new card colour");
+    escape(recoloured);
+    // Leaving the Profile and coming back; closing and reopening the HUD.
+    open("profile:name", m::ProfileField::name, "before leaving");
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now);
+    check(!canvas.editingField(), "Leaving ends the editor");
+    w.show(canvas);
+    escape(open("profile:name", m::ProfileField::name, "after leaving and returning"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after returning"));
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now); canvas.resetSession();
+    w.show(canvas);
+    escape(open("profile:name", m::ProfileField::name, "after the HUD closed and reopened"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after the HUD reopened"));
+    enter(open("profile:name", m::ProfileField::name, "for a real change"), "Endmin");
+    check(store->profile().name == "Endmin", "A changed name still saves");
+    escape(open("profile:name", m::ProfileField::name, "after a saved change"));
 }
 }
 
@@ -419,7 +553,7 @@ int main(int argc, char** argv) {
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour(); hiddenScaleChange();
-        partsKept();
+        partsKept(); reopenEditors();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);

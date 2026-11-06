@@ -199,6 +199,7 @@ private:
     std::vector<std::function<void(design::Color)>> accentBinders_;
     std::vector<std::function<void()>> popoverBinders_;
     std::optional<Editing> editing_;
+    std::uint32_t editorsMade_{};            // the fields whose "edit:<field>" this page already made (bit per ProfileField)
     design::Deadlines::Token hoursTimer_{};
     std::uint64_t dialogGeneration_{};
 
