@@ -10,6 +10,7 @@
 #include "tools/hud_design_overlay_owner.hpp"
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -146,7 +147,24 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
      check(invoke("profile:introduction")&&canvas.editingField()==m::ProfileField::introduction,"Invoking the bio ends the name and opens the bio");
      press(VK_ESCAPE);
      check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens again after the bio");press(VK_ESCAPE);
-     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published and nothing was saved");}
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published and nothing was saved");
+     // 2c. The same by clicks, the route on which the repeated editor id
+     // reached the module registry and blanked the dial: each press goes
+     // through the owner's pointer routing to the element under it.
+     const auto click=[&](std::string_view id){
+        std::vector<d::AccessibilityItem>items;canvas.accessibilityItems(items);
+        const auto found=std::find_if(items.begin(),items.end(),[&](const d::AccessibilityItem&i){return i.id==id;});
+        if(found==items.end())return false;
+        const auto r=core.clientRect(found->rect);if(!r)return false;
+        const double x=r->x+r->width/2,y=r->y+r->height/2;
+        core.pointer({app::PointerKind::move,app::PointerButton::none,x,y},time);
+        core.pointer({app::PointerKind::down,app::PointerButton::left,x,y},time);
+        core.pointer({app::PointerKind::up,app::PointerButton::left,x,y},time);paint();return true;};
+     for(const char*id:{"profile:name","profile:introduction","profile:name","profile:introduction","profile:name"}){
+        check(click(id)&&canvas.editingField().has_value(),std::string("A click opens the native editor for ")+id);
+        press(VK_ESCAPE);check(!canvas.editingField(),std::string("Esc closes ")+id);}
+     core.pointer({app::PointerKind::leave,app::PointerButton::none,0,0},time);paint();
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published after the clicks");}
     const auto frameImages=owner->stats();
     // 3. Avatar chooser from the ⋯ menu: the host's queued dialog, imported on the worker.
     const auto photo=t.root/"portrait.png";encode(photo,300,200);

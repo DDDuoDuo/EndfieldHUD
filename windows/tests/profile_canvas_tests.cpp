@@ -436,6 +436,11 @@ void partsKept() {
     check(canvas.editingField() == m::ProfileField::name, "The name's editor opens again");
     const auto reopened = artwork();
     check(rasterized(closed, reopened) <= 4, "The reopened editor rasterizes " + std::to_string(rasterized(closed, reopened)) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
+    // The rebuilt page is the first open's scene again: the reopen rasterizes
+    // exactly the first editor's surfaces, and none of the card's.
+    check(rasterized(closed, reopened) == count && rasterized(after, reopened) == 0,
+          "The reopen rasterizes only the editor (" + std::to_string(rasterized(closed, reopened)) + " vs " + std::to_string(count) + "; "
+          + std::to_string(rasterized(after, reopened)) + " differ from the first open)");
     oneCard(reopened, "while editing again");
 }
 
@@ -517,6 +522,23 @@ void reopenEditors() {
               && bio.layer().frame().x == anchor->layer().frame().x && bio.layer().frame().y == anchor->layer().frame().y,
               "The bio's editor lies over the re-rendered card's element");
         escape(bio);
+    }
+    // The name invoked again while its editor holds a longer name: the save
+    // widens the name element, and the new editor takes the new element's
+    // width (an element read before the save would give the old one).
+    open("profile:name", m::ProfileField::name, "before invoking it again");
+    host.value = "Endministrator Talos";
+    {
+        const auto old = control(canvas, "profile:name");
+        const double oldWidth = old ? old->layer().frame().width : 0;
+        auto& again = open("profile:name", m::ProfileField::name, "while it is edited");
+        check(store->profile().name == "Endministrator Talos", "The edited name commits first");
+        const auto anchor = control(canvas, "profile:name");
+        check(anchor && anchor->layer().frame().width > std::max(oldWidth, 220.), "The saved name widens the name element");
+        check(anchor && again.layer().frame().x == anchor->layer().frame().x && again.layer().frame().y == anchor->layer().frame().y
+              && again.layer().frame().width == std::max(anchor->layer().frame().width, 220.),
+              "The reopened name's editor takes the re-rendered element's frame");
+        escape(again);
     }
     open("profile:name", m::ProfileField::name, "before invoking the bio unchanged");
     escape(open("profile:introduction", m::ProfileField::introduction, "while the name is edited unchanged"));

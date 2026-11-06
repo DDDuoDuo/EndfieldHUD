@@ -912,6 +912,7 @@ void ProfileCanvas::beginEdit(ProfileField field) {
     // a field edited before on this page (closed without a save that
     // re-rendered it: Esc, an unchanged, invalid or refused value) opens on
     // the page built again. It keeps its ids: the scene reuses every part.
+    static_assert(unsigned(ProfileField::avatarOffsetY) < 32, "editorsMade_ keeps one bit per ProfileField (avatarOffsetY is the last)");
     const auto made = std::uint32_t{1} << unsigned(field);
     if (editorsMade_ & made) rerender();
     // A save, or that re-render, replaced the card: the card and the element
