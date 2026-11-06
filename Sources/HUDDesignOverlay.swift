@@ -343,6 +343,8 @@ final class HUDCenterOverlay {
     private let still = HUDLayer.plain("center.dim.still")
     private let picture = HUDLayer.plain("center.dim.picture")
     private var stillRestoreOpacity: Float = 1
+    /// The live content was faded out under the still: it owes `stillRestoreOpacity`.
+    private var stillHidesContent = false
     /// Bumped by every dim change: a picture still due for an older one is dropped.
     private var stillRequest = 0
     private static let stillContext = CIContext(options: [.cacheIntermediates: false])
@@ -518,9 +520,11 @@ final class HUDCenterOverlay {
             return
         }
         if !on, still.superlayer != nil {
+            let request = stillRequest
+            stillHidesContent = false
             CATransaction.begin()
             CATransaction.setCompletionBlock { [weak self] in
-                guard let self, !self.dimmed else { return }
+                guard let self, !self.dimmed, self.stillRequest == request else { return }
                 HUDMotion.perform { self.still.removeFromSuperlayer(); self.picture.contents = nil }
             }
             // The content returns in the first half under the still, so the
@@ -554,7 +558,12 @@ final class HUDCenterOverlay {
     /// (again over a still that is still fading out); false when it cannot.
     private func showStill(of target: CALayer) -> Bool {
         guard target.mask == nil, let parent = target.superlayer, let drawn = Self.dimmedStill(of: target) else {
-            if still.superlayer != nil { HUDMotion.perform { still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil } }
+            // A still that can no longer be retaken gives the content back at once.
+            HUDMotion.perform {
+                if stillHidesContent { target.removeAnimation(forKey: "hud.opacity"); target.opacity = stillRestoreOpacity }
+                still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
+            }
+            stillHidesContent = false
             return false
         }
         if still.superlayer == nil { stillRestoreOpacity = target.opacity }
@@ -569,6 +578,7 @@ final class HUDCenterOverlay {
             still.transform = target.transform; still.zPosition = target.zPosition
             if still.superlayer == nil { still.opacity = 0; parent.insertSublayer(still, above: target) }
         }
+        stillHidesContent = true
         // The content leaves in the second half, once the still covers it.
         HUDMotion.animate(still, "opacity", to: stillRestoreOpacity, duration: HUDDuration.dimFilter, env: env)
         HUDMotion.animate(target, "opacity", to: Float(0), duration: HUDDuration.dimFilter / 2,
@@ -611,8 +621,22 @@ final class HUDCenterOverlay {
     static func dimmedStill(of target: CALayer) -> (image: CGImage, rect: CGRect, scale: CGFloat)? {
         let shown = target
         let leftOut = heldOut(in: shown)
-        HUDMotion.perform { leftOut.forEach { $0.isHidden = true } }
-        defer { HUDMotion.perform { leftOut.forEach { $0.isHidden = false } } }
+        let scale = min(2, max(1, target.contentsScale))
+        // Core Graphics casts shadows in pixels, past the raster's scale: scale them for the capture.
+        func shadowed(_ layer: CALayer) -> [CALayer] {
+            (layer.shadowOpacity > 0 ? [layer] : []) + (layer.sublayers ?? []).flatMap(shadowed)
+        }
+        let shadows = scale == 1 ? [] : shadowed(shown).map { ($0, $0.shadowOffset, $0.shadowRadius) }
+        HUDMotion.perform {
+            leftOut.forEach { $0.isHidden = true }
+            for (layer, offset, radius) in shadows {
+                layer.shadowOffset = CGSize(width: offset.width * scale, height: offset.height * scale); layer.shadowRadius = radius * scale
+            }
+        }
+        defer { HUDMotion.perform {
+            leftOut.forEach { $0.isHidden = false }
+            for (layer, offset, radius) in shadows { layer.shadowOffset = offset; layer.shadowRadius = radius }
+        } }
         func live(_ layer: CALayer) -> Bool {
             layer is CAMetalLayer || layer is AVPlayerLayer || layer is AVSampleBufferDisplayLayer
                 || (layer.sublayers ?? []).contains(where: live)
@@ -629,7 +653,6 @@ final class HUDCenterOverlay {
         let reach = bounds.insetBy(dx: -bounds.width / 2, dy: -bounds.height / 2)
         let overflow = shown.masksToBounds ? CGRect.null : extent(shown).intersection(reach)
         let rect = (overflow.isNull ? bounds : bounds.union(overflow)).integral
-        let scale = min(2, max(1, target.contentsScale))
         let width = Int(ceil(rect.width * scale)), height = Int(ceil(rect.height * scale))
         guard !live(target), width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
               let raster = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -703,11 +726,10 @@ final class HUDCenterOverlay {
         dismissConfirm(); clearToast(); stillRequest += 1
         HUDMotion.perform {
             dim.opacity = 0; blurTarget?.filters = nil
-            if still.superlayer != nil {
-                blurTarget?.removeAnimation(forKey: "hud.opacity"); blurTarget?.opacity = stillRestoreOpacity
-                still.removeAllAnimations(); still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
-            }
+            if stillHidesContent { blurTarget?.removeAnimation(forKey: "hud.opacity"); blurTarget?.opacity = stillRestoreOpacity }
+            still.removeAllAnimations(); still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
         }
+        stillHidesContent = false
         dimmed = false
     }
 }
