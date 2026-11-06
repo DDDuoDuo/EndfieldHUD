@@ -361,12 +361,14 @@ void run(const std::filesystem::path& shader) {
         };
         bool crowdedBeforeCollect{};
         std::size_t relieved{};
-        // One frame of the application over these cores (registration order).
-        const auto tour = [&](gpu::LayerRasterizer& cache, std::initializer_list<tools::DesignOwnerCore*> cores, core::Module m, double t) {
-            const app::ModuleFrame f{center, chrome, sample(m), 1, t, true};
+        // One frame of the application over these cores (registration order):
+        // every owner collects, then the shared cache is relieved.
+        const auto present = [&](gpu::LayerRasterizer& cache, std::initializer_list<tools::DesignOwnerCore*> cores, const core::ModulePresentationSample& s, double t) {
+            const app::ModuleFrame f{center, chrome, s, 1, t, true};
             std::vector<gpu::LayerCompositionEntry> entries;
             for (auto* c : cores) { c->update(f); c->upload(renderer); }
-            for (auto* c : cores) for (const auto& e : c->entries(m)) entries.push_back(e);
+            for (auto* c : cores) for (const auto& e : c->entries(s.current.module)) entries.push_back(e);
+            if (s.incoming) for (auto* c : cores) for (const auto& e : c->entries(s.incoming->module)) entries.push_back(e);
             composition.setEntries(renderer, entries);
             composition.present(renderer);
             renderer.draw(false);
@@ -374,6 +376,9 @@ void run(const std::filesystem::path& shader) {
             for (auto* c : cores) c->collected(renderer);
             relieved = cache.relieve(renderer);
             return entries.size();
+        };
+        const auto tour = [&](gpu::LayerRasterizer& cache, std::initializer_list<tools::DesignOwnerCore*> cores, core::Module m, double t) {
+            return present(cache, cores, sample(m), t);
         };
         const auto stats = [](tools::DesignOwnerCore& c, core::Module m) { return *c.sceneStats(m); };
         const auto fill = [&](gpu::LayerRasterizer& cache, std::vector<std::string>& ids, std::size_t n) {
@@ -383,14 +388,25 @@ void run(const std::filesystem::path& shader) {
             composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{}); composition.present(renderer); renderer.draw(false);
             for (auto* c : cores) { c->collected(renderer); c->release(renderer); }
         };
+        // A failed check leaves a block with its cores' entries still
+        // composed: they are withdrawn before the cores go, so the failure
+        // is reported rather than a crash in the unwinding.
+        struct Withdrawn {
+            gpu::LayerComposition& composition; gpu::Renderer& renderer;
+            ~Withdrawn() { try { composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{}); } catch (...) {} }
+        };
         // 1) The shown module's replaced parts, still held by its owner while
-        // an owner registered before it collects, never park the module
-        // switched away (in either registration order).
+        // an owner registered before it collects, never park the modules
+        // switched away (in either registration order): neither the module
+        // just left nor an older one (Calendar, left before Work Mode, in the
+        // shown module's owner), which a crowd judged before every owner
+        // collected would park.
         {
             gpu::LayerRasterizer cache;
             std::vector<FakeCanvas*> canvases;
             auto awayCore = make(cache, "awayTest", {{core::Module::workMode, 0}}, canvases);
-            auto shownCore = make(cache, "shownTest", {{core::Module::storage, 0}}, canvases);
+            auto shownCore = make(cache, "shownTest", {{core::Module::storage, 0}, {core::Module::calendar, 0}}, canvases);
+            const Withdrawn withdrawn{composition, renderer};
             auto* shown = canvases[1];
             awayCore->resize(metrics); shownCore->resize(metrics);
             awayCore->setOverlayVisible(true, 10); shownCore->setOverlayVisible(true, 10);
@@ -399,21 +415,26 @@ void run(const std::filesystem::path& shader) {
                 shown->striped = striped; shown->rerender();
                 return awayFirst ? tour(cache, {a, b}, core::Module::storage, t) : tour(cache, {b, a}, core::Module::storage, t);
             };
-            tour(cache, {a, b}, core::Module::workMode, 10);
+            tour(cache, {a, b}, core::Module::calendar, 10);
+            tour(cache, {a, b}, core::Module::workMode, 10.05);
             tour(cache, {a, b}, core::Module::storage, 10.1);
             tour(cache, {a, b}, core::Module::storage, 10.15);
-            check(stats(*a, core::Module::workMode).rasterEntries > 0 && !cache.crowded(), "With room, the module switched away (another owner) keeps its page");
+            check(stats(*a, core::Module::workMode).rasterEntries > 0 && stats(*b, core::Module::calendar).rasterEntries > 0 && !cache.crowded(),
+                "With room, the modules switched away (both owners) keep their pages");
             restyle(true, 10.2, true);
             const auto striped = cache.stats().entries;
             restyle(false, 10.25, true);
             check(striped < line, "The restyled page leaves room");
             std::vector<std::string> crowd;
             fill(cache, crowd, line - striped);
-            const auto away0 = stats(*a, core::Module::workMode);
+            const auto away0 = stats(*a, core::Module::workMode), older0 = stats(*b, core::Module::calendar);
             for (const bool awayFirst : {true, false}) {
                 const auto loads = stats(*b, core::Module::storage).partsLoaded;
                 restyle(true, awayFirst ? 10.3 : 10.4, awayFirst);
                 check(crowdedBeforeCollect && stats(*b, core::Module::storage).partsLoaded > loads, "Before collection, the replaced part crowds the cache");
+                const auto olderNow = stats(*b, core::Module::calendar);
+                check(olderNow.rasterEntries == older0.rasterEntries && olderNow.parks == older0.parks,
+                    "Replaced parts of the shown module never park an older module switched away (the crowd is judged once every owner collected)");
                 const auto awayNow = stats(*a, core::Module::workMode);
                 check(cache.stats().entries == line && !cache.crowded() && awayNow.rasterEntries == away0.rasterEntries && awayNow.parks == away0.parks && relieved == 0,
                     awayFirst ? "Replaced parts of the shown module never park another owner's module switched away (registered before it)"
@@ -431,6 +452,7 @@ void run(const std::filesystem::path& shader) {
             std::vector<FakeCanvas*> canvases;
             auto coreY = make(cache, "relieveY", {{core::Module::calendar, 540}, {core::Module::hotkeys, 0}}, canvases);
             auto coreX = make(cache, "relieveX", {{core::Module::eventLog, 270}, {core::Module::about, 270}, {core::Module::display, 0}}, canvases);
+            const Withdrawn withdrawn{composition, renderer};
             coreY->resize(metrics); coreX->resize(metrics);
             coreY->setOverlayVisible(true, 20); coreX->setOverlayVisible(true, 20);
             auto* y = coreY.get(); auto* x = coreX.get();
@@ -484,6 +506,38 @@ void run(const std::filesystem::path& shader) {
             go(m1, t += .1); go(m1, t += .05);
             check(of(m1).rasterEntries > 0 && relieved == 0 && of(m4).parks == 1 && of(m5).rasterEntries > 0 && of(m5).parks == 0, "With room again, nothing parks");
             unpublish({y, x});
+        }
+        // 3) A superseded switch: A shown, B requested, then C requested
+        // inside A's leave. B was shown (its incoming screen prepared,
+        // unattached) but never drawn; A is the page the user left last, so
+        // in a crowd B parks first and A stays for a quick return.
+        {
+            gpu::LayerRasterizer cache;
+            std::vector<FakeCanvas*> canvases;
+            const core::Module pageA = core::Module::eventLog, pageB = core::Module::about, pageC = core::Module::display;
+            auto coreA = make(cache, "supersededA", {{pageA, 300}}, canvases);
+            auto coreBC = make(cache, "supersededBC", {{pageB, 300}, {pageC, 0}}, canvases);
+            const Withdrawn withdrawn{composition, renderer};
+            coreA->resize(metrics); coreBC->resize(metrics);
+            coreA->setOverlayVisible(true, 30); coreBC->setOverlayVisible(true, 30);
+            auto* x = coreA.get(); auto* y = coreBC.get();
+            const auto show = [&](const core::ModulePresentationSample& s, double t) { return present(cache, {x, y}, s, t); };
+            show(sample(pageA), 30); show(sample(pageA), 30.05);
+            show(skipping(pageA, pageB, pageB), 30.1);
+            check(canvases[1]->isShown() && stats(*y, pageB).rasterEntries > 0, "The incoming B screen is shown and prepared (unattached)");
+            show(skipping(pageA, pageC, pageC), 30.15);
+            check(!canvases[1]->isShown() && canvases[2]->isShown(), "C requested inside A's leave: B is skipped, C comes in");
+            show(sample(pageC), 30.2); show(sample(pageC), 30.25);
+            const auto a0 = stats(*x, pageA), b0 = stats(*y, pageB);
+            check(a0.rasterEntries > 0 && b0.rasterEntries > 0 && relieved == 0 && !cache.crowded(), "With room, A and B keep their pages");
+            std::vector<std::string> crowd;
+            fill(cache, crowd, line + 1 - cache.stats().entries);
+            show(sample(pageC), 30.3);
+            const auto a1 = stats(*x, pageA), b1 = stats(*y, pageB);
+            check(a1.rasterEntries == a0.rasterEntries && a1.parks == a0.parks, "Crowded after a superseded switch, the page the user left (A) is not parked before the skipped one");
+            check(relieved == 1 && b1.rasterEntries == 0 && b1.parks == b0.parks + 1, "The skipped page (B, shown but never seen) parks first");
+            for (const auto& id : crowd) (void)cache.remove(id);
+            unpublish({x, y});
         }
     }
     composition.detach(renderer);
