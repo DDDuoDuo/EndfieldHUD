@@ -14,7 +14,7 @@ EndfieldHUD's Swift app and desktop renderer are independently implemented. No s
 
 *Arknights*, *Arknights: Endfield*, character portraits, faction logos, branding and extracted game resources belong to HYPERGRYPH and their respective owners. This project is not affiliated with or endorsed by them.
 
-The app includes selected Watch scene resources and translated shader programs, UI icons, the Endfield cursor, Photo Mode stickers and filters, and the original *Merge! OrbiPom!* rules and artwork. Game audio is not bundled. These materials are excluded from EndfieldHUD's MIT license.
+The app includes selected Watch scene resources and translated shader programs, UI icons, the Endfield cursor, Photo Mode stickers and filters, and the original *OrbiPom! MERGE!* rules and artwork. Game audio is not bundled. These materials are excluded from EndfieldHUD's MIT license.
 
 Asset sources and checksums are recorded in the resource manifests:
 
