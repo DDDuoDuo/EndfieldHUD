@@ -346,11 +346,13 @@ public:
     // warm (the cache keeps at most that one page beyond what cannot park,
     // and the close parks it); near the hard bounds it parks too, so the
     // shown page's next rasters fit. A page parks once (it then holds
-    // nothing). A park that lowers none of the bounds that are over (held
-    // pixels of renderer resources, intrinsic images or editors) ends the
-    // pass, and no page parks for those bounds again until the cache has
-    // room or another page is left. Not crowded: four counter comparisons,
-    // no walk. Returns the pages parked.
+    // nothing). At or below seven eighths, a park that lowers none of the
+    // bounds that are over (held pixels of renderer resources, intrinsic
+    // images or editors) ends the pass, and no page parks for those bounds
+    // again until the cache has room, another page is left or it passes
+    // seven eighths; past seven eighths every away page is tried, the page
+    // left last included. Not crowded: four counter comparisons, no walk.
+    // Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the

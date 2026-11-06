@@ -239,7 +239,8 @@ struct LayerRasterizer::Impl {
     struct Tenant {LayerRasterTenant*page{};std::uint64_t left{};LayerRasterTenant::State state{};};
     std::vector<Tenant> tenants;std::uint64_t leavings{};
     // The bounds past five eighths that a park gave nothing back of: no page
-    // parks for them again until the cache has room or another page is left.
+    // parks for them again until the cache has room, another page is left or
+    // a bound passes seven eighths.
     unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
@@ -1299,8 +1300,9 @@ void LayerRasterizer::left(LayerRasterTenant&page)noexcept{auto&r=*impl_;r.futil
 std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
     if(!r.above(6)){r.futile=0;return 0;}
     // Parks already found to give back nothing of what is over: none again
-    // (each would only cost its page a cold rebuild).
-    if(r.futile&&!(r.over(5)&~r.futile))return 0;
+    // (each would only cost its page a cold rebuild), unless the cache is
+    // past seven eighths: near the hard bounds every page is tried.
+    if(r.futile&&!(r.over(5)&~r.futile)&&!r.above(7))return 0;
     r.futile=0;
     // The page left most recently stays (a quick return) unless the cache
     // is still past seven eighths without it.
@@ -1308,9 +1310,14 @@ std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread
     for(auto&t:r.tenants){t.state=t.page->tenancy();if(t.state!=LayerRasterTenant::State::shown&&t.left&&(!last||t.left>last->left))last=&t;}
     std::size_t parked{};
     // One park; false (the pass stops) when it lowered none of the bounds
-    // past `eighths`/8: what is over is not the pages' (renderer resources,
-    // intrinsic images, editors), and parking more would rebuild them for
-    // nothing. Four counters compared per park.
+    // past `eighths`/8 while the cache is at or below seven eighths: what is
+    // over is likely not the pages' (renderer resources, intrinsic images,
+    // editors), and parking more would rebuild them for nothing. One page
+    // giving nothing back proves nothing of the others (a page whose pixels
+    // went to the GPU holds no held bytes; a newer one may), so past seven
+    // eighths the walk goes on, the page left last included, as it must
+    // before the hard bounds fail the shown owner. Four counters compared
+    // per park.
     const auto relieves=[&](Impl::Tenant&t,std::size_t eighths){
         const auto bounds=r.over(eighths);const auto before=r.load();
         t.state=LayerRasterTenant::State::empty; // tried once: a refused park is not retried in this pass
@@ -1318,6 +1325,7 @@ std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread
         ++parked;
         const auto after=r.load();
         for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n])return true;
+        if(r.above(7))return true;
         r.futile=bounds;return false;};
     while(r.above(5)){
         Impl::Tenant*oldest{};
