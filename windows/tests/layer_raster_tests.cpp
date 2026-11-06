@@ -1,5 +1,6 @@
 #include "native/layer_raster.hpp"
 #include "native/layer_image_source.hpp"
+#include "native/renderer.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -371,11 +372,56 @@ void textDensity(){
     check(raster.releasePixels("density.text",text),"The dense raster gives its pixels back");
     std::vector<std::uint8_t> again;raster.repaint(*text,again);check(again==painted,"It repaints byte for byte at its own density");
 }
+// Crowd relief (LayerRasterizer::relieve) over fake pages: each holds its
+// own entries and gives them back when parked.
+struct FakePage final:LayerRasterTenant{
+    LayerRasterizer&raster;std::vector<std::string> ids;bool showing{},refuses{};
+    mutable unsigned asked{};unsigned parks{};std::vector<const FakePage*>*order{};
+    FakePage(LayerRasterizer&r,const char*name,std::size_t entries,std::vector<const FakePage*>&o):raster(r),order(&o){
+        LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
+        for(std::size_t n=0;n<entries;++n){ids.push_back(std::string(name)+"."+std::to_string(n));raster.rasterize(ids.back(),1,layer("tiny",1,1),tiny);}
+        raster.enlist(*this);}
+    ~FakePage(){raster.withdraw(*this);}
+    State tenancy()const noexcept override{++asked;return showing?State::shown:ids.empty()?State::empty:State::held;}
+    bool park(Renderer&)noexcept override{++parks;if(refuses||ids.empty())return false;order->push_back(this);for(const auto&id:ids)(void)raster.remove(id);ids.clear();return true;}
+    void show(){showing=true;raster.shown(*this);}
+};
+void crowdRelief(){
+    LayerRasterizer raster;Renderer renderer;
+    LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
+    const auto line=LayerRasterizer::maximumEntries/4*3,low=LayerRasterizer::maximumEntries/8*5;
+    std::vector<const FakePage*> order;
+    FakePage a(raster,"a",280,order),b(raster,"b",280,order),c(raster,"c",560,order),d(raster,"d",10,order),shown(raster,"s",10,order),refused(raster,"r",10,order);
+    // Shown in the order refused, a, b, c, d, shown: d is the module left last.
+    for(auto*p:{&refused,&a,&b,&c,&d,&shown}){p->show();if(p!=&shown)p->showing=false;}
+    refused.refuses=true;
+    check(raster.relieve(renderer)==0&&a.asked+b.asked+c.asked+d.asked+shown.asked+refused.asked==0,"With room, the relief asks no page (counters only)");
+    std::size_t n=0;std::vector<std::string> crowd;
+    const auto fill=[&]{while(raster.stats().entries<=line){crowd.push_back("crowd."+std::to_string(n++));raster.rasterize(crowd.back(),1,layer("tiny",1,1),tiny);}};
+    fill();
+    check(raster.crowded()&&raster.relieve(renderer)==2,"Crowded, two pages park");
+    check(refused.parks==1&&order.size()==2&&order[0]==&a&&order[1]==&b,"Least recently shown first; a refused page is tried once and passed over");
+    check(!c.ids.empty()&&!d.ids.empty()&&!shown.ids.empty()&&raster.stats().entries<=low,"The parks stop at five eighths: newer pages keep theirs");
+    fill();
+    check(raster.relieve(renderer)==1&&order.size()==3&&order[2]==&c&&a.parks==1&&b.parks==1&&refused.parks==2,"Crowded again, the next oldest parks; parked pages are not parked again");
+    fill();
+    const auto parks=a.parks+b.parks+c.parks+d.parks+shown.parks;
+    check(raster.relieve(renderer)==0&&raster.crowded()&&a.parks+b.parks+c.parks+d.parks+shown.parks==parks&&!d.ids.empty()&&!shown.ids.empty(),
+        "Nothing to park: the page left last and the shown page stay, the parked ones are not asked to park");
+    // d shown and `shown` left: `shown` is now the page left last, d may park later.
+    d.show();shown.showing=false;
+    check(raster.relieve(renderer)==0&&!shown.ids.empty()&&!d.ids.empty(),"The page left last changes with each showing");
+    refused.refuses=false;
+    check(raster.relieve(renderer)==1&&refused.ids.empty()&&!shown.ids.empty(),"A page that refused parks once it can");
+    FakePage gone(raster,"gone",10,order);raster.withdraw(gone);
+    check(raster.crowded()&&raster.relieve(renderer)==0&&gone.asked==0&&gone.parks==0&&!gone.ids.empty(),"A withdrawn page is never asked");
+    for(const auto&id:crowd)(void)raster.remove(id);
+}
 }
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();memoryImages();releasable();textDensity();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();releasable();textDensity();crowdRelief();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }

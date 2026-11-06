@@ -678,11 +678,15 @@ bool NativeDesignScene::releaseResources(Renderer& r) {
     for (auto& p : i.parts) if (p->scene) ok = p->scene->releaseResources(r) && ok;
     return ok;
 }
+bool NativeDesignScene::holdsArtwork() const noexcept {
+    const auto& i = *impl_;
+    if (!i.retired.empty() || !i.kept.empty()) return true;
+    for (const auto& p : i.parts) if (p->scene) return true;
+    return false;
+}
 bool NativeDesignScene::park(Renderer& r) noexcept {
     auto& i = *impl_;
-    bool any = !i.retired.empty() || !i.kept.empty();
-    for (const auto& p : i.parts) any |= bool(p->scene);
-    if (!any) return false;
+    if (!holdsArtwork()) return false;
     // A composed part refuses (before anything is released): stay resident.
     try { if (!releaseResources(r)) return false; } catch (...) { return false; }
     // Destroying the scenes removes their shared raster entries; the next

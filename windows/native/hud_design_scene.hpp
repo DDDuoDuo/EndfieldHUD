@@ -154,6 +154,8 @@ public:
     // released; the next syncContent rebuilds them (Clipboard's park). False
     // when nothing was released or a part is still composed. Never throws.
     bool park(Renderer&) noexcept;
+    // Something park() would release (a part's scene, a retired or kept part).
+    bool holdsArtwork() const noexcept;
     // An owner-drawn entry composed right after the part whose root is
     // `after` (its direct or group entry): media the rasterizer cannot paint
     // (Media Assembly's edited picture and playing video, between its stage

@@ -225,6 +225,12 @@ struct LayerRasterizer::Impl {
     // renderer's resident textures and parked copies).
     std::size_t releasedBytes{};
     std::size_t heldBytes()const noexcept{return counts.resourceBytes-releasedBytes;}
+    // Past `eighths`/8 of a shared bound (crowded: 6; relieved at 5).
+    bool above(std::size_t eighths)const noexcept{const auto past=[eighths](std::size_t used,std::size_t maximum){return used>maximum/8*eighths;};
+        return past(entries.size(),maximumEntries)||past(heldBytes(),maximumResourceBytes)||past(counts.textMetadataBytes,maximumTextMetadataBytes)||past(counts.typographyDescriptorBytes,maximumTypographyDescriptorBytes);}
+    // Crowd relief: the enlisted pages and when each was last shown.
+    struct Tenant {LayerRasterTenant*page{};std::uint64_t shown{};LayerRasterTenant::State state{};};
+    std::vector<Tenant> tenants;std::uint64_t showings{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
     // The families of Fonts/manifest.json that ship on Windows and whose files
@@ -1275,8 +1281,25 @@ namespace {thread_local std::string_view rasterAttribution;}
 LayerRasterAttribution::LayerRasterAttribution(std::string_view owner)noexcept:previous_(rasterAttribution){rasterAttribution=owner;}
 LayerRasterAttribution::~LayerRasterAttribution(){rasterAttribution=previous_;}
 std::string_view LayerRasterAttribution::current()noexcept{return rasterAttribution;}
-bool LayerRasterizer::crowded()const{const auto&r=*impl_;r.onThread();const auto past=[](std::size_t used,std::size_t maximum){return used>maximum/4*3;};
-    return past(r.entries.size(),maximumEntries)||past(r.heldBytes(),maximumResourceBytes)||past(r.counts.textMetadataBytes,maximumTextMetadataBytes)||past(r.counts.typographyDescriptorBytes,maximumTypographyDescriptorBytes);}
+bool LayerRasterizer::crowded()const{const auto&r=*impl_;r.onThread();return r.above(6);}
+void LayerRasterizer::enlist(LayerRasterTenant&page){auto&r=*impl_;r.onThread();
+    if(std::none_of(r.tenants.begin(),r.tenants.end(),[&](const auto&t){return t.page==&page;}))r.tenants.push_back({&page});}
+void LayerRasterizer::withdraw(LayerRasterTenant&page)noexcept{std::erase_if(impl_->tenants,[&](const auto&t){return t.page==&page;});}
+void LayerRasterizer::shown(LayerRasterTenant&page)noexcept{auto&r=*impl_;for(auto&t:r.tenants)if(t.page==&page)t.shown=++r.showings;}
+std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
+    if(!r.above(6))return 0;
+    // The most recently shown page switched away stays (a quick return).
+    const Impl::Tenant*last{};
+    for(auto&t:r.tenants){t.state=t.page->tenancy();if(t.state!=LayerRasterTenant::State::shown&&t.shown&&(!last||t.shown>last->shown))last=&t;}
+    std::size_t parked{};
+    while(r.above(5)){
+        Impl::Tenant*oldest{};
+        for(auto&t:r.tenants)if(t.state==LayerRasterTenant::State::held&&&t!=last&&(!oldest||t.shown<oldest->shown))oldest=&t;
+        if(!oldest)break;
+        oldest->state=LayerRasterTenant::State::empty; // tried once: a refused park is not retried in this pass
+        if(oldest->page->park(renderer))++parked;
+    }
+    return parked;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();
     for(const auto&[id,e]:r.entries){(void)id;if(e.image->pixelsReleased())result.releasedPixelBytes+=e.image->pixelBytes();if(e.image->recipe_&&!e.hasText)result.repaintSourceBytes+=e.image->recipe_->bytes;}
     return result;}
