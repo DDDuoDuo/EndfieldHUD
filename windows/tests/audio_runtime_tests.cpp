@@ -187,6 +187,38 @@ void volumeRevisit(){
     check(deliveries.size()==1&&deliveries[0].applicationActivitySupported&&deliveries[0].canSetVolume,"The read updates the values in place; the page structure stays");
     h.runtime->stop();
 }
+// An app session whose name is ill-formed UTF-16 (an app-set display name or
+// an executable label with an unpaired surrogate): the UI's audio message
+// (AudioRuntime::drain, outside module isolation) converted every per-app
+// name to UTF-8 for the Volume page and threw, which stopped the HUD's frames
+// and ended the run. The row keeps the backend's PID fallback label instead,
+// and a well-formed surrogate pair keeps its own name.
+void malformedAppName(){
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{high}","4242:100",std::wstring(L"Player")+wchar_t(0xD800),4242,true,true,.8f,0},
+            {"{low}","4343:100",std::wstring(1,wchar_t(0xDC00))+L"Tail",4343,true,true,.6f,0},
+            {"{pair}","4444:100",std::wstring(L"Music ")+wchar_t(0xD83C)+wchar_t(0xDFB5),4444,true,true,.4f,0}};}
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
+    binding.setReceiver([&](const n::VolumeSnapshot&s){delivered=s;});
+    bool threw{};
+    try{binding.setVisible(true);callbacks.setActive(true);
+        h.until([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==3;},"Volume lists every audio app");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"An ill-formed UTF-16 app name never throws out of AudioRuntime::drain (the UI audio message)");
+    const auto named=[&](std::string_view id)->std::string{for(const auto&a:delivered.applications)if(a.id==id)return a.name;return "missing";};
+    check(named("4242:100")=="PID 4242"&&named("4343:100")=="PID 4343","An ill-formed name shows the existing PID fallback label");
+    check(named("4444:100")=="Music \xF0\x9F\x8E\xB5","A well-formed surrogate pair keeps its name");
+    // The reported trigger: a later volume change publishes again.
+    threw=false;
+    try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
+        h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.3)<1e-6;},"An endpoint volume change still drains");
+        check(callbacks.setAppGain("4242:100",.5),"The app's slider is accepted");
+        h.until([&]{for(const auto&a:delivered.applications)if(a.id=="4242:100")return a.state==n::VolumeAppState::active;return false;},"The app's gain reaches its row");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"Volume and per-app gain changes with the ill-formed app listed never throw");
+    h.runtime->stop();
+}
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
 // the page Volume shows when it enters keeps its staggered entrance through
@@ -266,6 +298,6 @@ void nowPlaying(){
 }
 }
 int main(){
-    try{construction();coalescing();devices();volume();volumeRevisit();volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
+    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

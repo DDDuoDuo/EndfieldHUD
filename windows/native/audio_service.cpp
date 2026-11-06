@@ -289,6 +289,10 @@ public:
                 ++impl.sessionReads;
                 const auto hr=call([&]{return sessions->read(records);});
                 if(hr<0){state.applicationError=hr;break;}
+                // Labels only, as for endpoints: an ill-formed UTF-16 name
+                // (an app-set display name, an unpaired surrogate) keeps the
+                // backend's PID fallback instead of reaching the UTF-8 rows.
+                for(auto&r:records)if(!audioUtf8(r.name))r.name=L"PID "+std::to_wstring(r.pid);
                 try{routes.update(records,*sessions);}catch(...){state.applicationError=unexpected;break;}
                 if(std::none_of(records.begin(),records.end(),[](const auto&r){return r.exited;}))break;
             }
