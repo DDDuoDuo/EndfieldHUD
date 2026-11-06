@@ -1672,7 +1672,7 @@ void Application::Impl::constructGame(double time){
     callbacks.saveBest=[this](std::int64_t best){gameBest=std::max(gameBest,best);configuration.set("orbipom.bestScore.v1",gameBest);if(settingsSaves){auto committed=settingsUI?settingsUI->controller().committed():configuration;committed.set("orbipom.bestScore.v1",gameBest);settingsSaves->save(committed);}};
     callbacks.event=[this](modules::OrbiPomEvent event){if(eventOwner){const char*action=event==modules::OrbiPomEvent::started?"started":event==modules::OrbiPomEvent::restarted?"restarted":"finished";eventOwner->record({ehud::data::makeUUID(),modules::EventKind::minigameAction,ehud::data::foundationNow(),{{"action",action}}});}};
     gameSession=std::make_unique<modules::OrbiPomSession>(gameBest,std::move(callbacks));
-    // Merge! OrbiPom! on the design library (modules/orbipom_canvas.hpp): one
+    // OrbiPom! MERGE! on the design library (modules/orbipom_canvas.hpp): one
     // design owner over the canvas, the original artwork under the minigame
     // resource root. Mac OrbiPomCanvas observes NSApplication activation and
     // NSWorkspace sleep / wake (here WM_ACTIVATEAPP and the host's suspension

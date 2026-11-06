@@ -12,7 +12,7 @@
       "version": "0.17.0 (commit 6d46d07d04041b40f4f49eaa7fdebe44c314c699)",
       "url": "https://github.com/quickjs-ng/quickjs",
       "license": "MIT",
-      "use": "JavaScript engine that runs the Merge! OrbiPom! scripts and Matter.js.",
+      "use": "JavaScript engine that runs the OrbiPom! MERGE! scripts and Matter.js.",
       "ships": ["EndfieldHUD.exe (compiled in)"],
       "paths": ["third_party/quickjs-ng"],
       "texts": ["third_party/quickjs-ng/LICENSE"]
@@ -103,7 +103,7 @@
       "version": "0.20.0",
       "url": "https://github.com/liabru/matter-js",
       "license": "MIT",
-      "use": "Physics engine of the Merge! OrbiPom! minigame, run by QuickJS-NG.",
+      "use": "Physics engine of the OrbiPom! MERGE! minigame, run by QuickJS-NG.",
       "ships": ["resources/orbipom/OrbiPom/matter-0.20.0.js", "resources/orbipom/OrbiPom/Matter-LICENSE.txt"],
       "paths": ["packaging/licenses/matter-js-LICENSE.txt"],
       "texts": ["packaging/licenses/matter-js-LICENSE.txt"],
