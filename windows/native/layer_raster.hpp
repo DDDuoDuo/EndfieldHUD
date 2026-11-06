@@ -346,13 +346,25 @@ public:
     // warm (the cache keeps at most that one page beyond what cannot park,
     // and the close parks it); near the hard bounds it parks too, so the
     // shown page's next rasters fit. A page parks once (it then holds
-    // nothing). At or below seven eighths, a park that lowers none of the
-    // bounds that are over (held pixels of renderer resources, intrinsic
+    // nothing). At or below seven eighths, a park that gives back nothing of
+    // the bounds that are over (held pixels of renderer resources, intrinsic
     // images or editors) ends the pass, and no page parks for those bounds
-    // again until the cache has room, another page is left or it passes
-    // seven eighths; past seven eighths every away page is tried, the page
-    // left last included. Not crowded: four counter comparisons, no walk.
-    // Returns the pages parked.
+    // again while they stay past five eighths, until a bound outside them
+    // passes five eighths or one passes seven eighths. Of the held pixels,
+    // under a sixty-fourth of the bound counts as nothing: a design page
+    // keeps a few pixels held after upload (its scroll bar's), and parking
+    // it for those frees nothing that matters. The other bounds have no such
+    // leftovers (a park gives back a page's entries, text metadata and
+    // typography descriptors whole), so any decrease of those counts: a page
+    // of a few entries parks for an entries crowd, and the pass goes on.
+    // Page switches keep what was learnt (cycling modules over such a crowd
+    // parks and rebuilds nothing after its first park, as in 1.3.0). A page
+    // away holding a share of such a bound waits as well, until the bound
+    // falls to five eighths, another passes it or one passes seven eighths
+    // (the pages keep no per-bound accounting to find it without a park). Past
+    // seven eighths every away page is tried, the page left last included.
+    // Not crowded, or crowded only by those bounds: counter comparisons
+    // only, no walk. Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the

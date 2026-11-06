@@ -375,9 +375,11 @@ void textDensity(){
 // Crowd relief (LayerRasterizer::relieve) over fake pages: each holds its
 // own entries (side x side points each; `released`: their pixels given back
 // to the GPU, as a design page's after upload) and gives them back when
-// parked. A page is stamped when it is left after it was shown.
+// parked. A page is stamped when it is left after it was shown. `outside`:
+// it also holds artwork outside the cache (parts the owner draws, GPU
+// textures), held until it parks.
 struct FakePage final:LayerRasterTenant{
-    LayerRasterizer&raster;std::vector<std::string> ids;bool showing{},refuses{};
+    LayerRasterizer&raster;std::vector<std::string> ids;bool showing{},refuses{},outside{};
     mutable unsigned asked{};unsigned parks{};std::vector<const FakePage*>*order{};
     FakePage(LayerRasterizer&r,const char*name,std::size_t entries,std::vector<const FakePage*>&o,unsigned side=1,bool released=false):raster(r),order(&o){
         LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
@@ -387,8 +389,8 @@ struct FakePage final:LayerRasterTenant{
             check(raster.releasePixels(ids.back(),image),"A fake page's pixels go to the GPU");}
         raster.enlist(*this);}
     ~FakePage(){raster.withdraw(*this);}
-    State tenancy()const noexcept override{++asked;return showing?State::shown:ids.empty()?State::empty:State::held;}
-    bool park(Renderer&)noexcept override{++parks;if(refuses||ids.empty())return false;order->push_back(this);for(const auto&id:ids)(void)raster.remove(id);ids.clear();return true;}
+    State tenancy()const noexcept override{++asked;return showing?State::shown:ids.empty()&&!outside?State::empty:State::held;}
+    bool park(Renderer&)noexcept override{++parks;if(refuses||(ids.empty()&&!outside))return false;order->push_back(this);for(const auto&id:ids)(void)raster.remove(id);ids.clear();outside=false;return true;}
     void show(){showing=true;}
     void leave(){showing=false;raster.left(*this);}
 };
@@ -397,7 +399,7 @@ void crowdRelief(){
     LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
     const auto line=LayerRasterizer::maximumEntries/4*3,low=LayerRasterizer::maximumEntries/8*5;
     std::vector<const FakePage*> order;
-    FakePage a(raster,"a",280,order),b(raster,"b",280,order),c(raster,"c",560,order),d(raster,"d",10,order),shown(raster,"s",10,order),refused(raster,"r",10,order);
+    FakePage a(raster,"a",280,order),b(raster,"b",280,order),c(raster,"c",560,order),d(raster,"d",10,order),shown(raster,"s",10,order),refused(raster,"r",80,order);
     // Shown in the order refused, a, b, c, d, shown: d is the module left last.
     for(auto*p:{&refused,&a,&b,&c,&d,&shown}){p->show();if(p!=&shown)p->leave();}
     refused.refuses=true;
@@ -419,7 +421,7 @@ void crowdRelief(){
     check(raster.relieve(renderer)==0&&!shown.ids.empty()&&!d.ids.empty(),"The page left last changes with each showing");
     refused.refuses=false;
     check(raster.relieve(renderer)==1&&refused.ids.empty()&&!shown.ids.empty(),"A page that refused parks once it can");
-    FakePage gone(raster,"gone",10,order);raster.withdraw(gone);
+    FakePage gone(raster,"gone",10,order);raster.withdraw(gone);fill();
     check(raster.crowded()&&raster.relieve(renderer)==0&&gone.asked==0&&gone.parks==0&&!gone.ids.empty(),"A withdrawn page is never asked");
     // Near the hard bounds the page left last (`shown`, the only one still
     // holding artwork) parks too, so the shown page's next rasters fit.
@@ -431,10 +433,12 @@ void crowdRelief(){
     check(raster.relieve(renderer)==0&&shown.parks==1&&d.parks==0,"Nothing left at all: nothing parks again");
     for(const auto&id:crowd)(void)raster.remove(id);
 }
-// A crowd the pages hold nothing of: held pixels past the bounds that no
-// page holds (renderer resources, intrinsic images, editors). At or below
-// seven eighths a park that lowers none of the bounds that are over ends the
-// pass; a park that lowers one goes on as before. Past seven eighths one page
+// A crowd the pages hold next to nothing of: held pixels past the bounds
+// that no page holds (renderer resources, intrinsic images, editors). At or
+// below seven eighths a park that gives back under a sixty-fourth of the
+// held pixels and nothing of any other bound that is over ends the pass;
+// any decrease of entries, text metadata or typography descriptors counts,
+// as does a sixty-fourth of the held pixels. Past seven eighths one page
 // giving nothing back does not stop the others (an older page whose pixels
 // went to the GPU next to a newer one holding its own).
 void crowdFutility(){
@@ -456,29 +460,58 @@ void crowdFutility(){
     }
     {
         LayerRasterizer raster;Renderer renderer;std::vector<const FakePage*> order;
-        FakePage p1(raster,"p1",4,order,64,true),p2(raster,"p2",4,order,64,true),p3(raster,"p3",4,order,64,true),p4(raster,"p4",4,order,64,true),shown(raster,"s",4,order,64,true);
-        for(auto*p:{&p1,&p2,&p3,&p4,&shown}){p->show();if(p!=&shown)p->leave();}
+        // 80 entries each, their pixels given to the GPU.
+        FakePage p1(raster,"p1",80,order,64,true),p2(raster,"p2",80,order,64,true),p3(raster,"p3",80,order,64,true),p4(raster,"p4",80,order,64,true),p5(raster,"p5",80,order,64,true),shown(raster,"s",80,order,64,true);
+        for(auto*p:{&p1,&p2,&p3,&p4,&p5,&shown}){p->show();if(p!=&shown)p->leave();}
         // 3 x 64 MiB + 4096 x 257 x 4: past three quarters of the held pixel
         // budget, under seven eighths.
         for(unsigned i=0;i<3;++i)raster.rasterize("held."+std::to_string(i),1,layer("held",4096,4096),wide);
         raster.rasterize("held.3",1,layer("held",4096,257),wide);
         check(raster.crowded()&&raster.stats().entries<LayerRasterizer::maximumEntries/8*5,"Held pixels past three quarters crowd the cache; the pages' entries are few");
-        check(raster.relieve(renderer)==1&&order.size()==1&&order[0]==&p1&&p2.parks+p3.parks+p4.parks+shown.parks==0,
+        check(raster.relieve(renderer)==1&&order.size()==1&&order[0]==&p1&&p2.parks+p3.parks+p4.parks+p5.parks+shown.parks==0,
             "Parks that lower no bound that is over: one page is tried, then the pass stops");
         const auto asked=p2.asked;
-        check(raster.relieve(renderer)==0&&p2.parks+p3.parks+p4.parks==0&&p2.asked==asked,"Nothing changed since: no page is asked or parked again");
-        // Another page left: one more is tried, then the pass stops again.
-        shown.leave();
-        check(raster.relieve(renderer)==1&&order.size()==2&&order[1]==&p2&&p3.parks+p4.parks+shown.parks==0,"Another page left: one page is tried again, then the pass stops");
-        // Room clears what was learnt: crowded again, one page is tried.
-        check(raster.remove("held.3")&&!raster.crowded()&&raster.relieve(renderer)==0,"With room nothing parks");
-        raster.rasterize("held.3",1,layer("held",4096,257),wide);
-        check(raster.relieve(renderer)==1&&order.size()==3&&order[2]==&p3&&p4.parks+shown.parks==0,"Crowded again after room, one page is tried again");
+        check(raster.relieve(renderer)==0&&p2.parks+p3.parks+p4.parks+p5.parks==0&&p2.asked==asked,"Nothing changed since: no page is asked or parked again");
+        // Cycling the modules while the same bound is over: each page is
+        // left in turn, and none is asked or parked (each park would free
+        // nothing and rebuild the next page opened).
+        {
+            const auto askedAll=p2.asked+p3.asked+p4.asked+p5.asked+shown.asked;std::size_t parked{};
+            for(unsigned round=0;round<2;++round)for(auto*p:{&p2,&p3,&p4,&p5,&shown}){p->show();parked+=raster.relieve(renderer);p->leave();parked+=raster.relieve(renderer);}
+            check(parked==0&&order.size()==1&&p2.asked+p3.asked+p4.asked+p5.asked+shown.asked==askedAll,
+                "Pages left while the same bound stays over: what was learnt holds, no page is asked or parked");
+        }
+        // Another bound passes five eighths (entries, which every park
+        // lowers): the pages are tried again; once only the held pixels are
+        // over, the next park that frees nothing ends the pass.
+        {
+            std::vector<std::string> many;
+            while(raster.stats().entries<=LayerRasterizer::maximumEntries/8*5){many.push_back("many."+std::to_string(many.size()));raster.rasterize(many.back(),1,layer("tiny",1,1),wide);}
+            check(raster.relieve(renderer)==2&&order.size()==3&&order[1]==&p2&&order[2]==&p3&&p4.parks+p5.parks+shown.parks==0,
+                "Another bound over: the oldest page parks (lowering it), the next frees nothing and the pass stops");
+            for(const auto&id:many)(void)raster.remove(id);
+            check(raster.relieve(renderer)==0&&p4.parks+p5.parks+shown.parks==0,"Only the held pixels over again: no page is tried");
+        }
+        // Dipping to three quarters (not crowded) without falling to five
+        // eighths keeps what was learnt: crowded again, no page is tried
+        // (each crossing would otherwise park a page for nothing).
+        {
+            const auto asked4=p4.asked;
+            check(raster.remove("held.3")&&!raster.crowded()&&raster.relieve(renderer)==0,"At three quarters nothing parks");
+            raster.rasterize("held.3",1,layer("held",4096,257),wide);
+            check(raster.relieve(renderer)==0&&order.size()==3&&p4.parks+p5.parks+shown.parks==0&&p4.asked==asked4,
+                "Back past three quarters without falling to five eighths: what was learnt holds, no page is tried");
+        }
+        // Room at five eighths clears what was learnt: crowded again, one
+        // page is tried.
+        check(raster.remove("held.0")&&raster.relieve(renderer)==0,"At five eighths nothing parks");
+        raster.rasterize("held.0",1,layer("held",4096,4096),wide);
+        check(raster.relieve(renderer)==1&&order.size()==4&&order[3]==&p4&&p5.parks+shown.parks==0,"Crowded again after falling to five eighths, one page is tried again");
         // Past seven eighths what was learnt does not hold the relief back:
         // the older page and the page left last are tried as well.
-        check(raster.relieve(renderer)==0&&p4.parks+shown.parks==0,"Still under seven eighths: nothing is tried again");
+        check(raster.relieve(renderer)==0&&p5.parks+shown.parks==0,"Still under seven eighths: nothing is tried again");
         raster.rasterize("held.4",1,layer("held",4096,1792),wide);
-        check(raster.relieve(renderer)==2&&order.size()==5&&order[3]==&p4&&order[4]==&shown,
+        check(raster.relieve(renderer)==2&&order.size()==6&&order[4]==&p5&&order[5]==&shown,
             "Past seven eighths, parks that gave nothing back before do not stop the older page or the page left last");
     }
     {
@@ -493,12 +526,76 @@ void crowdFutility(){
         check(raster.relieve(renderer)==3&&order.size()==3&&order[0]==&q1&&order[1]==&q2&&order[2]==&q3&&q4.parks==0&&!q4.ids.empty(),
             "Parks that lower the bound that is over go on down to five eighths; the page left last stays");
     }
+    {
+        // Pages that keep a few KiB of their own pixels held (a design page's
+        // scroll bar: small surfaces whose description outweighs them keep no
+        // recipe) under a crowd of held pixels they hold next to nothing of:
+        // the first park gives back a few KiB and ends the pass, and cycling
+        // the modules after it parks nothing.
+        LayerRasterizer raster;Renderer renderer;std::vector<const FakePage*> order;
+        FakePage k1(raster,"k1",4,order,16),k2(raster,"k2",4,order,16),k3(raster,"k3",4,order,16),k4(raster,"k4",4,order,16),shown(raster,"s",4,order,16);
+        for(auto*p:{&k1,&k2,&k3,&k4,&shown}){p->show();if(p!=&shown)p->leave();}
+        for(unsigned i=0;i<3;++i)raster.rasterize("held."+std::to_string(i),1,layer("held",4096,4096),wide);
+        raster.rasterize("held.3",1,layer("held",4096,257),wide);
+        check(raster.crowded()&&!k2.ids.empty(),"Held pixels past three quarters crowd the cache; each page holds 4 KiB of them");
+        check(raster.relieve(renderer)==1&&order.size()==1&&order[0]==&k1&&k2.parks+k3.parks+k4.parks+shown.parks==0,
+            "Parks that give back a few KiB of the held pixels over: one page is tried, then the pass stops");
+        std::size_t parked{};
+        for(unsigned round=0;round<2;++round)for(auto*p:{&k2,&k3,&k4,&shown}){p->show();parked+=raster.relieve(renderer);p->leave();parked+=raster.relieve(renderer);}
+        check(parked==0&&order.size()==1,"Cycling the modules over that crowd parks nothing");
+    }
+    {
+        // What was learnt of a bound that falls back to five eighths is
+        // forgotten: passing again it is newly over, and the pages are tried.
+        LayerRasterizer raster;Renderer renderer;std::vector<const FakePage*> order;
+        // `thin` holds artwork outside the cache only: its park gives back
+        // nothing of either bound.
+        FakePage thin(raster,"thin",0,order),big(raster,"big",80,order,64,true),last(raster,"last",4,order,64,true),shown(raster,"s",4,order,64,true);
+        thin.outside=true;
+        for(auto*p:{&thin,&big,&last,&shown}){p->show();if(p!=&shown)p->leave();}
+        for(unsigned i=0;i<3;++i)raster.rasterize("held."+std::to_string(i),1,layer("held",4096,4096),wide);
+        raster.rasterize("held.3",1,layer("held",4096,257),wide);
+        std::vector<std::string> many;
+        const auto pastEntries=[&]{while(raster.stats().entries<=LayerRasterizer::maximumEntries/8*5){many.push_back("many."+std::to_string(many.size()));raster.rasterize(many.back(),1,layer("tiny",1,1),wide);}};
+        pastEntries();
+        check(raster.crowded()&&raster.relieve(renderer)==1&&order.size()==1&&order[0]==&thin&&big.parks==0,
+            "Held pixels and entries over, the oldest page gives back nothing of either: the pass stops");
+        for(const auto&id:many)(void)raster.remove(id);
+        many.clear();
+        check(raster.relieve(renderer)==0&&big.parks==0,"The entries fall to five eighths, the held pixels stay over: no page is tried");
+        pastEntries();
+        check(raster.relieve(renderer)==1&&order.size()==2&&order[1]==&big&&big.ids.empty()&&last.parks==0,
+            "The entries pass five eighths again: newly over, the pages are tried and the page holding them parks");
+        for(const auto&id:many)(void)raster.remove(id);
+    }
+}
+// An entries crowd the pages hold, the oldest away page holding only a few
+// entries (fewer than a sixty-fourth of the bound) and newer ones many. A
+// park gives back all of a page's entries, so the few count as relief: the
+// newer pages park after it, the oldest first, down to five eighths
+// (crowded again, the next oldest parks).
+void crowdFewEntries(){
+    LayerRasterizer raster;Renderer renderer;std::vector<const FakePage*> order;
+    LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
+    FakePage few(raster,"few",8,order),big1(raster,"big1",400,order),big2(raster,"big2",400,order),big3(raster,"big3",400,order),last(raster,"last",10,order),shown(raster,"s",10,order);
+    for(auto*p:{&few,&big1,&big2,&big3,&last,&shown}){p->show();if(p!=&shown)p->leave();}
+    std::size_t n=0;std::vector<std::string> crowd;
+    const auto fill=[&]{while(raster.stats().entries<=LayerRasterizer::maximumEntries/4*3){crowd.push_back("crowd."+std::to_string(n++));raster.rasterize(crowd.back(),1,layer("tiny",1,1),tiny);}};
+    fill();
+    check(raster.crowded()&&raster.stats().entries<=LayerRasterizer::maximumEntries/8*7,"Entries past three quarters crowd the cache, under seven eighths");
+    check(raster.relieve(renderer)==3&&order.size()==3&&order[0]==&few&&order[1]==&big1&&order[2]==&big2,
+        "The oldest page's few entries count as relief: the newer pages park after it, the oldest first");
+    check(raster.stats().entries<=LayerRasterizer::maximumEntries/8*5&&!raster.crowded()&&!big3.ids.empty()&&last.parks==0&&!last.ids.empty(),
+        "The parks stop at five eighths: the next page and the page left last keep theirs");
+    fill();
+    check(raster.relieve(renderer)==1&&order.size()==4&&order[3]==&big3&&last.parks==0,"Crowded again, the next oldest page parks");
+    for(const auto&id:crowd)(void)raster.remove(id);
 }
 }
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();memoryImages();releasable();textDensity();crowdRelief();crowdFutility();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();releasable();textDensity();crowdRelief();crowdFutility();crowdFewEntries();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }
