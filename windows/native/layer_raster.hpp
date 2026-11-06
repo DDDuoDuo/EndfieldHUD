@@ -303,6 +303,14 @@ public:
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;
+    // Past three quarters of a shared bound: entries (maximumEntries), held
+    // pixel bytes (maximumResourceBytes), retained editor text metadata
+    // (maximumTextMetadataBytes) or typography descriptors
+    // (maximumTypographyDescriptorBytes). Owners that keep the artwork of
+    // modules switched away give it back then (DesignOwnerCore::collected),
+    // so the shown module's next page always fits. Counters only (stats()
+    // walks every entry).
+    bool crowded() const;
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the
     // decoded intrinsic image cache.

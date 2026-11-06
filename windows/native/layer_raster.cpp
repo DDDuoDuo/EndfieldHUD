@@ -1275,6 +1275,8 @@ namespace {thread_local std::string_view rasterAttribution;}
 LayerRasterAttribution::LayerRasterAttribution(std::string_view owner)noexcept:previous_(rasterAttribution){rasterAttribution=owner;}
 LayerRasterAttribution::~LayerRasterAttribution(){rasterAttribution=previous_;}
 std::string_view LayerRasterAttribution::current()noexcept{return rasterAttribution;}
+bool LayerRasterizer::crowded()const{const auto&r=*impl_;r.onThread();const auto past=[](std::size_t used,std::size_t maximum){return used>maximum/4*3;};
+    return past(r.entries.size(),maximumEntries)||past(r.heldBytes(),maximumResourceBytes)||past(r.counts.textMetadataBytes,maximumTextMetadataBytes)||past(r.counts.typographyDescriptorBytes,maximumTypographyDescriptorBytes);}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();
     for(const auto&[id,e]:r.entries){(void)id;if(e.image->pixelsReleased())result.releasedPixelBytes+=e.image->pixelBytes();if(e.image->recipe_&&!e.hasText)result.repaintSourceBytes+=e.image->recipe_->bytes;}
     return result;}

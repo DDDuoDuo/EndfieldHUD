@@ -295,8 +295,22 @@ void run(){
     check(raster.remove("text")&&!raster.remove("text"),"Explicit source removal releases its retained entry");
     raster.clear();check(raster.stats().entries==0&&raster.stats().resourceBytes==0&&raster.stats().decodedImages==0,"Explicit clear releases local rasters, text layouts and decoded images");
     LayerRasterOptions tiny;tiny.pixelsPerPoint=1;tiny.paddingPoints=0;
-    for(std::size_t i=0;i<LayerRasterizer::maximumEntries;++i)raster.rasterize("bounded."+std::to_string(i),1,layer("tiny",1,1),tiny);
+    // Crowded past three quarters of a shared bound (owners keeping the
+    // artwork of modules switched away give it back then).
+    for(std::size_t i=0;i<LayerRasterizer::maximumEntries;++i){
+        if(i==LayerRasterizer::maximumEntries/4*3)check(!raster.crowded(),"Three quarters of the entries is not crowded yet");
+        raster.rasterize("bounded."+std::to_string(i),1,layer("tiny",1,1),tiny);
+        if(i==LayerRasterizer::maximumEntries/4*3)check(raster.crowded(),"Past three quarters of the entries the cache is crowded");}
     rejects([&]{raster.rasterize("one-too-many",1,layer("tiny",1,1),tiny);},"Retained source-ID count is bounded");
+    for(std::size_t i=0;i<LayerRasterizer::maximumEntries/2;++i)(void)raster.remove("bounded."+std::to_string(i));
+    check(!raster.crowded(),"Removed entries leave the crowd");
+    raster.clear();
+    // Held pixels: four 64 MiB layers hold the whole budget; three are not past three quarters.
+    LayerRasterOptions wide;wide.pixelsPerPoint=1;wide.paddingPoints=0;
+    for(unsigned i=0;i<3;++i)raster.rasterize("held."+std::to_string(i),1,layer("held",4096,4096),wide);
+    check(!raster.crowded(),"Three quarters of the held pixel budget is not crowded yet");
+    raster.rasterize("held.3",1,layer("held",4096,1),wide);
+    check(raster.crowded(),"Held pixels past three quarters of the budget crowd the cache");
     raster.clear();
 }
 

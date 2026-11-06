@@ -313,12 +313,20 @@ void DesignOwnerCore::collected(gpu::Renderer& r) {
     auto& i = *impl_;
     i.renderer = &r;
     if (i.fields) need(i.fields->collectRetired(r), "Design field artwork still published");
+    // Every module visited in one opening keeps its scenes, so their raster
+    // entries and text descriptions add up in the shared cache until the HUD
+    // closes. Past three quarters of a shared bound (a large tour, much
+    // content) the modules switched away park as at the close: the next
+    // page of any owner always fits, and a parked module rasterizes again
+    // when shown. Checked here (a composition change), never per frame.
+    const bool crowded = i.raster.crowded();
     for (auto& s : i.slots) {
         need(s->scene->collectRetired(r), "Design artwork still published");
         if (s->pose) continue;
         // Not composed: a module switched away keeps its scenes (textures
         // parked); a module closed elsewhere keeps no artwork at all.
-        if (s->parkWanted) { if (s->scene->park(r)) s->parkWanted = false; }
+        const bool away = crowded && !s->shown && !s->canvas->isShown();
+        if (s->parkWanted || away) { if (s->scene->park(r)) s->parkWanted = false; else if (!s->parkWanted) need(s->scene->releaseResources(r), "Design inactive artwork still published"); }
         else need(s->scene->releaseResources(r), "Design inactive artwork still published");
     }
 }
