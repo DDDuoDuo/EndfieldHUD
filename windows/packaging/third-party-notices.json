@@ -152,10 +152,10 @@
     },
     {
       "name": "Natural Earth",
-      "version": "5.1.1, 1:10m admin 0 countries",
+      "version": "5.1.1, 1:10m admin 0 countries and admin 1 states and provinces",
       "url": "https://www.naturalearthdata.com/",
       "license": "Public domain",
-      "use": "The Map's country outlines.",
+      "use": "The Map's country outlines. China's outline follows its official boundary in Southern Tibet, drawn from the Natural Earth admin 1 areas there.",
       "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
       "paths": [],
       "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."

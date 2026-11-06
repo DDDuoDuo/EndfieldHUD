@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "application": "EndfieldHUD for macOS",
-  "release": "v1.3.0",
-  "build": 19,
-  "commit": "3cc84d5424b847eb1bbb5a0fdd67d51a89f9595f",
+  "release": "v1.3.1",
+  "build": 20,
+  "commit": "3e66146c3ea348e1517a6ba804bbe8e8483f19b3",
   "trees": {
-    "Sources": "fa11a4ad0494a8a73e7e5359a3f21d443304e6d1",
-    "Resources": "2ea905f1c8fc2b6a8e0fd78e7755cc063580f805"
+    "Sources": "9d9f6659effbe906e51c52a2555d2794f9551948",
+    "Resources": "fdabde0846877c41ea0086f72d037a934b761550"
   },
-  "policy": "Port the desktop macOS application. The rejected Windows preview and raw game-only scene are not an application reference. Shared game assets are permitted only as used by this macOS source. Mac 1.3.0 (build 19) is commit 29db6626154ca152b6f334846594bff0078aa965 plus 32eaf29613fb0487db905acbcc18c95666b35f85 (macOS 10.15 fallbacks for the Intel build) and 3cc84d5424b847eb1bbb5a0fdd67d51a89f9595f (the BUG Report/Suggestions link in About); the pinned commit's Sources tree is identical to that release, and its Resources tree differs only by the windows platform added for HarmonyOS Sans in the shared Resources/Fonts/manifest.json (the Mac reads the macos platform only)."
+  "policy": "Port the desktop macOS application. The rejected Windows preview and raw game-only scene are not an application reference. Shared game assets are permitted only as used by this macOS source. Mac 1.3.1 (build 20) is commit 3e66146c3ea348e1517a6ba804bbe8e8483f19b3 (the official OrbiPom! MERGE! names, Southern Tibet drawn as part of China on the world map, and the 1.3.1 version on top of 1.3.0); the pinned commit's Sources and Resources trees are that release's, and the shared Resources/Fonts/manifest.json carries the windows platform for HarmonyOS Sans (the Mac reads the macos platform only)."
 }
