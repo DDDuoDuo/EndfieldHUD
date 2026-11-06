@@ -336,7 +336,11 @@ class HUDProjectedTextView: NSTextView {
         }
         let glyph = manager.glyphIndexForCharacter(at: atEnd ? text.length - 1 : index)
         let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let x = atEnd ? manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).maxX
+        // At the end the caret follows the last glyph's advance (where the
+        // line's used rect ends), not its drawn bounds: in a line shorter than
+        // the face (the notes' fixed line height) TextKit widens those to the
+        // whole font box, about 2 em past a CJK glyph in Noto Sans.
+        let x = atEnd ? manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).maxX
             : line.minX + manager.location(forGlyphAt: glyph).x
         return CGRect(x: min(x, line.maxX - width) + origin.x, y: line.minY + origin.y, width: width, height: line.height)
     }
