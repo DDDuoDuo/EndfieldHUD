@@ -8,6 +8,26 @@
   "license_url": "https://www.naturalearthdata.com/about/terms-of-use/",
   "accessed": "2026-09-27",
   "source_records": 258,
+  "presentation_transfers": [
+    {
+      "area": "Southern Tibet",
+      "from": "IND",
+      "to": "CHN",
+      "source": "Natural Earth 1:10m Admin 1 States, Provinces",
+      "version": "5.1.1",
+      "source_url": "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_1_states_provinces.zip",
+      "source_page": "https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/",
+      "source_sha256": "efc59726337323058f9446210adc96673179cd344e053666ee3d28cb58ba2b05",
+      "feature": "Arunachal Pradesh",
+      "neighbours": [
+        "Assam",
+        "Nagaland"
+      ],
+      "map_units": 59.842,
+      "accessed": "2026-11-05",
+      "reason": "China's official boundary: the area India administers as Arunachal Pradesh is drawn as part of China. This is a derivative presentation, not a change to Natural Earth's source classification."
+    }
+  ],
   "presentation_grouping": {
     "CHN": {
       "name": "China",
@@ -29,9 +49,9 @@
   "general_simplification_tolerance_map_units": 0.085,
   "china_simplification_tolerance_map_units": 0.006,
   "countries": 255,
-  "vertices": 97707,
-  "bytes": 821219,
-  "sha256": "557e4e92f0fedb7e3f80e067cb0207655c9ecaedd9f5b29d730aa363842d0dd5",
+  "vertices": 97769,
+  "bytes": 821715,
+  "sha256": "d07bc277b1f96dbfc74ec348e49360fcbf2471b7c75b39e9592f9ab04e6ce839",
   "records": [
     {
       "id": "ABW",
@@ -439,7 +459,7 @@
         "MAC"
       ],
       "components": 83,
-      "vertices": 11144
+      "vertices": 11247
     },
     {
       "id": "CIV",
@@ -988,7 +1008,7 @@
         "IND"
       ],
       "components": 35,
-      "vertices": 1196
+      "vertices": 1155
     },
     {
       "id": "IOA",

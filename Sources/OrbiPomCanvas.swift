@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-/// Merge! OrbiPom! (spec §3.11): the original game session and physics
+/// OrbiPom! MERGE! (spec §3.11): the original game session and physics
 /// (OrbiPomSession / OrbiPomRuntime) drawn on the redesigned board, with the
 /// SCORE / NEXT plates, the SP bar, the four skills and Pause / Restart in a
 /// narrow column on its right. The "?" opens the instructions. The frame clock
