@@ -345,6 +345,11 @@ void zbandDiagnostics(){
     STARTUPINFOW startup{};startup.cb=sizeof startup;GetStartupInfoW(&startup);
     std::cout<<"startupFlags=0x"<<std::hex<<startup.dwFlags<<std::dec<<" startupShow="<<startup.wShowWindow<<'\n';
     std::cout<<"foreground: "<<windowFacts(GetForegroundWindow())<<'\n';
+    // Windows lifts the foreground lock once this long has passed since the
+    // last input, so an idle run reads the granted case, not a refused one.
+    LASTINPUTINFO input{sizeof input};const BOOL inputRead=GetLastInputInfo(&input);DWORD lockTimeout{};
+    SystemParametersInfoW(SPI_GETFOREGROUNDLOCKTIMEOUT,0,&lockTimeout,0);
+    std::cout<<"idleMs="<<(inputRead?GetTickCount()-input.dwTime:0u)<<" foregroundLockTimeoutMs="<<lockTimeout<<'\n';
     // A raw window with the host's styles, never shown.
     WNDCLASSEXW type{};type.cbSize=sizeof type;type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"EndfieldZBandDiagnostics";
     RegisterClassExW(&type);
@@ -387,29 +392,6 @@ void zbandDiagnostics(){
     host.hide();
     std::cout<<"host after hide: statsTopmost="<<host.stats().topmost<<" "<<windowFacts(window)<<'\n';
     host.destroy();UnregisterClassW(type.lpszClassName,type.hInstance);
-}
-// --zband-activating-probe: the host's real activating show (no seams) of
-// its topmost window, placed beyond the left edge of the virtual screen so
-// nothing appears on any display, then hidden at once. Unlike
-// --zband-diagnostics it asks Windows for the foreground (SetForegroundWindow),
-// so where this process holds the right it takes the foreground for that
-// moment: run it only idle-gated. It measures whether the created band
-// survives creation and a refused activating show in this session.
-void zbandActivatingProbe(){
-    std::cout<<"foreground before: "<<windowFacts(GetForegroundWindow())<<'\n';
-    const int x=GetSystemMetrics(SM_XVIRTUALSCREEN)-20000,y=GetSystemMetrics(SM_YVIRTUALSCREEN);
-    OverlayHost host;host.create({L"Hidden z-band activating probe",x,y,32,32,nullptr});
-    const auto window=static_cast<HWND>(host.hwnd());
-    std::cout<<"created topmost="<<((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<" statsTopmost="<<host.stats().topmost<<'\n';
-    host.show(true);
-    const auto shown=host.stats();const HWND foreground=GetForegroundWindow();
-    std::cout<<"after show(true): topmost="<<((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<" statsTopmost="<<shown.topmost
-             <<" bandRequests="<<shown.bandRequests<<" bandRefusals="<<shown.bandRefusals<<" bandPending="<<shown.bandPending
-             <<" foregroundRefusals="<<shown.foregroundRefusals<<" activationPending="<<shown.activationPending<<" foregroundIsProbe="<<(foreground==window?1:0)
-             <<" "<<windowFacts(window)<<'\n';
-    host.hide();
-    std::cout<<"after hide: topmost="<<((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<" foreground: "<<windowFacts(GetForegroundWindow())<<'\n';
-    host.destroy();
 }
 // The first opening after launch, as a summon without the right to set the
 // foreground window meets it (the default Ctrl+` arrives through the keyboard
@@ -1094,7 +1076,6 @@ int main(int argc,char**argv) {
 #ifdef _WIN32
         if(argc==2&&std::string_view(argv[1])=="--hidden-startup-child"){hiddenStartupChild();return 0;}
         if(argc==2&&std::string_view(argv[1])=="--zband-diagnostics"){zbandDiagnostics();return 0;}
-        if(argc==2&&std::string_view(argv[1])=="--zband-activating-probe"){zbandActivatingProbe();return 0;}
         if(argc==2&&std::string_view(argv[1])=="--interactive-startup"){hiddenStartupProcess();std::cout<<checks<<" isolated hidden-startup/first-frame checks passed; private desktop never switched\n";return 0;}
 #else
         (void)argc;(void)argv;

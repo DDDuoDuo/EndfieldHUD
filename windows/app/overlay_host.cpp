@@ -877,8 +877,9 @@ void OverlayHost::show(bool activate) {
     // the foreground rules allow (enterBand); a window in the band is never
     // sent a raise Windows may refuse. A granted activation (below) brings it
     // to the top of the band.
+    if(!p.topmost())p.enterBand(window);
+    // Held now: created in the band, kept while hidden, or just granted it.
     const bool inBand=p.topmost();
-    if(!inBand)p.enterBand(window);
     p.rethrow();
     if(p.window!=window||p.stopped)return;
     // An explicit owner request must not inherit a launcher's STARTUPINFO
