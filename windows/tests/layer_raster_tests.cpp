@@ -312,6 +312,31 @@ void run(){
     raster.rasterize("held.3",1,layer("held",4096,1),wide);
     check(raster.crowded(),"Held pixels past three quarters of the budget crowd the cache");
     raster.clear();
+    // Typography descriptors: captions carrying a large description (about
+    // 1 MiB each, short text) cross three quarters of the descriptor bound
+    // while entries, pixels and text metadata stay far below theirs.
+    {auto described=text;described["note"]=std::string(std::size_t(1)<<20,'x');
+     const auto bound=LayerRasterizer::maximumTypographyDescriptorBytes/4*3;
+     raster.rasterize("described.0",1,described,tiny);const auto each=raster.stats().typographyDescriptorBytes;
+     check(each>(std::size_t(1)<<20)&&raster.stats().textMetadataBytes<1024,"A large caption description counts as typography");
+     std::size_t n=1;for(;(n+1)*each<=bound;++n)raster.rasterize("described."+std::to_string(n),1,described,tiny);
+     check(raster.stats().typographyDescriptorBytes<=bound&&!raster.crowded(),"Three quarters of the typography bound is not crowded yet");
+     raster.rasterize("described."+std::to_string(n),1,described,tiny);
+     check(raster.stats().typographyDescriptorBytes>bound&&raster.crowded(),"Typography descriptors past three quarters of their bound crowd the cache");
+     raster.clear();}
+    // Text metadata: painted caption leaves of 64 Ki UTF-16 units (the
+    // longest text layout) keep 128 KiB of editor text each; their
+    // descriptors stay below a quarter of the typography bound.
+    {auto painted=text;painted["text"]["string"]=std::string(std::size_t(1)<<16,'x');
+     const auto bound=LayerRasterizer::maximumTextMetadataBytes/4*3;
+     raster.rasterize("painted.0",1,painted,tiny);const auto each=raster.stats().textMetadataBytes;
+     check(each>=(std::size_t(1)<<17),"A painted caption leaf keeps its text metadata");
+     std::size_t n=1;for(;(n+1)*each<=bound;++n)raster.rasterize("painted."+std::to_string(n),1,painted,tiny);
+     check(raster.stats().textMetadataBytes<=bound&&!raster.crowded(),"Three quarters of the text metadata bound is not crowded yet");
+     raster.rasterize("painted."+std::to_string(n),1,painted,tiny);
+     check(raster.stats().textMetadataBytes>bound&&raster.stats().typographyDescriptorBytes<LayerRasterizer::maximumTypographyDescriptorBytes/4&&raster.crowded(),
+         "Text metadata past three quarters of its bound crowds the cache");
+     raster.clear();}
 }
 
 // LayerRasterOptions::textContentsScale (the design scene; HUDRenderScale.

@@ -44,6 +44,7 @@ struct Press final : d::Control {
 struct FakeCanvas final : d::Canvas {
     FakeCanvas(d::Context& c, core::Module m) : Canvas(m, c) {}
     unsigned pressed{}, builds{}, leaves{}, keys{}, scrolls{};
+    bool striped{};   // the press gains a surface of its own: the page part loads again, its old scene retires
     d::ScrollArea* rows{};
     void buildPage(d::Page& page) override {
         ++builds;
@@ -56,6 +57,13 @@ struct FakeCanvas final : d::Canvas {
         press.layer().setContent(d::solid("plate", {0, 0, 200, 50}, d::rgb(0x2A2A2A)));
         press.setTarget({0, 0, 200, 50});
         press.onActivate = [this] { ++pressed; };
+        if (striped) {
+            auto& stripe = page.makeLayer("stripe");
+            stripe.setFrame({0, 0, 200, 4});
+            stripe.setContent(d::solid("stripe", {0, 0, 200, 4}, d::rgb(0xFAD41F)));
+            stripe.setAnimatable();
+            press.layer().add(stripe);
+        }
         page.layer().add(press.layer());
         page.add(press);
     }
@@ -294,6 +302,28 @@ void run(const std::filesystem::path& shader) {
             "Shown again, the parked module rasterizes its page again");
         frame(sample(core::Module::clipboard), 3.85);
         check(core0.sceneStats(core::Module::volume)->rasterEntries > 0, "With room again, the module switched away keeps its scene");
+        // The shown module's replaced parts (retired scenes, still holding
+        // their entries until collected) do not count: collected first, they
+        // leave the cache at exactly three quarters, which is not crowded,
+        // and the module switched away keeps its scene.
+        const auto restyle = [&](bool striped, double t) { fake->striped = striped; fake->rerender(); return frame(sample(core::Module::clipboard), t); };
+        const auto loads = core0.sceneStats(core::Module::clipboard)->partsLoaded;
+        restyle(true, 3.9);
+        const auto stripedEntries = raster.stats().entries;
+        check(core0.sceneStats(core::Module::clipboard)->partsLoaded > loads && core0.sceneStats(core::Module::clipboard)->retiredParts == 0,
+            "A new surface in the page loads the page part again and retires the old one");
+        restyle(false, 3.95);
+        const auto line = gpu::LayerRasterizer::maximumEntries / 4 * 3;
+        check(stripedEntries < line && core0.sceneStats(core::Module::volume)->rasterEntries > 0, "The restyled page leaves room");
+        std::vector<std::string> filler;
+        for (std::size_t n = 0; n < line - stripedEntries; ++n) { filler.push_back("filler." + std::to_string(n)); (void)raster.rasterize(filler.back(), 1, tiny, plain); }
+        const auto again = core0.sceneStats(core::Module::clipboard)->partsLoaded;
+        restyle(true, 4.0);
+        check(core0.sceneStats(core::Module::clipboard)->partsLoaded > again && core0.sceneStats(core::Module::volume)->rasterEntries > 0,
+            "Retired parts of the shown module never park the module switched away");
+        check(raster.stats().entries == line && !raster.crowded(), "Collected, the restyled page and the crowd fill exactly three quarters");
+        for (const auto& id : filler) (void)raster.remove(id);
+        restyle(false, 4.05);
     }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);
