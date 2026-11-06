@@ -322,7 +322,8 @@ public:
     // (maximumTextMetadataBytes) or typography descriptors
     // (maximumTypographyDescriptorBytes). The pages of modules switched away
     // give their artwork back then (relieve), so the shown module's next page
-    // always fits. Counters only (stats() walks every entry).
+    // fits unless what cannot park fills the cache on its own. Counters only
+    // (stats() walks every entry).
     bool crowded() const;
     // Crowd relief. Every module visited in one HUD opening keeps its page
     // (a quick return), so their entries add up across all owners sharing
@@ -337,10 +338,13 @@ public:
     // pages switched away park one at a time, least recently shown first,
     // until every bound is at or below five eighths or none is left. The
     // page shown most recently of those switched away (the module just left)
-    // is never parked here: a return to it stays warm, and the cache keeps
-    // at most that one page beyond what cannot park (the close parks it).
-    // A page parks once (it then holds nothing). Not crowded: four counter
-    // comparisons, no walk. Returns the pages parked.
+    // parks only when the cache is still past seven eighths of a bound once
+    // every older page parked: between three quarters and seven eighths a
+    // return to it stays warm (the cache keeps at most that one page beyond
+    // what cannot park, and the close parks it); near the hard bounds it
+    // parks too, so the shown page's next rasters fit. A page parks once (it
+    // then holds nothing). Not crowded: four counter comparisons, no walk.
+    // Returns the pages parked.
     std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the

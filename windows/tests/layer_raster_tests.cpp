@@ -415,6 +415,14 @@ void crowdRelief(){
     check(raster.relieve(renderer)==1&&refused.ids.empty()&&!shown.ids.empty(),"A page that refused parks once it can");
     FakePage gone(raster,"gone",10,order);raster.withdraw(gone);
     check(raster.crowded()&&raster.relieve(renderer)==0&&gone.asked==0&&gone.parks==0&&!gone.ids.empty(),"A withdrawn page is never asked");
+    // Near the hard bounds the page left last (`shown`, the only one still
+    // holding artwork) parks too, so the shown page's next rasters fit.
+    const auto fillPast=[&](std::size_t mark){while(raster.stats().entries<=mark){crowd.push_back("crowd."+std::to_string(n++));raster.rasterize(crowd.back(),1,layer("tiny",1,1),tiny);}};
+    fillPast(LayerRasterizer::maximumEntries/16*13);
+    check(raster.relieve(renderer)==0&&!shown.ids.empty()&&shown.parks==0,"Past thirteen sixteenths the page left last still stays");
+    fillPast(LayerRasterizer::maximumEntries/8*7);
+    check(raster.relieve(renderer)==1&&shown.ids.empty()&&shown.parks==1&&!d.ids.empty()&&d.parks==0,"Past seven eighths the page left last parks too; the shown page stays");
+    check(raster.relieve(renderer)==0&&shown.parks==1&&d.parks==0,"Nothing left at all: nothing parks again");
     for(const auto&id:crowd)(void)raster.remove(id);
 }
 }

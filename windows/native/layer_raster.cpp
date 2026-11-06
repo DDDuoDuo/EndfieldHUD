@@ -225,7 +225,8 @@ struct LayerRasterizer::Impl {
     // renderer's resident textures and parked copies).
     std::size_t releasedBytes{};
     std::size_t heldBytes()const noexcept{return counts.resourceBytes-releasedBytes;}
-    // Past `eighths`/8 of a shared bound (crowded: 6; relieved at 5).
+    // Past `eighths`/8 of a shared bound (crowded: 6; relieved at 5; the
+    // page left last parks past 7).
     bool above(std::size_t eighths)const noexcept{const auto past=[eighths](std::size_t used,std::size_t maximum){return used>maximum/8*eighths;};
         return past(entries.size(),maximumEntries)||past(heldBytes(),maximumResourceBytes)||past(counts.textMetadataBytes,maximumTextMetadataBytes)||past(counts.typographyDescriptorBytes,maximumTypographyDescriptorBytes);}
     // Crowd relief: the enlisted pages and when each was last shown.
@@ -1288,8 +1289,9 @@ void LayerRasterizer::withdraw(LayerRasterTenant&page)noexcept{std::erase_if(imp
 void LayerRasterizer::shown(LayerRasterTenant&page)noexcept{auto&r=*impl_;for(auto&t:r.tenants)if(t.page==&page)t.shown=++r.showings;}
 std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
     if(!r.above(6))return 0;
-    // The most recently shown page switched away stays (a quick return).
-    const Impl::Tenant*last{};
+    // The most recently shown page switched away stays (a quick return)
+    // unless the cache is still past seven eighths without it.
+    Impl::Tenant*last{};
     for(auto&t:r.tenants){t.state=t.page->tenancy();if(t.state!=LayerRasterTenant::State::shown&&t.shown&&(!last||t.shown>last->shown))last=&t;}
     std::size_t parked{};
     while(r.above(5)){
@@ -1299,6 +1301,10 @@ std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread
         oldest->state=LayerRasterTenant::State::empty; // tried once: a refused park is not retried in this pass
         if(oldest->page->park(renderer))++parked;
     }
+    // Nothing older left and still near the hard bounds: the page left last
+    // parks too, so the shown module's next page fits (a cold return to it
+    // beats a full cache that fails the shown owner).
+    if(last&&last->state==LayerRasterTenant::State::held&&r.above(7)){last->state=LayerRasterTenant::State::empty;if(last->page->park(renderer))++parked;}
     return parked;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();
     for(const auto&[id,e]:r.entries){(void)id;if(e.image->pixelsReleased())result.releasedPixelBytes+=e.image->pixelBytes();if(e.image->recipe_&&!e.hasText)result.repaintSourceBytes+=e.image->recipe_->bytes;}

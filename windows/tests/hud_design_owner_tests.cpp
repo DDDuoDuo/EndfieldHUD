@@ -286,7 +286,8 @@ void run(const std::filesystem::path& shader) {
     // counted in the shared cache until the HUD closes. Past three quarters of
     // a shared bound the modules switched away park at the next composition
     // change, least recently shown first, down to five eighths; the module
-    // shown last before the current one stays for a quick return.
+    // shown last before the current one stays for a quick return unless the
+    // cache is still past seven eighths.
     {
         frame(sample(core::Module::clipboard), 3.5);
         const auto kept = core0.sceneStats(core::Module::volume);
@@ -466,11 +467,22 @@ void run(const std::filesystem::path& shader) {
             go(m4, t += .1); go(m4, t += .05); go(m5, t += .1); go(m5, t += .05);
             check(of(m4).partsLoaded == e4.partsLoaded && of(m5).partsLoaded == e5.partsLoaded && of(m4).parks == 0 && of(m5).parks == 0 && relieved == 0,
                 "Switching between the last two modules in a crowd that cannot shrink parks and rebuilds nothing");
+            // Near the hard bounds the module just left (m4) parks too, so
+            // the shown module's next page fits; below seven eighths it stays.
+            fill(cache, crowd, gpu::LayerRasterizer::maximumEntries / 16 * 13 + 1 - cache.stats().entries);
+            go(m5, t += .1);
+            check(relieved == 0 && of(m4).rasterEntries == e4.rasterEntries && of(m4).parks == 0, "Past thirteen sixteenths the module just left still keeps its page");
+            fill(cache, crowd, gpu::LayerRasterizer::maximumEntries / 8 * 7 + 1 - cache.stats().entries);
+            go(m5, t += .1);
+            check(relieved == 1 && of(m4).rasterEntries == 0 && of(m4).parks == 1 && of(m5).rasterEntries > 0 && of(m5).parks == 0,
+                "Past seven eighths the module just left parks too; the shown module keeps its page");
+            go(m5, t += .1);
+            check(relieved == 0 && of(m4).parks == 1 && of(m5).parks == 0, "Nothing left to park near the bounds: nothing parks again, no throw");
             for (const auto& id : crowd) (void)cache.remove(id);
             // With room again a parked module rasterizes when shown and
             // nothing else parks.
             go(m1, t += .1); go(m1, t += .05);
-            check(of(m1).rasterEntries > 0 && relieved == 0 && of(m4).parks == 0 && of(m5).rasterEntries > 0 && of(m5).parks == 0, "With room again, nothing parks");
+            check(of(m1).rasterEntries > 0 && relieved == 0 && of(m4).parks == 1 && of(m5).rasterEntries > 0 && of(m5).parks == 0, "With room again, nothing parks");
             unpublish({y, x});
         }
     }
