@@ -192,24 +192,29 @@ void volumeRevisit(){
 // (AudioRuntime::drain, outside module isolation) converted every per-app
 // name to UTF-8 for the Volume page and threw, which stopped the HUD's frames
 // and ended the run. The row keeps the backend's PID fallback label instead,
-// and a well-formed surrogate pair keeps its own name.
+// a well-formed surrogate pair keeps its own name. A name with an embedded
+// NUL (which made routes.update drop the whole app list) keeps the same
+// label, and the other apps stay listed.
 void malformedAppName(){
     Harness h;
     {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
         h.world->sessions={{"{high}","4242:100",std::wstring(L"Player")+wchar_t(0xD800),4242,true,true,.8f,0},
             {"{low}","4343:100",std::wstring(1,wchar_t(0xDC00))+L"Tail",4343,true,true,.6f,0},
-            {"{pair}","4444:100",std::wstring(L"Music ")+wchar_t(0xD83C)+wchar_t(0xDFB5),4444,true,true,.4f,0}};}
+            {"{pair}","4444:100",std::wstring(L"Music \U0001F3B5"),4444,true,true,.4f,0},
+            {"{nul}","4545:100",std::wstring(L"Nul\0Name",8),4545,true,true,.5f,0}};}
     auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
     binding.setReceiver([&](const n::VolumeSnapshot&s){delivered=s;});
     bool threw{};
     try{binding.setVisible(true);callbacks.setActive(true);
-        h.until([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==3;},"Volume lists every audio app");}
+        h.until([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==4;},"Volume lists every audio app");}
     catch(const std::invalid_argument&){threw=true;}
     check(!threw,"An ill-formed UTF-16 app name never throws out of AudioRuntime::drain (the UI audio message)");
     const auto named=[&](std::string_view id)->std::string{for(const auto&a:delivered.applications)if(a.id==id)return a.name;return "missing";};
     check(named("4242:100")=="PID 4242"&&named("4343:100")=="PID 4343","An ill-formed name shows the existing PID fallback label");
     check(named("4444:100")=="Music \xF0\x9F\x8E\xB5","A well-formed surrogate pair keeps its name");
-    // The reported trigger: a later volume change publishes again.
+    check(named("4545:100")=="PID 4545","A name with an embedded NUL shows the PID label and the list stays");
+    // Later publications with the relabelled rows listed: an endpoint volume
+    // change and one app's gain.
     threw=false;
     try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
         h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.3)<1e-6;},"An endpoint volume change still drains");
