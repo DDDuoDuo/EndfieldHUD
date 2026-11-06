@@ -206,21 +206,24 @@ class NativeBackend final:public AudioSessionBackend {
                     else{
                         // Packaged apps: the package application's DisplayName;
                         // otherwise the executable's product label, then its stem.
+                        // A candidate that is not a valid UTF-8 label (an
+                        // unpaired surrogate, past 4096 bytes) yields to the
+                        // next, as the source falls back name, bundle, PID.
                         next.record.name=packagedName(next.process->value);
                         std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
                         if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
                             const std::wstring_view token(path.data(),length);
-                            if(next.record.name.empty())next.record.name=fileDescription(token);
-                            if(next.record.name.empty())next.record.name=std::filesystem::path(token).stem().wstring();
+                            if(utf8Optional(next.record.name).empty())next.record.name=fileDescription(token);
+                            if(utf8Optional(next.record.name).empty())next.record.name=std::filesystem::path(token).stem().wstring();
                             next.record.executable=executable(token);
                         }
                         next.record.appUserModelID=applicationIdentity(next.process->value);
                     }
-                    if(next.record.name.empty()||next.record.name.size()>4096)next.record.name=L"PID "+std::to_wstring(pid);
+                    if(utf8Optional(next.record.name).empty())next.record.name=L"PID "+std::to_wstring(pid);
                     next.processName=next.record.name;remember(next.record.processKey,next.record,next.processName);
                     TaskString label;if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view display(label.value);
                         const auto resolved=display.front()==L'@'?indirect(display):std::wstring(display);
-                        if(!resolved.empty()&&resolved.size()<=4096)next.record.name=resolved;}
+                        if(!utf8Optional(resolved).empty())next.record.name=resolved;}
                     TaskString persistent;if(SUCCEEDED(control->GetSessionIdentifier(&persistent.value))&&persistent.value)next.record.persistentID=utf8Optional(persistent.value);
                 }
             }
