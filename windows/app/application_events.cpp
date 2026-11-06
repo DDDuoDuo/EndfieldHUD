@@ -273,7 +273,9 @@ void Application::Impl::onFrame(double time){
         host.setFrameDemand(demand(now()));scheduleDeadline();return;
     }
     host.setFrameDemand(demand(time));scheduleDeadline();
-    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(time);if(stopping)return;}
+    // A close queued during the opening starts in finishOpening; under Reduce
+    // Motion it also finished there (Impl::close), so this frame is done.
+    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(time);if(stopping||concealedBroadcast)return;}
     if(shelfDragFrame(time,!active)||stopping)return;
     if(!active&&session->phase()==core::VisibilityPhase::concealed)finishConcealment(time);
 }
