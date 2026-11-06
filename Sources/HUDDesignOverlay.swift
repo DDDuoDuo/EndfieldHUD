@@ -550,7 +550,9 @@ final class HUDCenterOverlay {
             return
         }
         CATransaction.begin()
-        if !showStill(of: target) { setLiveFilters(true, on: target) }
+        // Replacing a still that shows, the live filters arrive already at full strength.
+        let replacing = still.superlayer != nil
+        if !showStill(of: target) { setLiveFilters(true, on: target, immediately: replacing) }
         CATransaction.commit()
     }
 
@@ -560,7 +562,7 @@ final class HUDCenterOverlay {
         guard target.mask == nil, let parent = target.superlayer, let drawn = Self.dimmedStill(of: target) else {
             // A still that can no longer be retaken gives the content back at once.
             HUDMotion.perform {
-                if stillHidesContent { target.removeAnimation(forKey: "hud.opacity"); target.opacity = stillRestoreOpacity }
+                if stillHidesContent || still.superlayer != nil { target.removeAnimation(forKey: "hud.opacity"); target.opacity = stillRestoreOpacity }
                 still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
             }
             stillHidesContent = false
@@ -586,13 +588,15 @@ final class HUDCenterOverlay {
         return true
     }
 
-    /// The live filters: added at their neutral values, eased in, and removed once eased out.
-    private func setLiveFilters(_ on: Bool, on target: CALayer) {
+    /// The live filters: added at their neutral values, eased in, and removed
+    /// once eased out; `immediately` adds them at full strength.
+    private func setLiveFilters(_ on: Bool, on target: CALayer, immediately: Bool = false) {
         if on, target.filters == nil {
             guard let blur = CIFilter(name: "CIGaussianBlur"), let dark = CIFilter(name: "CIExposureAdjust") else { return }
-            blur.setDefaults(); blur.name = "confirmBlur"; blur.setValue(0, forKey: kCIInputRadiusKey)
-            dark.setDefaults(); dark.name = "confirmDim"; dark.setValue(0, forKey: kCIInputEVKey)
+            blur.setDefaults(); blur.name = "confirmBlur"; blur.setValue(immediately ? Self.blurRadius : 0, forKey: kCIInputRadiusKey)
+            dark.setDefaults(); dark.name = "confirmDim"; dark.setValue(immediately ? Self.darkening : 0, forKey: kCIInputEVKey)
             HUDMotion.perform { target.filters = [blur, dark] }
+            if immediately { return }
         }
         guard target.filters != nil else { return }
         CATransaction.begin()
@@ -726,7 +730,9 @@ final class HUDCenterOverlay {
         dismissConfirm(); clearToast(); stillRequest += 1
         HUDMotion.perform {
             dim.opacity = 0; blurTarget?.filters = nil
-            if stillHidesContent { blurTarget?.removeAnimation(forKey: "hud.opacity"); blurTarget?.opacity = stillRestoreOpacity }
+            if stillHidesContent || still.superlayer != nil {
+                blurTarget?.removeAnimation(forKey: "hud.opacity"); blurTarget?.opacity = stillRestoreOpacity
+            }
             still.removeAllAnimations(); still.opacity = 0; still.removeFromSuperlayer(); picture.contents = nil
         }
         stillHidesContent = false
