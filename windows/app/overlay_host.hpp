@@ -331,19 +331,24 @@ public:
     // and style; an explicit show also overrides a launcher's STARTUPINFO
     // SW_HIDE. The window holds the band from creation on, so every opening,
     // the first after launch included, appears above every normal window
-    // whether or not Windows grants it the foreground. activate also asks
+    // whether or not Windows grants it the foreground, as long as Windows
+    // keeps the created style (stats().topmost). activate also asks
     // for the foreground (Mac: NSApp.activate ignoringOtherApps), which
     // raises it to the top of the band; a topmost window another program
     // raised later may otherwise sit above it, as other status-level panels
-    // do on the Mac. The foreground depends on the right to set it, which
-    // the hotkey (WM_HOTKEY), a click, or a launcher that passed it on
-    // (packaging/foreground_launch.hpp) gives this process. Without it
+    // do on the Mac. The foreground depends on the right to set it, which a
+    // click, a launcher that passed it on (packaging/foreground_launch.hpp)
+    // or a WM_HOTKEY delivery (Windows-key chords) can give this process; a
+    // chord the keyboard hook consumes (the default Ctrl+`) arrives as the
+    // hook's own message and usually carries none, which is why the window
+    // holds the band from creation instead of raising itself. Without it
     // Windows refuses the activation (stats().activationPending) and the
     // window waits for its next activation: a click on a visible part of it
     // (WM_MOUSEACTIVATE answers MA_ACTIVATE), or a later opening that holds
     // the right. Windows refuses a raise into the band without that right
     // too, so a raise is sent only when Windows kept the window out of the
-    // band (stats().bandPending until an activation enters it). No input is
+    // band (stats().bandPending until an activation enters it); a show that
+    // leaves a window out of the band it held waits the same way. No input is
     // injected and no thread input is attached. show(false) keeps keyboard
     // focus and activation as they are.
     void show(bool activate = true);

@@ -254,6 +254,13 @@ struct OverlayHost::Impl {
         ++counts.bandRequests;
         setBand(target);
         if (window != target) return;
+        judgeBand();
+    }
+    // Out of the band, the window waits for its next activation (counted as
+    // a refusal); back in it, the wait ends. Also judged after every show:
+    // whether Windows' refusal of an activating show can take a window out
+    // of the band is not known, so the same wait covers it.
+    void judgeBand() {
         if (topmost()) { if (std::exchange(bandPending, false)) ++counts.deferredBands; }
         else { bandPending = true; ++counts.bandRefusals; }
     }
@@ -854,7 +861,8 @@ void OverlayHost::show(bool activate) {
     // the foreground rules allow (enterBand); a window in the band is never
     // sent a raise Windows may refuse. A granted activation (below) brings it
     // to the top of the band.
-    if(!p.topmost())p.enterBand(window);
+    const bool inBand=p.topmost();
+    if(!inBand)p.enterBand(window);
     p.rethrow();
     if(p.window!=window||p.stopped)return;
     // An explicit owner request must not inherit a launcher's STARTUPINFO
@@ -874,6 +882,9 @@ void OverlayHost::show(bool activate) {
         p.minimized=IsIconic(window)!=FALSE;
         p.refreshSchedule();
         if(activate&&p.visible&&p.window==window)p.requestForeground(window);
+        // A show that cost the window its band (only the style is read)
+        // waits for the next activation like a refused raise.
+        if(inBand&&p.window==window)p.judgeBand();
     }
     p.rethrow();
 }
