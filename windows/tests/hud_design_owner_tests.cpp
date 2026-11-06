@@ -507,34 +507,39 @@ void run(const std::filesystem::path& shader) {
             check(of(m1).rasterEntries > 0 && relieved == 0 && of(m4).parks == 1 && of(m5).rasterEntries > 0 && of(m5).parks == 0, "With room again, nothing parks");
             unpublish({y, x});
         }
-        // 3) A superseded switch: A shown, B requested, then C requested
-        // inside A's leave. B was shown (its incoming screen prepared,
-        // unattached) but never drawn; A is the page the user left last, so
-        // in a crowd B parks first and A stays for a quick return.
+        // 3) A superseded switch: O shown, then A, B requested, then C
+        // requested inside A's leave. B was shown (its incoming screen
+        // prepared, unattached) but never drawn, so it keeps its older place:
+        // older than A, the page the user left last, and than O, left before
+        // B was shown. In a crowd B parks first; O and A stay. (A stamp on B
+        // would make it newer than O, and O would park first.)
         {
             gpu::LayerRasterizer cache;
             std::vector<FakeCanvas*> canvases;
-            const core::Module pageA = core::Module::eventLog, pageB = core::Module::about, pageC = core::Module::display;
-            auto coreA = make(cache, "supersededA", {{pageA, 300}}, canvases);
-            auto coreBC = make(cache, "supersededBC", {{pageB, 300}, {pageC, 0}}, canvases);
+            const core::Module pageO = core::Module::calendar, pageA = core::Module::eventLog, pageB = core::Module::about, pageC = core::Module::display;
+            auto coreA = make(cache, "supersededA", {{pageO, 300}, {pageA, 300}}, canvases);
+            auto coreBC = make(cache, "supersededBC", {{pageB, 600}, {pageC, 0}}, canvases);
             const Withdrawn withdrawn{composition, renderer};
             coreA->resize(metrics); coreBC->resize(metrics);
             coreA->setOverlayVisible(true, 30); coreBC->setOverlayVisible(true, 30);
             auto* x = coreA.get(); auto* y = coreBC.get();
             const auto show = [&](const core::ModulePresentationSample& s, double t) { return present(cache, {x, y}, s, t); };
+            show(sample(pageO), 29.9); show(sample(pageO), 29.95);
             show(sample(pageA), 30); show(sample(pageA), 30.05);
             show(skipping(pageA, pageB, pageB), 30.1);
-            check(canvases[1]->isShown() && stats(*y, pageB).rasterEntries > 0, "The incoming B screen is shown and prepared (unattached)");
+            check(canvases[2]->isShown() && stats(*y, pageB).rasterEntries > 0, "The incoming B screen is shown and prepared (unattached)");
             show(skipping(pageA, pageC, pageC), 30.15);
-            check(!canvases[1]->isShown() && canvases[2]->isShown(), "C requested inside A's leave: B is skipped, C comes in");
+            check(!canvases[2]->isShown() && canvases[3]->isShown(), "C requested inside A's leave: B is skipped, C comes in");
             show(sample(pageC), 30.2); show(sample(pageC), 30.25);
-            const auto a0 = stats(*x, pageA), b0 = stats(*y, pageB);
-            check(a0.rasterEntries > 0 && b0.rasterEntries > 0 && relieved == 0 && !cache.crowded(), "With room, A and B keep their pages");
+            const auto o0 = stats(*x, pageO), a0 = stats(*x, pageA), b0 = stats(*y, pageB);
+            check(o0.rasterEntries > 0 && a0.rasterEntries > 0 && b0.rasterEntries > 0 && relieved == 0 && !cache.crowded(), "With room, O, A and B keep their pages");
+            check(b0.rasterEntries >= line + 1 - lowMark && o0.rasterEntries < line + 1 - lowMark, "The pages' weights: B alone brings the crowd back to five eighths, O alone does not");
             std::vector<std::string> crowd;
             fill(cache, crowd, line + 1 - cache.stats().entries);
             show(sample(pageC), 30.3);
-            const auto a1 = stats(*x, pageA), b1 = stats(*y, pageB);
+            const auto o1 = stats(*x, pageO), a1 = stats(*x, pageA), b1 = stats(*y, pageB);
             check(a1.rasterEntries == a0.rasterEntries && a1.parks == a0.parks, "Crowded after a superseded switch, the page the user left (A) is not parked before the skipped one");
+            check(o1.rasterEntries == o0.rasterEntries && o1.parks == o0.parks, "The page left before the skipped one was shown (O) is not parked before it either");
             check(relieved == 1 && b1.rasterEntries == 0 && b1.parks == b0.parks + 1, "The skipped page (B, shown but never seen) parks first");
             for (const auto& id : crowd) (void)cache.remove(id);
             unpublish({x, y});
