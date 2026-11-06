@@ -167,6 +167,7 @@ final class NowPlayingAccessibility {
             CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .commonModes)
         }
         let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.15)
         let entries: [(AXUIElement, CFString)] = [(app, kAXWindowCreatedNotification as CFString), (app, kAXFocusedWindowChangedNotification as CFString)]
             + targets.prefix(12).flatMap { [($0, kAXValueChangedNotification as CFString), ($0, kAXTitleChangedNotification as CFString)] }
         for (target, name) in entries {
@@ -201,6 +202,9 @@ final class NowPlayingAccessibility {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.7
         while let (node, depth) = pending.popLast(), result.count < limit,
               !cancelled(), ProcessInfo.processInfo.systemUptime < deadline {
+            // Every element answers within the root's bound: watch() and stop()
+            // use these on the main thread, and a busy player must not hold it.
+            AXUIElementSetMessagingTimeout(node, 0.15)
             result.append(node)
             guard depth < 12 else { continue }
             let children = attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? []

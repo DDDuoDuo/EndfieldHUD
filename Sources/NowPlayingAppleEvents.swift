@@ -217,7 +217,7 @@ final class NowPlayingScriptingDictionary: NSObject, XMLParserDelegate {
     private(set) var commands: [String: (UInt32, UInt32)] = [:]
     private(set) var enumerators: [String: UInt32] = [:]
     private(set) var classes: [String: UInt32] = [:]
-    private static let optionalProperties: Set<String> = ["persistent ID", "id", "raw data", "artwork url"]
+    private static let optionalProperties: Set<String> = ["persistent ID", "id", "raw data", "artwork url", "sound volume"]
     private static let propertyNames: Set<String> = ["player state", "player position", "current track", "name", "artist", "album", "duration"]
     private static let commandNames: Set<String> = ["playpause", "previous track", "next track"]
 
