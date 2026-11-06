@@ -1823,7 +1823,7 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     using K=core::SystemOverlayEffect::Kind;
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
-        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();openPresentation(e.module,time);break;
+        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
         case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);break;
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
@@ -1949,6 +1949,8 @@ void Application::Impl::close(double time){
         if(const double length=chromePlan->entranceSeconds();length>0&&designDensityFrameTime)
             designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,core::VisibilityClock::clipTime(std::max(0.,*designDensityFrameTime-canvasOpenedAt),length)/length);
     host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);
+    // The lifecycle's close plays now (an editor that declined above leaves no deadline).
+    if(lifecycleClosing)transitionDeadline=time+closingTransitionBound;
     refresh(time);
     // Reduce Motion conceals the source at once: as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), the close
@@ -1968,7 +1970,7 @@ void Application::Impl::forceConceal(double time){
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
         closing=false;session->conceal(time);if(notes)notes->setMediaActive(false,hostTime(time));
     }
-    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();
+    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();transitionDeadline.reset();
     host.hide();concealed(time);if(!stopping){host.setFrameDemand(demand(time));scheduleDeadline();}
 }
 bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
@@ -2171,7 +2173,7 @@ void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stoppin
     if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
        !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
         idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
-    include(calendarNextWake);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    include(calendarNextWake);include(graphicsIdleAt);if(lifecycleOpening||lifecycleClosing)include(transitionDeadline);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){

@@ -229,6 +229,7 @@ void Application::Impl::onDeadline(double time){
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
+    if(transitionDeadline&&*transitionDeadline<=time){transitionDeadlineExpired(time);if(stopping)return;time=hostTime(time);}
     // The tray icon was pointed at but no opening came: the device prepared
     // for it goes again (Renderer::discardPreparedDevice).
     if(preparedGraphicsUntil&&*preparedGraphicsUntil<=time){preparedGraphicsUntil.reset();
@@ -279,6 +280,7 @@ void Application::Impl::onFrame(double time){
 // OverlayController.finishSystemOpening: the source entrance is complete
 // once the session is visible; a focus loss queued during opening closes now.
 void Application::Impl::finishOpening(double time){
+    transitionDeadline.reset();
     const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
     if(startupTrace&&startupTrace->complete())writeStartupTrace();
     if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
@@ -289,6 +291,7 @@ void Application::Impl::finishOpening(double time){
 // presents any more; the window hides (and leaves the topmost band) and the
 // lifecycle's close completes.
 void Application::Impl::finishConcealment(double time){
+    transitionDeadline.reset();
     if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
     core::SystemOverlayEffects closed;
     if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
@@ -300,6 +303,20 @@ void Application::Impl::finishConcealment(double time){
     openAfterConcealed();
     // A development preview quits with its window; the hidden idle and animation traces keep running closed.
     if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
+}
+// OverlayController.transitionDeadline expired with the transition still
+// running (no frame reached its end): the opening is shown stable and
+// completes (a close queued meanwhile then starts), a close conceals the
+// source and completes, through the same ends a frame reaches.
+void Application::Impl::transitionDeadlineExpired(double time){
+    transitionDeadline.reset();
+    if(lifecycleClosing&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing){
+        if(session->phase()!=core::VisibilityPhase::concealed)session->conceal(time);
+        host.setFrameDemand(demand(time));finishConcealment(time);
+    }else if(lifecycleOpening&&!closing&&lifecycle.phase()==core::SystemOverlayPhase::opening){
+        if(session->phase()!=core::VisibilityPhase::visible){session->showStable(time,0x5eed);if(focused)session->setInputEnabled(true,time);}
+        finishOpening(time);if(!stopping)refresh(now());
+    }
 }
 
 // OverlayController.tearDownSystemPresentation: the hand-offs to other

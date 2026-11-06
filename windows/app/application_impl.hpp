@@ -31,6 +31,7 @@
 #include "native/event_log_time.hpp"
 #include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
+#include "modules/charge_badge.hpp"
 #include "core/application_event_recorder.hpp"
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
@@ -350,6 +351,17 @@ struct Application::Impl {
     void prepareGraphics(bool anticipated);
     static constexpr double preparedGraphicsLifetime = 15;
     std::optional<double> preparedGraphicsUntil;
+    // OverlayController.transitionDeadline: an opening or a close the frames
+    // never finished is finished by the host's deadline wake. Armed only while
+    // a transition runs (no wake while idle or hidden): at an opening for
+    // HUDSourceWatchView.backdropPreparationTimeout (3 s) +
+    // SystemHUDView.entranceDuration + 0.2 s, and where a close starts its
+    // animation for SystemHUDView.exitDuration (HUDChargeBadge.exitDuration)
+    // + 0.2 s. Cleared when the transition finishes or is forced.
+    static constexpr double openingTransitionBound=3+core::SystemOverlayLifecycle::entranceDuration+.2;
+    static constexpr double closingTransitionBound=modules::ChargeBadgeState::exitDuration+.2;
+    std::optional<double> transitionDeadline;
+    void transitionDeadlineExpired(double time);
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
     // The hidden idle and animation traces run on the real clock through the production scheduling.
@@ -375,8 +387,8 @@ struct Application::Impl {
     void close(double time);
     // OverlayController.finishSystemOpening / finishSystemClosing: the end of
     // an opening (the session visible) and of a close (the session concealed),
-    // reached by a frame or by a close that concealed the session at once
-    // (Reduce Motion).
+    // reached by a frame, by a close that concealed the session at once
+    // (Reduce Motion) or by the transition deadline.
     void finishOpening(double time);
     void finishConcealment(double time);
     void finishQuit(double time);

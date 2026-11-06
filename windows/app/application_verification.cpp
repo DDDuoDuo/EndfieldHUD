@@ -407,8 +407,14 @@ int Application::Impl::runIdleTrace(){
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
     // After the report (its numbers stay those of the windows above), the
-    // ends of the close on the same real scheduling (the HUD is closed).
+    // close and opening ends on the same real scheduling (the HUD is closed).
+    using P=core::SystemOverlayPhase;
     const auto reduceMotion=[&](bool on){configuration.set("reduceMotion",on);configurationPending=true;applyConfiguration(clock());};
+    // A normal close ends on its frames, before its transition deadline.
+    openHUD();
+    {const auto at=OverlayHost::clockNow();closeHUD();const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace normal close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(elapsed<closingTransitionBound,"A normal close ends on its frames before its transition deadline");}
     // Reduce Motion (the preference, or Windows "Animation effects" off):
     // the close conceals the source at once and, as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), finishes there
@@ -416,16 +422,31 @@ int Application::Impl::runIdleTrace(){
     // next summon opens the HUD again.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
-     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
           "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
      pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");}
     openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
     {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    reduceMotion(false);
+    // OverlayController.transitionDeadline: an opening and a close no frame
+    // finishes (the window stays hidden under them, so the host's frame gate
+    // stays shut) end on the host's deadline wake. Escape during that opening
+    // waits for it, then closes.
+    {const auto framesBefore=host.stats().frames;const auto at=OverlayHost::clockNow();
+     perform(lifecycle.toggle(),clock());(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
+     pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
+     need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes an opening no frame finished, and the close queued during it starts");
+     pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&ended>=openedAfter+closingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s\n";}
     // The tray's Quit under Reduce Motion ends the run without a frame.
-    openHUD();
+    reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
-     need(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");}
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");}
     shutdownVisible();
     return 0;
 }
