@@ -264,7 +264,8 @@ struct OverlayOptions {
     // replaces SetForegroundWindow and answers whether Windows granted it.
     // testBand(topmost) replaces the z-band SetWindowPos and answers
     // whether the window is in the topmost band afterwards, so a test can
-    // stand in for Windows refusing it. Empty in production.
+    // stand in for Windows refusing it; create() also asks it (true) whether
+    // Windows kept the window's created topmost style. Empty in production.
     std::function<bool(bool shown, bool activate)> testVisibility;
     std::function<bool()> testForeground;
     std::function<bool(bool topmost)> testBand;
@@ -286,14 +287,15 @@ struct OverlayHostStats {
     double refreshRate{};
     std::uint64_t pacedFrames{};
     // Z-band and activation (show/hide): whether the window is in the
-    // topmost band now (WS_EX_TOPMOST); activating shows that asked for the
+    // topmost band now (WS_EX_TOPMOST: from creation on, shown or hidden,
+    // unless Windows kept it out); activating shows that asked for the
     // foreground and those Windows' foreground lock refused; whether a shown
     // window still waits for its activation (the first click on it) and the
     // activations that ended such a wait.
     bool topmost{}, activationPending{};
     std::uint64_t foregroundRequests{}, foregroundRefusals{}, deferredActivations{};
-    // Attempts to enter the topmost band (each show, and a retry at
-    // activation), those Windows' foreground rules refused (the window then
+    // Attempts to enter the topmost band (a show of a window Windows kept
+    // out of it, and a retry at activation), those Windows' foreground rules refused (the window then
     // stays just behind the foreground window), whether a shown window still
     // waits for the band, and the retries that entered it.
     bool bandPending{};
@@ -318,36 +320,40 @@ public:
     ~OverlayHost();
     OverlayHost(const OverlayHost&) = delete;
     OverlayHost& operator=(const OverlayHost&) = delete;
-    void create(const OverlayOptions&, OverlayCallbacks = {}); // always initially hidden
+    // Always initially hidden; created in the topmost band (WS_EX_TOPMOST)
+    // unless offscreenScheduling.
+    void create(const OverlayOptions&, OverlayCallbacks = {});
     void destroy(); // idempotent; release the renderer/DComp target before this
     void* hwnd() const noexcept;
     ClientMetrics metrics() const;
     // Shows the window in the topmost band, above every normal application
     // window (Mac: the HUD panel's .statusBar level), keeping its geometry
     // and style; an explicit show also overrides a launcher's STARTUPINFO
-    // SW_HIDE. Every call raises it to the top of that band; a topmost
-    // window another program raises later may sit above it, as other
-    // status-level panels do on the Mac. activate also asks for the
-    // foreground (Mac: NSApp.activate ignoringOtherApps).
-    // Both depend on the right to set the foreground window, which the hotkey
-    // (WM_HOTKEY), a click, or a launcher that passed it on
+    // SW_HIDE. The window holds the band from creation on, so every opening,
+    // the first after launch included, appears above every normal window
+    // whether or not Windows grants it the foreground. activate also asks
+    // for the foreground (Mac: NSApp.activate ignoringOtherApps), which
+    // raises it to the top of the band; a topmost window another program
+    // raised later may otherwise sit above it, as other status-level panels
+    // do on the Mac. The foreground depends on the right to set it, which
+    // the hotkey (WM_HOTKEY), a click, or a launcher that passed it on
     // (packaging/foreground_launch.hpp) gives this process. Without it
-    // Windows refuses the foreground and even the band: the window is shown
-    // just behind the foreground window (stats().bandPending and
-    // activationPending), and its next activation - a click on a visible
-    // part of it (WM_MOUSEACTIVATE answers MA_ACTIVATE), or a later opening
-    // that holds the right - enters the band. No input is injected and no
-    // thread input is attached. show(false) keeps keyboard focus and
-    // activation as they are.
+    // Windows refuses the activation (stats().activationPending) and the
+    // window waits for its next activation: a click on a visible part of it
+    // (WM_MOUSEACTIVATE answers MA_ACTIVATE), or a later opening that holds
+    // the right. Windows refuses a raise into the band without that right
+    // too, so a raise is sent only when Windows kept the window out of the
+    // band (stats().bandPending until an activation enters it). No input is
+    // injected and no thread input is attached. show(false) keeps keyboard
+    // focus and activation as they are.
     void show(bool activate = true);
-    // Hides the window and leaves the topmost band: a hidden window is never
-    // topmost.
+    // Hides the window; it keeps the topmost band (Mac: orderOut keeps the
+    // panel's level).
     void hide();
     // Moves and sizes the window to these screen pixels (Projection on its
     // retained display) and changes nothing else: z-order, visibility and
-    // activation stay as they are, so a hidden window never enters the
-    // topmost band here (only show() does) and a shown one keeps its place in
-    // it. false when Windows refuses the move or no window exists.
+    // activation stay as they are, so the window keeps its band, shown or
+    // hidden. false when Windows refuses the move or no window exists.
     bool place(int x, int y, int pixelWidth, int pixelHeight);
     void setFrameDemand(core::FrameDemand);
     // Caller aggregates its next media/save/countdown deadline. It shares the

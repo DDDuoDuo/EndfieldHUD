@@ -235,12 +235,13 @@ struct OverlayHost::Impl {
         return window && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
     }
     // The topmost band (Mac: the HUD panel's .statusBar level, above every
-    // normal window): entered by show() before the window appears, left by
-    // hide() once it is hidden. Only the z-order changes, never geometry,
-    // visibility or activation.
-    void setBand(HWND target, bool topmostBand) {
-        if (testBand) { bandState = testBand(topmostBand); return; }
-        (void)SetWindowPos(target, topmostBand ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // normal window, set once and kept through every orderOut): the window is
+    // created in it and keeps it while hidden; show() asks again only when
+    // Windows kept the window out of it. Only the z-order changes, never
+    // geometry, visibility or activation.
+    void setBand(HWND target) {
+        if (testBand) { bandState = testBand(true); return; }
+        (void)SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     // Windows applies its foreground rules to raising a window too: for a
     // process that may not set the foreground window, SetWindowPos into the
@@ -251,7 +252,7 @@ struct OverlayHost::Impl {
     // window (when the process holds that right) enters it.
     void enterBand(HWND target) {
         ++counts.bandRequests;
-        setBand(target, true);
+        setBand(target);
         if (window != target) return;
         if (topmost()) { if (std::exchange(bandPending, false)) ++counts.deferredBands; }
         else { bandPending = true; ++counts.bandRefusals; }
@@ -266,12 +267,15 @@ struct OverlayHost::Impl {
         if (!granted) { ++counts.foregroundRefusals; activationPending = true; }
         else if (std::exchange(activationPending, false)) ++counts.deferredActivations;
     }
-    // Hides the window (or a hidden test's stand-in) and leaves the band.
+    // Hides the window (or a hidden test's stand-in). The window keeps the
+    // topmost band, as the Mac panel keeps its level through orderOut: the
+    // next opening then appears above every normal window even when Windows
+    // refuses that opening the foreground, and the first opening after launch
+    // is no different from the later ones.
     void conceal(HWND target) {
         activationPending = bandPending = false;
         if (testVisibility) { (void)testVisibility(false, false); visible = false; if (ready && window == target) refreshSchedule(); }
         else ShowWindow(target, SW_HIDE);
-        if (window == target && topmost()) setBand(target, false);
     }
     UINT wheelLines{3},wheelChars{3};
     void refreshWheelSettings(){SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&wheelLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&wheelChars,0);}
@@ -803,12 +807,20 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.fixedRefresh = std::isfinite(options.refreshRate) && options.refreshRate > 0 ? options.refreshRate : 0;
     p.testVisibility = options.testVisibility; p.testForeground = options.testForeground; p.testBand = options.testBand;
     p.activationPending = p.bandPending = p.bandState = false;
-    const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, windowClass,
+    // Created in the topmost band (Mac: the panel's .statusBar level, set
+    // once), unlike a SetWindowPos raise, which Windows refuses a process
+    // without the right to set the foreground window. An offscreen benchmark
+    // window is never shown and stays out of it.
+    const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | (options.offscreenScheduling ? 0 : WS_EX_TOPMOST), windowClass,
         options.title.c_str(), WS_POPUP, options.x, options.y,
         static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight),
         static_cast<HWND>(options.ownerWindow), nullptr, GetModuleHandleW(nullptr), &p);
     if (!window) { p.rethrow(); fail("CreateWindowEx overlay"); }
     p.rethrow();
+    // The band the window was created in; a hidden test's stand-in answers
+    // whether Windows kept the created style.
+    p.bandState = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (p.testBand && p.bandState) p.bandState = p.testBand(true);
     const UINT dpi = GetDpiForWindow(window);
     p.client.dpi = dpi ? dpi : 96;
     if (options.offscreenScheduling && options.testDpi) { if (options.testDpi < 48 || options.testDpi > 768) throw std::invalid_argument("Invalid test DPI"); p.client.dpi = options.testDpi; p.testDpi = true; }
@@ -835,10 +847,14 @@ void OverlayHost::show(bool activate) {
         p.visible = true; p.minimized = false; p.refreshSchedule(); p.rethrow(); return;
     }
     const auto window=p.window;
-    // Above every normal application window: the band is entered before the
-    // window appears (or the window raised to its top when already shown),
-    // as far as Windows' foreground rules allow (enterBand).
-    p.enterBand(window);
+    // Above every normal application window: the window already holds the
+    // topmost band (created in it, kept while hidden), so it appears there
+    // whatever Windows decides about this opening. Only a window Windows
+    // kept out of the band asks for it again, before it appears, as far as
+    // the foreground rules allow (enterBand); a window in the band is never
+    // sent a raise Windows may refuse. A granted activation (below) brings it
+    // to the top of the band.
+    if(!p.topmost())p.enterBand(window);
     p.rethrow();
     if(p.window!=window||p.stopped)return;
     // An explicit owner request must not inherit a launcher's STARTUPINFO

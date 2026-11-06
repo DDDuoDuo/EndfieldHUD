@@ -290,8 +290,8 @@ void Application::Impl::finishOpening(double time){
     automationChanged();refreshAutomation();
 }
 // OverlayController.finishSystemClosing: the session is concealed and nothing
-// presents any more; the window hides (and leaves the topmost band) and the
-// lifecycle's close completes.
+// presents any more; the window hides (keeping the topmost band, as orderOut
+// keeps the panel's level) and the lifecycle's close completes.
 void Application::Impl::finishConcealment(double time){
     transitionDeadline.reset();
     if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
@@ -324,7 +324,7 @@ void Application::Impl::transitionDeadlineExpired(double time){
 
 // OverlayController.tearDownSystemPresentation: the hand-offs to other
 // applications wait for the normal close to finish (the panel ordered out;
-// here the window hidden and out of the topmost band), then open in front of
+// here the window hidden), then open in front of
 // the windows the HUD covered; a quit or forced close drops them.
 // OverlayController.performShelfDragAction on this host. The retract is the
 // presentation's own close (owners' overlayClosing, the source exit, the
