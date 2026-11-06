@@ -757,13 +757,16 @@ void gatedFrameUnderContinuousInput() {
     struct Gate { HANDLE h; ~Gate() { CloseHandle(h); } } owned{gate};
     unsigned moves{}, limit{}, signalAt{};
     double cost{};
-    std::vector<unsigned> frameAtMove; std::vector<double> frameTimes;
+    bool admissionHeld{};
+    std::vector<unsigned> frameAtMove, admittedAtMove; std::vector<double> frameTimes;
     HWND window{};
     OverlayCallbacks callbacks;
     callbacks.frame = [&](double now) { frameAtMove.push_back(moves); frameTimes.push_back(now); };
     callbacks.presentationWaitable = [&] { return static_cast<void*>(gate); };
-    callbacks.presentationHeld = [] { return false; };
-    callbacks.presentationAdmitted = [] {};
+    // The owner already holds an admission (the top of pumpOnce takes the
+    // frame as admitted before it dispatches the queued input).
+    callbacks.presentationHeld = [&] { return admissionHeld; };
+    callbacks.presentationAdmitted = [&] { admittedAtMove.push_back(moves); };
     // One resize step: a move that costs `cost` seconds and, while the drag
     // lasts, queues the next move before it returns (the mouse moved again).
     callbacks.pointer = [&](const PointerEvent& event) {
@@ -790,7 +793,8 @@ void gatedFrameUnderContinuousInput() {
         check(!host.stats().presentationGated && !host.stats().framePending && !host.stats().timerArmed, "No gate, timer or frame is left pending");
     };
     const auto hold = [&] {
-        settle(); frameAtMove.clear(); frameTimes.clear(); moves = 0;
+        settle(); frameAtMove.clear(); admittedAtMove.clear(); frameTimes.clear();
+        moves = limit = signalAt = 0; cost = 0; admissionHeld = false;
         const auto since = OverlayHost::clockNow();
         host.invalidate(); host.pumpOnce(0);
         check(host.stats().presentationGated && frameAtMove.empty(), "The frame waits for the swap chain's admission");
@@ -800,7 +804,7 @@ void gatedFrameUnderContinuousInput() {
         limit = until; cost = seconds; signalAt = signal;
         PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 1));
         for (unsigned i = 0; i < 256 && moves < limit; ++i) host.pumpOnce(0);
-        limit = 0;
+        limit = signalAt = 0; cost = 0;
     };
     // The swap chain accepts a frame at the third 2 ms resize step: the held
     // frame runs within about half a refresh of input, not after the batch.
@@ -816,12 +820,33 @@ void gatedFrameUnderContinuousInput() {
     check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
         host.stats().presentationFallbacks > before.presentationFallbacks,
         "A held frame the swap chain never admits runs 50 ms after it was held while input keeps arriving");
-    // A burst queued while the frame is held, then admitted at once (the
-    // Projection contract): the one frame samples the whole burst.
-    hold();
-    for (unsigned k = 0; k < 6; ++k) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(k, 2));
+    // A burst of cheap moves queued while the frame is held, then admitted at
+    // once (the Projection contract): the one frame samples the whole burst,
+    // whichever edge takes the admission.
+    const auto burst = [&](double seconds) {
+        cost = seconds;
+        for (unsigned k = 0; k < 6; ++k) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(k, 2));
+    };
+    hold(); before = host.stats(); burst(0);
     SetEvent(gate); host.pumpOnce(0);
+    std::cout << "Gated frame with a queued burst: admitted at move " << (admittedAtMove.empty() ? 0 : admittedAtMove.front())
+        << ", frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(host.stats().presentationAdmissions == before.presentationAdmissions + 1 && admittedAtMove.size() == 1,
+        "The queued burst's frame takes the swap chain's one admission");
     check(frameAtMove.size() == 1 && frameAtMove.front() == 6, "A frame admitted with a queued burst runs once, after every move of it");
+    // The same burst with the admission already held when pumpOnce starts: the
+    // frame is due before the first message and still samples the burst.
+    hold(); burst(0); admissionHeld = true; host.pumpOnce(0); admissionHeld = false;
+    check(frameAtMove.size() == 1 && frameAtMove.front() == 6, "A frame due at the top of pumpOnce runs once, after every move of a queued burst");
+    // A burst whose moves outlast the sample window (six 2 ms moves against
+    // half a 60 Hz refresh): the frame runs after at most five of them, and
+    // the next frame draws the rest.
+    hold(); burst(.002); admissionHeld = true; host.pumpOnce(0); admissionHeld = false;
+    std::cout << "Gated frame with a costly burst: frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of 6\n";
+    check(frameAtMove.size() == 1 && frameAtMove.front() < 6, "A due frame samples at most half a refresh of further input");
+    for (unsigned i = 0; i < 40 && (moves < 6 || host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(0); }
+    check(moves == 6 && frameAtMove.size() == 2 && frameAtMove.back() == 6, "The next frame draws the rest of the burst");
+    cost = 0;
     settle();
     before = host.stats(); frameAtMove.clear();
     for (const auto end = OverlayHost::clockNow() + .3; OverlayHost::clockNow() < end;) host.pumpOnce(100);
