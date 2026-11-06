@@ -22,6 +22,12 @@ d::Control* control(d::Canvas& canvas, std::string_view id) {
     return nullptr;
 }
 d::Point centre(const d::Control& c, const d::Layer& root) { const auto r = c.rect(root); return {r.x + r.width / 2, r.y + r.height / 2}; }
+// A layer's drawn backgroundColor / borderColor (content colour times its tint).
+std::optional<d::Color> drawnColour(const d::Layer& l, std::string_view key) {
+    if (!l.content() || !(*l.content())[key].isObject()) return std::nullopt;
+    const auto& c = (*l.content())[key]["sRGB"].array();
+    return multiply(d::Color{c[0].number(), c[1].number(), c[2].number(), c[3].number()}, l.tint());
+}
 constexpr double avatarWidth = 120, avatarHeight = 80;
 
 struct World {
@@ -552,6 +558,15 @@ void reopenEditors() {
     auto& recoloured = open("profile:name", m::ProfileField::name, "after a colour change");
     check(recoloured.layer().id() == before, "The editor keeps its id (the page keeps its ids)");
     check(host.request->caretColor != caretBefore, "The reopened editor takes the new card colour");
+    {
+        const d::Layer* bar{};
+        for (const auto* c : recoloured.layer().children()) if (c->id().ends_with("field.bar")) bar = c;
+        const auto ring = drawnColour(recoloured.layer(), "borderColor");
+        const auto barFill = bar ? drawnColour(*bar, "backgroundColor") : std::nullopt;
+        check(recoloured.frame().focusColor && near(*recoloured.frame().focusColor, host.request->caretColor), "The reopened editor's focus colour is the new card colour");
+        check(ring && near(*ring, host.request->caretColor) && bar && !bar->hidden() && barFill && near(*barFill, host.request->caretColor),
+              "The reopened editor's ring and 3 px bar take the new card colour with its caret");
+    }
     escape(recoloured);
     // Leaving the Profile and coming back; closing and reopening the HUD.
     open("profile:name", m::ProfileField::name, "before leaving");

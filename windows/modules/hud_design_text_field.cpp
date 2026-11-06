@@ -90,16 +90,21 @@ void TextField::setSize(Size size) {
     renderIdle();
     if (editing_) refreshProjection();
 }
-void TextField::setStyle(std::optional<TextStyle> style) {
-    if (options_.style == style) return;
+bool TextField::setStyle(std::optional<TextStyle> style) {
+    if (editing_) return false;
+    if (options_.style == style) return true;
     options_.style = std::move(style);
     renderIdle();
+    return true;
 }
-void TextField::setAccent(std::optional<Color> accent) {
-    if (options_.accent == accent) return;
+bool TextField::setAccent(std::optional<Color> accent) {
+    if (editing_) return false;
+    if (options_.accent == accent) return true;
     options_.accent = accent;
+    // An idle frame is at rest or invalid, neither of which draws the focus
+    // colour: beginEditing's focused state draws the ring and bar in it.
     frame_->focusColor = accent;
-    frame_->setState(frame_->state());
+    return true;
 }
 // setInvalid (:100-108): red state; the shake is additive x 0,-6,6,-6,6,0 over .32 s.
 void TextField::setInvalid(bool value, bool shake) {
