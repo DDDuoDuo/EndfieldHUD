@@ -212,8 +212,9 @@ public:
     const fs::path& path() const noexcept { return path_; }
     const Json::Array& rows() const noexcept { return rows_; }
     const Json::Array& visits() const noexcept { return visits_; }
-    // Production rows: openings and closings finished, close requests that
-    // reached the presentation, transition deadlines that expired, quits.
+    // Lifecycle rows (production; the idle trace checks them in memory):
+    // openings and closings finished, close requests as they reach the
+    // presentation, transition deadlines that expired, quits.
     unsigned openings{}, closings{}, closes{}, deadlines{}, quits{};
 private:
     fs::path path_;
@@ -1059,6 +1060,11 @@ struct Application::Impl {
     void projectionFailed();
     LiveProbe probe;
     std::unique_ptr<MemoryTrace> memoryTrace;
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows (opened, close request,
+    // closed, transition deadline, quit): production, or the hidden idle
+    // trace, which keeps them in memory (never written) to check them.
+    bool memoryTraceRows{};
+    bool lifecycleTraced() const noexcept { return memoryTrace && (production() || memoryTraceRows); }
     std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
     void recordModuleFailure(const ModuleFailure&) noexcept;
     void startFailed(std::string_view name, const std::exception&) noexcept; // a production start site's catch

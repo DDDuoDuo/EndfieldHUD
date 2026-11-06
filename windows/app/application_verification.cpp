@@ -420,11 +420,22 @@ int Application::Impl::runIdleTrace(){
     // (HUDSourceWatchAnimation.close calls its completion), finishes there
     // without a frame - the window hides and the lifecycle closes, so the
     // next summon opens the HUD again.
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows on the transitions below,
+    // kept in memory (never written): where each lands and what it records.
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});memoryTraceRows=true;
+    const auto row=[&](std::string_view stage)->std::optional<std::size_t>{const auto&rows=memoryTrace->rows();
+        for(std::size_t n=0;n<rows.size();++n)if(const auto&name=rows[n]["stage"];name.isString()&&name.string()==stage)return n;return std::nullopt;};
+    const auto traced=[&](std::string_view stage,std::string_view field)->const Json&{static const Json none;const auto n=row(stage);return n?memoryTrace->rows()[*n]["scheduling"][field]:none;};
+    const auto tracedIs=[&](std::string_view stage,std::string_view field,std::string_view value){const auto&v=traced(stage,field);return v.isString()&&v.string()==value;};
+    const auto tracedTrue=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isBool()&&v.boolean();};
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
      need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
           "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
-     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");}
+     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");
+     need(row("close-1")&&row("closed-1")&&*row("close-1")<*row("closed-1")&&tracedIs("close-1","lifecycle","closing")&&tracedIs("close-1","session","visible")&&
+          tracedTrue("close-1","closePending")&&tracedTrue("close-1","reduceMotion")&&traced("close-1","host")["visible"].isBool()&&traced("close-1","host")["visible"].boolean(),
+          "The memory trace's close row records the request, before the Reduce Motion close finishes");}
     openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
     {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
@@ -442,11 +453,17 @@ int Application::Impl::runIdleTrace(){
      pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
      need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&ended>=openedAfter+closingTransitionBound-.05&&host.stats().frames==framesBefore,
           "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
-     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s\n";}
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s\n";
+     need(tracedIs("transition-deadline-1","lifecycle","opening")&&tracedTrue("transition-deadline-1","closeAfterOpening")&&tracedIs("transition-deadline-2","lifecycle","closing")&&
+          traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
+          "The memory trace records the expired opening and close deadlines");}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
-     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");}
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
+     const auto request="close-"+std::to_string(memoryTrace->closes);
+     need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
+          "The memory trace records Quit's close request, then the quit");}
     shutdownVisible();
     return 0;
 }

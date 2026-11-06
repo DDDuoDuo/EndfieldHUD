@@ -790,7 +790,7 @@ void Application::Impl::concealed(double time){
     designDensityRetracted=false;
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
 }
 // Nothing is drawn until the next opening. One publication lets the owners
 // that released their artwork on the overlayConcealed broadcast retire its GPU
@@ -849,7 +849,7 @@ void Application::Impl::releaseIdleGraphics(double time){
         const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics device (")+typeid(e).name()+")\n";
         std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     }
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
 }
 void Application::Impl::prepareGraphics(bool anticipated){
     if(!ready||stopping||!renderer.stats().initialized||!renderer.deviceSuspended())return;
@@ -1824,13 +1824,15 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
         case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
-        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);
-            if(memoryTrace&&production()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);break;
+        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();
+            // At the request, before the close runs (a Reduce Motion close finishes inside it).
+            if(lifecycleTraced()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);
+            close(time);break;
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
-        case K::terminate:if(memoryTrace&&production()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
+        case K::terminate:if(lifecycleTraced()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;
         case K::shelfRetract:case K::shelfHide:case K::shelfRestore:case K::shelfClose:shelfDragEffect(e,time);break;
         }

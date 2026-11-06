@@ -283,7 +283,7 @@ void Application::Impl::finishOpening(double time){
     transitionDeadline.reset();
     const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
     if(startupTrace&&startupTrace->complete())writeStartupTrace();
-    if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
+    if(lifecycleTraced()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
     // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
     automationChanged();refreshAutomation();
 }
@@ -310,7 +310,7 @@ void Application::Impl::finishConcealment(double time){
 // source and completes, through the same ends a frame reaches.
 void Application::Impl::transitionDeadlineExpired(double time){
     transitionDeadline.reset();
-    if(memoryTrace&&production()&&memoryTrace->deadlines<8)recordMemory("transition-deadline-"+std::to_string(++memoryTrace->deadlines),false);
+    if(lifecycleTraced()&&memoryTrace->deadlines<8)recordMemory("transition-deadline-"+std::to_string(++memoryTrace->deadlines),false);
     if(lifecycleClosing&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing){
         if(session->phase()!=core::VisibilityPhase::concealed)session->conceal(time);
         host.setFrameDemand(demand(time));finishConcealment(time);
