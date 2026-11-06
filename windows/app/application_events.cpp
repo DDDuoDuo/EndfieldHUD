@@ -257,7 +257,7 @@ void Application::Impl::onFrame(double time){
         if(phase>=1&&!diagnosticEditing&&phase<3){auto measured=probe.measure(LiveProbe::editTransition);diagnosticEditing=notes->diagnosticEditing(true,time);}
         if(phase==2){environment.pointer=core::Point{metrics.width*.5+200*std::sin(elapsed*2),metrics.height*.5+120*std::cos(elapsed*2)};session->pointerMove(environment.pointer,time);}
         if(phase==3&&diagnosticEditing){auto measured=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
-        if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);}
+        if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);if(stopping)return;}
     }
     bool active{};
     // A lost GPU device ends this run; main.cpp starts a fresh owner.
@@ -272,27 +272,34 @@ void Application::Impl::onFrame(double time){
         host.setFrameDemand(demand(now()));scheduleDeadline();return;
     }
     host.setFrameDemand(demand(time));scheduleDeadline();
-    // OverlayController.finishSystemOpening: the source entrance is complete
-    // once the session is visible; a focus loss queued during opening closes now.
-    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
-        if(startupTrace&&startupTrace->complete())writeStartupTrace();
-        if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
-        // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
-        automationChanged();refreshAutomation();if(stopping)return;}
+    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(time);if(stopping)return;}
     if(shelfDragFrame(time,!active)||stopping)return;
-    if(!active&&session->phase()==core::VisibilityPhase::concealed){
-        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
-        core::SystemOverlayEffects closed;
-        if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
-        if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
-            const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
-            if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
-        }
-        if(!closed.empty()){perform(closed,time);if(stopping)return;}
-        openAfterConcealed();
-        // A development preview quits with its window; the hidden idle and animation traces keep running closed.
-        if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
+    if(!active&&session->phase()==core::VisibilityPhase::concealed)finishConcealment(time);
+}
+// OverlayController.finishSystemOpening: the source entrance is complete
+// once the session is visible; a focus loss queued during opening closes now.
+void Application::Impl::finishOpening(double time){
+    const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
+    if(startupTrace&&startupTrace->complete())writeStartupTrace();
+    if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
+    // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
+    automationChanged();refreshAutomation();
+}
+// OverlayController.finishSystemClosing: the session is concealed and nothing
+// presents any more; the window hides (and leaves the topmost band) and the
+// lifecycle's close completes.
+void Application::Impl::finishConcealment(double time){
+    if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
+    core::SystemOverlayEffects closed;
+    if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
+    if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
+        const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
+        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
     }
+    if(!closed.empty()){perform(closed,time);if(stopping)return;}
+    openAfterConcealed();
+    // A development preview quits with its window; the hidden idle and animation traces keep running closed.
+    if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
 }
 
 // OverlayController.tearDownSystemPresentation: the hand-offs to other

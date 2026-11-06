@@ -373,6 +373,12 @@ struct Application::Impl {
     void selectModule(core::Module, double time);
     void open(double time);
     void close(double time);
+    // OverlayController.finishSystemOpening / finishSystemClosing: the end of
+    // an opening (the session visible) and of a close (the session concealed),
+    // reached by a frame or by a close that concealed the session at once
+    // (Reduce Motion).
+    void finishOpening(double time);
+    void finishConcealment(double time);
     void finishQuit(double time);
     void forceConceal(double time);
     // The Shelf drag-out (application_events.cpp): the drag loop with the

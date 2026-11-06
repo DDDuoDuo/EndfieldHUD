@@ -406,6 +406,26 @@ int Application::Impl::runIdleTrace(){
         {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
+    // After the report (its numbers stay those of the windows above), the
+    // ends of the close on the same real scheduling (the HUD is closed).
+    const auto reduceMotion=[&](bool on){configuration.set("reduceMotion",on);configurationPending=true;applyConfiguration(clock());};
+    // Reduce Motion (the preference, or Windows "Animation effects" off):
+    // the close conceals the source at once and, as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), finishes there
+    // without a frame - the window hides and the lifecycle closes, so the
+    // next summon opens the HUD again.
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
+          "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
+     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");}
+    openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
+    {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // The tray's Quit under Reduce Motion ends the run without a frame.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
+     need(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");}
     shutdownVisible();
     return 0;
 }

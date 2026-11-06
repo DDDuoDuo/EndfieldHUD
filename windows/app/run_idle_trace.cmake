@@ -17,7 +17,9 @@
 # The trace itself checks that a reopening within the grace keeps the
 # device, that a media owner holding the device refuses the release until it
 # lets go, and that a device prepared for an anticipated opening (the tray
-# icon pointed at) is taken by the opening or discarded without one.
+# icon pointed at) is taken by the opening or discarded without one. After
+# its report it checks that under Reduce Motion a close (summon, Escape,
+# Quit) hides the HUD and completes without a frame.
 # NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)

@@ -1948,7 +1948,12 @@ void Application::Impl::close(double time){
         // RC 139 measured on the frames: up to the deploy's last frame, posed at its eased clip time.
         if(const double length=chromePlan->entranceSeconds();length>0&&designDensityFrameTime)
             designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,core::VisibilityClock::clipTime(std::max(0.,*designDensityFrameTime-canvasOpenedAt),length)/length);
-    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
+    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);
+    refresh(time);
+    // Reduce Motion conceals the source at once: as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), the close
+    // finishes here. No frame would: the concealed demand presents nothing.
+    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time);
 }
 void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
