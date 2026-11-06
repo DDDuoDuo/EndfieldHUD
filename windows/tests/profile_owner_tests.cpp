@@ -125,8 +125,10 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     // editing the name or the bio everything in the dial disappeared). Opened
     // as UI Automation (and a click) opens them, through the owner; Esc, Enter
     // on the shown value and another field's invoke, each followed by the same
-    // field again: every open makes "edit:<field>" on the page.
-    {const auto invoke=[&](std::string_view id){
+    // field again: the page makes "edit:<field>" at the first open and every
+    // later open takes that editor again, building no page.
+    {const auto builds=context.pagesBuilt();
+     const auto invoke=[&](std::string_view id){
         (void)core.automationRefresh(nullptr);check(core.automationCount()>0,"The page is listed for UI Automation");
         const std::wstring wanted(id.begin(),id.end());
         for(std::size_t n=0;n<core.automationCount();++n){
@@ -148,6 +150,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
      press(VK_ESCAPE);
      check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens again after the bio");press(VK_ESCAPE);
      check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published and nothing was saved");
+     check(context.pagesBuilt()==builds,"Reopening the editors builds no page ("+std::to_string(context.pagesBuilt()-builds)+" built)");
      // 2c. The same by clicks, the route on which the repeated editor id
      // reached the module registry and blanked the dial: each press goes
      // through the owner's pointer routing to the element under it.
@@ -164,7 +167,8 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
         check(click(id)&&canvas.editingField().has_value(),std::string("A click opens the native editor for ")+id);
         press(VK_ESCAPE);check(!canvas.editingField(),std::string("Esc closes ")+id);}
      core.pointer({app::PointerKind::leave,app::PointerButton::none,0,0},time);paint();
-     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published after the clicks");}
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published after the clicks");
+     check(context.pagesBuilt()==builds,"Reopening the editors by clicks builds no page ("+std::to_string(context.pagesBuilt()-builds)+" built)");}
     const auto frameImages=owner->stats();
     // 3. Avatar chooser from the ⋯ menu: the host's queued dialog, imported on the worker.
     const auto photo=t.root/"portrait.png";encode(photo,300,200);

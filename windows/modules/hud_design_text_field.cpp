@@ -90,6 +90,17 @@ void TextField::setSize(Size size) {
     renderIdle();
     if (editing_) refreshProjection();
 }
+void TextField::setStyle(std::optional<TextStyle> style) {
+    if (options_.style == style) return;
+    options_.style = std::move(style);
+    renderIdle();
+}
+void TextField::setAccent(std::optional<Color> accent) {
+    if (options_.accent == accent) return;
+    options_.accent = accent;
+    frame_->focusColor = accent;
+    frame_->setState(frame_->state());
+}
 // setInvalid (:100-108): red state; the shake is additive x 0,-6,6,-6,6,0 over .32 s.
 void TextField::setInvalid(bool value, bool shake) {
     invalid_ = value;

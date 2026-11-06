@@ -89,6 +89,13 @@ public:
     // add field follows the width the Add button leaves it; the Mac makes a
     // new field with the same draft when its width changes).
     void setSize(Size);
+    // The text style and the accent (ring, bar and caret) of the next edit: an
+    // owner that opens one field again with new values (Personal ID's inline
+    // editor after a card colour change; the Mac makes a new field with them)
+    // sets them while the field is idle. A running editor keeps the style it
+    // began with.
+    void setStyle(std::optional<TextStyle>);
+    void setAccent(std::optional<Color>);
     void setInvalid(bool, bool shake = false);     // shake: additive x 0,-6,6,-6,6,0 over .32 (not reduced)
     bool editing() const noexcept { return editing_; }
     void beginEditing(std::optional<std::pair<std::uint32_t, std::uint32_t>> selection = {});

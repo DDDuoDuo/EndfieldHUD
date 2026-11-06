@@ -178,6 +178,9 @@ private:
         ProfileThemeButton* theme{};
         std::map<ProfileField, design::Layer*> values;
         std::map<ProfileField, ProfileEditable*> editables;
+        // The inline editors this page made ("edit:<field>", one per field:
+        // its arena makes an id once); a later open on the page takes it again.
+        std::map<ProfileField, design::TextField*> editors;
         std::optional<ProfilePortrait> shownPortrait;
         int silhouetteStep{};
     };
@@ -199,7 +202,6 @@ private:
     std::vector<std::function<void(design::Color)>> accentBinders_;
     std::vector<std::function<void()>> popoverBinders_;
     std::optional<Editing> editing_;
-    std::uint32_t editorsMade_{};            // the fields whose "edit:<field>" this page already made (bit per ProfileField)
     design::Deadlines::Token hoursTimer_{};
     std::uint64_t dialogGeneration_{};
 

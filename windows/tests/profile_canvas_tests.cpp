@@ -29,8 +29,8 @@ struct World {
     d::Context context;
     double now{100};
     explicit World(d::TextMeasurer& mm) : measurer(mm), context(mm, d::asciiUppercase) { context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, now); }
-    void appearance(Language language, bool light = false, bool recording = false) {
-        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = true; a.recordingMode = recording; context.apply(a, now);
+    void appearance(Language language, bool light = false, bool recording = false, bool reduceMotion = true) {
+        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = reduceMotion; a.recordingMode = recording; context.apply(a, now);
     }
     void show(d::Canvas& c) { c.show(now); c.setActive(true, now); }
     std::optional<d::ToastRequest> toast() { return context.overlay().toastState().current(); }
@@ -424,9 +424,9 @@ void partsKept() {
     check(partOf(after, "edit:name") && partOf(after, "edit:name") != partOf(after, "profile:name"), "The inline editor is its own part");
     oneCard(after, "while editing");
     check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
-    // Esc only removes the editor. Opening it again builds the page again
-    // (its arena keeps the first editor's id); the page keeps its ids, so
-    // the reopened editor rasterizes no more than the first one.
+    // Esc only removes the editor. Opening it again puts the same editor
+    // back on the card (the page builds nothing), so the reopened editor
+    // rasterizes no more than the first one.
     d::KeyInput esc; esc.virtualKey = d::key::escape;
     check(host.request && host.request->field->handleEditingKey(esc) && !canvas.editingField(), "Esc closes the editor");
     const auto closed = artwork();
@@ -436,7 +436,7 @@ void partsKept() {
     check(canvas.editingField() == m::ProfileField::name, "The name's editor opens again");
     const auto reopened = artwork();
     check(rasterized(closed, reopened) <= 4, "The reopened editor rasterizes " + std::to_string(rasterized(closed, reopened)) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
-    // The rebuilt page is the first open's scene again: the reopen rasterizes
+    // The page is the first open's scene again: the reopen rasterizes
     // exactly the first editor's surfaces, and none of the card's.
     check(rasterized(closed, reopened) == count && rasterized(after, reopened) == 0,
           "The reopen rasterizes only the editor (" + std::to_string(rasterized(closed, reopened)) + " vs " + std::to_string(count) + "; "
@@ -445,11 +445,12 @@ void partsKept() {
 }
 
 // Reopening an inline editor (the Windows 11 report: after editing the name
-// or the bio the whole Profile dial went blank). Every open makes the editor
-// "edit:<field>" on the page, as the Mac makes a new HUDDesignTextField each
-// time; the page's arena refuses an id it already made, so an editor that
-// ended without a re-render (Esc, an unchanged, normalized-equal, invalid or
-// refused value) threw on the next open and the owner disabled the module.
+// or the bio the whole Profile dial went blank). The Mac makes a new
+// HUDDesignTextField "edit:<field>" at every open; the page's arena refuses an
+// id it already made, so making one at every open threw on the next open of an
+// editor that ended without a re-render (Esc, an unchanged, normalized-equal,
+// invalid or refused value) and the owner disabled the module. The page makes
+// the editor once and every later open on it takes that editor again.
 void reopenEditors() {
     FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
     FieldHost host; w.context.setEditorHost(&host);
@@ -567,6 +568,62 @@ void reopenEditors() {
     check(store->profile().name == "Endmin", "A changed name still saves");
     escape(open("profile:name", m::ProfileField::name, "after a saved change"));
 }
+
+// Reopening an editor builds nothing again: the Mac adds a new field to the
+// card and leaves the page alone, so what the page is playing plays on (the
+// entrance after returning to the module, the eye's .22 s fade). The field's
+// editor made at the first open is taken again, on the same page.
+void reopenKeepsPage() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english, false, false, false);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const std::function<d::Layer*(d::Layer&, std::string_view)> find = [&](d::Layer& l, std::string_view suffix) -> d::Layer* {
+        if (l.id().ends_with(suffix)) return &l;
+        for (d::Layer* c : l.children()) if (auto* f = find(*c, suffix)) return f;
+        return nullptr;
+    };
+    double t = w.now;
+    const auto open = [&](std::string_view id, m::ProfileField expected, const std::string& when) -> d::TextField& {
+        canvas.perform(id, t);
+        check(canvas.editingField() == expected && host.request && host.request->field->editing(), "The " + std::string(id) + " editor opens " + when);
+        return *host.request->field;
+    };
+    const auto escape = [&](d::TextField& f) { d::KeyInput k; k.virtualKey = d::key::escape; check(f.handleEditingKey(k) && !canvas.editingField(), "Esc closes the editor"); };
+    auto& name = open("profile:name", m::ProfileField::name, "the first time");
+    const std::string nameID = name.layer().id();
+    escape(name);
+    auto& bio = open("profile:introduction", m::ProfileField::introduction, "the first time");
+    bio.setInvalid(true);   // an invalid value left the field red
+    escape(bio);
+    // Leaving and returning plays the entrance on the page kept; the eye
+    // hides the text and shows it again (a .22 s fade back in).
+    canvas.setActive(false, t); canvas.prepareToLeave(t);
+    w.show(canvas); canvas.playEntrance({0, 24}, t);
+    canvas.perform("profile:visibility", t);
+    t += .1;
+    canvas.perform("profile:visibility", t);
+    d::Page* page = &canvas.page();
+    const auto builds = w.context.pagesBuilt();
+    d::Layer* wrapper = page->staggered().empty() ? nullptr : page->staggered().front();
+    d::Layer* main = find(page->layer(), "profile.main");
+    d::Layer* card = find(page->layer(), "profile.card");
+    t += .05;
+    check(wrapper && wrapper->animating(t) && main && main->animating(t) && card, "The entrance and the eye's fade are running");
+    auto& again = open("profile:name", m::ProfileField::name, "again");
+    check(&canvas.page() == page && w.context.pagesBuilt() == builds, "Reopening the name builds no page (" + std::to_string(w.context.pagesBuilt() - builds) + " built)");
+    check(wrapper->animating(t) && main->animating(t), "The entrance and the eye's fade still run after the reopen");
+    check(&again == &name && again.layer().id() == nameID, "The name opens on the editor the page made for it");
+    check(again.layer().parent() == card && again.layer().value(d::Channel::opacity) == 1 && again.layer().animating(t), "The editor joins the card and fades in");
+    escape(again);
+    t += .02;
+    auto& bioAgain = open("profile:introduction", m::ProfileField::introduction, "again");
+    check(&bioAgain == &bio && &canvas.page() == page && w.context.pagesBuilt() == builds, "Reopening the bio builds no page");
+    check(bioAgain.frame().state() == d::FieldFrame::State::focused, "The bio's editor opens focused, not red from its last value");
+    check(wrapper->animating(t), "The entrance still runs after the second reopen");
+    escape(bioAgain);
+}
 }
 
 int main(int argc, char** argv) {
@@ -575,7 +632,7 @@ int main(int argc, char** argv) {
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour(); hiddenScaleChange();
-        partsKept(); reopenEditors();
+        partsKept(); reopenEditors(); reopenKeepsPage();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);
