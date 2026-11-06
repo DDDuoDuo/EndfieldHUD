@@ -18,6 +18,20 @@ namespace endfield::native {
 class PaintedTextLayout;
 class LayerImageSource;
 class LayerRasterizer;
+class Renderer;
+// A retained module page in the shared cache that can give its artwork back
+// while its module is switched away (DesignOwnerCore's pages): the crowd
+// relief (LayerRasterizer::relieve) parks the least recently shown first.
+class LayerRasterTenant {
+public:
+    enum class State { shown, held, empty }; // shown or composed; away holding artwork; away holding none
+    virtual State tenancy() const noexcept = 0;
+    // Gives every raster of the page back (it rasterizes again when shown).
+    // False when refused (a part still composed) or nothing was held.
+    virtual bool park(Renderer&) noexcept = 0;
+protected:
+    ~LayerRasterTenant() = default;
+};
 namespace detail { struct LayerRasterRecipe; }
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
@@ -306,11 +320,32 @@ public:
     // Past three quarters of a shared bound: entries (maximumEntries), held
     // pixel bytes (maximumResourceBytes), retained editor text metadata
     // (maximumTextMetadataBytes) or typography descriptors
-    // (maximumTypographyDescriptorBytes). Owners that keep the artwork of
-    // modules switched away give it back then (DesignOwnerCore::collected),
-    // so the shown module's next page always fits. Counters only (stats()
-    // walks every entry).
+    // (maximumTypographyDescriptorBytes). The pages of modules switched away
+    // give their artwork back then (relieve), so the shown module's next page
+    // fits unless what cannot park fills the cache on its own. Counters only
+    // (stats() walks every entry).
     bool crowded() const;
+    // Crowd relief. Every module visited in one HUD opening keeps its page
+    // (a quick return), so their entries add up across all owners sharing
+    // this cache until the HUD closes. Owners enlist their pages once (and
+    // withdraw them before they go) and stamp a page when its module is
+    // shown (a monotonic count shared by every owner, no clock).
+    void enlist(LayerRasterTenant&);
+    void withdraw(LayerRasterTenant&) noexcept;
+    void shown(LayerRasterTenant&) noexcept;
+    // After every owner collected its retired scenes (one composition
+    // change; Application, after ModuleOwner::collected): when crowded, the
+    // pages switched away park one at a time, least recently shown first,
+    // until every bound is at or below five eighths or none is left. The
+    // page shown most recently of those switched away (the module just left)
+    // parks only when the cache is still past seven eighths of a bound once
+    // every older page parked: between three quarters and seven eighths a
+    // return to it stays warm (the cache keeps at most that one page beyond
+    // what cannot park, and the close parks it); near the hard bounds it
+    // parks too, so the shown page's next rasters fit. A page parks once (it
+    // then holds nothing). Not crowded: four counter comparisons, no walk.
+    // Returns the pages parked.
+    std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the
     // decoded intrinsic image cache.
