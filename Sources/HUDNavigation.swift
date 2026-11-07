@@ -314,7 +314,9 @@ final class HUDNavigation {
 
     /// Closing commits a legal scroll position and cancels finite motion. A
     /// pending animation completion cannot revive the hidden navigation.
-    func cancelAnimations() {
+    /// It also drops a tile dragged on the HUD, unless `keepingArrangeDrag`
+    /// (a cancelled scroll gesture leaves the held tile where it is grabbed).
+    func cancelAnimations(keepingArrangeDrag: Bool = false) {
         scrollAnimationGeneration += 1
         isScrollGestureActive = false
         ownsMomentum = false
@@ -322,10 +324,10 @@ final class HUDNavigation {
         rightScrollOffset = bounded(rightScrollOffset)
         rawScrollOffset = rightScrollOffset
         hoveredTarget = nil
-        arrangeDrag = nil
+        if !keepingArrangeDrag { arrangeDrag = nil }
         for entry in entries {
             entry.setHovered(false, animated: false)
-            entry.setDragPosition(nil); entry.setLifted(false, animated: false)
+            if !keepingArrangeDrag { entry.setDragPosition(nil); entry.setLifted(false, animated: false) }
         }
         layoutRight(animated: false)
         for entry in entries { entry.cancelAnimations() }
@@ -420,7 +422,7 @@ final class HUDNavigation {
         let isMomentum = !momentumPhase.isEmpty
         let ended = isMomentum ? momentumPhase.contains(.ended) : phase.contains(.ended)
         let hasPhase = !phase.isEmpty || isMomentum
-        if cancelled { cancelAnimations(); notifyLayoutChange(); return true }
+        if cancelled { cancelAnimations(keepingArrangeDrag: true); notifyLayoutChange(); return true }
         if !hasPhase {
             guard abs(delta) > 0.001 else { return false }
             scrollPixels(delta, animated: false)
