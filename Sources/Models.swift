@@ -91,6 +91,9 @@ struct AppConfiguration: Equatable {
     var dailyBootLog = true
     /// Low disk, memory pressure and overheating warnings (spec §3.29).
     var facilityAlerts = true
+    /// Display > Battery alert: the "ESC / hotkey / click outside to close"
+    /// line at the bottom of the HUD. Off hides it; nothing else moves.
+    var showsCloseHint = true
     /// Order and visibility of the right-hand list (System > Modules).
     var moduleLayout = HUDModuleLayout()
     /// Display > HUD elements: the title, Sanity gauge and alert tags on the
@@ -177,7 +180,8 @@ enum HUDSettingsScope: CaseIterable {
                     Field(\.applicationIcon),
                     // Battery alert
                     Field(\.alertMetric), Field(\.displayMode), Field(\.batteryAlertsEnabled), Field(\.displayDuration),
-                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength)]
+                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength),
+                    Field(\.showsCloseHint)]
                 + Self.hudElements.fields
         case .hudElements:
             return [Field(\.overlayLayout), Field(\.facilityAlerts)]
@@ -295,7 +299,8 @@ final class ConfigurationStore {
             summonHotkeyEnabled: Self.bool(defaults, "summonHotkeyEnabled", fallback: true),
             recordingMode: Self.bool(defaults, "recordingMode", fallback: false),
             dailyBootLog: Self.bool(defaults, "dailyBootLog", fallback: true),
-            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true)
+            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true),
+            showsCloseHint: Self.bool(defaults, "showsCloseHint", fallback: true)
         ).normalized
         configuration = ReleaseFallback.restore(configuration, from: defaults)
         configuration.moduleLayout = HUDModuleLayout(defaults: defaults)
@@ -352,6 +357,7 @@ final class ConfigurationStore {
         defaults.set(next.recordingMode, forKey: "recordingMode")
         defaults.set(next.dailyBootLog, forKey: "dailyBootLog")
         defaults.set(next.facilityAlerts, forKey: "facilityAlerts")
+        defaults.set(next.showsCloseHint, forKey: "showsCloseHint")
         ReleaseFallback.save(next, to: defaults)
         next.moduleLayout.save(to: defaults)
         next.overlayLayout.save(to: defaults)

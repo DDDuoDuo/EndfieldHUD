@@ -1672,7 +1672,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             facilityBanner.layer.isHidden = true
             // The footer deliberately lives below the 640-point design box.
             // Include its real unprojected frame without moving any live layer.
-            let nativeRasterBounds = canvas.bounds.union(hintLabel.convert(hintLabel.bounds, to: canvas)).insetBy(dx: -2, dy: -2)
+            let footerBounds = hintLabel.isHidden ? canvas.bounds : canvas.bounds.union(hintLabel.convert(hintLabel.bounds, to: canvas))
+            let nativeRasterBounds = footerBounds.insetBy(dx: -2, dy: -2)
             HUDSourceWatchView.renderProjectedContent(canvas, opacity: canvas.opacity, clip: nil,
                 flippedRaster: true, projection: projection, rasterBounds: nativeRasterBounds, subdivisions: 16, in: context)
             statusPanel.isHidden = statusHidden
@@ -2682,6 +2683,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
             self.updateWorkPresentation(force: true)
             self.hintLabel.string = "ESC / \(self.configuration.summonShortcut.displayName.uppercased()) / " + L10n.text("CLICK OUTSIDE TO CLOSE", "点击外侧关闭")
+            // Display > Battery alert > Close hint. The line sits alone below
+            // the design box, so hiding it leaves no gap to close.
+            self.hintLabel.isHidden = !self.configuration.showsCloseHint
             self.setAccessibilityLabel(L10n.text("System interface", "系统界面") + ", " + self.selectedModule.title)
             self.updateContentsScale()
         }

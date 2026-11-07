@@ -523,6 +523,8 @@ extension LocalizationCatalog {
         R("Edit position and size", "编辑位置和大小", "編輯位置和大小", "位置とサイズを編集", "위치 및 크기 편집"),
         R("Length", "长度", "長度", "長さ", "길이"),
         R("Confirm", "确认", "確認", "確定", "확인"),
+        // Display > Battery alert: the "ESC / hotkey / click outside to close" line
+        R("Close hint", "关闭提示", "關閉提示", "閉じるヒント", "닫기 안내"),
         // Display > HUD elements (the title, Sanity gauge and alert tags, and the module on open)
         R("HUD elements", "界面元素", "介面元素", "HUD 要素", "HUD 요소"),
         R("Show title", "显示标题", "顯示標題", "タイトルを表示", "제목 표시"),

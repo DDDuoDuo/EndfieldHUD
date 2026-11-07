@@ -723,6 +723,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         rows.append(navRow("editPosition", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
             self?.controller.editBatteryPosition()
         })
+        rows.append(toggleRow("closeHint", L10n.text("Close hint", "关闭提示"), \.showsCloseHint, page))
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["DISPLAY", "BATTERY ALERT"], code: "SYS-02", title: HUDModuleTitle("Battery alert", "电池提醒"),
                          counter: HUDFormat.pad2(rows.count), showsBack: true)
