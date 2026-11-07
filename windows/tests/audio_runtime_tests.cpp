@@ -17,6 +17,7 @@
 #include <mutex>
 #include <regex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 // The production audio owner over injected endpoint/session backends: no COM,
@@ -418,9 +419,12 @@ void noticeRetry(){
 // Volume, so a caller that drains directly would silently freeze the Volume
 // page, and a binding call outside volumeBindingCall would publish outside
 // Volume's isolation. Every AudioRuntime drain goes through drainAudio and
-// every publishing binding call through volumeBindingCall.
+// every publishing binding call through volumeBindingCall. Reading the text is
+// the only way to pin this wiring, so a failure names itself as a text match:
+// reformatting these lines fails it too, and then the expected text is updated.
 void appWiring(const std::filesystem::path&app){
     check(std::filesystem::is_directory(app),"The application sources are passed");
+    const auto wired=[](bool value,const std::string&what){++checks;if(!value)throw std::runtime_error("app/ wiring text check: "+what+" (reformatting these lines? update the expected text in appWiring)");};
     const std::regex call(R"(audio(->|\.)(drain\(|volume\(\)\.(receive|setVisible|setErrorText)\(|setLanguage\())");
     unsigned guarded{},drains{};
     for(const auto&entry:std::filesystem::recursive_directory_iterator(app)){
@@ -429,14 +433,14 @@ void appWiring(const std::filesystem::path&app){
         while(std::getline(in,line)){
             if(line.find("drainAudio(registry,volumeModuleOwner.get(),*audio)")!=line.npos)++drains;
             for(auto it=std::sregex_iterator(line.begin(),line.end(),call);it!=std::sregex_iterator();++it){
-                if((*it)[2].str()=="drain(")throw std::runtime_error("AudioRuntime::drain() is called outside drainAudio in "+file.filename().string());
-                if(line.find("volumeBindingCall(registry,volumeModuleOwner.get(),")==line.npos)throw std::runtime_error("A Volume binding call publishes outside volumeBindingCall in "+file.filename().string()+": "+(*it)[0].str());
+                wired((*it)[2].str()!="drain(","AudioRuntime::drain() is called outside drainAudio in "+file.filename().string());
+                wired(line.find("volumeBindingCall(registry,volumeModuleOwner.get(),")!=line.npos,"A Volume binding call publishes outside volumeBindingCall in "+file.filename().string()+": "+(*it)[0].str());
                 ++guarded;
             }
         }
     }
-    check(drains==1,"The audio message drains through drainAudio under the Volume owner");
-    check(guarded>=4,"Open, close, force close and the language run the binding under the Volume owner");
+    wired(drains==1,"The audio message drains through drainAudio under the Volume owner");
+    wired(guarded>=4,"Open, close, force close and the language run the binding under the Volume owner");
 }
 #endif
 // The same through the Volume canvas, as DesignOwnerCore drives a module
