@@ -941,6 +941,82 @@ void gatedFrameUnderContinuousInput() {
         "After the drag, the idle HUD runs no frame and wakes nothing");
     host.destroy();
 }
+// A modal loop the HUD thread runs for someone else: the avatar picker's
+// IFileOpenDialog::Show (and the other pickers, the colour panel, a drag)
+// dispatches the HUD's messages with its own GetMessage loop. Display-paced
+// motion posts its next frame as each frame ends; run straight from that
+// loop, every frame queued the next one at once, and posted messages come
+// before input, WM_PAINT and WM_TIMER, so the dialog never painted (a white
+// frame, not responding) until the HUD closed. A frame the loop dispatches
+// now waits for the swap chain's admission like one pumpOnce dispatches, on
+// the gate timer, which comes after the loop's own input, paint and timers.
+// Hidden: a never-shown fixture, an auto-reset event standing in for the
+// frame latency object and a hidden stand-in dialog whose timer counts the
+// low-priority work its loop gets through.
+unsigned standInTicks{};
+HANDLE standInGate{};
+LRESULT CALLBACK standInDialog(HWND window, UINT message, WPARAM w, LPARAM l) {
+    if (message == WM_TIMER && w == 1) { ++standInTicks; if (standInGate) SetEvent(standInGate); return 0; }
+    return DefWindowProcW(window, message, w, l);
+}
+void nestedModalLoopUnderPacedMotion() {
+    const HANDLE gate = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    check(gate != nullptr, "Create the stand-in frame latency object");
+    struct Gate { HANDLE h; ~Gate() { CloseHandle(h); standInGate = nullptr; } } owned{gate};
+    unsigned frames{};
+    OverlayCallbacks callbacks;
+    callbacks.frame = [&](double) { ++frames; };
+    callbacks.presentationWaitable = [&] { return static_cast<void*>(gate); };
+    OverlayOptions options{L"Hidden nested modal loop fixture", 0, 0, 16, 16, nullptr};
+    options.offscreenScheduling = true; options.refreshRate = 60;
+    OverlayHost host; host.create(options, callbacks);
+    const auto window = static_cast<HWND>(host.hwnd());
+    leaveFixture = window;
+    struct Hook { HHOOK h{}; ~Hook() { if (h) UnhookWindowsHookEx(h); leaveFixture = nullptr; } } hook;
+    hook.h = SetWindowsHookExW(WH_GETMESSAGE, dropFixtureLeaves, nullptr, GetCurrentThreadId());
+    check(hook.h != nullptr, "Thread-local hook for the fixture's leave notices");
+    WNDCLASSW type{}; type.lpfnWndProc = standInDialog; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = L"EndfieldHiddenStandInDialog";
+    check(RegisterClassW(&type) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS, "Register the stand-in dialog class");
+    const auto dialog = CreateWindowExW(WS_EX_TOOLWINDOW, type.lpszClassName, L"Hidden stand-in dialog", WS_POPUP, 0, 0, 16, 16, window, nullptr, type.hInstance, nullptr);
+    check(dialog != nullptr && !IsWindowVisible(dialog), "The stand-in dialog is owned by the fixture and never shown");
+    auto paced = visibleDemand(); paced.finiteAnimation = true;
+    host.setFrameDemand(paced); host.show(false);
+    check(!IsWindowVisible(window) && host.stats().visible, "The nested loop fixture is never shown");
+    // The modal loop: GetMessage-style dispatch (never pumpOnce) for `seconds`.
+    const auto modal = [&](double seconds, bool admit) {
+        standInTicks = 0; frames = 0; standInGate = admit ? gate : nullptr;
+        check(SetTimer(dialog, 1, USER_TIMER_MINIMUM, nullptr) != 0, "Start the stand-in dialog's timer");
+        SetEvent(gate); host.invalidate();
+        MSG message{};
+        for (const auto end = OverlayHost::clockNow() + seconds; OverlayHost::clockNow() < end;) {
+            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); continue; }
+            const auto left = static_cast<DWORD>(std::ceil(std::max(0., end - OverlayHost::clockNow()) * 1000));
+            MsgWaitForMultipleObjectsEx(0, nullptr, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        KillTimer(dialog, 1); standInGate = nullptr;
+    };
+    // The swap chain admits a frame whenever the dialog's loop is idle (a
+    // display refresh): the dialog's timer keeps running and the HUD keeps drawing.
+    auto before = host.stats();
+    modal(.4, true);
+    std::cout << "Nested modal loop under paced motion: " << standInTicks << " dialog timer ticks, " << frames << " HUD frames\n";
+    check(standInTicks >= 5, "A modal loop run on the HUD thread gets its own timers while the HUD animates");
+    check(frames >= 3 && frames <= standInTicks + 2, "The HUD keeps drawing in the modal loop, one frame per admission");
+    check(host.stats().presentationWaits > before.presentationWaits, "Frames the modal loop dispatches wait for the swap chain's admission");
+    // An occluded or suspended target never admits one: the 50 ms bound
+    // still draws the HUD and the dialog's loop keeps its timers.
+    before = host.stats();
+    modal(.4, false);
+    std::cout << "Nested modal loop, never admitted: " << standInTicks << " dialog timer ticks, " << frames << " HUD frames\n";
+    check(standInTicks >= 5 && frames >= 3 && frames <= 12 && host.stats().presentationFallbacks > before.presentationFallbacks,
+        "Without admissions the modal loop keeps its timers and the HUD draws every 50 ms");
+    DestroyWindow(dialog);
+    host.setFrameDemand(visibleDemand());
+    for (unsigned i = 0; i < 40 && (host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(20); }
+    ResetEvent(gate);
+    check(!host.stats().presentationGated && !host.stats().framePending, "No gate or frame is left pending after the modal loop");
+    host.destroy();
+}
 void nativeWindow() {
     OverlayHost host;
     std::vector<PointerEvent> pointer;
@@ -1187,7 +1263,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput();
+        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput(); nestedModalLoopUnderPacedMotion();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else

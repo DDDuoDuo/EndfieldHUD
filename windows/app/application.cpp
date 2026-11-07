@@ -2518,7 +2518,8 @@ bool Application::Impl::present(double time,bool submit){
     // sampled after it and Present neither blocks behind a GPU that a game
     // saturates nor queues frames ahead of the display. The host's pump
     // normally took that admission while it dispatched input (the wait below
-    // then returns at once); a frame run from a nested modal loop waits here,
+    // then returns at once, and a nested modal loop's gate timer takes it the
+    // same way); a frame the 50 ms bound runs without one waits here,
     // bounded. Projection frames too: without it they outran the display and
     // queued ~35 frames (200 ms) behind the pointer. Offscreen returns at once.
     if(submit&&visibleMode())(void)renderer.waitForPresentation(50);

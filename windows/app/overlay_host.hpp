@@ -312,7 +312,8 @@ struct OverlayHostStats {
 // process DPI-policy changes, timer-resolution changes, workers, or polling.
 // (The owner's presentation admission is a borrowed handle it waits on; only
 // while a frame waits for it does a short USER timer let a nested modal loop
-// admit that frame.)
+// admit that frame. A frame such a loop dispatches waits for it the same way,
+// so the loop's own input, paint and timers go first.)
 // Callbacks may hide/destroy this host's HWND but must not delete the host itself.
 // Windows handles are opaque in this header to keep the scheduling tests portable.
 class OverlayHost final {

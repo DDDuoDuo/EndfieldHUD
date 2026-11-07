@@ -124,8 +124,9 @@ constexpr UINT frameMessage = WM_APP + 0x31d;
 // While a frame waits for the presentation gate, a nested modal loop (a file
 // dialog, a drag, a menu) dispatches messages instead of pumpOnce: this
 // short-lived timer lets it admit (or after 50 ms run) the waiting frame.
-// WM_TIMER comes only while no other message is queued, so pumpOnce asks the
-// same question (Impl::gateDue) between the input it dispatches.
+// WM_TIMER comes only while no other message is queued, so the loop's own
+// input, paint and timers go first; pumpOnce asks the same question
+// (Impl::gateDue) between the input it dispatches.
 constexpr UINT_PTR gateTimer = 0x45484744;
 constexpr double gateBound = .05;
 constexpr wchar_t windowClass[] = L"EndfieldSourceOverlayHost.v1";
@@ -207,9 +208,6 @@ struct OverlayHost::Impl {
     std::vector<PointerSample> historySamples;
     bool ready{}, visible{}, minimized{}, focused{}, stopped{}, armed{},
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
-    // pumpOnce itself is dispatching a frame message (not a nested modal
-    // loop, which never waits on the presentation gate).
-    bool ownFrameDispatch{};
     unsigned menuDepth{}, sizeMoveDepth{};
     bool coverMonitor{};
     // OverlayOptions::offscreenScheduling / refreshRate (hidden benchmarks).
@@ -608,8 +606,12 @@ struct OverlayHost::Impl {
             if (!frames.current(ticket)) return 0;
             // The swap chain still holds the previous frame: wait in the pump
             // (input keeps flowing) instead of queueing or blocking. A nested
-            // modal loop runs the frame as before.
-            if (ownFrameDispatch && window && !stopped && visible && !minimized && plan.canPresent() && !admitFrame(handlers)) {
+            // modal loop (a file dialog's Show, the colour panel, a drag)
+            // waits the same way, on the gate timer: run from that loop,
+            // display-paced motion queued its next frame as each one ended,
+            // and posted messages come before input, WM_PAINT and WM_TIMER,
+            // so the dialog never painted or took input (a white frame).
+            if (window && !stopped && visible && !minimized && plan.canPresent() && !admitFrame(handlers)) {
                 if (!gated) { gatedSince = monotonicSeconds(); ++counts.presentationWaits; SetTimer(target, gateTimer, USER_TIMER_MINIMUM, nullptr); }
                 gated = ticket;
                 return 0;
@@ -829,7 +831,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.refreshWheelSettings();
     p.callbacks = std::make_shared<OverlayCallbacks>(std::move(callbacks));
     p.demand = {}; p.plan.cancel(); p.client = {}; p.counts = {};
-    p.gated.reset(); p.frameInterval.reset(); p.lastMouse.reset(); p.ownFrameDispatch = false;
+    p.gated.reset(); p.frameInterval.reset(); p.lastMouse.reset();
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
     p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
     p.offscreen = options.offscreenScheduling;
@@ -1049,9 +1051,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
             if(consumed||p.window!=owner||p.callbacks!=handlers){checkGate();continue;}
         }
         TranslateMessage(&message);
-        p.ownFrameDispatch = message.message == frameMessage && message.hwnd == owner;
         DispatchMessageW(&message);
-        p.ownFrameDispatch = false;
         p.rethrow();
         if (!p.window || p.stopped) break;
         checkGate();
