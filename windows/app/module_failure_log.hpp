@@ -62,17 +62,20 @@ std::string budgetLines(const FailureBudgets&);
 // record could not be written.
 bool appendBoundedRecord(const std::filesystem::path& path, std::string_view record, std::string_view header, std::size_t maximum) noexcept;
 
-// <data root>/v1/Diagnostics/module-failures.txt: one record per owner per
-// run (UTC time, owner, exception type, message, operation, stage and the
-// host's `context` lines), written synchronously on the failure path.
+// <data root>/v1/Diagnostics/module-failures.txt: a record per failure and
+// per repair of an owner (UTC time, owner, exception type, message,
+// operation, stage and the host's `context` lines), written synchronously on
+// the failure path; at most recordsPerOwner per owner in one run.
 class ModuleFailureLog final {
 public:
     static constexpr std::size_t maximumBytes = 16 * 1024;
     static constexpr std::string_view header = "EndfieldHUD module failure\n";
+    // A failure, a rebuild, the next failure ... and the stop at the repair cap.
+    static constexpr std::size_t recordsPerOwner = 8;
     explicit ModuleFailureLog(std::filesystem::path path) : path_(std::move(path)) {}
     const std::filesystem::path& path() const noexcept { return path_; }
     // `context`: "key: value\n" lines (numbers and code literals only).
-    // False when this owner was already recorded in this run, or the write failed.
+    // False when this owner already has recordsPerOwner records in this run, or the write failed.
     bool record(const ModuleFailure&, std::string_view context = {}) noexcept;
 private:
     std::filesystem::path path_;

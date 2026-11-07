@@ -45,12 +45,22 @@ int main(int argc, char** argv) {
     try {
         check(argc == 3, "Pass app/application_impl.hpp and app/application_lifetime.cpp");
         const auto names = adapters(read(argv[1]));
-        const auto body = cleanup(read(argv[2]));
+        const auto source = read(argv[2]);
+        const auto body = cleanup(source);
+        // An adapter cleanup drops through a helper shared with a module
+        // repair: "dropXOwner();" whose definition unregisters it.
+        const auto droppedAt = [&](const std::string& n) {
+            if (const auto direct = body.find("drop(" + n + ")"); direct != std::string::npos) return direct;
+            const std::regex helper("void Application::Impl::(drop[A-Za-z]+Owner)\\(\\)\\{[^\\n]*unregisterModule\\(" + n + "\\)");
+            std::smatch found;
+            if (!std::regex_search(source, found, helper)) return std::string::npos;
+            return body.find(found[1].str() + "()");
+        };
         check(names.size() > 10, "The adapter list was read (" + std::to_string(names.size()) + ")");
         const auto freed = body.find("designOverlay.reset()");
         check(freed != std::string::npos, "cleanup() frees the shared design Context");
         for (const auto& n : names) {
-            const auto dropped = body.find("drop(" + n + ")");
+            const auto dropped = droppedAt(n);
             check(dropped != std::string::npos, n + " is dropped in cleanup()");
             check(dropped < freed, n + " is dropped before the shared design Context is freed");
         }

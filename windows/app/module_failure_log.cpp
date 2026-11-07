@@ -55,7 +55,7 @@ bool appendBoundedRecord(const std::filesystem::path& path, std::string_view rec
 
 bool ModuleFailureLog::record(const ModuleFailure& f, std::string_view context) noexcept {
     try {
-        if (std::find(owners_.begin(), owners_.end(), f.owner) != owners_.end() || owners_.size() >= 64) return false;
+        if (std::count(owners_.begin(), owners_.end(), f.owner) >= std::ptrdiff_t(recordsPerOwner) || owners_.size() >= 64 * recordsPerOwner) return false;
         owners_.push_back(f.owner);
         std::string text(header);
         char stamp[32]{};

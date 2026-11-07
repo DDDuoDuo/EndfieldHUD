@@ -1347,6 +1347,46 @@ int Application::Impl::runHiddenVerification(){
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
             }
+            // Module self-repair (1.3.1): an owner the registry disabled comes
+            // back, rebuilt through its construction, when its module is opened
+            // again, at most moduleRepairLimit times per run; each failure and
+            // rebuild leaves a record, and a rebuild leaks no canvas, raster
+            // entry or registry slot. The throw is injected here with the
+            // registry's isolation on, as production isolates owners.
+            if(activity&&activityModuleOwner){
+                if(!failureLog){failureLog=std::make_unique<ModuleFailureLog>(args.dataRoot/"Diagnostics"/"module-failures.txt");registry.setFailureObserver([this](const ModuleFailure&f){recordModuleFailure(f);});}
+                const auto settleOn=[&](core::Module module,double seconds){selectModule(module,time);const unsigned n=unsigned(std::ceil(seconds*30));for(unsigned f=0;f<n;++f){time+=1./30;(void)designOverlay->deadline(time);present(time,true);}};
+                const auto fail=[&]{const bool isolating=registry.isolating();registry.setIsolation(true);
+                    (void)registry.guard(*activityModuleOwner,[]{throw std::runtime_error("Synthetic Activity failure");},"frame");registry.setIsolation(isolating);
+                    need(!registry.enabled(*activityModuleOwner)&&!registry.presenter(core::Module::activityMonitor),"The injected throw disables Activity's owner");};
+                const auto drawn=[&]{auto*owner=registry.presenter(core::Module::activityMonitor);return owner&&!owner->entries(core::Module::activityMonitor).empty()&&activity->canvas()&&activity->canvas()->isActive();};
+                const auto repairs=[&]{for(auto&r:moduleRepairs)if(r.module==core::Module::activityMonitor)return &r;need(false,"Activity is listed for repair");return (ModuleRepair*)nullptr;};
+                settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                need(drawn(),"Activity draws before the injected failure");
+                const auto canvases=designOverlay->context().canvases().size();const auto entries=rasterizer.stats().entries;const auto slots=registry.size();const auto routes=utility->stats();
+                for(unsigned round=1;round<=moduleRepairLimit;++round){
+                    fail();settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                    {auto*shown=registry.presenter(core::Module::activityMonitor);
+                     const auto state="(rebuild "+std::to_string(round)+": rebuilds "+std::to_string(repairs()->rebuilds)+", enabled "+std::to_string(activityModuleOwner&&registry.enabled(*activityModuleOwner))+", presenter "+std::to_string(shown!=nullptr)+
+                        ", entries "+std::to_string(shown?shown->entries(core::Module::activityMonitor).size():0)+", canvas "+std::to_string(activity->canvas()!=nullptr)+", active "+std::to_string(activity->canvas()&&activity->canvas()->isActive())+", selected "+std::string(core::moduleIdentifier(notes->selected()))+")";
+                     need(registry.enabled(*activityModuleOwner)&&drawn()&&repairs()->rebuilds==round,("Reopened, the disabled Activity is rebuilt and draws its content "+state).c_str());}
+                    need(activity->state().appSnapshot().items.size()==18,"A rebuild keeps the module's readings (its data service stays)");
+                    need(designOverlay->context().canvases().size()==canvases&&registry.size()==slots,"A rebuild leaves no extra canvas or registry slot");
+                    need(rasterizer.stats().entries<=entries,("A rebuild holds no more raster entries than the owner it replaced ("+std::to_string(rasterizer.stats().entries)+" of "+std::to_string(entries)+")").c_str());
+                    need(utility->stats().pending==routes.pending,"A rebuild leaves no queued work behind");}
+                fail();settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,.5);
+                need(!registry.enabled(*activityModuleOwner)&&!registry.presenter(core::Module::activityMonitor)&&repairs()->capped&&repairs()->rebuilds==moduleRepairLimit,"Past the cap the failing Activity stays off (no rebuild loop)");
+                settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,.3);
+                need(repairs()->rebuilds==moduleRepairLimit,"Reopening past the cap rebuilds nothing more");
+                {const auto text=ehud::data::detail::readFile(failureLog->path(),ModuleFailureLog::maximumBytes).value_or(std::string());
+                 const auto count=[&](std::string_view what){std::size_t n{};for(auto at=text.find(what);at!=std::string::npos;at=text.find(what,at+1))++n;return n;};
+                 need(count("message: Synthetic Activity failure\n")==moduleRepairLimit+1&&count("message: rebuilt after a failure (")==moduleRepairLimit&&count("message: stopped: rebuilt ")==1&&count("operation: repair\n")==moduleRepairLimit+1,
+                     "module-failures.txt records every failure, every rebuild and the stop at the cap");}
+                // Coverage only: lift the cap once so the checks below find Activity as before.
+                repairs()->rebuilds=0;repairs()->capped=false;settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                need(registry.enabled(*activityModuleOwner)&&drawn(),"Activity runs again for the remaining coverage");
+                time+=1;
+            }
             // RC 140 report (not reproduced): starting a Work Mode countdown or
             // switching an Event Log tab hid Work Mode, Event Log, Personal ID,
             // Account binding, the sanity wallet and Power. After both triggers,

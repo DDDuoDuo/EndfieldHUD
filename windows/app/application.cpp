@@ -558,6 +558,7 @@ void Application::Impl::construct(){
     if(!args.settingsAssets.empty())optional("settings",[&]{constructSettings();});
     if(args.projection){projectionIsolation=std::make_unique<ProjectionIsolation>();registry.add(*projectionIsolation);}
     if(args.projection&&designOverlay)optional("projection",[&]{constructProjection();});
+    listModuleRepairs();
     constructAreas();
     connectAreas();
     if(!args.residentIcons.empty())constructTray();
@@ -774,6 +775,56 @@ void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
 // FatalStage("start",name)): the same line and record as a disabled owner.
 void Application::Impl::startFailed(std::string_view name,const std::exception&e)noexcept{
     try{const auto f=startFailure(name,e);const auto line=failureLine(f);std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());recordModuleFailure(f);}catch(...){}
+}
+// The owners a repair can rebuild, as constructed (an absent module has none).
+void Application::Impl::listModuleRepairs(){
+    moduleRepairs.clear();
+    const auto add=[&](core::Module module,std::unique_ptr<ModuleOwner>Impl::*owner,void(Impl::*drop)(),void(Impl::*build)()){if(this->*owner)moduleRepairs.push_back({module,owner,drop,build});};
+    if(activity)add(core::Module::activityMonitor,&Impl::activityModuleOwner,&Impl::dropActivityOwner,&Impl::constructActivityOwner);
+    if(storage)add(core::Module::storage,&Impl::storageModuleOwner,&Impl::dropStorageOwner,&Impl::constructStorageOwner);
+    if(eventOwner)add(core::Module::eventLog,&Impl::eventLogModuleOwner,&Impl::dropEventLogOwner,&Impl::constructEventLogOwner);
+    add(core::Module::clipboard,&Impl::clipboardModuleOwner,&Impl::dropClipboardOwner,&Impl::constructClipboard);
+    add(core::Module::power,&Impl::batteryModuleOwner,&Impl::dropBatteryOwner,&Impl::constructBattery);
+    add(core::Module::volume,&Impl::volumeModuleOwner,&Impl::dropVolumeOwner,&Impl::constructVolume);
+}
+// A rebuild and the stop at the cap, in module-failures.txt beside the failure
+// records (the record's numbers are the host's, as for a failure).
+void Application::Impl::recordModuleRepair(const ModuleRepair&repair,std::string_view result)noexcept{
+    try{
+        const auto*owner=(this->*repair.owner).get();const std::string name=owner?std::string(owner->name()):std::string(core::moduleIdentifier(repair.module));
+        const auto line="EndfieldHUD module "+name+": "+std::string(result)+"\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+        recordModuleFailure({name,"(none)","repair",std::string(result),"repair ["+name+"]"});
+    }catch(...){}
+}
+// The module's owner was disabled: tear it down and build it again through
+// its construction, then hand it the host's current appearance and
+// visibility. Inside an owner call (the registry routes) the next frame
+// repairs instead. True when a new owner runs.
+bool Application::Impl::repairModule(core::Module module,double time){
+    if(stopping||!ready)return false;
+    const auto found=std::find_if(moduleRepairs.begin(),moduleRepairs.end(),[&](const ModuleRepair&r){return r.module==module;});
+    if(found==moduleRepairs.end())return false;
+    auto&repair=*found;auto&owner=this->*repair.owner;
+    if(!owner||registry.enabled(*owner))return false;
+    if(registry.routing()||framePresenting){pendingRepair=module;if(ready&&!stopping)host.invalidate();return false;}
+    if(repair.rebuilds>=moduleRepairLimit){
+        if(!repair.capped){repair.capped=true;recordModuleRepair(repair,"stopped: rebuilt "+std::to_string(moduleRepairLimit)+" times in this run; it stays off until EndfieldHUD restarts");}
+        return false;}
+    ++repair.rebuilds;
+    time=hostTime(time);
+    // The disabled owner presents nothing: publish without it, so its scenes
+    // leave the composition before it gives its GPU resources back.
+    if(renderer.stats().initialized&&!renderer.deviceSuspended()){try{publishNative();}catch(...){}try{owner->release(renderer);}catch(...){}}
+    (this->*repair.drop)();
+    try{
+        const FatalStage stage("rebuild",core::moduleIdentifier(module));
+        (this->*repair.build)();
+    }catch(const std::exception&e){startFailed(core::moduleIdentifier(module),e);return false;}
+    if(!owner){recordModuleRepair(repair,"not rebuilt: its construction made no owner");return false;}
+    recordModuleRepair(repair,"rebuilt after a failure ("+std::to_string(repair.rebuilds)+" of "+std::to_string(moduleRepairLimit)+")");
+    (void)registry.guard(*owner,[&]{owner->setAppearance(moduleAppearance,time);owner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,time);},"repair");
+    automationChanged();if(ready&&!stopping)refresh(time);
+    return registry.enabled(*owner);
 }
 power::PowerAreaService* Application::Impl::powerArea()const noexcept{return areaHost?areaHost->find<power::PowerAreaService>(power::PowerAreaService::key):nullptr;}
 AppShortcutNavigation* Application::Impl::appNavigation()const noexcept{return areaHost?areaHost->find<AppShortcutNavigation>(appShortcutNavigationService):nullptr;}
@@ -1337,10 +1388,13 @@ void Application::Impl::constructStorage(){
         options.saveVolume=[this](const std::string&id){if(areaHost)(void)areaHost->updateSettings([&id](ehud::data::Settings&s){s.set("storageVolume",Json(id));});};
     }
     storage=std::make_unique<tools::StorageService>(std::move(options));
+    constructStorageOwner();
+    startup.mark(args.nativeStorage?"native-storage-owner":"synthetic-storage-owner");
+}
+void Application::Impl::constructStorageOwner(){
     storageModuleOwner=storage->makeOwner(rasterizer,designOverlay->context(),designOwnerOptions("storage",tools::StorageService::routing()));
     storageModuleOwner->resize(metrics);storageModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
     registerModule(storageModuleOwner);
-    startup.mark(args.nativeStorage?"native-storage-owner":"synthetic-storage-owner");
 }
 void Application::Impl::constructActivity(){
     // Activity Monitor is a design canvas (modules/activity_canvas.hpp, Mac
@@ -1381,10 +1435,13 @@ void Application::Impl::constructActivity(){
         activityTelemetry=std::make_unique<modules::ActivityTelemetryLink>(activityPlan,activity->providerState());
         activityPlan.start(now()); // AppDelegate.swift:216 activity.start(): 5 s session history from launch
     }
+    constructActivityOwner();
+    startup.mark(args.nativeActivity?"native-activity-owner":"synthetic-activity-owner");
+}
+void Application::Impl::constructActivityOwner(){
     activityModuleOwner=activity->makeOwner(rasterizer,designOverlay->context(),designOwnerOptions("activityMonitor",tools::ActivityService::routing()));
     activityModuleOwner->resize(metrics);activityModuleOwner->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():hostTime(args.benchmarkEpoch));
     registerModule(activityModuleOwner);
-    startup.mark(args.nativeActivity?"native-activity-owner":"synthetic-activity-owner");
 }
 void Application::Impl::constructEventLog(){
     const auto window=static_cast<HWND>(host.hwnd());
@@ -1402,10 +1459,12 @@ void Application::Impl::constructEventLog(){
             if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),kind,ehud::data::foundationNow(),std::move(metadata)});});
         recordDisplays();recordBattery();
     }
+    if(designOverlay)constructEventLogOwner();
+}
+void Application::Impl::constructEventLogOwner(){
     // Mac EventLogCanvas: Calendar.current times in the current Windows time
     // zone; the synthetic fixture reads UTC against a fixed "now" so its rows
     // stay the same on every machine.
-    if(!designOverlay)return;
     ModuleRouting routing;routing.pointer=13;routing.wheel=7;routing.key=7;
     auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),designOwnerOptions("eventLog",routing));
     modules::EventLogLocalTime local=args.eventLogFixture?modules::EventLogLocalTime([](double r){return gpu::eventLogTimeInZone(r,L"UTC");}):modules::EventLogLocalTime(gpu::localEventLogTime);
@@ -1900,6 +1959,7 @@ void Application::Impl::openPresentation(core::Module initial,double time){
         if(placing){placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;}
         holdOpeningDesignDensity();if(placing&&visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
+    else (void)repairModule(initial,time); // reopened on a disabled module
     showOpening(time);
 }
 // OverlayController.performSystemAction(.open) orders the panel front in the
@@ -1933,6 +1993,7 @@ void Application::Impl::selectModule(core::Module module,double time){
         if(module!=current)if(auto*owner=registry.presenter(current)){bool releases=true;
             if(registry.guard(*owner,[&]{releases=owner->releasesSelection(hostTime(time));},"select")&&!releases){pendingModule=module;return;}}}
     pendingModule.reset();if(mediaPicker){mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();finishAreaPicker({true,false,{}});}
+    (void)repairModule(module,time); // a disabled module comes back when it is opened
     if(module!=core::Module::display)deactivateDisplayPanels(); // the Display page's colour panel and logo import
     if(readerOwner&&module!=core::Module::reader)isolate(readerModuleOwner,"select",[&]{readerOwner->cancelImport();});
     pendingReaderPicker.reset();pendingReaderAction.reset();

@@ -172,7 +172,7 @@ void isolation() {
 
 // A disabled owner is never silent (Windows 1.3.0: the whole Settings group
 // went blank with no trace): the report carries the exception's static
-// message and the stage it left, once per owner; production appends it to a
+// message and the stage it left, once per owner object; production appends it to a
 // bounded Diagnostics/module-failures.txt that a missing folder or a write
 // error never turns into a second failure.
 struct Thrower final : app::ModuleOwner {
@@ -245,7 +245,9 @@ void failureRecords() {
     const auto file = root / "v1" / "Diagnostics" / "module-failures.txt";
     app::ModuleFailureLog log(file);
     check(log.record(observed[0], "density: 2.5\n" + budgets + "about: main, update current\n"), "A record is written into a missing folder");
-    check(!log.record(observed[0], "density: 2.5\n"), "One record per owner and run");
+    // A repaired owner can fail again: each failure and each repair leaves a record, up to a bound per owner and run.
+    for (std::size_t n = 1; n < app::ModuleFailureLog::recordsPerOwner; ++n) check(log.record(observed[0], "repair: rebuilt\n"), "Every failure and repair of an owner leaves a record");
+    check(!log.record(observed[0], "density: 2.5\n"), "At most recordsPerOwner records per owner and run");
     const auto first = text(file);
     check(first.starts_with(app::ModuleFailureLog::header) && first.find("utc: ") != std::string::npos && first.find("owner: settings\n") != std::string::npos &&
           first.find("message: Retained layer resource budget exceeded\n") != std::string::npos && first.find("operation: frame\n") != std::string::npos &&

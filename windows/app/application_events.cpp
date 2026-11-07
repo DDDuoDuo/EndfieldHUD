@@ -283,6 +283,8 @@ void Application::Impl::onFrame(double time){
 // its first pose before the window shows (showOpening). A lost GPU device
 // ends this run (main.cpp starts a fresh owner): nothing is returned then.
 std::optional<bool> Application::Impl::presentFrame(double time){
+    // A module opened from inside an owner call is repaired before this frame.
+    if(pendingRepair&&!registry.routing()){const auto module=*pendingRepair;pendingRepair.reset();(void)repairModule(module,time);}
     const auto frameStart=Clock::now();bool active{};
     framePresenting=true;
     try{active=present(time,true);framePresenting=false;}catch(const std::exception&e){framePresenting=false;if(recoverDevice(e,time))return std::nullopt;throw;}

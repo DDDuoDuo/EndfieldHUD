@@ -640,6 +640,40 @@ struct Application::Impl {
     void constructVolume();
     gpu::VolumeQueuedIconProvider* constructVolumeIcons(gpu::VolumeQueuedIconProvider::Extractor);
     void constructSettings();
+    // --- module self-repair (1.3.1) -------------------------------------------------
+    // A module owner the registry disabled (it threw) is rebuilt when its
+    // module is next opened (selected, or the HUD reopened on it), through the
+    // same owner construction and the same drop as startup and cleanup, at most
+    // moduleRepairLimit times per run; then it stays off as before. The data
+    // services (Activity readings, Storage reads, the Event Log store, the
+    // clipboard history, the audio runtime) stay: only the owner, its canvas
+    // and what it holds (artwork, routes, icon queues) go and come back. Each
+    // rebuild and the stop at the cap leave a module-failures.txt record.
+    // Modules whose owner holds editors, documents or text input (Notes,
+    // Settings, Reader, Map, Calendar, Archive, Shelf, Projection, the areas)
+    // are not rebuilt.
+    static constexpr unsigned moduleRepairLimit = 2;
+    struct ModuleRepair {
+        core::Module module; std::unique_ptr<ModuleOwner> Impl::*owner;
+        void (Impl::*drop)(); void (Impl::*build)();
+        unsigned rebuilds{}; bool capped{};
+    };
+    std::vector<ModuleRepair> moduleRepairs;
+    std::optional<core::Module> pendingRepair; // asked inside an owner call: the next frame repairs
+    void listModuleRepairs();
+    bool repairModule(core::Module, double time);
+    void recordModuleRepair(const ModuleRepair&, std::string_view result) noexcept;
+    // The owner halves of the constructions above (built at startup and by a repair).
+    void constructActivityOwner();
+    void constructStorageOwner();
+    void constructEventLogOwner();
+    // Their drops (cleanup's order and a repair).
+    void dropActivityOwner();
+    void dropStorageOwner();
+    void dropEventLogOwner();
+    void dropClipboardOwner();
+    void dropBatteryOwner();
+    void dropVolumeOwner();
     void createSettings(const ehud::data::Settings& loaded);
     void ensureGame(double time);
     void constructGame(double time);

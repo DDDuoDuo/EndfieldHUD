@@ -470,6 +470,8 @@ public:
     void setFailureObserver(std::function<void(const ModuleFailure&)> observer) { observer_ = std::move(observer); }
     void setIsolation(bool value) noexcept { isolate_ = value; }
     bool isolating() const noexcept { return isolate_; }
+    // Inside an owner call: add / remove must wait (a module repair defers to the next frame).
+    bool routing() const noexcept { return iterating_ > 0; }
 
     void add(ModuleOwner&);
     void remove(ModuleOwner&) noexcept;
