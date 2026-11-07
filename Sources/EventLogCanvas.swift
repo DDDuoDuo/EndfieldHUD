@@ -241,6 +241,8 @@ final class EventLogCanvas: HUDDesignCanvas {
     // MARK: Host interface
 
     override func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
+        // A return to the module starts the list at the top.
+        if showsFromTop, (list?.offset ?? 0) > 0 { listOffset = 0; list = nil; rerender() }
         let content = super.makeContent(for: module, style: style)
         refresh()
         return content

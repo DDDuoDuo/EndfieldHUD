@@ -352,6 +352,9 @@ enum HUDEasing {
     static let easeOut = CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1)
     static let easeInOut = CAMediaTimingFunction(controlPoints: 0.42, 0, 0.58, 1)
     static let linear = CAMediaTimingFunction(name: .linear)
+    /// The HUD's right-hand list: a tile sliding to its slot (scroll, reflow,
+    /// a tile dragged on the HUD and the ones making room for it).
+    static let listSlide = CAMediaTimingFunction(controlPoints: 0.20, 0.75, 0.30, 1)
 }
 
 /// Every duration is finite and short; Reduce Motion collapses all of them.
@@ -364,6 +367,8 @@ enum HUDDuration {
     static let staggerBase: CFTimeInterval = 0.06
     static let staggerCap = 14
     static let leave: CFTimeInterval = 0.13
+    /// With `HUDEasing.listSlide`: the right-hand list's tile slide.
+    static let listSlide: CFTimeInterval = 0.18
     static let titleWipe: CFTimeInterval = 0.45
     static let ruleWipe: CFTimeInterval = 0.42
     static let ruleDelay: CFTimeInterval = 0.05

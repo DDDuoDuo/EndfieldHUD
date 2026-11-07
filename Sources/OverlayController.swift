@@ -1046,7 +1046,8 @@ final class OverlayController: NSObject {
             let completion = { [weak self] in
                 guard let self, self.shelfDragPresentation.didRestore(token) else { return }
                 self.shelfDragDeadline?.cancel(); self.shelfDragDeadline = nil
-                self.systemView?.showStable(preservingChargeAnimation: true, preservingPointerMotion: true)
+                self.systemView?.showStable(preservingChargeAnimation: true, preservingPointerMotion: true,
+                                            preservingModuleEntrance: true)
                 self.systemView?.interactionEnabled = true
                 let close = self.closeAfterShelfDrag
                 self.closeAfterShelfDrag = false

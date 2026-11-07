@@ -82,9 +82,14 @@ enum HUDMotion {
         HUDDuration.staggerBase + Double(min(max(0, index), HUDDuration.staggerCap)) * HUDDuration.staggerStep
     }
 
-    static func stagger(_ layers: [CALayer], from offset: CGPoint, env: HUDDesignEnvironment) {
-        for (index, layer) in layers.enumerated() { enter(layer, from: offset, delay: staggerDelay(index), env: env) }
+    /// `delay` holds the whole stagger back (the HUD's open waits for the centre to show).
+    static func stagger(_ layers: [CALayer], from offset: CGPoint, delay: CFTimeInterval = 0, env: HUDDesignEnvironment) {
+        for (index, layer) in layers.enumerated() { enter(layer, from: offset, delay: delay + staggerDelay(index), env: env) }
     }
+
+    /// The keys a module entrance adds (enter, wipe and its fade, grow), which
+    /// the end of the HUD's open keeps running instead of cutting them off.
+    static let entranceKeys: Set<String> = ["hud.enter", "hud.wipe", "hud.wipe.fade", "hud.grow"]
 
     /// The leave: .13 s to transparent while moving −0.6 × the new direction.
     /// Holds its end state; the caller removes the layer when the swap happens.

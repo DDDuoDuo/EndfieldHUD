@@ -116,9 +116,9 @@ final class FileShelfCanvas: HUDDesignCanvas {
         onDeactivate?()
     }
 
-    override func playEntrance(from offset: CGPoint) {
-        super.playEntrance(from: offset)
-        if let card { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env) }
+    override func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playEntrance(from: offset, delay: delay)
+        if let card { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, delay: delay, env: env) }
     }
 
     override func recordingModeChanged() {
@@ -510,6 +510,8 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard renderedLanguage != nil else { pendingReveal.formUnion(ids); return }
         if structure != renderedStructure { rerender() }
         scrollGrid(to: .greatestFiniteMagnitude)
+        // The new files stay in view when the shelf is next shown.
+        keepsScrollOnNextShow()
         guard animated, isActive, root.superlayer != nil else { return }
         for id in ids { if let tile = tiles[id] { HUDMotion.enter(tile.layer, from: CGPoint(x: 0, y: 16), env: env) } }
     }

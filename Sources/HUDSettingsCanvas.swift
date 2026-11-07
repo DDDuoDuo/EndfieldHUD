@@ -105,6 +105,12 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func willLeave() { didDeactivate() }
 
+    /// A page left on a sub-page shows the page it returned to with the entrance.
+    override func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
+        if renderedLanguage != nil, structure != renderedStructure { rerender() }
+        return super.makeContent(for: module, style: style)
+    }
+
     private var structure: Structure {
         Structure(section: section, language: L10n.resolvedLanguage, languageSetting: config.language, displays: displays, capturing: isCapturingShortcut,
                   icon: config.applicationIcon,
