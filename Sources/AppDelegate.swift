@@ -47,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = diagnosticDomain.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         store = ConfigurationStore(defaults: defaults)
         // Once: a gauge hidden in 1.3.0's Account > Header display starts with Show Sanity off.
-        store.migrateHiddenSanity { HypergryphAccountController.storedHeaderIsHidden(at: HypergryphAccountController.applicationFile()) }
+        // Diagnostic runs never read the account cache, so they leave the migration for a normal launch.
+        if !OverlayController.isDiagnosticRun { store.migrateHiddenSanity { HypergryphAccountController.storedHeaderIsHidden(at: HypergryphAccountController.applicationFile()) } }
         super.init()
         overlay.eventRecorder.receiveConfiguration(store.configuration)
     }
