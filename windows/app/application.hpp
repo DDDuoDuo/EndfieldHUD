@@ -185,6 +185,9 @@ struct ApplicationOptions {
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).
     std::optional<double> idleTraceClosedSeconds;
+    // How the idle trace ends: 0 the tray's Quit under Reduce Motion, 1 the
+    // Quit button answered on the confirm bar under Reduce Motion.
+    unsigned idleTraceQuit{};
     // closedGraphicsGraceSeconds, shortened only by hidden traces, tests and
     // the section 9 gate's isolated --data-root runs (isolatedDataRoot).
     double closedGraphicsGrace{closedGraphicsGraceSeconds};

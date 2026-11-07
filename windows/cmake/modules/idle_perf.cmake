@@ -38,5 +38,14 @@ if(WIN32 AND BUILD_TESTING)
       "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
       -DSECONDS=4 -DGRACE=3 -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
     set_tests_properties(application_idle_trace PROPERTIES TIMEOUT 600)
+    # The same trace ending another way (app/application.hpp idleTraceQuit):
+    # the Quit button answered on the confirm bar under Reduce Motion.
+    foreach(ending button)
+      add_test(NAME application_idle_trace_quit_${ending} COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/idle-trace-quit-${ending}-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        -DSECONDS=4 -DGRACE=3 -DEXTRA=--idle-trace-quit-${ending} -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
+      set_tests_properties(application_idle_trace_quit_${ending} PROPERTIES TIMEOUT 600)
+    endforeach()
   endif()
 endif()
