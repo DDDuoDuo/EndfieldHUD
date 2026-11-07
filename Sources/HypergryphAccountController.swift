@@ -515,7 +515,7 @@ final class HypergryphAccountController {
                 value.gamePlayerID = snapshot.role.roleID
                 value.playerIDOverride = nil
             }
-            if fields.contains(.name), let name = identity.name { value.name = name }
+            if fields.contains(.name), let name = identity.name { value.name = name; value.autoName = false }
             if fields.contains(.tag), let tag = identity.tag { value.tag = tag }
             if fields.contains(.awakening), let date = snapshot.createdAt {
                 value.awakeningDate = date

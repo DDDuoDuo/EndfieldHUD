@@ -396,6 +396,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         case .failure(let error): mapCanvas = WorldMapCanvas(context: context, store: nil, error: error.localizedDescription)
         }
         self.profileStore = try? profile.get()
+        profileStore?.hidesSystemAccount = configuration.recordingMode
         self.accountController = account ?? HypergryphAccountController(profile: try? profile.get())
         accountController.showsHeaderGauge = configuration.overlayLayout.showsSanity
         switch profile {
@@ -670,6 +671,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         self.snapshot = snapshot
         self.configuration = configuration
         batteryCanvas.update(snapshot: snapshot, configuration: configuration)
+        // Recording mode also swaps the macOS account's name and picture for
+        // the defaults; the store's observers re-render every card.
+        profileStore?.hidesSystemAccount = configuration.recordingMode
         designContext.setRecordingMode(configuration.recordingMode)
         sourceWatch?.desktopUIDRedacted = configuration.recordingMode
         identityCard.uidRedacted = configuration.recordingMode
@@ -3582,10 +3586,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let fraction = Double(available) / Double(total)
             disk = (Int((fraction * 100).rounded()), fraction < FacilityAlertMonitor.diskRaiseFreeFraction)
         }
-        let name = profileStore?.profile.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = profileStore?.profile.displayedName.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return HUDBootLogContent.lines(date: now, uptime: ProcessInfo.processInfo.systemUptime, battery: battery,
                                        eventsToday: events, sanity: sanity, workStreak: work, disk: disk,
-                                       operatorName: name.isEmpty ? "Endministrator" : name)
+                                       operatorName: name.isEmpty ? UserProfile.defaultName : name)
     }
 
     /// A view point in the gauge's own (unscaled 168 x 42) coordinates.
