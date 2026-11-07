@@ -90,6 +90,14 @@ struct HUDModuleLayout: Equatable {
     static let orderKey = "hudModuleOrder", hiddenKey = "hudHiddenModules"
     /// The configurable modules in their default desktop order.
     static let configurable = HUDDesktopWatchNavigation.rightModules.filter { $0 != .addApp }
+    /// Arrange on HUD's VoiceOver help for a right-hand tile: a module tile
+    /// (`draggable`) is dragged to reorder; saved apps and Add App do nothing
+    /// until arranging ends.
+    static func arrangeHelp(draggable: Bool) -> String {
+        draggable ? L10n.text("Drag to reorder", "拖动以调整顺序") : L10n.text("Unavailable while arranging", "排列时不可用")
+    }
+    /// The help is one `arrangeHelp(draggable:)` gives.
+    static func isArrangeHelp(_ help: String?) -> Bool { help == arrangeHelp(draggable: true) || help == arrangeHelp(draggable: false) }
     private(set) var order: [HUDModule]
     private(set) var hidden: Set<HUDModule>
 

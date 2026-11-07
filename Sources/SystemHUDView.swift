@@ -2609,10 +2609,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             button.isEnabled = allowsInput && !button.isHidden
             button.setAccessibilityLabel(entry.navigationTitle)
             if entry.module == .power { button.setAccessibilityHelp(chargeBadge.accessibilityLabel) }
-            // Arrange on HUD: the module tiles say they are dragged instead.
-            if arrangingModules, entry.group == .right, entry.module.map(HUDModuleLayout.configurable.contains) == true {
-                button.setAccessibilityHelp(Self.arrangeHelp)
-            } else if button.accessibilityHelp() == Self.arrangeHelp { button.setAccessibilityHelp(nil) }
+            // Arrange on HUD: the module tiles say they are dragged, the other
+            // right-hand tiles that they do nothing meanwhile.
+            if arrangingModules, entry.group == .right {
+                button.setAccessibilityHelp(HUDModuleLayout.arrangeHelp(draggable: entry.module.map(HUDModuleLayout.configurable.contains) == true))
+            } else if HUDModuleLayout.isArrangeHelp(button.accessibilityHelp()) { button.setAccessibilityHelp(nil) }
             button.setAccessibilityValue(entry.isSelected ? L10n.text("Selected", "已选择") : L10n.text("Not selected", "未选择"))
         }
         for (direction, button) in navigationScrollButtons {
@@ -3320,7 +3321,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var arrangingModules = false
     /// The module pressed, where, whether it has lifted, and the order it previews.
     private var arrangeDrag: (module: HUDModule, start: CGPoint, lifted: Bool, preview: HUDModuleLayout)?
-    private static var arrangeHelp: String { L10n.text("Drag to reorder", "拖动以调整顺序") }
     /// The order the right-hand list shows: a lifted drag's preview, else the saved one.
     private var arrangedLayout: HUDModuleLayout {
         if let drag = arrangeDrag, drag.lifted { return drag.preview }

@@ -76,6 +76,7 @@ extension LocalizationCatalog {
         R("Arrange on HUD", "在界面上排列", "在介面上排列", "HUD 上で並べ替え", "HUD에서 순서 변경"),
         R("Drag the module buttons on the right", "拖动右侧的模块按钮", "拖曳右側的模組按鈕", "右側のモジュールボタンをドラッグ", "오른쪽 모듈 버튼을 드래그"),
         R("Drag to reorder", "拖动以调整顺序", "拖曳以調整順序", "ドラッグで並べ替え", "드래그해 순서 변경"),
+        R("Unavailable while arranging", "排列时不可用", "排列時無法使用", "並べ替え中は使用できません", "순서 변경 중에는 사용할 수 없음"),
         R("Digital", "数字", "數字", "デジタル", "디지털"),
         R("Split", "分栏", "分欄", "分割", "분할"),
         R("Dial", "表盘", "錶盤", "ダイヤル", "다이얼"),

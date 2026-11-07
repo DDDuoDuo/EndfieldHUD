@@ -1807,7 +1807,9 @@ final class HUDSourceWatchView: NSView {
     /// What a bound button does: open its module or app, or, while it can be
     /// arranged (Display > Modules > Arrange on HUD), be dragged to reorder.
     private func desktopAccessibilityHelp(for entry: HUDDesktopWatchNavigation.Entry) -> String {
-        if desktopArrangeTargets.contains(entry.target) { return L10n.text("Drag to reorder", "拖动以调整顺序") }
+        if !desktopArrangeTargets.isEmpty, entry.target.group == .right {
+            return HUDModuleLayout.arrangeHelp(draggable: desktopArrangeTargets.contains(entry.target))
+        }
         return entry.target.module?.title ?? (L10n.text("Open ", "打开 ") + entry.title)
     }
 
