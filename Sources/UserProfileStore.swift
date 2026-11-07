@@ -49,7 +49,7 @@ struct SystemAccountIdentity: Equatable {
 }
 
 struct UserProfile: Codable, Equatable {
-    var name = "Endministrator"
+    var name = UserProfile.defaultName
     var tag = "0000"
     var introduction = ""
     let uid: String
