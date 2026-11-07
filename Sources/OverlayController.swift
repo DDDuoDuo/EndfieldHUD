@@ -1376,7 +1376,7 @@ final class OverlayController: NSObject {
         let canvas = NSSize(width: OverlayGeometry.canvasWidth(barWidth: width), height: ChargeIndicatorView.canvasSize.height)
         let barFrame = NSRect(x: anchor.x - canvas.width * scale / 2, y: anchor.y - canvas.height * scale / 2,
                               width: canvas.width * scale, height: canvas.height * scale)
-        var frame = barFrame
+        var frame = OverlayGeometry.panelFrame(bar: barFrame, screen: screen)
         var strip: NSRect?
         if isEditingPosition, let editor = root.editor {
             if let held = editorStripFrame, editor.isAdjusting { strip = held } else {

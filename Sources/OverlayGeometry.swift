@@ -49,6 +49,16 @@ enum OverlayGeometry {
         max(ChargeIndicatorView.canvasSize.width, barWidth + 2 * barMargin)
     }
 
+    /// The bar panel's frame for the canvas frame `bar`: cut at the display's
+    /// sides, so a full-length bar's shadow margins never hang onto (or take
+    /// clicks from) the next display. Shorter bars are already kept inside by
+    /// `clampedAnchor`, so for them this is `bar` itself.
+    static func panelFrame(bar: NSRect, screen: NSRect) -> NSRect {
+        let minX = max(bar.minX, screen.minX), maxX = min(bar.maxX, screen.maxX)
+        guard maxX > minX else { return bar }
+        return NSRect(x: minX, y: bar.minY, width: maxX - minX, height: bar.height)
+    }
+
     /// The Length slider's fractions on this display at this Size: from the
     /// 200 pt minimum up to edge to edge.
     static func lengthRange(screen: NSRect, scale: Double) -> ClosedRange<Double> {
