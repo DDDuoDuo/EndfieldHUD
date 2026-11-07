@@ -152,7 +152,7 @@ final class AppShortcutCanvas: HUDDesignCanvas {
         let centre: CGFloat = 8 + (Self.rowHeight - 14) / 2
         // The row's left edge: drag to reorder; a press opens the item menu (Change icon, move,
         // Remove), which is also how keyboard and VoiceOver reach those actions.
-        let grip = HUDDragGrip(id: "apps:\(item.id.uuidString):grip", label: L10n.text("Item options", "事项选项") + ", " + item.name,
+        let grip = HUDDragGrip(id: "apps:\(item.id.uuidString):grip", label: L10n.text("App options", "应用选项") + ", " + item.name,
                                size: CGSize(width: 14, height: Self.rowHeight), dotsAt: CGPoint(x: 5, y: centre - 5), env: env)
         grip.onActivate = { [weak self, weak grip] in self?.openItemMenu(item.id, anchor: grip) }
         grip.onDrag = { [weak self, weak grip] phase, point in
