@@ -472,6 +472,16 @@ int Application::Impl::runIdleTrace(){
      const auto wakes=host.stats().externalWakes-wakesBefore;
      std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
      need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
+    // A Calendar owner a failure disabled (a synthetic one here) cannot
+    // re-arm its midnight wake: the host wakes for that midnight once.
+    if(calendarModuleOwner&&registry.contains(*calendarModuleOwner)){
+     const bool isolating=registry.isolating();registry.setIsolation(true);
+     (void)registry.guard(*calendarModuleOwner,[]{throw std::runtime_error("Synthetic Calendar failure");},"idle trace");registry.setIsolation(isolating);
+     need(!registry.guard(*calendarModuleOwner,[]{},"idle trace"),"The synthetic failure disables the Calendar owner");
+     const auto wakesBefore=host.stats().externalWakes;calendarNextWake=now();scheduleDeadline();pump(1,{});
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace disabled Calendar midnight: "<<wakes<<" deadline wakes\n";
+     need(!calendarNextWake&&wakes<=3,"A disabled Calendar owner's midnight wakes the host once");}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
