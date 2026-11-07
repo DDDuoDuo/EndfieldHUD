@@ -3837,6 +3837,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         withoutActions { workBadge.string = label; workBadge.isHidden = false }
         updateStatusPanel()
+        // Arrange on HUD's drag help stays until arranging ends, which calls this again.
+        guard !arrangingModules else { return }
         navigationButtons[.module(.workMode)]?.setAccessibilityHelp(phase == .running || phase == .paused ? label : nil)
     }
 
