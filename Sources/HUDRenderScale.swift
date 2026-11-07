@@ -13,8 +13,12 @@ enum HUDRenderScale {
 
     /// Glyph buffers on the tilted plane: the base scale with a 1.35x
     /// oversample, rounded up to whole pixels and capped at `maximum`.
-    static func glyphScale(baseScale: CGFloat) -> CGFloat {
-        min(maximum, ceil(clamped(baseScale) * 1.35))
+    /// `magnification` is a layer transform that enlarges the buffer on
+    /// screen; the buffer grows with it, so the cap stays `maximum` pixels
+    /// per on-screen point, as for text that is enlarged by its font size.
+    static func glyphScale(baseScale: CGFloat, magnification: CGFloat = 1) -> CGFloat {
+        let factor = magnification.isFinite && magnification > 0 ? magnification : 1
+        return min(maximum * factor, ceil(clamped(baseScale) * 1.35 * factor))
     }
 
     private static func clamped(_ scale: CGFloat) -> CGFloat {

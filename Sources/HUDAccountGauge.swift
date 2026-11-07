@@ -40,18 +40,49 @@ final class HUDAccountGauge {
     /// the new size instead of being stretched.
     var sizeFactor: CGFloat = 1 {
         didSet {
-            let clamped = sizeFactor.isFinite ? min(4, max(0.25, sizeFactor)) : 1
+            let clamped = AppConfiguration.clamp(sizeFactor, to: 0.25...4, fallback: 1)
             if sizeFactor != clamped { sizeFactor = clamped }
             if sizeFactor != oldValue { setScale(baseScale) }
         }
     }
     /// The raster scale for the current base scale and size, by the HUD's
     /// glyph rule (the tilted plane's oversample, capped like other text).
-    var targetScale: CGFloat { HUDRenderScale.glyphScale(baseScale: baseScale * sizeFactor) }
+    /// The size is a layer transform, so the cap is per on-screen point.
+    var targetScale: CGFloat { HUDRenderScale.glyphScale(baseScale: baseScale, magnification: sizeFactor) }
     static let size = CGSize(width: 168, height: 42)
+    /// Which way the recovery menu opens: left and down from the wallet's
+    /// bottom-right corner as designed, mirrored by an edge it would cross.
+    struct PopoverDirection: Equatable {
+        var opensRight = false, opensUp = false
+    }
+    /// Set by the host from where the gauge sits (`popoverDirection(gauge:within:)`).
+    var popoverDirection = PopoverDirection() {
+        didSet {
+            guard popoverDirection != oldValue else { return }
+            popoverRect = Layout.frame(width: popoverRect.width, direction: popoverDirection)
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            popover.frame = popoverRect
+            CATransaction.commit(); onChange?()
+        }
+    }
+    /// The direction that keeps the widest recovery menu inside `bounds` for
+    /// a gauge drawn at `gauge` (its 168 x 42 design times its size), in the
+    /// same coordinates. The designed direction wins wherever it fits.
+    static func popoverDirection(gauge: CGRect, within bounds: CGRect) -> PopoverDirection {
+        guard gauge.width > 0 else { return PopoverDirection() }
+        let scale = gauge.width / size.width
+        func extent(_ direction: PopoverDirection) -> CGRect {
+            let menu = Layout.frame(width: Layout.maximumWidth, direction: direction)
+            return CGRect(x: gauge.minX + menu.minX * scale, y: gauge.minY + menu.minY * scale,
+                          width: menu.width * scale, height: menu.height * scale)
+        }
+        let designed = extent(PopoverDirection()), mirrored = extent(PopoverDirection(opensRight: true, opensUp: true))
+        return PopoverDirection(opensRight: designed.minX < bounds.minX && mirrored.maxX <= bounds.maxX,
+                                opensUp: designed.maxY > bounds.maxY && mirrored.minY >= bounds.minY)
+    }
     /// The recovery menu grows left from the wallet's right edge, away from
     /// the adjacent clock, to fit its labels and values (`Layout`).
-    private(set) var popoverRect = Layout.frame(width: Layout.minimumWidth)
+    private(set) var popoverRect = Layout.frame(width: Layout.minimumWidth, direction: PopoverDirection())
     private var refreshRect: CGRect { Layout.refresh(width: popoverRect.width) }
     // Mirror the heading's x=270 inset around the 1,000-point HUD plane.
     static let headerPosition = CGPoint(x: 292, y: 0)
@@ -216,7 +247,8 @@ final class HUDAccountGauge {
         popover.removeAllAnimations(); popover.isHidden = false; popover.opacity = value ? 1 : 0
         if animated && !HUDRuntimeAppearance.reduceMotion {
             let alpha = CABasicAnimation(keyPath: "opacity"); alpha.fromValue = value ? 0 : 1; alpha.toValue = value ? 1 : 0
-            let shift = CABasicAnimation(keyPath: "transform.translation.y"); shift.fromValue = value ? -5 : 0; shift.toValue = value ? 0 : -3
+            let away: CGFloat = popoverDirection.opensUp ? -1 : 1
+            let shift = CABasicAnimation(keyPath: "transform.translation.y"); shift.fromValue = value ? -5 * away : 0; shift.toValue = value ? 0 : -3 * away
             let group = CAAnimationGroup(); group.animations = [alpha, shift]; group.duration = 0.16
             group.timingFunction = CAMediaTimingFunction(name: .easeOut); popover.add(group, forKey: "account.gauge.menu")
         } else { popover.isHidden = !value }
@@ -242,7 +274,8 @@ final class HUDAccountGauge {
         guard key != renderedTooltip else { return }
         renderedTooltip = key; tooltipRenderCount += 1
         // HarmonyOS Sans, with the region's Noto for CJK labels.
-        let layout = Layout(labels: [first, second].map(Layout.labelWidth), values: [nextRecoveryText, fullRecoveryText].map(Layout.labelWidth))
+        let layout = Layout(labels: [first, second].map(Layout.labelWidth), values: [nextRecoveryText, fullRecoveryText].map(Layout.labelWidth),
+                            direction: popoverDirection)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if popoverRect != layout.frame {
             popoverRect = layout.frame; popover.frame = layout.frame
@@ -279,17 +312,20 @@ final class HUDAccountGauge {
         static let valueTemplate = "000:00:00"
         let frame: CGRect, labelWidth: CGFloat, valueWidth: CGFloat
 
-        init(labels: [CGFloat], values: [CGFloat]) {
+        init(labels: [CGFloat], values: [CGFloat], direction: PopoverDirection) {
             let value = ceil(max(values.max() ?? 0, Self.labelWidth(Self.valueTemplate))) + Self.slack
             let fixed = Self.leading + Self.columnGap + Self.refreshGap + Self.refreshSize.width + Self.trailing
             let width = min(Self.maximumWidth, max(Self.minimumWidth, fixed + ceil(labels.max() ?? 0) + Self.slack + value))
-            frame = Self.frame(width: width)
+            frame = Self.frame(width: width, direction: direction)
             valueWidth = value
             labelWidth = width - fixed - value
         }
 
-        static func frame(width: CGFloat) -> CGRect {
-            CGRect(x: HUDAccountGauge.size.width - width, y: 40, width: width, height: height)
+        /// Under the wallet, overlapping its bottom 2 pt; mirrored, above it.
+        static func frame(width: CGFloat, direction: PopoverDirection) -> CGRect {
+            let gauge = HUDAccountGauge.size
+            return CGRect(x: direction.opensRight ? 0 : gauge.width - width,
+                          y: direction.opensUp ? gauge.height - 40 - height : 40, width: width, height: height)
         }
         static func refresh(width: CGFloat) -> CGRect {
             CGRect(origin: CGPoint(x: width - trailing - refreshSize.width, y: 19), size: refreshSize)

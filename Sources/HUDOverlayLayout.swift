@@ -37,13 +37,10 @@ struct HUDOverlayLayout: Equatable {
         }
 
         var normalized: Placement {
-            Placement(x: Self.clamp(x, -HUDOverlayLayout.offsetLimit...HUDOverlayLayout.offsetLimit, 0),
-                      y: Self.clamp(y, -HUDOverlayLayout.offsetLimit...HUDOverlayLayout.offsetLimit, 0),
-                      size: Self.clamp(size, HUDOverlayLayout.sizeRange, 1))
-        }
-
-        private static func clamp(_ value: Double, _ range: ClosedRange<Double>, _ fallback: Double) -> Double {
-            value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
+            let offsets = -HUDOverlayLayout.offsetLimit...HUDOverlayLayout.offsetLimit
+            return Placement(x: AppConfiguration.clamp(x, to: offsets, fallback: 0),
+                             y: AppConfiguration.clamp(y, to: offsets, fallback: 0),
+                             size: AppConfiguration.clamp(size, to: HUDOverlayLayout.sizeRange, fallback: 1))
         }
     }
 

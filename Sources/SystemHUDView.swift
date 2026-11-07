@@ -277,6 +277,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         overlayEditor != nil || notesInteraction?.isInputLocked == true || shelfInteraction?.isInputLocked == true
             || settingsInteractions.values.contains { $0.isInputLocked } || activeDesignCanvas?.isInputLocked == true
     }
+    /// The HUD's own controls outside the placement editor: they wait while
+    /// HUD elements are placed, for VoiceOver as for the pointer (`hitTest`).
+    private var allowsInputBesidePlacement: Bool { allowsModuleInput && overlayEditor == nil }
     /// The selected redesigned module while it accepts input.
     private var activeDesignCanvas: HUDDesignCanvas? {
         guard allowsModuleInput, !moduleContent.isTransitioning, let canvas = designCanvases[selectedModule], canvas.isActive else { return nil }
@@ -1222,7 +1225,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func activateNavigationTarget(_ target: HUDNavigationTarget) {
-        guard allowsModuleInput else { return }
+        guard allowsInputBesidePlacement else { return }
         if accountGauge.isPopoverOpen { accountGauge.dismiss(); return }
         notesInteraction?.finishEditing()
         notesCanvas.clearSelection()
@@ -2520,21 +2523,27 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         for (module, canvas) in designCanvases { canvas.setActive(designInput && selectedModule == module) }
         if !allowsModuleInput { designContext.overlay.reset() }
         layoutDesignAccessibility()
+        updateNavigationButtonStates()
+    }
+
+    /// The quit, module and scroll buttons; disabled while HUD elements are placed.
+    private func updateNavigationButtonStates() {
+        let allowsInput = allowsInputBesidePlacement
         closeHUDButton.isHidden = usesSourceShell
-        closeHUDButton.isEnabled = allowsModuleInput && !usesSourceShell
+        closeHUDButton.isEnabled = allowsInput && !usesSourceShell
         closeHUDButton.setAccessibilityLabel(L10n.text("Quit EndfieldHUD", "退出 EndfieldHUD"))
         let visible = Set(navigation.visibleEntries.map(\.target))
         for entry in navigation.entries {
             guard let button = navigationButtons[entry.target] else { continue }
             button.isHidden = (usesSourceShell && entry.module != .power) || !visible.contains(entry.target)
-            button.isEnabled = allowsModuleInput && !button.isHidden
+            button.isEnabled = allowsInput && !button.isHidden
             button.setAccessibilityLabel(entry.navigationTitle)
             if entry.module == .power { button.setAccessibilityHelp(chargeBadge.accessibilityLabel) }
             button.setAccessibilityValue(entry.isSelected ? L10n.text("Selected", "已选择") : L10n.text("Not selected", "未选择"))
         }
         for (direction, button) in navigationScrollButtons {
             button.isHidden = usesSourceShell
-            button.isEnabled = allowsModuleInput && (direction < 0 ? navigation.canScrollUp : navigation.canScrollDown)
+            button.isEnabled = allowsInput && (direction < 0 ? navigation.canScrollUp : navigation.canScrollDown)
             button.setAccessibilityLabel(direction < 0 ? L10n.text("Scroll modules up", "向上滚动模块") : L10n.text("Scroll modules down", "向下滚动模块"))
         }
     }
@@ -2968,9 +2977,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if allowsModuleInput, overlay.capturesInput { designOverlayStandIns.update(overlay.router.accessibilityItems(in: overlay.layer)) }
         else { designOverlayStandIns.hideAll() }
         activeDesignCanvas?.refreshTextFieldProjection()
-        if allowsModuleInput, facilityBanner.isShowing { facilityBannerStandIns.update(facilityBannerRouter.accessibilityItems(in: facilityBanner.layer)) }
+        if allowsInputBesidePlacement, facilityBanner.isShowing { facilityBannerStandIns.update(facilityBannerRouter.accessibilityItems(in: facilityBanner.layer)) }
         else { facilityBannerStandIns.hideAll() }
-        if allowsModuleInput { facilityTagStandIns.update(facilityTagRouter.accessibilityItems(in: facilityTags.layer)) }
+        if allowsInputBesidePlacement { facilityTagStandIns.update(facilityTagRouter.accessibilityItems(in: facilityTags.layer)) }
         else { facilityTagStandIns.hideAll() }
         if allowsModuleInput, let editor = overlayEditor { overlayEditorStandIns.update(editor.accessibilityItems(in: overlayEditorHost)) }
         else { overlayEditorStandIns.hideAll() }
@@ -3020,6 +3029,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             accountGauge.layer.transform = scale == 1 ? CATransform3DIdentity : CATransform3DMakeScale(scale, scale, 1)
         }
         accountGauge.sizeFactor = CGFloat(layout.sanity.size)
+        accountGauge.popoverDirection = HUDAccountGauge.popoverDirection(gauge: overlayFrame(.sanity, layout), within: HUDOverlayGeometry.plane)
         layoutFacilityLayers()
         layoutAccountGaugeControls()
         layoutOverlayEditor()
@@ -3043,10 +3053,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
     }
 
+    /// An element's placement as drawn: kept on the core plane at its
+    /// current size and text.
+    private func overlayPlacement(_ element: HUDOverlayLayout.Element, _ placement: HUDOverlayLayout.Placement) -> HUDOverlayLayout.Placement {
+        HUDOverlayGeometry.clamped(element, placement, natural: overlayNatural(element))
+    }
+
     /// Where an element is drawn: its placement, kept on the core plane.
     private func overlayFrame(_ element: HUDOverlayLayout.Element, _ layout: HUDOverlayLayout) -> CGRect {
-        let natural = overlayNatural(element)
-        return HUDOverlayGeometry.frame(element, HUDOverlayGeometry.clamped(element, layout[element], natural: natural), natural: natural)
+        HUDOverlayGeometry.frame(element, overlayPlacement(element, layout[element]), natural: overlayNatural(element))
     }
 
     /// The element under a core-plane point; the gauge first (the smallest).
@@ -3086,6 +3101,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         window?.makeFirstResponder(self)
         lockParallaxForActiveInput()
         designInputStateChanged()
+        updateNavigationButtonStates()
     }
 
     private func overlaySizeChanged(_ id: String, value: Double) {
@@ -3099,9 +3115,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func finishOverlayPlacement(confirm: Bool) {
         guard let editor = overlayEditor, var draft = overlayDraft else { return }
         if confirm {
-            for element in HUDOverlayLayout.Element.allCases {
-                draft[element] = HUDOverlayGeometry.clamped(element, draft[element], natural: overlayNatural(element))
-            }
+            for element in HUDOverlayLayout.Element.allCases { draft[element] = overlayPlacement(element, draft[element]) }
         }
         editor.cancelPointer()
         overlayEditor = nil; overlayDraft = nil; overlayDragged = nil; overlayFocus = nil
@@ -3112,6 +3126,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if confirm, draft != configuration.overlayLayout { settingsController?.update { $0.overlayLayout = draft } }
         applyOverlayLayout()
         designInputStateChanged()
+        updateNavigationButtonStates()
     }
 
     private func cancelOverlayPlacement() { finishOverlayPlacement(confirm: false) }
@@ -3153,7 +3168,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             editor.pointerDown(at: box, in: overlayEditorHost, pointer: core ?? far, anchor: .zero)
         } else if let core, let element = overlayElement(at: core) {
             overlayDragged = element; overlayFocus = element
-            editor.pointerDown(at: box, in: overlayEditorHost, pointer: core, anchor: CGPoint(x: draft[element].x, y: draft[element].y))
+            // From where it is drawn: a size or text change since the last
+            // drag may have pulled it in from the saved offset.
+            let start = overlayPlacement(element, draft[element])
+            editor.pointerDown(at: box, in: overlayEditorHost, pointer: core, anchor: CGPoint(x: start.x, y: start.y))
         }
     }
 
@@ -3163,7 +3181,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard let proposed = editor.pointerDragged(to: box, in: overlayEditorHost, pointer: core ?? .zero),
               core != nil, let element = overlayDragged, var placement = overlayDraft?[element] else { return }
         placement.x = Double(proposed.x); placement.y = Double(proposed.y)
-        overlayDraft?[element] = HUDOverlayGeometry.clamped(element, placement, natural: overlayNatural(element))
+        overlayDraft?[element] = overlayPlacement(element, placement)
         applyOverlayLayout()
     }
 
@@ -3201,7 +3219,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         facilityBanner.onClick = { [weak self] in self?.openFacilityModule($0) }
         facilityTags.onOpen = { [weak self] in self?.openFacilityModule($0) }
-        facilityTags.onDismiss = { [weak self] in self?.facilityAlerts?.dismiss($0) }
+        facilityTags.onDismiss = { [weak self] in
+            guard let self, self.overlayEditor == nil else { return }
+            self.facilityAlerts?.dismiss($0)
+        }
         facilityBanner.onHidden = { [weak self] in self?.layoutDesignAccessibility() }
         bootLog.onFinish = { [weak self] in self?.finishBootLog() }
         facilityAlerts?.onChange = { [weak self] in self?.facilityChanged() }
@@ -3275,7 +3296,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func openFacilityModule(_ kind: FacilityAlertKind) {
-        guard allowsModuleInput else { return }
+        guard allowsInputBesidePlacement else { return }
         selectModule(kind.module)
     }
 
@@ -3356,13 +3377,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return viewRect(projectedBounds(design, through: [transform]))
     }
     @objc private func accountGaugeAction(_ sender: NSButton) {
-        guard allowsModuleInput else { return }
+        guard allowsInputBesidePlacement else { return }
         accountGauge.perform(sender.tag == 0 ? "toggle" : "refresh")
         window?.makeFirstResponder(self)
     }
     private func layoutAccountGaugeControls() {
         let actions = accountGauge.accessibleActions
-        let interactive = allowsModuleInput
+        let interactive = allowsInputBesidePlacement
         for button in accountGaugeControls {
             let action = actions.first { $0.id == (button.tag == 0 ? "toggle" : "refresh") }
             let hidden = !interactive || action == nil
