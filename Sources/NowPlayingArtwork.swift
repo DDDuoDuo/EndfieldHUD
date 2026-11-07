@@ -55,9 +55,18 @@ final class NowPlayingArtworkLoader {
     /// `setPixelSize`.
     private(set) var pixelSize: Int
     var onChange: (() -> Void)?
-    private struct Request { let key: NowPlayingArtworkKey; let app: NowPlayingApplication; let track: NowPlayingTrack }
+    /// `trackKey`: the revisionless key, the same track whatever its artwork
+    /// revision (the identity Catalog and Lyrics use).
+    private struct Request {
+        let key: NowPlayingArtworkKey; let trackKey: NowPlayingArtworkKey; let app: NowPlayingApplication; let track: NowPlayingTrack
+        init(application: NowPlayingApplication, track: NowPlayingTrack) {
+            key = NowPlayingArtworkKey(application: application, track: track)
+            trackKey = NowPlayingArtworkKey(application: application, track: track, includeArtworkRevision: false)
+            app = application; self.track = track
+        }
+    }
     /// `pixels`: the decode size this entry stands for.
-    private struct Entry { let key: NowPlayingArtworkKey; let image: CGImage?; let pixels: Int }
+    private struct Entry { let key: NowPlayingArtworkKey; let trackKey: NowPlayingArtworkKey; let image: CGImage?; let pixels: Int }
     private var cache: [Entry] = []
     private var desired: Request?
     private var token: NowPlayingArtworkToken?
@@ -80,12 +89,18 @@ final class NowPlayingArtworkLoader {
 
     func request(application: NowPlayingApplication, track: NowPlayingTrack) {
         precondition(Thread.isMainThread)
-        let request = Request(key: NowPlayingArtworkKey(application: application, track: track), app: application, track: track)
+        let request = Request(application: application, track: track)
         guard desired?.key != request.key else { return }
         desired = request; token?.cancel()
         let cancellation = cancelFetch; cancelFetch = nil
         image = nil
         if let index = cache.firstIndex(where: { $0.key == request.key }) {
+            let entry = cache.remove(at: index); cache.append(entry); image = entry.image
+        }
+        // Only the artwork revision changed (a reopened player stream restarts
+        // it, or sends the cover later): keep the same track's newest decoded
+        // cover on screen, and keep it cached, while this key resolves.
+        if image == nil, let index = cache.lastIndex(where: { $0.image != nil && $0.trackKey == request.trackKey }) {
             let entry = cache.remove(at: index); cache.append(entry); image = entry.image
         }
         onChange?(); cancellation?(); startLatestIfNeeded()
@@ -179,9 +194,16 @@ final class NowPlayingArtworkLoader {
             if image == nil, let shown {
                 // A failed decode for a new size keeps the cover already shown,
                 // which then stands for this size: no gap and no repeated attempt.
-                cache.append(Entry(key: request.key, image: shown, pixels: pixelSize))
+                cache.append(Entry(key: request.key, trackKey: request.trackKey, image: shown, pixels: pixelSize))
+            } else if image == nil, self.image != nil {
+                // No cover under this revision, but the same track's earlier
+                // cover is shown: record the miss and keep that cover. It is not
+                // copied in under this key, so a later cover URL can still fill it.
+                cache.append(Entry(key: request.key, trackKey: request.trackKey, image: nil, pixels: pixels))
             } else {
-                cache.append(Entry(key: request.key, image: image, pixels: pixels))
+                // A new cover replaces the same track's covers of other revisions.
+                if image != nil { cache.removeAll { $0.image != nil && $0.trackKey == request.trackKey } }
+                cache.append(Entry(key: request.key, trackKey: request.trackKey, image: image, pixels: pixels))
                 self.image = image; onChange?()
             }
             if cache.count > 2 { cache.removeFirst(cache.count - 2) }
