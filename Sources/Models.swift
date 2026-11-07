@@ -93,6 +93,9 @@ struct AppConfiguration: Equatable {
     var facilityAlerts = true
     /// Order and visibility of the right-hand list (System > Modules).
     var moduleLayout = HUDModuleLayout()
+    /// Display > HUD elements: the title, Sanity gauge and alert tags on the
+    /// HUD, and the module it opens on.
+    var overlayLayout = HUDOverlayLayout()
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
                                            displayDuration: 3, accentHex: "FAD41F")
@@ -123,6 +126,7 @@ struct AppConfiguration: Equatable {
         if result.hudDisplayName?.isEmpty == true { result.hudDisplayName = nil }
         result.centerLogoRevision = centerLogoRevision.flatMap { UUID(uuidString: $0)?.uuidString }
         if summonShortcut.validationError != nil { result.summonShortcut = .default }
+        result.overlayLayout = overlayLayout.normalized
         return result
     }
 
@@ -239,6 +243,7 @@ final class ConfigurationStore {
         ).normalized
         configuration = ReleaseFallback.restore(configuration, from: defaults)
         configuration.moduleLayout = HUDModuleLayout(defaults: defaults)
+        configuration.overlayLayout = HUDOverlayLayout(defaults: defaults)
         L10n.language = configuration.language
     }
 
@@ -293,8 +298,24 @@ final class ConfigurationStore {
         defaults.set(next.facilityAlerts, forKey: "facilityAlerts")
         ReleaseFallback.save(next, to: defaults)
         next.moduleLayout.save(to: defaults)
+        next.overlayLayout.save(to: defaults)
         onChange?(next)
         Array(observers.values).forEach { $0(next) }
+    }
+
+    /// Set once the hidden-gauge migration below has run.
+    static let sanityMigrationKey = "hudOverlaySanityMigrated"
+
+    /// Runs once: a Sanity gauge hidden through Account > Header display
+    /// (1.3.0 and earlier, `headerHidden`) starts 1.3.1 with its Show switch
+    /// off. The account cache, which v1.2.0 also reads, is left as it is.
+    func migrateHiddenSanity(headerHidden: () -> Bool) {
+        guard defaults.object(forKey: Self.sanityMigrationKey) == nil else { return }
+        defaults.set(true, forKey: Self.sanityMigrationKey)
+        guard headerHidden() else { return }
+        var next = configuration
+        next.overlayLayout.showsSanity = false
+        update(next)
     }
 
     @discardableResult

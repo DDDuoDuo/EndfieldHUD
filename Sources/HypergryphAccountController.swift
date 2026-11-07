@@ -109,7 +109,24 @@ final class HypergryphAccountController {
     var isPresentingAccountPanel: Bool { isPresentingLogin || pendingCredentialCommits > 0 }
     var region: HypergryphAccountRegion { cache.region }
     var record: RegionRecord { cache.records[region.rawValue] ?? RegionRecord() }
-    var headerMode: HUDAccountPresentation.HeaderMode { .init(rawValue: cache.header) ?? .workMode }
+    /// 1.3.0's "hidden" header now lives in Display > HUD elements (Show
+    /// Sanity, migrated once by the configuration store). The cache keeps the
+    /// value for v1.2.0, which also reads it; here it reads as the default game.
+    var headerMode: HUDAccountPresentation.HeaderMode {
+        cache.header == Self.hiddenHeader ? .endfield : .init(rawValue: cache.header) ?? .workMode
+    }
+    static let hiddenHeader = "hidden"
+    /// Display > HUD elements > Show Sanity. While it is off the gauge shows
+    /// nothing and only the open Account module refreshes the account.
+    var showsHeaderGauge = true
+    /// Whether the saved cache hides the header gauge (1.3.0 and earlier), read
+    /// without loading the rest of the account.
+    static func storedHeaderIsHidden(at url: URL?) -> Bool {
+        struct Header: Decodable { let header: String? }
+        guard let url, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
+              let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(Header.self, from: data) else { return false }
+        return saved.header == hiddenHeader
+    }
     var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
     var selectedSnapshot: HypergryphProfileSnapshot? { record.selectedRoleID.flatMap { record.snapshots[$0] } }
@@ -176,7 +193,7 @@ final class HypergryphAccountController {
     }
     func tick() {
         guard visible, record.linked, !record.requiresReconnect, !busy,
-              moduleVisible || headerMode == .endfield || headerMode == .arknights,
+              moduleVisible || showsHeaderGauge && (headerMode == .endfield || headerMode == .arknights),
               now() >= nextRefresh else { return }
         refresh()
     }
@@ -211,7 +228,7 @@ final class HypergryphAccountController {
                 && date.timeIntervalSince(lastAttempt) >= 5)
     }
     func gaugeValue(work: WorkModeSnapshot) -> (String, String, Bool) {
-        if headerMode == .hidden { return ("", "", false) }
+        if !showsHeaderGauge { return ("", "", false) }
         let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
         if record.linked, game != nil {
             let stamina = sanityPresentation()

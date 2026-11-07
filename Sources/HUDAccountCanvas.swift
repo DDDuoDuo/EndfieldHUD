@@ -9,13 +9,13 @@ struct HUDAccountPresentation: Equatable {
         var title: String { self == .china ? L10n.text("Mainland China", "国服") : L10n.text("Global", "国际服") }
     }
     enum HeaderMode: String, CaseIterable {
-        case workMode, endfield, arknights, hidden
+        // Hiding the gauge is Display > HUD elements > Show Sanity (1.3.1).
+        case workMode, endfield, arknights
         var title: String {
             switch self {
             case .workMode: return L10n.text("Work Mode", "工作模式")
             case .endfield: return L10n.text("Arknights: Endfield", "明日方舟：终末地")
             case .arknights: return L10n.text("Arknights", "明日方舟")
-            case .hidden: return L10n.text("Hidden", "隐藏")
             }
         }
     }

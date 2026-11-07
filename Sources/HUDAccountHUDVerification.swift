@@ -157,10 +157,10 @@ enum HUDAccountHUDVerification {
                       "ESC cancels the disconnect without an unlink request")
                 wait("confirm bar hiding", until: { !self.view.designContext.overlay.capturesInput }) { [self] in
                     view.performDesignActionForVerification(.account, "header")
-                    view.performDesignActionForVerification(.account, "header:hidden")
-                    check(!canvas.isMenuOpen && view.accountControllerForVerification.presentation.headerMode == .hidden
-                          && view.accountGaugeForVerification.layer.isHidden,
-                          "Header display Hidden saves the preference and removes the complete gauge")
+                    view.performDesignActionForVerification(.account, "header:arknights")
+                    check(!canvas.isMenuOpen && view.accountControllerForVerification.presentation.headerMode == .arknights
+                          && !view.accountGaugeForVerification.layer.isHidden,
+                          "Header display saves the chosen game; hiding the gauge is Display > HUD elements")
                     check(canvas.presentation == view.accountControllerForVerification.presentation && !canvas.presentation.isLinked,
                           "A controller change replaces the fixture with the real, still unlinked presentation")
                     view.accountControllerForVerification.perform(.selectHeaderMode(.workMode), window: nil)
