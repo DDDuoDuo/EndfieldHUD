@@ -122,7 +122,8 @@ final class HUDDesignPage {
     /// Adds `layer` to the stagger in document order (spec §1.10 `.st`).
     func stagger(_ layer: CALayer) { staggered.append(layer) }
 
-    /// A scroll area whose offset survives in-place re-renders of the page.
+    /// A scroll area whose offset is kept by in-place re-renders of the page;
+    /// a sub-navigation, a Back or a return to the module starts at the top.
     func scrollArea(id: String, frame: CGRect, in parent: CALayer? = nil) -> HUDScrollArea {
         let area = HUDScrollArea(frame: frame)
         HUDMotion.perform { (parent ?? layer).addSublayer(area.layer) }
@@ -130,7 +131,8 @@ final class HUDDesignPage {
         return area
     }
 
-    /// Call after filling a scroll area so a re-render keeps its position.
+    /// Call after filling a scroll area so an in-place re-render keeps its
+    /// position (a sub-navigation, a Back or a return to the module has none).
     func restoreOffset(of area: HUDScrollArea) {
         guard let id = scrollAreas.first(where: { $0.area === area })?.id, let offset = restoredOffsets[id] else { return }
         area.setOffset(offset)
@@ -243,7 +245,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
         revealSettledPage()
-        if isStale { rerender() }
+        if isStale || (showsFromTop && page.scrollAreas.contains { $0.area.offset > 0 }) { rerender() }
+        showsFromTop = false
         return root
     }
 
@@ -261,24 +264,30 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         cancelGestures()
         settleSwap(concealed: true)
         willLeave()
+        // Last, so a re-render made while the module leaves keeps its page.
+        showsFromTop = true
     }
 
-    // MARK: Activation
+    /// The module was left: its next showing builds every list from the top.
+    private(set) var showsFromTop = false
 
-    /// Scroll offsets of pages left by sub-navigation, and those the page
-    /// being navigated to restores.
-    private var retainedOffsets: [String: CGFloat] = [:], pendingOffsets: [String: CGFloat] = [:]
+    /// Keeps the scroll a module set for its next showing (a reveal made
+    /// while it was hidden) instead of starting at the top.
+    func keepsScrollOnNextShow() { showsFromTop = false }
+
+    // MARK: Activation
 
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
         if active {
+            // Shown again without makeContent (a cancelled module swap).
+            showsFromTop = false
             revealSettledPage()
             if isStale { rerender() }
             didActivate()
         } else {
             closePopups(); endEditing(commit: true); cancelGestures(); settleSwap(concealed: true)
-            retainedOffsets = [:]
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -286,11 +295,12 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     // MARK: Rendering
 
-    /// In-place re-render (spec §1.10): no entrance, scroll offsets kept.
+    /// In-place re-render (spec §1.10): no entrance, scroll offsets kept,
+    /// except for a module that was left, which comes back at the top.
     /// During a sub-page swap the page has already left: the re-rendered one
     /// stays hidden until the swap lands its own page with the entrance.
     func rerender() {
-        install(makePage(restoring: currentOffsets))
+        install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
         if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey) }
     }
 
@@ -301,15 +311,13 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// Sub-navigation (spec §1.10 `subnav`): the box content leaves .13 s
     /// against the vector, the next page renders after 130 ms and enters with
     /// the header and stagger. dx/dy: +1 forward / below, −1 back / above.
+    /// The next page, a Back included, starts at the top.
     func navigate(dx: CGFloat, dy: CGFloat = 0) {
         let offset = HUDShellPosition.subpageOffset(dx: dx, dy: dy)
         closePopups(); endEditing(commit: true); cancelGestures()
-        // Going back (dx < 0) returns each scroll area to where it was left.
-        retainedOffsets.merge(currentOffsets) { _, new in new }
-        pendingOffsets = dx < 0 ? retainedOffsets : [:]
         guard !env.reducesMotion, root.superlayer != nil else {
             if let work = swapWork { work.cancel(); swapWork = nil; finishLeave() }
-            install(makePage(restoring: pendingOffsets)); return
+            install(makePage(restoring: [:])); return
         }
         // A swap in flight (Q / E pressed again) is retargeted and lands on
         // time: settling it would show the next page at full opacity only to
@@ -329,7 +337,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             CATransaction.begin()
             self.swapWork = nil
             self.finishLeave()
-            self.install(self.makePage(restoring: self.pendingOffsets))
+            self.install(self.makePage(restoring: [:]))
             self.playEntrance(from: offset)
             self.context.onInputStateChange?()
             CATransaction.commit()
@@ -347,7 +355,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         work.cancel(); swapWork = nil
         CATransaction.begin()
         finishLeave()
-        install(makePage(restoring: pendingOffsets))
+        install(makePage(restoring: [:]))
         if concealed {
             HUDMotion.hold(page.layer, key: Self.holdKey)
             if showsHeader { HUDMotion.hold(header.layer, key: Self.holdKey) }
