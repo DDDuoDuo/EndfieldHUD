@@ -1086,6 +1086,13 @@ void editorChrome(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&f
     wake=f.preview->nextWakeTime();check(wake&&*wake<=scrolled+1+1e-9,"The hide is a wake, not a frame loop");
     at(scrolled+1);at(scrolled+1.15);const auto hiding=opacity("/editor-scroll-indicator-quad/thumb");check(hiding>0&&hiding<1&&f.preview->requiresFrames(f.time),"Then it fades out with frames");
     at(scrolled+1.4);check(opacity("/editor-scroll-indicator-quad/thumb")==0,"And stays hidden");
+    // A HUD concealed without a frame (a lock, the display off) with the
+    // field focused: the host's deadline loop, no frame between its wakes.
+    // The blink's due change is handed to the host once and waits for the
+    // next frame (no continuous wakes); that frame hands the next change.
+    {unsigned wakes{};for(auto w=f.preview->nextWakeTime();w&&wakes<20;w=f.preview->nextWakeTime()){f.time=std::max(f.time,*w);(void)f.preview->deadline(f.time);++wakes;}
+     check(wakes==1,"Without a frame the caret's due blink wake is handed to the host once");
+     f.frame();wake=f.preview->nextWakeTime();check(wake&&*wake>f.time,"The next frame hands the blink's next change");}
     // A move (typing) makes the caret solid again and restarts the cycle.
     f.tick(.3);check(f.key(app::KeyKind::character,'Q'),"Type into the field");const double typed=f.time;
     check(opacity("projected-editor-caret")==1,"A caret move is solid at once (typing at the end also scrolls: the indicator fades in)");

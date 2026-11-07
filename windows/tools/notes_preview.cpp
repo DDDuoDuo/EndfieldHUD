@@ -404,8 +404,12 @@ struct NotesPreview::Impl {
     // editor) and hides 1 s later (ScrollBarVisibility, reset with the editor).
     mod::design::CaretBlink caretBlink;mod::design::ScrollBarVisibility editorBar;
     UINT_PTR chromeField{};core::text::Selection caretSelection;std::uint64_t caretRevision{};double barOffset{},chromeTime{};bool caretShown{};
+    // The blink change editorChromeDue last handed to the host: it waits for
+    // the frame that samples it (a HUD concealed without a frame - a lock,
+    // the display off - would otherwise wake the host continuously).
+    std::optional<double> caretWakeHanded;
     std::pair<float,float> editorChrome(double t){
-        const auto*document=workspace->editorDocument();auto*editor=workspace->editor();const bool reduce=preferences.reduceMotion;chromeTime=t;
+        const auto*document=workspace->editorDocument();auto*editor=workspace->editor();const bool reduce=preferences.reduceMotion;chromeTime=t;caretWakeHanded.reset();
         if(!document||!editor){if(chromeField){chromeField=0;caretShown=false;editorBar.reset();}return {1.f,0.f};}
         if(chromeField!=workspace->editorGeneration()){chromeField=workspace->editorGeneration();caretShown=false;editorBar.reset();barOffset=0;caretSelection=document->selection();caretRevision=document->revision();}
         if(document->revision()!=caretRevision||document->selection()!=caretSelection){caretRevision=document->revision();caretSelection=document->selection();caretBlink.restart(t);}
@@ -416,11 +420,11 @@ struct NotesPreview::Impl {
     bool editorChromeAnimating(double t)const{return chromeField&&((caretShown&&caretBlink.ramping(t,preferences.reduceMotion))||editorBar.animating(t));}
     std::optional<double> editorChromeWake()const{
         if(!chromeField)return std::nullopt;auto next=editorBar.nextDeadline();
-        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion))next=next?std::min(*next,*change):*change;return next;}
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&change!=caretWakeHanded)next=next?std::min(*next,*change):*change;return next;}
     // A ramp begins or the armed hide falls due: one frame (the ramp then asks for its own).
     bool editorChromeDue(double t){
         if(!chromeField)return false;bool due=editorBar.advance(t,preferences.reduceMotion);
-        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&*change<=t)due=true;return due;}
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&*change<=t){due=true;caretWakeHanded=change;}return due;}
     // A press that moves the first responder (SystemHUDView or a note's text
     // view) commits an editing design field (HUDDesignTextField.textDidEndEditing).
     void focusMoved(){if(design)design->editorFocusMoved();}
