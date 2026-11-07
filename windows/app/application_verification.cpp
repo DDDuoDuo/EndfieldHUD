@@ -331,33 +331,33 @@ int Application::Impl::runIdleTrace(){
     const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
     const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
     const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
-    // A summon, the window shown where openPresentation shows it. Before the
-    // window shows, the opening's first frame is drawn: the window never
-    // composites what was presented before it (as OverlayController orders
-    // the panel front with the entrance's first pose committed). That would
-    // be the last frame of the previous close, whose canvas is still opaque
-    // (its fade waits past the exit), or the HUD a lock or sleep hid. Its
-    // pose is the entrance's first: the session opening, the canvas at 0
-    // (the frame time the design density recorded). Under Reduce Motion the
-    // first frame is the stable HUD.
-    if(chromePlan)need(chromePlan->exitSeconds()<source::DesktopChromeTiming::closingDelay&&source::DesktopChromeTiming::opacity(false,chromePlan->exitSeconds())==1,
-                       "A close's last retract frame draws the canvas at full opacity: the next opening must not show it");
+    // A summon: the opening's first frame is drawn, then the window shows
+    // (showOpening shows the offscreen window in this trace too), so the
+    // window never composites what was presented before it (as
+    // OverlayController orders the panel front with the entrance's first
+    // pose committed): the last frame of the previous close, whose canvas is
+    // still opaque (its fade waits past the exit), or the HUD a lock or
+    // sleep hid. Its pose is the entrance's first: the session opening, the
+    // canvas at 0 (the frame time the design density recorded). Under Reduce
+    // Motion the first frame is the stable HUD.
     const auto drawn=[&]{const auto s=renderer.stats();return s.nativePasses+s.nativePassesSkipped;};
-    const auto summon=[&]{const auto before=drawn();perform(lifecycle.toggle(),clock());
-        const bool first=drawn()>before&&session->phase()!=core::VisibilityPhase::concealed&&(settings.reduceMotion||
+    const auto summon=[&]{const auto before=drawn();std::optional<std::uint64_t>atFrame;bool shownAtFrame{};
+        openingFrameForTest=[&]{atFrame=drawn();shownAtFrame=host.stats().visible;};
+        try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+        const bool first=atFrame&&*atFrame>before&&!shownAtFrame&&host.stats().visible&&session->phase()!=core::VisibilityPhase::concealed&&(settings.reduceMotion||
             (session->phase()==core::VisibilityPhase::opening&&(!designOverlay||(designDensityFrameTime&&canvasOpacity(*designDensityFrameTime)<.01))));
-        if(!first)std::cout<<"Idle trace summon before the window shows: frames drawn +"<<drawn()-before<<", session "<<static_cast<unsigned>(session->phase())
-                           <<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
-        need(first,"A summon draws the opening's first pose before the window shows");host.show(false);};
+        if(!first)std::cout<<"Idle trace summon: frames drawn before the show +"<<(atFrame?*atFrame-before:0)<<", shown at that frame "<<shownAtFrame<<", shown "<<host.stats().visible
+                           <<", session "<<static_cast<unsigned>(session->phase())<<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
+        need(first,"A summon draws the opening's first pose, then shows the window");};
     const auto openHUD=[&]{summon();host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
     const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
     // An opening as the summon hotkey asks for it (OverlayController toggle):
-    // the time to its first frame and to the open phase.
-    struct Opening {double firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
-    const auto timedOpening=[&]{const auto before=renderer.stats();const auto at=OverlayHost::clockNow();Opening o;
-        // Its first frame is the one the summon drew before the window showed.
-        summon();o.firstFrame=OverlayHost::clockNow()-at;host.setFrameDemand(demand(clock()));
-        pump(10,[&]{return opened();});
+    // the time to the window shown (its first pose drawn), to its first host
+    // frame and to the open phase.
+    struct Opening {double shown{},firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
+    const auto timedOpening=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;const auto at=OverlayHost::clockNow();Opening o;
+        summon();o.shown=OverlayHost::clockNow()-at;host.setFrameDemand(demand(clock()));
+        pump(10,[&]{if(o.firstFrame<0&&host.stats().frames!=frames)o.firstFrame=OverlayHost::clockNow()-at;return opened();});
         need(opened(),"The traced HUD opened");const auto after=renderer.stats();
         o.opened=OverlayHost::clockNow()-at;o.resume=after.deviceResumeSeconds-before.deviceResumeSeconds;o.resumes=after.deviceResumes-before.deviceResumes;return o;};
     measure("closed-after-launch");
@@ -385,7 +385,7 @@ int Application::Impl::runIdleTrace(){
         prepareGraphics(true);need(renderer.devicePrepared()&&preparedGraphicsUntil.has_value(),"Pointing at the tray icon prepares the released device");
         pump(.35,{});const auto early=timedOpening();
         need(early.resumes==1&&!preparedGraphicsUntil,"The anticipated opening takes the prepared device");
-        anticipated=Json::Object{{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
+        anticipated=Json::Object{{"shownSeconds",early.shown},{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
         // A media owner still holding the device at the deadline (a movie
         // playing, an edit pass) refuses the release; it follows shortly
         // after the owner lets go. (Same-device media exists with the shared
@@ -417,12 +417,12 @@ int Application::Impl::runIdleTrace(){
         {"device",renderer.deviceInfo().name},{"warp",args.warp},{"refreshHz",stats.refreshRate},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},
         {"closedGraphicsGraceSeconds",grace},{"productionClosedGraphicsGraceSeconds",closedGraphicsGraceSeconds},{"closedSeconds",closedFor},{"releaseExpected",releaseExpected},
         {"sharedMedia",bool(mediaBroker)},
-        {"openingSeconds",first.opened},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
+        {"openingSeconds",first.opened},{"openingShownSeconds",first.shown},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
         {"deviceResume",Json::Object{{"resumes",std::int64_t(renderer.stats().deviceResumes)},{"deviceSeconds",renderer.stats().deviceCreateSeconds},{"programSeconds",renderer.stats().pipelineCreateSeconds},
             {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
-        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
+        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"shownSeconds",reopening.shown},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
         {"anticipatedOpening",std::move(anticipated)},{"mediaRefusal",std::move(refusal)},{"anticipationDiscard",std::move(discard)},
-        {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
+        {"quickReopeningShownSeconds",warm.shown},{"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
     // After the report (its numbers stay those of the windows above), the
@@ -460,11 +460,12 @@ int Application::Impl::runIdleTrace(){
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
     reduceMotion(false);
     // OverlayController.transitionDeadline: an opening and a close no frame
-    // finishes (the window stays hidden under them, so the host's frame gate
+    // finishes (the window kept hidden under them, so the host's frame gate
     // stays shut) end on the host's deadline wake. Escape during that opening
-    // waits for it, then closes.
+    // waits for it, then closes. (The summon still draws the opening's first
+    // pose before it shows the window; that is not a host frame.)
     {const auto framesBefore=host.stats().frames;const auto wakesBefore=host.stats().externalWakes;const auto at=OverlayHost::clockNow();
-     perform(lifecycle.toggle(),clock());(void)onKey({KeyKind::down,VK_ESCAPE});
+     perform(lifecycle.toggle(),clock());host.hide();(void)onKey({KeyKind::down,VK_ESCAPE});
      need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
      pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
      need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
