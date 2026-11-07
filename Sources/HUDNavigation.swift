@@ -218,7 +218,7 @@ final class HUDNavigation {
     }
 
     /// The tile dragged on the HUD and where in it the pointer holds it
-    /// (the press point less the slot's centre).
+    /// (the press point less the centre the tile is drawn at).
     private var arrangeDrag: (target: HUDNavigationTarget, grab: CGPoint)?
     /// Arrange on HUD: the dragged tile lifts and follows `pointer`, held where
     /// it was first grabbed and kept inside the list; the others keep sliding
@@ -235,7 +235,9 @@ final class HUDNavigation {
         }
         guard let entry, let pointer else { arrangeDrag = nil; return }
         if arrangeDrag?.target != entry.target {
-            arrangeDrag = (entry.target, CGPoint(x: pointer.x - entry.rect.midX, y: pointer.y - entry.rect.midY))
+            // It lifts from where it is drawn, even part way through a slide.
+            let shown = (entry.layer.presentation() ?? entry.layer).position
+            arrangeDrag = (entry.target, CGPoint(x: pointer.x - shown.x, y: pointer.y - shown.y))
             entry.setLifted(true)
         }
         let grab = arrangeDrag!.grab, half = CGSize(width: entry.rect.width / 2, height: entry.rect.height / 2)
