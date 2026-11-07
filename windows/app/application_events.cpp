@@ -299,7 +299,10 @@ void Application::Impl::finishConcealment(double time,bool inRequest){
     if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
     if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
         const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
-        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
+        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt)){projectionCommand(*command,now());return;}
+        // No display left: the hand-off ended (OverlayController.cancelProjection),
+        // no Projection is active any more and the close completes as any other.
+        setProjectionActive(false,time);
     }
     if(!closed.empty()){perform(closed,time);if(stopping)return;}
     // A close Reduce Motion finished inside its request (a canvas event:

@@ -2852,6 +2852,7 @@ void Application::Impl::openPendingStorageSettings(){
 // ---------------------------------------------------------------------------
 // Projection (unchanged handoff)
 std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::uintptr_t preferred){
+    if(projectionDisplayForTest)return projectionDisplayForTest(preferred);
     const auto displays=gpu::readConnectedDisplays();for(const auto&display:displays)if(display.handle==preferred)return display;
     POINT pointer{};GetCursorPos(&pointer);if(const auto index=gpu::resolveDisplay({},displays,{pointer.x,pointer.y}))return displays[*index];return {};
 }

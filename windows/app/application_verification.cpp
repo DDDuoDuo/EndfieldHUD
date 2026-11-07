@@ -474,11 +474,22 @@ int Application::Impl::runIdleTrace(){
      need(closedWithoutFrame(framesBefore)&&pendingLink&&afterCloseQueued&&linkRequests==links,"A Settings link closes the Reduce Motion HUD without a frame and opens nothing inside the request");
      pump(1,[&]{return !pendingLink;});
      need(closedWithoutFrame(framesBefore)&&!pendingLink&&!afterCloseQueued&&linkRequests==links+1,"The browser opens once, after the request");}
-    // Projection's hand-off (openProjection) closes the HUD, then takes the
-    // window over in finishConcealment. The workspace needs the visible HUD
-    // (--projection), so the hand-off carries a summon queued during the
-    // close (projectionActionMessage's external action), which reopens the
-    // HUD; without a display the hand-off ends with the HUD closed.
+    // Projection (openProjection, the page's button) under Reduce Motion
+    // with no display left: the hand-off ends inside the click, the HUD
+    // closes without a frame and no Projection stays active (charge alerts
+    // show again, OverlayController.cancelProjection).
+    openHUD();
+    {const auto framesBefore=host.stats().frames;
+     projectionDisplayForTest=[](std::uintptr_t){return std::optional<gpu::DisplayDescriptor>{};};
+     const bool projectionPage=std::exchange(args.projection,true);openProjection(clock());args.projection=projectionPage;projectionDisplayForTest={};
+     auto*power=powerArea();
+     need(power&&!power->projectionActive()&&!projectionHandoff.active()&&closedWithoutFrame(framesBefore),
+          "Projection with no display left ends its hand-off: the Reduce Motion HUD closes without a frame and no Projection stays active");}
+    // Projection's hand-off closes the HUD, then takes the window over in
+    // finishConcealment. The workspace needs the visible HUD (--projection),
+    // so this hand-off only carries a summon queued during the close
+    // (projectionActionMessage's external action), which reopens the HUD;
+    // without a display the hand-off ends with the HUD closed.
     openHUD();
     {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
      const auto framesBefore=host.stats().frames;
@@ -487,7 +498,7 @@ int Application::Impl::runIdleTrace(){
      (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
      const bool reopened=lifecycle.phase()==P::opening;
      need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),
-          "Projection's hand-off finishes the Reduce Motion close without a frame and goes on");
+          "Projection's hand-off with a summon queued finishes the Reduce Motion close without a frame and goes on");
      // The hand-off placed the window on its display: the trace's own place back.
      need(host.place(placed.left,placed.top,placed.right-placed.left,placed.bottom-placed.top),"The traced window returns to its place");
      if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");}

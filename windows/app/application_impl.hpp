@@ -826,6 +826,8 @@ struct Application::Impl {
     bool designDensityRetracted{}; // a shelf drag's settled retract already derived the next start
     std::optional<double> designDensityFrameTime; // the opening's last frame (close(): where a cut deploy got to)
     std::function<void()> placementForTest;
+    // The hidden trace's stand-in for the displays Projection's hand-off finds (projectionDisplay).
+    std::function<std::optional<gpu::DisplayDescriptor>(std::uintptr_t)> projectionDisplayForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
