@@ -1293,7 +1293,12 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
            shownDocuments.contains(where: { $0.id == uuid }) {
             if tileID == id { openDocument(uuid) }
             else if isMenuOpen { closeMenu() }
-            else if let area = gridArea { openDocumentMenu(uuid, anchorRect: root.convert(area.layer.bounds, from: area.layer), anchor: nil) }
+            else if let area = gridArea {
+                // At the grid's top-left, like a right-click's point, so the
+                // menu (and Move to…) opens inside the box below the header.
+                let grid = root.convert(area.layer.bounds, from: area.layer)
+                openDocumentMenu(uuid, anchorRect: CGRect(x: grid.minX, y: grid.minY, width: 1, height: 1), anchor: nil)
+            }
             return
         }
         super.performAccessibilityAction(id)
