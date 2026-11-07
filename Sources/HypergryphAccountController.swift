@@ -119,6 +119,12 @@ final class HypergryphAccountController {
     /// Display > HUD elements > Show Sanity. While it is off the gauge shows
     /// nothing and only the open Account module refreshes the account.
     var showsHeaderGauge = true
+    /// The game the header gauge shows sanity for; nil while the gauge shows
+    /// Work Mode time or is hidden, so a hidden gauge fetches nothing extra.
+    private var headerGame: HypergryphGame? {
+        guard showsHeaderGauge else { return nil }
+        return headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
+    }
     /// Whether the saved cache hides the header gauge (1.3.0 and earlier), read
     /// without loading the rest of the account.
     static func storedHeaderIsHidden(at url: URL?) -> Bool {
@@ -193,7 +199,7 @@ final class HypergryphAccountController {
     }
     func tick() {
         guard visible, record.linked, !record.requiresReconnect, !busy,
-              moduleVisible || showsHeaderGauge && (headerMode == .endfield || headerMode == .arknights),
+              moduleVisible || headerGame != nil,
               now() >= nextRefresh else { return }
         refresh()
     }
@@ -217,9 +223,7 @@ final class HypergryphAccountController {
     }
     private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MM/dd HH:mm:ss"; return f }()
     func sanityPresentation(at date: Date? = nil) -> HypergryphSanityPresentation? {
-        guard record.linked else { return nil }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        guard let game else { return nil }
+        guard record.linked, let game = headerGame else { return nil }
         let role = selectedRole?.game == game ? selectedRole : record.roles.first { $0.game == game && $0.isAvailable }
         guard let role, let snapshot = record.snapshots[role.id] else { return nil }
         let date = date ?? now()
@@ -229,8 +233,7 @@ final class HypergryphAccountController {
     }
     func gaugeValue(work: WorkModeSnapshot) -> (String, String, Bool) {
         if !showsHeaderGauge { return ("", "", false) }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if record.linked, game != nil {
+        if record.linked, headerGame != nil {
             let stamina = sanityPresentation()
             let value = stamina.map { "\($0.current) / \($0.maximum)" } ?? "— / —"
             return (value, headerMode.title + ", " + L10n.text("Sanity", "理智") + " " + value, true)
@@ -463,8 +466,7 @@ final class HypergryphAccountController {
     }
     private var rolesNeededForPresentation: [HypergryphRole] {
         var roles = selectedRole.map { [$0] } ?? []
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if let game, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
+        if let game = headerGame, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
         return roles
     }
     private func fetchProfiles(_ credentials: HypergryphCredentials, token: Int) {
