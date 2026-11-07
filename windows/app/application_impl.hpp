@@ -580,6 +580,10 @@ struct Application::Impl {
     ModuleCursor cursorAt(core::Point);   // the owners' answer in pointer routing order
     void onFocus(bool);
     void onApplicationActive(bool);
+    // Close when focus lost (Windows: another application took the
+    // foreground, e.g. Start after the Windows key): closes the HUD unless
+    // an exemption holds; true when the close was asked.
+    bool closeForFocusLoss(double time);
     void onDisplayChanged();
     void onCloseRequested();
     void onDeadline(double time);

@@ -464,6 +464,25 @@ int Application::Impl::runIdleTrace(){
     {const auto at=OverlayHost::clockNow();closeHUD();const auto elapsed=OverlayHost::clockNow()-at;
      std::cout<<"Idle trace normal close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
      need(elapsed<closingTransitionBound,"A normal close ends on its frames before its transition deadline");}
+    // The Windows key with motion on: the HUD has the keyboard, so the key
+    // reaches it first and is not taken; its release opens Start, which takes
+    // the foreground (WM_KILLFOCUS, WM_ACTIVATEAPP), and Close when focus is
+    // lost closes the HUD on its frames, before the transition deadline. The
+    // hidden run ignores activation changes (visibleMode) and its window
+    // never has the keyboard, so the trace asks the focus-loss close
+    // WM_ACTIVATEAPP asks in production.
+    const auto windowsKeyFocusLoss=[&]{const auto window=static_cast<HWND>(host.hwnd());
+        need(!onKey({KeyKind::down,VK_LWIN})&&!onKey({KeyKind::up,VK_LWIN})&&opened(),"The Windows key passes through the open HUD and changes nothing");
+        SendMessageW(window,WM_ACTIVATEAPP,FALSE,0);
+        need(closeForFocusLoss(clock()),"Start taking the foreground asks the focus-loss close");};
+    const bool focusLossOriginal=configuration.boolean("closeOnFocusLost");
+    configuration.set("closeOnFocusLost",true);configurationPending=true;applyConfiguration(clock());
+    openHUD();
+    {const auto at=OverlayHost::clockNow();windowsKeyFocusLoss();need(lifecycle.phase()==P::closing||closed(),"Start taking the foreground starts the close");
+     host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace Windows key close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(closed()&&!host.stats().visible&&elapsed<closingTransitionBound,"The Windows key's focus loss closes the HUD on its frames before the transition deadline");
+     SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);}
     // Reduce Motion (the preference, or Windows "Animation effects" off):
     // the close conceals the source at once and, as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), finishes there
@@ -488,6 +507,17 @@ int Application::Impl::runIdleTrace(){
     openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
     {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // The Windows key under Reduce Motion (the preference here; Windows
+    // "Animation effects" off sets the same flag): Start's focus loss closes
+    // inside WM_ACTIVATEAPP, without a frame, and the next summon opens again.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;windowsKeyFocusLoss();const auto s=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==framesBefore,
+          "The Windows key's focus loss closes the Reduce Motion HUD without a frame");
+     SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);
+     openHUD();need(opened(),"A summon after the Windows key's close opens the Reduce Motion HUD again");
+     closeHUD();}
+    configuration.set("closeOnFocusLost",focusLossOriginal);configurationPending=true;applyConfiguration(clock());
     // The other closes a user reaches, each through Impl::close: inside the
     // request the window hides, leaves the topmost band and the lifecycle
     // closes, with no frame (the hidden run never launches an application,

@@ -191,14 +191,17 @@ void Application::Impl::onApplicationActive(bool active){
     if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
     if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
-    if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
+    if(ready&&visibleMode()&&!active)(void)closeForFocusLoss(now());
+}
+bool Application::Impl::closeForFocusLoss(double time){
+    if(!ready||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return false;
     // Source exempts its own file panels and active shelf drag/drop (the drag
     // loop and its retract, hidden and restore presentation: hiding the
     // window hands the foreground to another one). Moving keyboard focus
     // between owned windows is not an application switch.
     const auto picker=mediaPicker?mediaPicker->stats():gpu::ShelfPickerStats{};
-    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return;
-    perform(lifecycle.close(),now());
+    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return false;
+    perform(lifecycle.close(),time);return true;
 }
 
 void Application::Impl::onDisplayChanged(){
