@@ -66,6 +66,9 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     /// Gestures belong to the player (and track) on which they began.
     private var seekGesture: (application: NowPlayingApplication?, track: NowPlayingTrack)?
     private var volumeGesture: (application: NowPlayingApplication?, audioID: UInt32?)?
+    /// The audio process whose per-app route this page started as the
+    /// player's volume fallback. Routes set in the Volume module are not ours.
+    private var fallbackRoute: UInt32?
     private var displayedArt: CGImage?
     // Elements of the current page, updated in place between rebuilds.
     private var art: CALayer?
@@ -141,8 +144,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     private var structure: Structure { Structure(language: L10n.resolvedLanguage, playing: controller.snapshot.track != nil) }
 
     private func refresh() {
-        guard isPresented else { return }
         retireRouteForPlayerVolume()
+        guard isPresented else { return }
         let snapshot = controller.snapshot
         if let gesture = seekGesture, gesture.application != snapshot.application
             || snapshot.track.map({ !$0.hasSameIdentity(as: gesture.track) }) ?? true { seek?.cancelDrag() }
@@ -497,12 +500,16 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         return session.error
     }
 
-    /// Once the player's own volume is available, a per-app route started
-    /// for it before would attenuate it a second time: retire that route.
+    /// Once the player's own volume is available, a per-app route this page
+    /// started for it before would attenuate it a second time: retire that
+    /// route. A route set in the Volume module is left alone, also when it
+    /// replaces ours while the page is hidden.
     private func retireRouteForPlayerVolume() {
-        guard controller.playerVolume != nil, let app = audioApplication, let session = currentSession,
-              session.state == .preparing || session.state == .active else { return }
-        perAppAudio.stop(processID: app.id)
+        guard let processID = fallbackRoute else { return }
+        guard let session = perAppAudio.sessions.first(where: { $0.processID == processID }) else { fallbackRoute = nil; return }
+        guard isPresented, controller.playerVolume != nil, audioApplication?.id == processID else { return }
+        fallbackRoute = nil
+        if session.state == .preparing || session.state == .active { perAppAudio.stop(processID: processID) }
     }
 
     @discardableResult private func setAppVolume(_ value: Double) -> Bool {
@@ -518,7 +525,9 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         // Untouched direct playback stays untouched at 100%.
         if bounded == 1 { return true }
         guard let output = currentOutput else { return false }
-        return perAppAudio.start(application: app, output: output, initialGain: bounded)
+        guard perAppAudio.start(application: app, output: output, initialGain: bounded) else { return false }
+        fallbackRoute = app.id
+        return true
     }
 
     private func toggleVolume() { isVolumeOpen ? closeVolume() : openVolume() }
