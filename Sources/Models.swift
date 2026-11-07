@@ -142,6 +142,62 @@ struct AppConfiguration: Equatable {
     }
 }
 
+/// The settings a page's Restore defaults resets. Each scope lists its fields
+/// once, here; `AppConfiguration.restoring(_:)` copies only those from
+/// `.defaults`, so a new setting joins a Restore by adding one line.
+enum HUDSettingsScope: CaseIterable {
+    /// The System page and System > Modules.
+    case system
+    /// The Display page and every page under it: Battery alert (with the bar's
+    /// position, size and length), App / menu bar icon and HUD elements.
+    case display
+    /// Display > HUD elements only.
+    case hudElements
+
+    /// One saved setting: copies its value from `source` into `target`.
+    struct Field {
+        let copy: (_ target: inout AppConfiguration, _ source: AppConfiguration) -> Void
+        init<Value>(_ key: WritableKeyPath<AppConfiguration, Value>) {
+            copy = { $0[keyPath: key] = $1[keyPath: key] }
+        }
+    }
+
+    var fields: [Field] {
+        switch self {
+        case .system:
+            return [Field(\.language), Field(\.launchAtLogin), Field(\.closeOnFocusLost), Field(\.openOnActiveDisplay),
+                    Field(\.hudDisplayUUID), Field(\.hudDisplayName), Field(\.moduleLayout)]
+        case .display:
+            return [Field(\.hudScale), Field(\.hudOffsetX), Field(\.hudOffsetY), Field(\.parallaxIntensity),
+                    Field(\.perspectiveIntensity), Field(\.backgroundDarkness), Field(\.blurAmount), Field(\.theme),
+                    Field(\.clockFormat), Field(\.clockStyle), Field(\.centerLogo), Field(\.centerLogoRevision),
+                    Field(\.accentHex), Field(\.ambientAnimation), Field(\.reduceMotion), Field(\.lowPowerVisualMode),
+                    Field(\.recordingMode), Field(\.dailyBootLog),
+                    // App / menu bar icon
+                    Field(\.applicationIcon),
+                    // Battery alert
+                    Field(\.alertMetric), Field(\.displayMode), Field(\.batteryAlertsEnabled), Field(\.displayDuration),
+                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength)]
+                + Self.hudElements.fields
+        case .hudElements:
+            return [Field(\.overlayLayout), Field(\.facilityAlerts)]
+        }
+    }
+
+    /// Kept by every scope: the hotkey has its own Restore on the Hotkeys page,
+    /// and the device popup has no setting to show.
+    static let unscopedFields = [Field(\.summonShortcut), Field(\.summonHotkeyEnabled), Field(\.devicePopupEnabled)]
+}
+
+extension AppConfiguration {
+    /// This configuration with only `scope`'s settings back at their defaults.
+    func restoring(_ scope: HUDSettingsScope) -> AppConfiguration {
+        var result = self
+        scope.fields.forEach { $0.copy(&result, .defaults) }
+        return result
+    }
+}
+
 /// Choices added after v1.2.0 that its decoders do not know ("Don't display",
 /// the GPU reading). v1.2.0 shares these defaults, so the original key keeps the
 /// value v1.2.0 falls back to anyway and the new choice lives under its own key.

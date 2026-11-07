@@ -202,10 +202,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             shown?.setTitle(self.modulesCount); modules?.label = modulesTitle + ", " + self.modulesCount
         }
         rows.append(modules)
-        let restore = HUDButton(id: "restore", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
-        restore.place(at: .zero)
-        restore.onActivate = { [weak self] in self?.confirmRestore() }
-        rows.append(row("restore", L10n.text("Restore default settings", "恢复默认设置"), [restore.layer], page, controls: [restore]))
+        rows.append(restoreRow(.system, page))
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["SYSTEM"], code: "SYS-01", title: HUDModuleTitle("System", "系统设置"),
                          counter: HUDFormat.pad2(rows.count), showsBack: false)
@@ -239,12 +236,57 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
     }
 
-    private func confirmRestore() {
-        confirm(HUDConfirmRequest(id: "restore", title: L10n.text("Restore default settings?", "恢复默认设置？"),
-                                  message: L10n.text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。"),
+    // MARK: Restore defaults (System, Display, Display > HUD elements)
+
+    /// What a scoped Restore row is called, what its confirm says it resets
+    /// and keeps, and the toast after it.
+    private struct RestoreCopy {
+        let id: String, title: String, question: String, message: String
+        let toast: (english: L10n.Text, chinese: L10n.Text)
+    }
+
+    private func restoreCopy(_ scope: HUDSettingsScope) -> RestoreCopy {
+        switch scope {
+        case .system:
+            return RestoreCopy(id: "restore", title: L10n.text("Restore default settings", "恢复默认设置"),
+                               question: L10n.text("Restore default settings?", "恢复默认设置？"),
+                               message: L10n.text("Only System and Modules are reset. Display, the hotkey, notes, files and shortcuts are kept.",
+                                                  "仅恢复系统设置与模块。保留显示设置、快捷键、便笺、文件与应用快捷方式。"),
+                               toast: ("Settings restored", "已恢复默认设置"))
+        case .display:
+            return RestoreCopy(id: "displayRestore", title: L10n.text("Restore default settings", "恢复默认设置"),
+                               question: L10n.text("Restore default settings?", "恢复默认设置？"),
+                               message: L10n.text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.",
+                                                  "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。"),
+                               toast: ("Settings restored", "已恢复默认设置"))
+        case .hudElements:
+            return RestoreCopy(id: "overlayRestore", title: L10n.text("Restore defaults", "恢复默认"),
+                               question: L10n.text("Restore HUD elements?", "恢复界面元素默认设置？"),
+                               message: L10n.text("Only this page's settings change.", "仅恢复本页设置。"),
+                               toast: ("HUD elements restored", "已恢复界面元素"))
+        }
+    }
+
+    /// The Restore row for `scope`: enabled while something it resets differs
+    /// from its default, and it asks before resetting.
+    private func restoreRow(_ scope: HUDSettingsScope, _ page: HUDDesignPage) -> HUDRowPlate {
+        let copy = restoreCopy(scope)
+        let restore = HUDButton(id: copy.id, title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
+        restore.place(at: .zero)
+        restore.onActivate = { [weak self] in self?.confirmRestore(scope) }
+        restore.isEnabled = !controller.isDefault(scope)
+        binders.append { [weak self, weak restore] in guard let self else { return }; restore?.isEnabled = !self.controller.isDefault(scope) }
+        return row(copy.id, copy.title, [restore.layer], page, controls: [restore])
+    }
+
+    private func confirmRestore(_ scope: HUDSettingsScope) {
+        let copy = restoreCopy(scope)
+        confirm(HUDConfirmRequest(id: copy.id, title: copy.question, message: copy.message,
                                   confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
-            self?.controller.restoreDefaults()
-            self?.toast(icon: .reset, "Settings restored", "已恢复默认设置")
+            guard let self else { return }
+            if scope == .display { self.stagedLayout = (nil, nil, nil) } // A slider mid-drag must not show its old value.
+            self.controller.restoreDefaults(scope)
+            self.toast(icon: .reset, copy.toast.english, copy.toast.chinese)
         }
     }
 
@@ -480,6 +522,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             else { self?.toast(icon: .eye, "Recording mode off", "私密内容已恢复") }
         }))
         rows.append(toggleRow("bootLog", L10n.text("Daily boot log", "每日启动日志"), \.dailyBootLog, page))
+        rows.append(restoreRow(.display, page))
         let height = stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10)
         scroll.setContentHeight(height)
         page.restoreOffset(of: scroll)
@@ -515,12 +558,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             guard let self else { return }; opening?.setValue(self.openModuleTitle(self.config.overlayLayout.openModule))
         }
         rows.append(row("openModule", L10n.text("Open on", "打开时显示"), [opening], page))
-        let restore = HUDButton(id: "overlayRestore", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
-        restore.place(at: .zero)
-        restore.onActivate = { [weak self] in self?.confirmOverlayRestore() }
-        restore.isEnabled = !Self.overlayIsDefault(c)
-        binders.append { [weak self, weak restore] in guard let self else { return }; restore?.isEnabled = !Self.overlayIsDefault(self.config) }
-        rows.append(row("overlayRestore", L10n.text("Restore defaults", "恢复默认"), [restore.layer], page, controls: [restore]))
+        rows.append(restoreRow(.hudElements, page))
         scroll.setContentHeight(stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10))
         page.restoreOffset(of: scroll)
         header.configure(crumbs: ["DISPLAY", "HUD ELEMENTS"], code: "SYS-02", title: HUDModuleTitle("HUD elements", "界面元素"),
@@ -565,23 +603,6 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             let module = HUDModule(rawValue: item.id)
             guard let self, module != self.config.overlayLayout.openModule else { return }
             self.controller.update { $0.overlayLayout.openModule = module }
-        }
-    }
-
-    /// This page's settings, and nothing else, are at their defaults.
-    private static func overlayIsDefault(_ c: AppConfiguration) -> Bool {
-        c.overlayLayout.isDefault && c.facilityAlerts == AppConfiguration.defaults.facilityAlerts
-    }
-
-    private func confirmOverlayRestore() {
-        confirm(HUDConfirmRequest(id: "overlayRestore", title: L10n.text("Restore HUD elements?", "恢复界面元素默认设置？"),
-                                  message: L10n.text("Only this page's settings change.", "仅恢复本页设置。"),
-                                  confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
-            self?.controller.update {
-                $0.overlayLayout = HUDOverlayLayout()
-                $0.facilityAlerts = AppConfiguration.defaults.facilityAlerts
-            }
-            self?.toast(icon: .reset, "HUD elements restored", "已恢复界面元素")
         }
     }
 
