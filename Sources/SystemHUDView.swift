@@ -274,7 +274,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
     var isDraggingShelfItem: Bool { shelfInteraction?.isDraggingOut == true }
     private var isModuleInputLocked: Bool {
-        notesInteraction?.isInputLocked == true || shelfInteraction?.isInputLocked == true
+        overlayEditor != nil || notesInteraction?.isInputLocked == true || shelfInteraction?.isInputLocked == true
             || settingsInteractions.values.contains { $0.isInputLocked } || activeDesignCanvas?.isInputLocked == true
     }
     /// The selected redesigned module while it accepts input.
@@ -293,7 +293,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
     /// An open menu, pop-over or confirm bar takes the next press anywhere (spec §1.12).
     private var popupCapturesPointer: Bool {
-        accountGauge.isPopoverOpen || (notesWorkspaceIsInteractive && notesInteraction?.capturesPointer == true)
+        overlayEditor != nil || accountGauge.isPopoverOpen || (notesWorkspaceIsInteractive && notesInteraction?.capturesPointer == true)
             || activeDesignCanvas?.capturesPointer == true || designContext.overlay.capturesInput
     }
     private var navigationButtons: [HUDNavigationTarget: HUDNavigationHitButton] = [:]
@@ -317,6 +317,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var mutedTexts: [CATextLayer] = []
     private var accentTexts: [CATextLayer] = []
     private var titleLabel = HUDStandardTextLayer()
+    private var subtitleLabel = HUDStandardTextLayer()
     private var hintLabel = HUDStandardTextLayer()
     private var snapshot = BatterySnapshot.unavailable
     private var configuration = AppConfiguration.defaults
@@ -379,6 +380,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         self.profileStore = try? profile.get()
         self.accountController = account ?? HypergryphAccountController(profile: try? profile.get())
+        accountController.showsHeaderGauge = configuration.overlayLayout.showsSanity
         switch profile {
         case .success(let store): profileCanvas = PersonalProfileCanvas(context: context, store: store, workSeconds: { workMode.trackedWorkSeconds },
                                                                          minigameBest: { minigame.bestSoFar })
@@ -649,6 +651,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         sourceWatch?.setDesktopCenterLogo(configuration.centerLogo, revision: configuration.centerLogoRevision)
         // System > Modules: the right-hand list rebinds its recycled rows in place.
         if old.moduleLayout != configuration.moduleLayout { refreshAppNavigation(animated: true) }
+        // Display > HUD elements: relaid only when the layout changes.
+        if old.overlayLayout != configuration.overlayLayout { applyOverlayLayout() }
+        if accountController.showsHeaderGauge != configuration.overlayLayout.showsSanity {
+            accountController.showsHeaderGauge = configuration.overlayLayout.showsSanity
+            updateAccountGauge()
+        }
         let scaleChanged = old.hudScale != configuration.hudScale
         let layoutChanged = scaleChanged || old.hudOffsetX != configuration.hudOffsetX || old.hudOffsetY != configuration.hudOffsetY
         let previousTransform = canvas.presentation()?.transform ?? canvas.transform
@@ -676,6 +684,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             sourceWatch?.refreshDesktopLanguage()
             HUDStandardTextLayer.languageChanged(in: layer ?? canvas)
             refreshIdentityProfile()
+            applyOverlayLayout() // The title's face, and so its width, follows the language.
         }
         if layoutChanged, interactionEnabled, !HUDRuntimeAppearance.reduceMotion {
             animate(canvas, "transform", from: previousTransform, to: canvas.transform, duration: 0.2)
@@ -1354,6 +1363,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// The active module's own pointer at a view point (the map's grab hand);
     /// the source shell asks whenever it refreshes its cursor.
     private func designCursor(at location: CGPoint) -> NSCursor? {
+        if let editor = overlayEditor {
+            if editor.isDragging { return .closedHand }
+            if let box = designBoxPoint(location), editor.stripContains(box, in: overlayEditorHost) { return nil }
+            return coreDesignPoint(designPoint(location)).flatMap(overlayElement(at:)) != nil ? .openHand : nil
+        }
         guard let canvas = activeDesignCanvas, !canvas.capturesPointer, !designContext.overlay.capturesInput,
               let cursor = canvas.cursor(at: designBoxPoint(location)) else { return nil }
         // The shell's controls over a module (the bottom plates and the charge
@@ -1412,6 +1426,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func clearControlHighlights() {
+        overlayEditor?.updateHighlights(in: overlayEditorHost, point: nil)
         accountGauge.hover(at: nil)
         if clockHovered { clockHovered = false; updateStatusPanel() }
         if let moduleContent { HUDControlHighlightLayer.update(in: moduleContent.layer, point: nil) }
@@ -1427,6 +1442,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func updateControlHighlights(at location: CGPoint, pressed: Bool = false) {
         guard allowsModuleInput, !moduleContent.isTransitioning else {
             clearControlHighlights(); return
+        }
+        if let editor = overlayEditor {
+            editor.updateHighlights(in: overlayEditorHost, point: designBoxPoint(location), pressed: pressed); return
         }
         accountGauge.hover(at: accountGaugePoint(location))
         let notePoint = notesWorkspaceIsInteractive ? notesWorkspacePoint(location) : nil
@@ -1465,6 +1483,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// dismisses the menu instead of activating whatever is behind it.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
+        if allowsModuleInput, overlayEditor != nil, bounds.contains(local) { return self }
         if allowsModuleInput, accountGauge.isPopoverOpen, bounds.contains(local) { return self }
         if allowsModuleInput, designContext.overlay.capturesInput || bootLog.isPlaying, bounds.contains(local) { return self }
         if allowsModuleInput, let point = facilityBannerPoint(local),
@@ -1519,6 +1538,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let location = convert(event.locationInWindow, from: nil)
         let p = designPoint(location)
         if bootLog.isPlaying { bootLog.skip(); return }
+        // Placing the HUD elements takes every press: the strip or a drag.
+        if overlayEditor != nil { if allowsModuleInput { overlayPointerDown(location) }; return }
         if allowsModuleInput, accountGauge.isPopoverOpen {
             _ = accountGauge.mouseDown(at: accountGaugePoint(location)); return
         }
@@ -1584,6 +1605,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if bootLog.isPlaying { bootLog.skip(); return }
         guard allowsModuleInput, !event.isARepeat else { return }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if let editor = overlayEditor {
+            // Esc cancels and Return confirms the placement; the summon shortcut still closes.
+            if !(modifiers.isEmpty && editor.key(event.keyCode)), SummonShortcut.active.matches(event: event) { onToggle?() }
+            return
+        }
         if accountGauge.isPopoverOpen {
             if event.keyCode == 53 && modifiers.isEmpty { accountGauge.dismiss() }
             else if SummonShortcut.active.matches(event: event) { onToggle?() }
@@ -2178,6 +2204,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if let settingsController {
             for module: HUDModule in [.system, .display, .hotkeys, .about] {
                 let settings = HUDSettingsCanvas(module: module, controller: settingsController, context: designContext)
+                settings.onEditOverlay = { [weak self] in self?.beginOverlayPlacement() }
                 settingsCanvases[module] = settings
                 register(design: settings)
             }
@@ -2212,13 +2239,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         actionFeedback.path = brackets
         // Leave the enlarged marker orbit clear of the English heading.
-        header.frame = CGRect(x: 270, y: 2, width: 600, height: 74)
+        header.frame = HUDOverlayGeometry.header
         header.zPosition = 20 // Recovery tooltip stays above central module artwork.
         corePlane.content.addSublayer(header)
         titleLabel = text("ENDFIELDHUD", rect: CGRect(x: 0, y: 0, width: 300, height: 27), size: 20,
                           parent: header, role: .primary, weight: .semibold)
-        _ = text("SYSTEM INTERFACE", rect: CGRect(x: 0, y: 31, width: 300, height: 18),
-                 size: 9, parent: header, role: .muted)
+        subtitleLabel = text("SYSTEM INTERFACE", rect: CGRect(x: 0, y: 31, width: 300, height: 18),
+                             size: 9, parent: header, role: .muted)
         clockTime = text("", rect: CGRect(x: 340, y: 0, width: 220, height: 27), size: 20,
                          parent: header, role: .primary, alignment: .right, weight: .semibold, tabular: true)
         clockDate = text("", rect: CGRect(x: 340, y: 31, width: 220, height: 18), size: 9,
@@ -2256,6 +2283,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         workBadge = text("", rect: CGRect(x: 320, y: 55, width: 240, height: 18), size: 10,
                          parent: header, role: .accent, alignment: .right, weight: .semibold)
         workBadge.name = "hud.workMode.badge"
+        applyOverlayLayout()
         statusPanel.name = "hud.clock.panel"
         statusPanel.anchorPoint = .zero; statusPanel.position = .zero
         statusPanel.bounds = CGRect(x: 0, y: 0, width: 340, height: 122)
@@ -2917,8 +2945,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             overlay.anchorPoint = .zero
             overlay.position = box.origin
             overlay.transform = CATransform3DMakeScale(designUnit, designUnit, 1)
+            // The HUD elements' editor strip shares the overlay's box coordinates.
+            overlayEditorHost.anchorPoint = .zero
+            overlayEditorHost.position = box.origin
+            overlayEditorHost.transform = overlay.transform
         }
         moduleContent?.designUnit = designUnit
+        layoutOverlayEditor()
     }
     private func designInputStateChanged() {
         layoutDesignAccessibility()
@@ -2926,7 +2959,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
     private func layoutDesignAccessibility() {
         let overlay = designContext.overlay
-        if let canvas = activeDesignCanvas, !overlay.capturesInput { designStandIns.update(canvas.accessibilityItems) }
+        if let canvas = activeDesignCanvas, !overlay.capturesInput, overlayEditor == nil { designStandIns.update(canvas.accessibilityItems) }
         else { designStandIns.hideAll() }
         if allowsModuleInput, overlay.capturesInput { designOverlayStandIns.update(overlay.router.accessibilityItems(in: overlay.layer)) }
         else { designOverlayStandIns.hideAll() }
@@ -2935,6 +2968,207 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         else { facilityBannerStandIns.hideAll() }
         if allowsModuleInput { facilityTagStandIns.update(facilityTagRouter.accessibilityItems(in: facilityTags.layer)) }
         else { facilityTagStandIns.hideAll() }
+        if allowsModuleInput, let editor = overlayEditor { overlayEditorStandIns.update(editor.accessibilityItems(in: overlayEditorHost)) }
+        else { overlayEditorStandIns.hideAll() }
+    }
+
+    // MARK: HUD elements (Display > HUD elements)
+
+    /// Display > HUD elements > Edit position and size: the strip beside the
+    /// elements sets their sizes; layers exist only while placing.
+    private var overlayEditor: HUDPlacementEditor?
+    /// The layout being placed; nil when not placing.
+    private var overlayDraft: HUDOverlayLayout?
+    private var overlayDragged: HUDOverlayLayout.Element?
+    /// The element the strip sits beside: the last one dragged (nil: all three).
+    private var overlayFocus: HUDOverlayLayout.Element?
+    private let overlayEditorHost = CALayer()
+    private let overlayFrames = CAShapeLayer()
+    private lazy var overlayEditorStandIns: HUDAccessibilityStandIns = {
+        let standIns = HUDAccessibilityStandIns(host: self)
+        standIns.project = { [weak self] in self?.projectDesignBoxRect($0) ?? $0 }
+        standIns.onPerform = { [weak self] id in self?.overlayEditor?.perform(id) }
+        standIns.onAdjust = { [weak self] id, value in self?.overlayEditor?.adjust(id, to: value) }
+        return standIns
+    }()
+    var isPlacingOverlayForVerification: Bool { overlayEditor != nil }
+
+    /// The layout on screen: the editor's draft while placing, else the saved one.
+    private var shownOverlayLayout: HUDOverlayLayout { overlayDraft ?? configuration.overlayLayout }
+
+    /// Places, sizes and fills the title, the Sanity gauge and the alert tags.
+    /// Text is resized through its font size and the gauge redraws its text and
+    /// icon at its size, so both stay sharp. Runs only when the layout, the
+    /// language or the scale changes, or while placing.
+    private func applyOverlayLayout() {
+        let layout = shownOverlayLayout, origin = header.frame.origin
+        withoutActions {
+            let size = CGFloat(layout.title.size)
+            titleLabel.string = layout.shownTitle; subtitleLabel.string = layout.shownSubtitle
+            titleLabel.fontSize = 20 * size; subtitleLabel.fontSize = 9 * size
+            let title = overlayFrame(.title, layout)
+            let width = max(300 * size, title.width + 4)
+            titleLabel.frame = CGRect(x: title.minX - origin.x, y: title.minY - origin.y, width: width, height: 27 * size)
+            subtitleLabel.frame = CGRect(x: title.minX - origin.x, y: title.minY - origin.y + 31 * size, width: width, height: 18 * size)
+            titleLabel.isHidden = !layout.showsTitle; subtitleLabel.isHidden = !layout.showsTitle
+            let gauge = overlayFrame(.sanity, layout), scale = CGFloat(layout.sanity.size)
+            accountGauge.layer.position = CGPoint(x: gauge.minX - origin.x, y: gauge.minY - origin.y)
+            accountGauge.layer.transform = scale == 1 ? CATransform3DIdentity : CATransform3DMakeScale(scale, scale, 1)
+        }
+        accountGauge.sizeFactor = CGFloat(layout.sanity.size)
+        layoutFacilityLayers()
+        layoutAccountGaugeControls()
+        layoutOverlayEditor()
+    }
+
+    /// An element's size at 100 %, in core-plane points.
+    private func overlayNatural(_ element: HUDOverlayLayout.Element) -> CGSize {
+        switch element {
+        case .title:
+            func width(_ label: HUDStandardTextLayer) -> CGFloat {
+                guard let text = label.string as? String, let font = label.font as? NSFont else { return 0 }
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+                return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            }
+            let size = max(0.01, titleLabel.fontSize / 20)
+            return CGSize(width: ceil(max(width(titleLabel), width(subtitleLabel)) / size), height: 49)
+        case .sanity: return HUDAccountGauge.size
+        case .alerts:
+            return CGSize(width: HUDFacilityTagStack.width * designUnit,
+                          height: max(HUDFacilityTagStack.tagHeight, facilityTags.preferredHeight) * designUnit)
+        }
+    }
+
+    /// Where an element is drawn: its placement, kept on the core plane.
+    private func overlayFrame(_ element: HUDOverlayLayout.Element, _ layout: HUDOverlayLayout) -> CGRect {
+        let natural = overlayNatural(element)
+        return HUDOverlayGeometry.frame(element, HUDOverlayGeometry.clamped(element, layout[element], natural: natural), natural: natural)
+    }
+
+    /// The element under a core-plane point; the gauge first (the smallest).
+    private func overlayElement(at point: CGPoint) -> HUDOverlayLayout.Element? {
+        let layout = shownOverlayLayout
+        return [HUDOverlayLayout.Element.sanity, .title, .alerts].first { overlayFrame($0, layout).insetBy(dx: -6, dy: -6).contains(point) }
+    }
+
+    /// Starts placing the title, the Sanity gauge and the alert tags: drag one
+    /// on the HUD, set sizes on the strip; Cancel or Esc drops the draft,
+    /// Confirm or Return saves it. The rest of the HUD waits meanwhile.
+    func beginOverlayPlacement() {
+        guard allowsModuleInput, overlayEditor == nil, !designContext.overlay.capturesInput else { return }
+        activeDesignCanvas?.endEditing(commit: true)
+        if activeDesignCanvas?.isMenuOpen == true { activeDesignCanvas?.closeMenu() }
+        accountGauge.dismiss(animated: false)
+        clearControlHighlights()
+        let layout = configuration.overlayLayout
+        overlayDraft = layout; overlayFocus = nil; overlayDragged = nil
+        let range = HUDSlider.Range(minimum: HUDOverlayLayout.sizeRange.lowerBound * 100,
+                                    maximum: HUDOverlayLayout.sizeRange.upperBound * 100, step: 1)
+        let editor = HUDPlacementEditor(id: "hudElements", sliders: HUDOverlayLayout.Element.allCases.map {
+            HUDPlacementEditor.Slider(id: $0.rawValue, title: $0.sizeTitle, value: layout[$0].size * 100, range: range, format: .percent)
+        }, env: designContext.env)
+        editor.onChange = { [weak self] id, value, _ in self?.overlaySizeChanged(id, value: value) }
+        editor.onDecision = { [weak self] decision in self?.finishOverlayPlacement(confirm: decision == .confirm) }
+        overlayEditor = editor
+        withoutActions {
+            overlayFrames.name = "hud.elements.frames"; overlayFrames.fillColor = HUDColor.yellow; overlayFrames.zPosition = 39
+            overlayEditorHost.name = "hud.elements.editor"; overlayEditorHost.zPosition = 40
+            corePlane.content.addSublayer(overlayFrames); corePlane.content.addSublayer(overlayEditorHost)
+            overlayEditorHost.addSublayer(editor.layer)
+        }
+        layoutDesignOverlay()
+        applyOverlayLayout()
+        editor.show()
+        window?.makeFirstResponder(self)
+        lockParallaxForActiveInput()
+        designInputStateChanged()
+    }
+
+    private func overlaySizeChanged(_ id: String, value: Double) {
+        guard overlayDraft != nil, let element = HUDOverlayLayout.Element(rawValue: id) else { return }
+        overlayDraft?[element].size = value / 100
+        applyOverlayLayout()
+    }
+
+    /// Confirm saves the placements as drawn (kept on the plane); Cancel, Esc
+    /// or the HUD closing drops them.
+    private func finishOverlayPlacement(confirm: Bool) {
+        guard let editor = overlayEditor, var draft = overlayDraft else { return }
+        if confirm {
+            for element in HUDOverlayLayout.Element.allCases {
+                draft[element] = HUDOverlayGeometry.clamped(element, draft[element], natural: overlayNatural(element))
+            }
+        }
+        editor.cancelPointer()
+        overlayEditor = nil; overlayDraft = nil; overlayDragged = nil; overlayFocus = nil
+        withoutActions {
+            editor.layer.removeFromSuperlayer(); overlayEditorHost.removeFromSuperlayer()
+            overlayFrames.removeFromSuperlayer(); overlayFrames.path = nil
+        }
+        if confirm, draft != configuration.overlayLayout { settingsController?.update { $0.overlayLayout = draft } }
+        applyOverlayLayout()
+        designInputStateChanged()
+    }
+
+    private func cancelOverlayPlacement() { finishOverlayPlacement(confirm: false) }
+
+    /// The corner marks around each element, and the strip beside the last
+    /// one dragged (below it, or above it near the plane's bottom). The strip
+    /// holds still while one of its sliders or an element has the pointer.
+    private func layoutOverlayEditor() {
+        guard let editor = overlayEditor else { return }
+        let layout = shownOverlayLayout
+        let frames = HUDOverlayLayout.Element.allCases.map { overlayFrame($0, layout).insetBy(dx: -6, dy: -6) }
+        let marks = CGMutablePath()
+        frames.forEach { marks.addPath(HUDArchiveTile.bracketPath($0, inset: 0)) }
+        withoutActions { overlayFrames.path = marks }
+        guard !editor.isAdjusting, !editor.isDragging else { return }
+        let unit = designUnit, box = HUDDesignGeometry.boxRect(unit: unit)
+        func local(_ rect: CGRect) -> CGRect {
+            CGRect(x: (rect.minX - box.minX) / unit, y: (rect.minY - box.minY) / unit, width: rect.width / unit, height: rect.height / unit)
+        }
+        // Beside the last element dragged; at first beside all three while they
+        // sit together, else beside the title.
+        let union = frames.dropFirst().reduce(frames[0]) { $0.union($1) }
+        let focus = overlayFocus ?? (union.height > HUDOverlayGeometry.plane.height / 3 ? .title : nil)
+        let target = focus.map { frames[HUDOverlayLayout.Element.allCases.firstIndex(of: $0)!] } ?? union
+        let size = CGSize(width: editor.size.width, height: editor.size.height + HUDPlacementEditor.bubbleClearance)
+        let strip = HUDPlacementEditor.frame(size: size, beside: local(target), within: local(HUDOverlayGeometry.plane), gap: 8)
+        withoutActions {
+            editor.layer.frame = CGRect(x: strip.minX, y: strip.minY + HUDPlacementEditor.bubbleClearance,
+                                        width: editor.size.width, height: editor.size.height)
+        }
+        if allowsModuleInput { overlayEditorStandIns.update(editor.accessibilityItems(in: overlayEditorHost)) }
+    }
+
+    private func overlayPointerDown(_ location: CGPoint) {
+        guard let editor = overlayEditor, let draft = overlayDraft else { return }
+        let far = CGPoint(x: -10_000, y: -10_000)
+        let box = designBoxPoint(location) ?? far, core = coreDesignPoint(designPoint(location))
+        if editor.stripContains(box, in: overlayEditorHost) {
+            editor.pointerDown(at: box, in: overlayEditorHost, pointer: core ?? far, anchor: .zero)
+        } else if let core, let element = overlayElement(at: core) {
+            overlayDragged = element; overlayFocus = element
+            editor.pointerDown(at: box, in: overlayEditorHost, pointer: core, anchor: CGPoint(x: draft[element].x, y: draft[element].y))
+        }
+    }
+
+    private func overlayPointerDragged(_ location: CGPoint) {
+        guard let editor = overlayEditor else { return }
+        let box = designBoxPoint(location) ?? CGPoint(x: -10_000, y: -10_000), core = coreDesignPoint(designPoint(location))
+        guard let proposed = editor.pointerDragged(to: box, in: overlayEditorHost, pointer: core ?? .zero),
+              core != nil, let element = overlayDragged, var placement = overlayDraft?[element] else { return }
+        placement.x = Double(proposed.x); placement.y = Double(proposed.y)
+        overlayDraft?[element] = HUDOverlayGeometry.clamped(element, placement, natural: overlayNatural(element))
+        applyOverlayLayout()
+    }
+
+    private func overlayPointerUp(_ location: CGPoint) {
+        guard let editor = overlayEditor else { return }
+        editor.pointerUp(at: designBoxPoint(location) ?? CGPoint(x: -10_000, y: -10_000), in: overlayEditorHost)
+        overlayDragged = nil
+        // The strip settles beside the element again.
+        layoutOverlayEditor()
     }
 
     // MARK: Facility alerts, the Recording mode tag and the daily boot log (spec §3.26, §3.28, §3.29)
@@ -2998,9 +3232,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             facilityBanner.layer.anchorPoint = CGPoint(x: 0.5, y: 0)
             facilityBanner.layer.position = CGPoint(x: 500, y: (bannerTop - designOrigin.y) / max(0.01, designScale))
             facilityBanner.layer.transform = CATransform3DMakeScale(unit, unit, 1)
+            // Display > HUD elements places and sizes the column (top-right anchor).
+            let tags = overlayFrame(.alerts, shownOverlayLayout), size = CGFloat(shownOverlayLayout.alerts.size)
             facilityTags.layer.anchorPoint = CGPoint(x: 1, y: 0)
-            facilityTags.layer.position = CGPoint(x: header.frame.minX - 8, y: header.frame.minY + 50)
-            facilityTags.layer.transform = CATransform3DMakeScale(unit, unit, 1)
+            facilityTags.layer.position = CGPoint(x: tags.maxX, y: tags.minY)
+            facilityTags.layer.transform = CATransform3DMakeScale(unit * size, unit * size, 1)
         }
         for item in [facilityBanner.layer, facilityTags.layer, bootLog.layer] { designContext.env.applyScale(to: item) }
     }
@@ -3029,6 +3265,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         facilityTags.update(alerts: facilityAlerts?.alerts ?? alerts, animated: allowsModuleInput)
         facilityBannerRouter.set([facilityBanner.control])
         facilityTagRouter.set(facilityTags.controls)
+        // A taller column is kept on the plane where the column was moved.
+        if shownOverlayLayout.alerts != HUDOverlayLayout.Placement() { layoutFacilityLayers() }
         layoutDesignAccessibility()
     }
 
@@ -3099,14 +3337,17 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                                        operatorName: name.isEmpty ? "Endministrator" : name)
     }
 
+    /// A view point in the gauge's own (unscaled 168 x 42) coordinates.
     private func accountGaugePoint(_ point: CGPoint) -> CGPoint? {
         guard !accountGauge.layer.isHidden, let local = coreDesignPoint(designPoint(point)) else { return nil }
-        return CGPoint(x: local.x - header.frame.minX - accountGauge.layer.position.x,
-                       y: local.y - header.frame.minY - accountGauge.layer.position.y)
+        let size = accountGauge.sizeFactor
+        return CGPoint(x: (local.x - header.frame.minX - accountGauge.layer.position.x) / size,
+                       y: (local.y - header.frame.minY - accountGauge.layer.position.y) / size)
     }
     private func accountGaugeRect(_ rect: CGRect) -> CGRect {
-        let design = rect.offsetBy(dx: header.frame.minX + accountGauge.layer.position.x,
-                                   dy: header.frame.minY + accountGauge.layer.position.y)
+        let size = accountGauge.sizeFactor
+        let design = CGRect(x: rect.minX * size, y: rect.minY * size, width: rect.width * size, height: rect.height * size)
+            .offsetBy(dx: header.frame.minX + accountGauge.layer.position.x, dy: header.frame.minY + accountGauge.layer.position.y)
         let transform = corePlane.spatial.presentation()?.transform ?? corePlane.spatial.transform
         return viewRect(projectedBounds(design, through: [transform]))
     }
@@ -3310,6 +3551,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func deactivateModuleInput(preservingNowPlayingPresentation: Bool = false) {
+        cancelOverlayPlacement()
         accountGauge.dismiss(animated: false)
         layoutAccountGaugeControls()
         clearControlHighlights()
@@ -3347,6 +3589,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     override func mouseDragged(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+        if overlayEditor != nil { overlayPointerDragged(location); return }
         if notesWorkspaceIsInteractive, notesCanvas.isDragging, let local = notesWorkspacePoint(location) {
             notesInteraction?.mouseDraggedInWorkspace(to: local); return
         }
@@ -3363,6 +3606,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseUp(with event: NSEvent) {
         summonedDuringFileDrag = false
         let releaseLocation = convert(event.locationInWindow, from: nil), far = CGPoint(x: -10_000, y: -10_000)
+        if overlayEditor != nil { overlayPointerUp(releaseLocation); return }
         facilityBannerRouter.pointerUp(at: facilityBannerPoint(releaseLocation) ?? far, in: facilityBanner.layer)
         facilityTagRouter.pointerUp(at: facilityTagPoint(releaseLocation) ?? far, in: facilityTags.layer)
         let release = designBoxPoint(releaseLocation) ?? far
@@ -3375,7 +3619,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        guard !accountGauge.isPopoverOpen else { return }
+        guard !accountGauge.isPopoverOpen, overlayEditor == nil else { return }
         let location = convert(event.locationInWindow, from: nil), design = designPoint(location)
         if notesWorkspaceIsInteractive, let point = notesWorkspacePoint(location), notesCanvas.containsWorkspacePoint(point) {
             _ = notesInteraction?.rightMouseDown(at: point); return
@@ -3387,7 +3631,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func magnify(with event: NSEvent) {
-        guard !accountGauge.isPopoverOpen else { return }
+        guard !accountGauge.isPopoverOpen, overlayEditor == nil else { return }
         let location = convert(event.locationInWindow, from: nil), design = designPoint(location)
         if designContext.overlay.capturesInput { return }
         if let canvas = activeDesignCanvas, navigationTargetAtDesignPoint(design) == nil, let point = designBoxPoint(location),
@@ -3403,7 +3647,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard !accountGauge.isPopoverOpen else { return }
+        guard !accountGauge.isPopoverOpen, overlayEditor == nil else { return }
         let location = convert(event.locationInWindow, from: nil)
         let design = designPoint(location)
         if designContext.overlay.capturesInput { return }
