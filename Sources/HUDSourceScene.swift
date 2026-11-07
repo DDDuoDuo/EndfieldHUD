@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import Compression
+import QuartzCore
 import simd
 
 /// Runtime packages may store byte-exact source payloads in a bounded raw
@@ -692,6 +693,18 @@ struct HUDSourceScalarCurve {
                                  b.value - duration * incoming * b.inSlope, b.value)
         }
         return result.isFinite ? result : nil
+    }
+    /// `timing`'s eased progress at normalized `time` (clamped to 0...1), on
+    /// the same cubic solver as the source curves, so a value driven per frame
+    /// follows the curve Core Animation uses for the same timing function.
+    static func ease(_ time: Double, _ timing: CAMediaTimingFunction) -> Double {
+        var first: [Float] = [0, 0], second: [Float] = [0, 0]
+        timing.getControlPoint(at: 1, values: &first)
+        timing.getControlPoint(at: 2, values: &second)
+        let t = time.isFinite ? min(1, max(0, time)) : 1
+        guard t > 0, t < 1 else { return t }
+        let u = bezierTimeParameter(t, outgoing: Double(first[0]), incoming: 1 - Double(second[0]))
+        return bezier(u, 0, Double(first[1]), Double(second[1]), 1)
     }
     private static func bezier(_ u: Double, _ a: Double, _ b: Double, _ c: Double, _ d: Double) -> Double {
         let v = 1 - u

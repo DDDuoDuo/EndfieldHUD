@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import QuartzCore
 import simd
 
 /// Every desktop button icon is drawn in a 32-point box. Glyphs are sized
@@ -128,6 +129,176 @@ struct HUDSourceDesktopHoverFeedback {
             result[background] = 1 + 0.25 * progress(binding)
         }
         return result
+    }
+}
+
+/// Arrange on HUD in the source shell: right-hand buttons drawn away from the
+/// slot the layout gives them, in the plane of the list's scroll viewport
+/// (source units, y up). Applied after layout and slant, so moving a tile
+/// never repeats either; the offset follows the button's whole subtree.
+enum HUDSourceDesktopTiles {
+    enum Placement: Equatable {
+        /// This far from its slot (a tile sliding to its new place).
+        case offset(SIMD2<Double>)
+        /// Held with its centre here (the dragged tile).
+        case center(SIMD2<Double>)
+    }
+
+    /// A point of a node drawn by `world`, in the plane of `plane`.
+    static func planePoint(_ local: SIMD2<Double>, world: simd_double4x4, plane: simd_double4x4) -> SIMD2<Double>? {
+        guard let inverse = HUDSourceGeometry.inverse(plane) else { return nil }
+        let point = inverse * (world * SIMD4(local.x, local.y, 0, 1))
+        guard point.w != 0, point.x.isFinite, point.y.isFinite else { return nil }
+        return SIMD2(point.x, point.y) / point.w
+    }
+    static func center(world: simd_double4x4, rect: HUDSourceRect, plane: simd_double4x4) -> SIMD2<Double>? {
+        planePoint(rect.origin + rect.size / 2, world: world, plane: plane)
+    }
+
+    /// The scene translation (before the HUD's root scale and offset) that
+    /// draws a button resting at `world` at `placement`.
+    static func translation(_ placement: Placement, world: simd_double4x4, rect: HUDSourceRect,
+                            plane: simd_double4x4) -> SIMD3<Double>? {
+        let delta: SIMD2<Double>
+        switch placement {
+        case .offset(let offset): delta = offset
+        case .center(let target):
+            guard let rest = center(world: world, rect: rect, plane: plane) else { return nil }
+            delta = target - rest
+        }
+        let moved = plane * SIMD4(delta.x, delta.y, 0, 0)
+        let result = SIMD3(moved.x, moved.y, moved.z)
+        return result.x.isFinite && result.y.isFinite && result.z.isFinite ? result : nil
+    }
+
+    static func translated(_ node: HUDSourceResolvedNode, by translation: SIMD3<Double>) -> HUDSourceResolvedNode {
+        HUDSourceResolvedNode(node: node.node, localMatrix: node.localMatrix,
+            worldMatrix: HUDSourceGeometry.translation(translation) * node.worldMatrix,
+            rect: node.rect, activeInHierarchy: node.activeInHierarchy)
+    }
+
+    /// The nodes a complete resolve moves: each translated button and
+    /// everything under it (in `traversal`, parents first).
+    static func movedNodes(_ nodes: [HUDSourceID: HUDSourceResolvedNode], by translations: [HUDSourceID: SIMD3<Double>],
+                           traversal: [HUDSourceID]) -> [HUDSourceID: HUDSourceResolvedNode] {
+        guard !translations.isEmpty else { return [:] }
+        var moved: [HUDSourceID: HUDSourceResolvedNode] = [:], inherited: [HUDSourceID: SIMD3<Double>] = [:]
+        for id in traversal {
+            guard let node = nodes[id],
+                  let translation = translations[id] ?? node.node.parentID.flatMap({ inherited[$0] }) else { continue }
+            inherited[id] = translation
+            moved[id] = translated(node, by: translation)
+        }
+        return moved
+    }
+
+    /// A drawn world (`worldRoot` applied) moved by `translation`, back at rest.
+    static func restWorld(_ world: simd_double4x4, translation: SIMD3<Double>, worldRoot: simd_double4x4) -> simd_double4x4 {
+        var rest = world
+        for column in 0..<4 where world[column].w != 0 {
+            rest[column] -= worldRoot * SIMD4(translation * world[column].w, 0)
+        }
+        return rest
+    }
+
+    /// `items` with the raised ones moved, in order, to just after the last
+    /// item of their group, so they draw over the rest of the group only.
+    static func raising<Item>(_ items: [Item], isRaised: (Item) -> Bool, inGroup: (Item) -> Bool) -> [Item] {
+        guard let last = items.lastIndex(where: inGroup) else { return items }
+        let raised = items.filter(isRaised)
+        guard !raised.isEmpty else { return items }
+        var result: [Item] = []
+        result.reserveCapacity(items.count)
+        for (index, item) in items.enumerated() {
+            if !isRaised(item) { result.append(item) }
+            if index == last { result.append(contentsOf: raised) }
+        }
+        return result
+    }
+}
+
+/// Arrange on HUD in the source shell: the dragged tile follows the pointer,
+/// held where it was grabbed and kept inside the list; when the order changes
+/// or the tile is dropped, each tile slides from where it is shown into its
+/// slot, with the right-hand list's own slide timing (`HUDDuration.listSlide`,
+/// `HUDEasing.listSlide`). Time-based and finite; nothing runs while idle.
+struct HUDSourceDesktopArrangeMotion {
+    struct Slide: Equatable {
+        let from: SIMD2<Double>
+        let start: Double
+    }
+    private(set) var lifted: HUDNavigationTarget?
+    private var grab = SIMD2<Double>(0, 0)
+    /// Where the dragged tile's centre is held.
+    private(set) var liftedCenter: SIMD2<Double>?
+    private(set) var slides: [HUDNavigationTarget: Slide] = [:]
+    /// Drawn above the other tiles: the dragged tile, then while it settles.
+    private(set) var raised: HUDNavigationTarget?
+
+    var isActive: Bool { lifted != nil || !slides.isEmpty }
+    /// A slide runs, or ended and still needs the frame that draws it at rest
+    /// (`prune` forgets it). A held tile moves on pointer events only.
+    var requiresFrames: Bool { !slides.isEmpty }
+
+    /// `target`, shown with its centre at `shown`, is grabbed at `pointer`.
+    mutating func lift(_ target: HUDNavigationTarget, shown: SIMD2<Double>, pointer: SIMD2<Double>) {
+        lifted = target; raised = target; slides[target] = nil
+        grab = pointer - shown; liftedCenter = shown
+    }
+
+    /// The dragged tile follows `pointer`, its centre kept within `bounds`.
+    mutating func move(to pointer: SIMD2<Double>, within bounds: (min: SIMD2<Double>, max: SIMD2<Double>)?) {
+        guard lifted != nil, pointer.x.isFinite, pointer.y.isFinite else { return }
+        var center = pointer - grab
+        if let bounds {
+            let low = simd_min(bounds.min, bounds.max), high = simd_max(bounds.min, bounds.max)
+            center = simd_clamp(center, low, high)
+        }
+        liftedCenter = center
+    }
+
+    /// The dragged tile is let go; it slides from where it is shown into
+    /// `slot` (its centre at rest), or is there at once.
+    mutating func drop(slot: SIMD2<Double>?, at time: Double, reduceMotion: Bool) {
+        guard let target = lifted else { return }
+        let shown = liftedCenter
+        lifted = nil; liftedCenter = nil
+        if !reduceMotion, let shown, let slot { start(target, from: shown - slot, at: time) }
+        if slides[target] == nil, raised == target { raised = nil }
+    }
+
+    /// The order changed: `target`, shown at `shown`, now rests at `slot`.
+    /// A tile already sliding continues from where it is shown.
+    mutating func retarget(_ target: HUDNavigationTarget, shown: SIMD2<Double>, slot: SIMD2<Double>,
+                           at time: Double, reduceMotion: Bool) {
+        guard target != lifted else { return }
+        if reduceMotion { slides[target] = nil } else { start(target, from: shown - slot, at: time) }
+        if slides[target] == nil, raised == target { raised = nil }
+    }
+
+    /// How far `target` is drawn from its slot at `time` (nil at its slot).
+    func offset(for target: HUDNavigationTarget, at time: Double, reduceMotion: Bool) -> SIMD2<Double>? {
+        guard !reduceMotion, let slide = slides[target] else { return nil }
+        let progress = max(0, time - slide.start) / HUDDuration.listSlide
+        guard progress < 1 else { return nil }
+        return slide.from * (1 - HUDSourceScalarCurve.ease(progress, HUDEasing.listSlide))
+    }
+
+    /// Where `target` is shown, given its slot.
+    func shown(_ target: HUDNavigationTarget, slot: SIMD2<Double>, at time: Double, reduceMotion: Bool) -> SIMD2<Double> {
+        if target == lifted, let liftedCenter { return liftedCenter }
+        return slot + (offset(for: target, at: time, reduceMotion: reduceMotion) ?? SIMD2(0, 0))
+    }
+
+    /// Forgets finished slides (and Reduce Motion ends every one at once).
+    mutating func prune(at time: Double, reduceMotion: Bool) {
+        slides = reduceMotion ? [:] : slides.filter { time - $0.value.start < HUDDuration.listSlide }
+        if let raised, raised != lifted, slides[raised] == nil { self.raised = nil }
+    }
+
+    private mutating func start(_ target: HUDNavigationTarget, from: SIMD2<Double>, at time: Double) {
+        slides[target] = from.x.isFinite && from.y.isFinite && simd_length(from) > 1e-6 && time.isFinite
+            ? Slide(from: from, start: time) : nil
     }
 }
 
