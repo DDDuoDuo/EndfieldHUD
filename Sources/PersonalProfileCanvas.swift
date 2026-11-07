@@ -37,7 +37,7 @@ enum PersonalProfileField: String, CaseIterable {
     /// Inline editor limits (spec §3.20.3).
     var textLimit: Int? {
         switch self {
-        case .name: return 20
+        case .name: return UserProfile.nameLimit
         case .tag: return 11
         case .playerID: return 64
         case .introduction: return 150
@@ -798,7 +798,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             !value.isEmpty && value.unicodeScalars.allSatisfy { (48...57).contains($0.value) } && Int(value).map(range.contains) == true
         }
         switch field {
-        case .name: return !value.isEmpty && value.count <= 20 && value.rangeOfCharacter(from: .controlCharacters) == nil
+        case .name: return !value.isEmpty && value.count <= UserProfile.nameLimit && value.rangeOfCharacter(from: .controlCharacters) == nil
         case .tag:
             let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
             return (1...10).contains(digits.count) && digits.unicodeScalars.allSatisfy { (48...57).contains($0.value) }

@@ -17,13 +17,13 @@ struct SystemAccountIdentity: Equatable {
 
     var isEmpty: Bool { name == nil && uid == nil && avatarKey == nil }
 
-    /// The personal card's name rule: no control characters or line breaks,
-    /// trimmed, at most 20 characters; empty is no name.
+    /// The personal card's name rule (`UserProfile.cappedName`) with control
+    /// characters and line breaks dropped; empty is no name.
     static func normalizedName(_ raw: String) -> String? {
         let visible = String(String.UnicodeScalarView(raw.unicodeScalars.filter {
             !CharacterSet.controlCharacters.contains($0) && !CharacterSet.newlines.contains($0)
         }))
-        let clean = String(visible.trimmingCharacters(in: .whitespaces).prefix(20)).trimmingCharacters(in: .whitespaces)
+        let clean = UserProfile.cappedName(visible).trimmingCharacters(in: .whitespaces)
         return clean.isEmpty ? nil : clean
     }
 
@@ -60,6 +60,12 @@ struct UserProfile: Codable, Equatable {
     var hasManualAwakeningDate = false
     var displayedUID: String { playerIDOverride ?? gamePlayerID ?? systemAccount?.uid ?? uid }
     static let defaultName = "Endministrator"
+    /// The longest name the card keeps, in characters.
+    static let nameLimit = 20
+    /// A name trimmed at both ends and cut to `nameLimit` characters.
+    static func cappedName(_ raw: String) -> String {
+        String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(nameLimit))
+    }
     /// Until a name or a picture is chosen, the card shows the macOS account's
     /// (issue #17). A stored name other than the default always wins, so a
     /// name typed in an older build is kept.
@@ -160,7 +166,7 @@ struct UserProfile: Codable, Equatable {
             let clean = String(raw.filter { !$0.isNewline }.trimmingCharacters(in: .whitespaces).prefix(64))
             return clean.isEmpty ? nil : clean
         }
-        value.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(20))
+        value.name = Self.cappedName(name)
         value.tag = String(tag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(10))
         value.introduction = String(introduction.prefix(150))
         value.permissionLevel = min(60, max(1, permissionLevel))
@@ -563,7 +569,7 @@ final class UserProfileStore {
     }
 
     private static func validate(_ profile: UserProfile) throws {
-        guard !profile.name.isEmpty, profile.name.count <= 20,
+        guard !profile.name.isEmpty, profile.name.count <= UserProfile.nameLimit,
               profile.name.rangeOfCharacter(from: .controlCharacters) == nil else { throw UserProfileStoreError.invalidName }
         guard !profile.tag.isEmpty, profile.tag.count <= 10,
               profile.tag.rangeOfCharacter(from: .controlCharacters.union(.whitespacesAndNewlines).union(CharacterSet(charactersIn: "#"))) == nil else {
