@@ -201,29 +201,30 @@ class NativeBackend final:public AudioSessionBackend {
                     // process identity's sessions. No metadata I/O on read,
                     // volume events, hover, drag or native callback threads.
                     const auto prior=std::find_if(entries.begin(),entries.end(),[&](const auto&entry){return entry.second.record.processKey==next.record.processKey;});
-                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.record.name=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
-                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.record.name=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
+                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.processName=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
+                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.processName=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
                     else{
                         // Packaged apps: the package application's DisplayName;
                         // otherwise the executable's product label, then its stem.
-                        // A candidate that is not a valid UTF-8 label (an
-                        // unpaired surrogate, past 4096 bytes) yields to the
-                        // next, as the source falls back name, bundle, PID.
-                        next.record.name=packagedName(next.process->value);
+                        // audioApplicationLabel takes the first valid label (no
+                        // unpaired surrogate, within 4096 UTF-8 bytes), "PID n"
+                        // last, as the source falls back name, bundle, PID.
+                        const auto packaged=packagedName(next.process->value);std::wstring description,stem;
                         std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
                         if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
                             const std::wstring_view token(path.data(),length);
-                            if(utf8Optional(next.record.name).empty())next.record.name=fileDescription(token);
-                            if(utf8Optional(next.record.name).empty())next.record.name=std::filesystem::path(token).stem().wstring();
+                            if(!audioLabelValid(packaged))description=fileDescription(token);
+                            stem=std::filesystem::path(token).stem().wstring();
                             next.record.executable=executable(token);
                         }
                         next.record.appUserModelID=applicationIdentity(next.process->value);
+                        next.processName=audioApplicationLabel({packaged,description,stem},pid);
                     }
-                    if(utf8Optional(next.record.name).empty())next.record.name=L"PID "+std::to_wstring(pid);
-                    next.processName=next.record.name;remember(next.record.processKey,next.record,next.processName);
-                    TaskString label;if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view display(label.value);
-                        const auto resolved=display.front()==L'@'?indirect(display):std::wstring(display);
-                        if(!utf8Optional(resolved).empty())next.record.name=resolved;}
+                    remember(next.record.processKey,next.record,next.processName);
+                    // The session's own display name comes first when valid.
+                    TaskString label;std::wstring display;
+                    if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view raw(label.value);display=raw.front()==L'@'?indirect(raw):std::wstring(raw);}
+                    next.record.name=audioApplicationLabel({display,next.processName},pid);
                     TaskString persistent;if(SUCCEEDED(control->GetSessionIdentifier(&persistent.value))&&persistent.value)next.record.persistentID=utf8Optional(persistent.value);
                 }
             }

@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -40,4 +42,13 @@ struct AudioPackageManifestNames {
 // without a package identity name.
 std::optional<AudioPackageManifestNames>readAudioPackageManifest(const std::filesystem::path&manifest,std::wstring_view applicationID);
 #endif
+// Per-app audio labels: the one rule for the WASAPI session backend's name
+// chain and the audio worker's backstop over any backend. A label is shown
+// only when it is non-empty, holds no NUL, is well-formed UTF-16 and its UTF-8
+// form fits a Volume row's 4096 bytes. Checked without allocating.
+bool audioLabelValid(std::wstring_view)noexcept;
+// The first valid candidate, else "PID n": the source's order is the
+// session's display name, then the process name (package DisplayName, the
+// executable's FileDescription, then its stem), then the PID.
+std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candidates,std::uint32_t pid);
 } // namespace endfield::native

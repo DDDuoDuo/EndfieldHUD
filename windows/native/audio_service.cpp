@@ -1,4 +1,5 @@
 #include "native/audio_service.hpp"
+#include "native/audio_application_name.hpp"
 #include "native/audio_route_journal.hpp"
 #include "native/system_services.hpp"
 #include <algorithm>
@@ -289,11 +290,11 @@ public:
                 ++impl.sessionReads;
                 const auto hr=call([&]{return sessions->read(records);});
                 if(hr<0){state.applicationError=hr;break;}
-                // Labels only, as for endpoints: an ill-formed UTF-16 name
-                // (an app-set display name, an unpaired surrogate) or one past
-                // the Volume rows' 4096 UTF-8 bytes keeps the backend's PID
-                // fallback instead of reaching the UTF-8 rows.
-                for(auto&r:records)if(const auto label=audioUtf8(r.name);!label||label->size()>4096)r.name=L"PID "+std::to_wstring(r.pid);
+                // Labels only, as for endpoints: a name the backend's own
+                // label rule would refuse (an unpaired surrogate, a NUL, past
+                // the Volume rows' 4096 UTF-8 bytes) gets the same PID label
+                // instead of reaching the UTF-8 rows.
+                for(auto&r:records)if(!audioLabelValid(r.name))r.name=audioApplicationLabel({},r.pid);
                 try{routes.update(records,*sessions);}catch(...){state.applicationError=unexpected;break;}
                 if(std::none_of(records.begin(),records.end(),[](const auto&r){return r.exited;}))break;
             }
