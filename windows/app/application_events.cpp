@@ -696,9 +696,12 @@ void Application::Impl::suspend(Suspension reason,double time){
     if(activityProbe){activityPlan.stop();if(activityCatalog)activityCatalog->invalidate();}
     // AppDelegate.suspend: clipboard capture pauses (ClipboardWatcher.setSuspended).
     if(systemServices)systemServices->set_clipboard_suspended(true);
-    (void)lifecycle.forceClose();forceConceal(time);
+    const auto closed=lifecycle.forceClose();forceConceal(time);
     if(workMode)isolate(workModeModuleOwner,"suspend",[&]{workMode->setSuspended(true,hostTime(time));});
     broadcast(HostEvent::Kind::suspended,time,static_cast<std::uint32_t>(reason));
+    // OverlayController.tearDownSystemPresentation: a Quit accepted before
+    // the forced close still quits once the HUD is hidden (onQuitAfterSystemClose).
+    perform(closed,time);
 }
 void Application::Impl::resume(Suspension reason,double time){
     // Ignore duplicate or unmatched wake notifications.

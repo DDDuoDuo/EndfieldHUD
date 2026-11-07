@@ -536,6 +536,17 @@ int Application::Impl::runIdleTrace(){
         shutdownVisible();
         return 0;
     }
+    // A lock during an accepted Quit's close (--idle-trace-quit-locked):
+    // suspend's forced close hides the HUD and the quit still runs, as on
+    // the Mac (forceCloseSystemOverlay, then onQuitAfterSystemClose).
+    if(args.idleTraceQuit==2){
+        reduceMotion(false);openHUD();
+        perform(lifecycle.requestQuit(),clock());need(quitRequested&&lifecycle.phase()==P::closing&&closing&&!stopping,"The accepted Quit's close plays");
+        suspend(Suspension::session,clock());
+        need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&!host.stats().topmost,"A lock during an accepted Quit's close hides the HUD and quits");
+        shutdownVisible();
+        return 0;
+    }
     // The tray's Quit under Reduce Motion ends the run without a frame (a
     // fresh memory trace: its rows count at most eight closes).
     memoryTrace=std::make_unique<MemoryTrace>(fs::path{});

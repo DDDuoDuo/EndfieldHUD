@@ -94,8 +94,8 @@ Options options(int argc,wchar_t**argv){
             need(value==L"open"||value==L"open-reduced","The animation trace launch is open or open-reduced");o.animationTraceLaunchOpen=value==L"open"?1u:2u;}
         else if(arg==L"--animation-trace-dpi"&&i+1<argc){need(!o.animationTraceDpi,"Duplicate animation trace DPI");const std::wstring token=argv[++i];std::size_t used{};const auto value=std::stoul(token,&used);
             need(used==token.size()&&value>=48&&value<=768,"The animation trace DPI is 48...768");o.animationTraceDpi=static_cast<unsigned>(value);}
-        // How the idle trace ends (app/application.hpp idleTraceQuit): the Quit button.
-        else if(arg==L"--idle-trace-quit-button"){need(!o.idleTraceQuit,"One idle trace ending");o.idleTraceQuit=1;}
+        // How the idle trace ends (app/application.hpp idleTraceQuit): the Quit button, or a lock during Quit's close.
+        else if(arg==L"--idle-trace-quit-button"||arg==L"--idle-trace-quit-locked"){need(!o.idleTraceQuit,"One idle trace ending");o.idleTraceQuit=arg==L"--idle-trace-quit-button"?1u:2u;}
         // --idle-trace-grace: the closed HUD's graphics grace (production: ten
         // minutes, app/application.hpp); --idle-trace-closed: how long the HUD
         // stays closed before the closed windows and the first opening.

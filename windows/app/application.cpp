@@ -1878,7 +1878,7 @@ void Application::Impl::repositionHUD(double time){
     const auto preference=displayPreference();
     if(!preference.persistentID)for(std::size_t i=0;i<displays.size();++i)if(displays[i].bounds.valid()&&displayKey(displays[i])==hudDisplayID){index=i;break;}
     if(!index){POINT pointer{};(void)GetCursorPos(&pointer);index=gpu::resolveDisplay(preference,displays,{pointer.x,pointer.y});}
-    if(!index){(void)lifecycle.forceClose();forceConceal(time);return;}
+    if(!index){const auto closed=lifecycle.forceClose();forceConceal(time);perform(closed,time);return;} // an accepted Quit still quits (tearDownSystemPresentation)
     placeOnDisplay(displays[*index]);
 }
 void Application::Impl::openPresentation(core::Module initial,double time){
