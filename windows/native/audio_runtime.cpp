@@ -1,5 +1,4 @@
 #include "native/audio_runtime.hpp"
-#include "native/audio_application_name.hpp"
 #include "native/volume_audio_access.hpp"
 #include "native/volume_strings.hpp"
 #include <atomic>
@@ -12,14 +11,15 @@ namespace endfield::native {
 namespace {
 constexpr std::int32_t wrongThread=static_cast<std::int32_t>(0x8001010Eu); // RPC_E_WRONG_THREAD
 // Source-equivalent label hygiene: the topology list already carries trimmed,
-// nonempty names. Each is labelled as its Volume row is (audioEndpointLabel):
-// a name that is not well-formed UTF-16 or is past 4096 UTF-8 bytes is shown
-// as its endpoint ID, so the device list keeps updating while it exists.
+// nonempty labels chosen as each Volume row's (audioTopology uses
+// audioEndpointLabel): a name that is not well-formed UTF-16 or is past 4096
+// UTF-8 bytes is the endpoint ID, so the device list keeps updating while it
+// exists.
 std::optional<std::map<std::string,std::string>>labels(const AudioEndpointSnapshot&s){
     if(!s.topologyActive||!s.topologyListed)return std::nullopt;
     std::map<std::string,std::string>out;
     for(const auto&d:s.topology){
-        auto id=audioUtf8(d.id);auto name=audioUtf8(audioEndpointLabel(d.name,d.id));
+        auto id=audioUtf8(d.id);auto name=audioUtf8(d.name);
         // An unrepresentable entry makes the read incomplete, like the source
         // watcher's early return: never a false disconnect.
         if(!id||!name||id->empty()||name->empty()||!out.emplace(std::move(*id),std::move(*name)).second)return std::nullopt;

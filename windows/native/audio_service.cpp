@@ -232,10 +232,11 @@ public:
             if(inputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::input,defaultInput);})<0)defaultInput.clear();
             // Raw names for the Event Log's device list: a blank name is an
             // incomplete read (source watcher). Both the Volume rows here and
-            // the Event Log's labels (AudioRuntime::deviceLabels) show
-            // audioEndpointLabel: the endpoint ID for an empty name, one past
-            // a Volume row's 4096 UTF-8 bytes or one that is not well-formed
-            // UTF-16, so such a name never makes either list unavailable.
+            // the Event Log's labels (audioTopology, from these same raw
+            // names) show audioEndpointLabel: the endpoint ID for an empty
+            // name, one past a Volume row's 4096 UTF-8 bytes or one that is
+            // not well-formed UTF-16, so such a name never makes either list
+            // unavailable.
             std::vector<AudioEndpoint>rawOutputs,rawInputs;
             const auto convert=[&](const std::vector<AudioEndpointRecord>&records,std::vector<AudioEndpoint>&raw,std::int32_t&status){
                 std::vector<AudioEndpoint>ui;ui.reserve(records.size());std::set<std::wstring>ids;

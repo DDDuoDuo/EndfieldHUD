@@ -273,6 +273,15 @@ void longEndpointName(){
     try{h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";},"The ill-formed endpoint name reaches Volume");}
     catch(const std::exception&){threw=true;}
     check(!threw&&delivered.outputs.size()==2&&named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetVolume,"An endpoint name that is not well-formed UTF-16 shows the endpoint ID, and the list stays available");
+    // A name past 4096 UTF-8 bytes only with its trailing spaces: Volume
+    // checks the raw name and shows the ID, and the Event Log, which lists
+    // trimmed names, chose from the trimmed one and kept the name. Both now
+    // choose on the raw name. The microphone leaves so the list changes.
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=std::wstring(4095,L'a')+L"  ";h.world->inputs.clear();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices&&h.runtime->deviceLabels()&&h.runtime->deviceLabels()->size()==2;},"The microphone's removal reaches the Event Log");
+    const auto padded=h.runtime->deviceLabels();
+    check(named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}"&&padded->at("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}","A name past 4096 UTF-8 bytes with its trailing spaces is the endpoint ID in both Volume and the Event Log");
     h.runtime->stop();
 }
 // The Event Log's device list labels each endpoint as its Volume row does

@@ -1,4 +1,5 @@
 #include "native/audio_endpoint_model.hpp"
+#include "native/audio_application_name.hpp"
 #include "native/system_services.hpp"
 #include <algorithm>
 #include <cmath>
@@ -82,7 +83,9 @@ std::optional<std::vector<AudioTopologyDevice>>audioTopology(std::span<const Aud
     for(const auto list:{outputs,inputs})for(const auto&d:list){
         const auto name=trimmed(d.name);
         if(trimmed(d.id).empty()||name.empty()||!seen.insert(d.id).second)return std::nullopt;
-        out.push_back({d.id,std::wstring(name)});
+        // Labelled as its Volume row is, from the same raw name (so trailing
+        // spaces count toward the 4096 UTF-8 bytes there and here), then trimmed.
+        out.push_back({d.id,std::wstring(trimmed(audioEndpointLabel(d.name,d.id)))});
     }
     std::sort(out.begin(),out.end(),[](const auto&x,const auto&y){return x.id<y.id;});
     return out;
