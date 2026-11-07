@@ -1958,7 +1958,7 @@ void Application::Impl::close(double time){
     // Reduce Motion conceals the source at once: as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), the close
     // finishes here. No frame would: the concealed demand presents nothing.
-    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time);
+    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time,true);
 }
 void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and

@@ -463,11 +463,17 @@ int Application::Impl::runIdleTrace(){
     // An area's close (App Shortcut's launch: its overlayConcealed starts the launch).
     if(areaHost){openHUD();const auto framesBefore=host.stats().frames;areaHost->closeOverlay();
      need(closedWithoutFrame(framesBefore),"An area's close (App Shortcut's launch) finishes under Reduce Motion without a frame");}
-    // The hand-offs that open once the HUD is hidden: Storage Settings and a link.
+    // The hand-offs that open once the HUD is hidden: Storage Settings and a
+    // link. The request (a canvas event) hides the HUD; the Shell opens from
+    // the posted notice after it, never inside the event.
     if(storageFixture){openHUD();const auto framesBefore=host.stats().frames;const auto before=storageFixture->settingsRequests;openStorageSettingsAfterClose(clock());
-     need(closedWithoutFrame(framesBefore)&&!pendingStorageSettings&&storageFixture->settingsRequests==before+1,"Storage Settings closes the Reduce Motion HUD without a frame, then opens Windows Settings");}
+     need(closedWithoutFrame(framesBefore)&&pendingStorageSettings&&afterCloseQueued&&storageFixture->settingsRequests==before,"Storage Settings closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingStorageSettings;});
+     need(closedWithoutFrame(framesBefore)&&!pendingStorageSettings&&!afterCloseQueued&&storageFixture->settingsRequests==before+1,"Windows Settings opens once, after the request");}
     {openHUD();const auto framesBefore=host.stats().frames;const auto links=linkRequests;openAfterClose("https://github.com/DDDuoDuo/EndfieldHUD",clock());
-     need(closedWithoutFrame(framesBefore)&&!pendingLink&&linkRequests==links+1,"A Settings link closes the Reduce Motion HUD without a frame, then opens the browser");}
+     need(closedWithoutFrame(framesBefore)&&pendingLink&&afterCloseQueued&&linkRequests==links,"A Settings link closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingLink;});
+     need(closedWithoutFrame(framesBefore)&&!pendingLink&&!afterCloseQueued&&linkRequests==links+1,"The browser opens once, after the request");}
     // Projection's hand-off (openProjection) closes the HUD, then takes the
     // window over in finishConcealment. The workspace needs the visible HUD
     // (--projection), so the hand-off carries a summon queued during the

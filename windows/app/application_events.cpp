@@ -292,7 +292,7 @@ void Application::Impl::finishOpening(double time){
 // OverlayController.finishSystemClosing: the session is concealed and nothing
 // presents any more; the window hides (keeping the topmost band, as orderOut
 // keeps the panel's level) and the lifecycle's close completes.
-void Application::Impl::finishConcealment(double time){
+void Application::Impl::finishConcealment(double time,bool inRequest){
     transitionDeadline.reset();
     if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
     core::SystemOverlayEffects closed;
@@ -302,7 +302,13 @@ void Application::Impl::finishConcealment(double time){
         if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
     }
     if(!closed.empty()){perform(closed,time);if(stopping)return;}
-    openAfterConcealed();
+    // A close Reduce Motion finished inside its request (a canvas event:
+    // Storage Settings, a Settings link): the Shell hand-offs, which may
+    // pump messages, run from a posted notice, as a frame's close runs them
+    // after the event.
+    if(inRequest&&!afterCloseQueued&&(pendingShelfReveal||pendingStorageSettings||pendingLink))
+        afterCloseQueued=PostMessageW(static_cast<HWND>(host.hwnd()),afterCloseMessage,serviceGeneration,0)!=FALSE;
+    if(!afterCloseQueued)openAfterConcealed();
     // A development preview quits with its window; the hidden idle and animation traces keep running closed.
     if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
 }
@@ -511,6 +517,9 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             return 0;
         }
         if(m.message==restartDeclinedMessage){runRestartDeclined();refresh(now());return 0;}
+        // The hand-offs of a close that finished inside its request (finishConcealment);
+        // a summon that opened the HUD again meanwhile keeps them for its close.
+        if(m.message==afterCloseMessage){afterCloseQueued=false;if(hudClosed())openAfterConcealed();return 0;}
         if(m.message==projectionDropMessage){
             auto paths=std::exchange(projectionDrop->paths,{});const auto time=now();
             if(!paths.empty()&&projectionShown()&&projectionHandoff.acceptsInput())(void)projectionCall("drop",[&]{if(const auto token=projection->preview()->prepareImportRequest()){
