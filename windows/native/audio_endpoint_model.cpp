@@ -21,7 +21,7 @@ std::wstring_view trimmed(std::wstring_view v)noexcept{
 }
 bool finiteUnit(float v)noexcept{return std::isfinite(v)&&v>=0&&v<=1;}
 bool validText(std::wstring_view v,bool allowEmpty)noexcept{
-    return (allowEmpty||!v.empty())&&v.size()<=32767&&v.find(L'\0')==v.npos&&audioUtf8(v).has_value();
+    return (allowEmpty||!v.empty())&&v.size()<=32767&&audioScalars(v,[](std::uint32_t)noexcept{return true;});
 }
 int order(const AudioNameOrder&custom,std::wstring_view a,std::wstring_view b){return custom?custom(a,b):audioNameCompare(a,b);}
 }
@@ -106,17 +106,7 @@ std::vector<AudioTopologyEvent>AudioTopologyRecorder::receive(std::span<const Au
 std::optional<std::string>audioUtf8(std::wstring_view value)noexcept{
     try{
         std::string out;out.reserve(value.size());
-        for(std::size_t i=0;i<value.size();++i){
-            auto c=static_cast<std::uint32_t>(value[i]);
-            if constexpr(sizeof(wchar_t)==2){
-                if(c>=0xd800&&c<=0xdbff){if(i+1>=value.size())return std::nullopt;const auto low=static_cast<std::uint32_t>(value[++i]);if(low<0xdc00||low>0xdfff)return std::nullopt;c=0x10000+((c-0xd800)<<10)+(low-0xdc00);}
-            }
-            if(!c||c>0x10ffff||(c>=0xd800&&c<=0xdfff))return std::nullopt;
-            if(c<0x80)out.push_back(static_cast<char>(c));
-            else if(c<0x800){out.push_back(static_cast<char>(0xc0|(c>>6)));out.push_back(static_cast<char>(0x80|(c&63)));}
-            else if(c<0x10000){out.push_back(static_cast<char>(0xe0|(c>>12)));out.push_back(static_cast<char>(0x80|((c>>6)&63)));out.push_back(static_cast<char>(0x80|(c&63)));}
-            else{out.push_back(static_cast<char>(0xf0|(c>>18)));out.push_back(static_cast<char>(0x80|((c>>12)&63)));out.push_back(static_cast<char>(0x80|((c>>6)&63)));out.push_back(static_cast<char>(0x80|(c&63)));}
-        }
+        if(!audioScalars(value,[&](std::uint32_t c){char bytes[4];out.append(bytes,audioUtf8Encode(c,bytes));return true;}))return std::nullopt;
         return out;
     }catch(...){return std::nullopt;}
 }

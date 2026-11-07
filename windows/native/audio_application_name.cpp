@@ -1,5 +1,7 @@
 #include "native/audio_application_name.hpp"
+#include "native/audio_endpoint_model.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cwctype>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -52,6 +54,16 @@ std::wstring_view audioPackageApplicationID(std::wstring_view aumid)noexcept{
     const auto bang=aumid.find(L'!');if(bang==aumid.npos||bang==0||bang+1>=aumid.size())return {};
     const auto id=aumid.substr(bang+1);return id.size()<=maximumText&&id.find(L'!')==id.npos?id:std::wstring_view{};
 }
+bool audioLabelValid(std::wstring_view v)noexcept{
+    if(v.empty()||v.size()>maximumText)return false;
+    std::size_t bytes{};
+    return audioScalars(v,[&](std::uint32_t c)noexcept{char out[4];bytes+=audioUtf8Encode(c,out);return bytes<=maximumText;});
+}
+std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candidates,std::uint32_t pid){
+    for(const auto candidate:candidates)if(audioLabelValid(candidate))return std::wstring(candidate);
+    return L"PID "+std::to_wstring(pid);
+}
+std::wstring audioSessionLabel(std::wstring_view display,std::wstring_view process,std::uint32_t pid){return audioApplicationLabel({display,process},pid);}
 #ifdef _WIN32
 std::optional<AudioPackageManifestNames>readAudioPackageManifest(const std::filesystem::path&file,std::wstring_view applicationID){
     using Microsoft::WRL::ComPtr;

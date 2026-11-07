@@ -89,6 +89,27 @@ private:
     std::optional<std::vector<AudioTopologyDevice>>previous_;
 };
 
+// The one strict UTF-16/32 decoder of the audio text rules (audioUtf8,
+// audioLabelValid, the Volume provider's sameText): each(c) receives every
+// Unicode scalar in order, without allocating. False at the first NUL,
+// unpaired surrogate or value past U+10FFFF, or when each returns false.
+template<class Each>bool audioScalars(std::wstring_view value,Each&&each)noexcept(noexcept(each(std::uint32_t{}))){
+    for(std::size_t i=0;i<value.size();++i){
+        auto c=static_cast<std::uint32_t>(value[i]);
+        if constexpr(sizeof(wchar_t)==2){
+            if(c>=0xd800&&c<=0xdbff){if(i+1>=value.size())return false;const auto low=static_cast<std::uint32_t>(value[++i]);if(low<0xdc00||low>0xdfff)return false;c=0x10000+((c-0xd800)<<10)+(low-0xdc00);}
+        }
+        if(!c||c>0x10ffff||(c>=0xd800&&c<=0xdfff)||!each(c))return false;
+    }
+    return true;
+}
+// A scalar's UTF-8 bytes; returns how many (1 to 4) were written.
+inline std::size_t audioUtf8Encode(std::uint32_t c,char(&out)[4])noexcept{
+    if(c<0x80){out[0]=static_cast<char>(c);return 1;}
+    if(c<0x800){out[0]=static_cast<char>(0xc0|(c>>6));out[1]=static_cast<char>(0x80|(c&63));return 2;}
+    if(c<0x10000){out[0]=static_cast<char>(0xe0|(c>>12));out[1]=static_cast<char>(0x80|((c>>6)&63));out[2]=static_cast<char>(0x80|(c&63));return 3;}
+    out[0]=static_cast<char>(0xf0|(c>>18));out[1]=static_cast<char>(0x80|((c>>12)&63));out[2]=static_cast<char>(0x80|((c>>6)&63));out[3]=static_cast<char>(0x80|(c&63));return 4;
+}
 // Strict UTF-16/32 -> UTF-8 (unpaired surrogates and NUL are rejected).
 std::optional<std::string>audioUtf8(std::wstring_view)noexcept;
 // Inverse, for UTF-8 identities stored by the recovery journal.

@@ -6,6 +6,7 @@
 // persistent versioned data root, real providers, tray, first run, session-end
 // durability and per-module failure isolation.
 #include "app/application_impl.hpp"
+#include "app/application_audio.hpp"
 #include "app/application_persistence.hpp"
 #include "app/areas/projection_automation.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
@@ -982,7 +983,7 @@ void Application::Impl::constructAudio(){
     // interface until the first vote; hidden tests never construct it.
     const auto window=static_cast<HWND>(host.hwnd());
     audio=std::make_unique<gpu::AudioRuntime>(gpu::nativeAudioServiceOptions(args.dataRoot),settingsLanguage(configuration),
-        [window]{PostMessageW(window,audioMessage,serviceGeneration,0);});
+        audioNotice(window,audioMessage,serviceGeneration));
     (void)audio->recover(); // crash-recovery journal of owned per-app attenuation
     if(eventRecorder)(void)audio->setDeviceEvents(true); // Event Log device list, app lifetime
 }
@@ -1931,7 +1932,7 @@ void Application::Impl::open(double time){
     if(notes&&!deferDeployEntrance)notes->beginEntrance(hostTime(time));
     quitPromptOpen=false;
     automationChanged();
-    if(audio)audio->volume().setVisible(true);
+    if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"open",[&]{audio->volume().setVisible(true);});
     if(visibleMode()&&headerClock.setActive(true,time))updateClock();
 }
 void Application::Impl::close(double time){
@@ -1943,7 +1944,7 @@ void Application::Impl::close(double time){
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
-    registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)audio->volume().setVisible(false);automationChanged();
+    registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"close",[&]{audio->volume().setVisible(false);});automationChanged();
     time=hostTime(time);
     // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).
     designDensityAtClose.reset();
@@ -1969,7 +1970,7 @@ void Application::Impl::forceConceal(double time){
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     if(session->phase()!=core::VisibilityPhase::concealed||closing){
-        registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"force close");if(audio)audio->volume().setVisible(false);
+        registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"force close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"force close",[&]{audio->volume().setVisible(false);});
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
         closing=false;session->conceal(time);if(notes)notes->setMediaActive(false,hostTime(time));
     }
@@ -2128,7 +2129,9 @@ void Application::Impl::applyConfiguration(double time){
     session->setSettings(settings,time);
     // A HUD scale, offset or Reduce Motion change while closed: the next opening's density (cached per layout).
     if(session->phase()==core::VisibilityPhase::concealed)holdDesignDensity();
-    watchAppearance.language=settingsLanguage(configuration);if(audio)audio->setLanguage(watchAppearance.language);
+    watchAppearance.language=settingsLanguage(configuration);
+    // The Volume failure text republishes the binding (Volume's isolation).
+    if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"language",[&]{(void)audio->setLanguage(watchAppearance.language);});
     rasterizer.setDefaultFontLanguage(textFontLanguage(watchAppearance.language));
     watchAppearance.dark=configuration.string("theme")!="light";
     if(configuration.string("theme")=="system"){DWORD light=0,size=sizeof(light);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS)watchAppearance.dark=light==0;}

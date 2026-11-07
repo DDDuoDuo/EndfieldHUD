@@ -32,6 +32,37 @@ void references(){
     check(gpu::audioPackageApplicationID(L"Synthetic.Player_8wekyb3d8bbwe!App")==L"App","The application id follows the family name");
     check(gpu::audioPackageApplicationID(L"Synthetic.Player_8wekyb3d8bbwe").empty()&&gpu::audioPackageApplicationID(L"!App").empty()&&gpu::audioPackageApplicationID(L"Family!").empty()&&gpu::audioPackageApplicationID(L"a!b!c").empty(),"Malformed AppUserModelIDs name no application");
 }
+// Per-app labels: the WASAPI backend's name chain (audioProcessLabel, then
+// audioSessionLabel, the order NativeBackend::add runs) and the worker's
+// backstop (audioApplicationLabel). An app-set display name or a version
+// resource with an unpaired surrogate yields to the next candidate, never to
+// a throw in the UI's UTF-8 conversion. Literals hold scalars, so a valid
+// pair stays valid and a lone surrogate stays invalid whether wchar_t is 16
+// or 32 bits.
+void labels(){
+    const std::wstring high(1,static_cast<wchar_t>(0xD800)),low(1,static_cast<wchar_t>(0xDC00));
+    const std::wstring badDisplay=L"Player"+high,badDescription=low+L"Tail",nul(L"Nul\0Name",8);
+    unsigned reads{};
+    const auto reader=[&](std::wstring value){return [&reads,value]{++reads;return value;};};
+    // The process name, then the session's display name over it.
+    const auto process=gpu::audioProcessLabel(L"",reader(L"Synthetic Player"),L"player",4242);
+    check(process==L"Synthetic Player"&&reads==1,"The executable's FileDescription names a process without a package name");
+    check(gpu::audioProcessLabel(L"Synthetic Package",reader(L"Synthetic Player"),L"player",4242)==L"Synthetic Package"&&reads==1,"A valid package DisplayName comes first and no FileDescription is read");
+    check(gpu::audioSessionLabel(badDisplay,process,4242)==L"Synthetic Player","An ill-formed session display name keeps the process name");
+    check(gpu::audioSessionLabel(L"Music \U0001F3B5",process,4242)==L"Music \U0001F3B5","A well-formed display name (a surrogate pair in UTF-16) is shown over the process name");
+    check(gpu::audioProcessLabel(L"",reader(badDescription),L"player",4242)==L"player","An ill-formed FileDescription falls back to the executable stem");
+    check(gpu::audioProcessLabel(high+L"Package",reader(L"Synthetic Player"),L"player",4242)==L"Synthetic Player","An ill-formed package DisplayName falls back to the FileDescription");
+    check(gpu::audioProcessLabel(L"",reader(badDescription),low,4242)==L"PID 4242"&&gpu::audioSessionLabel(badDisplay,gpu::audioProcessLabel(L"",reader(badDescription),high,7),7)==L"PID 7","With every candidate bad the label is \"PID n\"");
+    check(gpu::audioApplicationLabel({},4646)==L"PID 4646","The worker's backstop label for a refused name");
+    // The Volume row's bound is 4096 UTF-8 bytes, not UTF-16 units.
+    check(gpu::audioLabelValid(std::wstring(4096,L'a'))&&!gpu::audioLabelValid(std::wstring(4097,L'a')),"4096 ASCII bytes are kept, 4097 are not");
+    std::wstring cjk(1365,L'\u6587');check(gpu::audioLabelValid(cjk+L'a')&&!gpu::audioLabelValid(cjk+L"\u00e9"),"1365 CJK characters plus one byte (4096 bytes) are kept, plus two bytes (4097) are not");
+    std::wstring emoji;for(int n=0;n<1024;++n)emoji+=L"\U0001F3B5";
+    check(gpu::audioLabelValid(emoji)&&!gpu::audioLabelValid(emoji+L'a'),"1024 four-byte scalars (4096 bytes) are kept, one more byte is not");
+    check(gpu::audioSessionLabel(cjk+L"\u00e9",L"Short",9)==L"Short","A name past 4096 UTF-8 bytes yields to the next candidate");
+    check(!gpu::audioLabelValid(nul)&&gpu::audioSessionLabel(nul,process,1)==L"Synthetic Player","An embedded NUL is refused");
+    check(!gpu::audioLabelValid(L"")&&!gpu::audioLabelValid(high)&&!gpu::audioLabelValid(low)&&!gpu::audioLabelValid(high+L"A")&&!gpu::audioLabelValid(L"A"+low+high),"Empty and unpaired surrogates are refused");
+}
 #ifdef _WIN32
 struct TemporaryDirectory {
     std::filesystem::path path;
@@ -89,7 +120,7 @@ void manifests(){
 #endif
 }
 int main(){
-    try{references();
+    try{references();labels();
 #ifdef _WIN32
         manifests();
 #endif

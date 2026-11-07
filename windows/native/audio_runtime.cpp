@@ -64,10 +64,10 @@ AudioRuntimeChanges AudioRuntime::drain(){
     s.pending->store(false,std::memory_order_release);
     if(!s.service.drain())return changes;
     changes.snapshot=true;
+    // The Volume binding is not republished here: the caller does it after
+    // drain() under the Volume owner's isolation (volume().receive()), so a
+    // Volume publish that throws can never stop this adoption.
     const auto&current=s.service.snapshot();
-    // The binding republishes only while Volume is visible and selected; its
-    // receiver updates the Volume owner synchronously.
-    changes.volume=s.binding.receive();
     if(current.applications!=s.applications){s.applications=current.applications;++s.applicationsRevision;changes.applications=true;}
     if(!current.topologyListed||!current.topologyActive)s.topologyListed=false;
     else if(!s.topologyListed||current.topologyGeneration!=s.topologyGeneration){

@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <string_view>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -85,9 +87,40 @@ void stub(const std::filesystem::path&path){std::array<unsigned char,1024>bytes{
     u16(0,0x5a4d);u32(0x3c,0x80);u32(0x80,0x4550);u16(0x84,0x14c);u16(0x86,1);u16(0x94,224);u16(0x96,0x102);const std::size_t o=0x98;u16(o,0x10b);u32(o+4,512);u32(o+16,0x1000);u32(o+20,0x1000);u32(o+28,0x400000);u32(o+32,4096);u32(o+36,512);u16(o+40,6);u16(o+48,6);u32(o+56,8192);u32(o+60,512);u16(o+68,3);u32(o+72,0x100000);u32(o+76,4096);u32(o+80,0x100000);u32(o+84,4096);u32(o+92,16);const std::size_t s=o+224;const char name[]=".text";std::copy(name,name+5,bytes.data()+s);u32(s+8,1);u32(s+12,0x1000);u32(s+16,512);u32(s+20,512);u32(s+36,0x60000020);bytes[512]=0xc3;
     std::ofstream output(path,std::ios::binary|std::ios::trunc);output.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));check(bool(output),"Write only owned synthetic PE metadata fixture; never execute it");
 }
+// A version resource (VS_VERSIONINFO) naming the owned synthetic PE with
+// `description` as its FileDescription, written with the documented
+// UpdateResource API. The PE is never executed.
+using Bytes=std::vector<unsigned char>;
+void wideBytes(Bytes&out,std::wstring_view text){for(const wchar_t c:text){out.push_back(static_cast<unsigned char>(c));out.push_back(static_cast<unsigned char>(static_cast<unsigned>(c)>>8));}out.push_back(0);out.push_back(0);}
+Bytes versionNode(std::wstring_view key,const Bytes&value,std::size_t valueLength,bool text,std::initializer_list<Bytes>children){
+    Bytes b(6,0);wideBytes(b,key);while(b.size()%4)b.push_back(0);b.insert(b.end(),value.begin(),value.end());
+    for(const auto&child:children){while(b.size()%4)b.push_back(0);b.insert(b.end(),child.begin(),child.end());}
+    const auto put=[&](std::size_t at,std::size_t v){b[at]=static_cast<unsigned char>(v);b[at+1]=static_cast<unsigned char>(v>>8);};
+    put(0,b.size());put(2,valueLength);put(4,text?1:0);return b;
+}
+void versioned(const std::filesystem::path&path,std::wstring_view description){
+    stub(path);Bytes fixed(52,0);const unsigned signature=0xFEEF04BD,structure=0x00010000;
+    for(unsigned n=0;n<4;++n){fixed[n]=static_cast<unsigned char>(signature>>(8*n));fixed[4+n]=static_cast<unsigned char>(structure>>(8*n));}
+    Bytes text;wideBytes(text,description);
+    const auto entry=versionNode(L"FileDescription",text,description.size()+1,true,{});
+    const auto strings=versionNode(L"StringFileInfo",{},0,true,{versionNode(L"040904b0",{},0,true,{entry})});
+    const auto variables=versionNode(L"VarFileInfo",{},0,true,{versionNode(L"Translation",Bytes{0x09,0x04,0xb0,0x04},4,false,{})});
+    auto root=versionNode(L"VS_VERSION_INFO",fixed,fixed.size(),false,{strings,variables});
+    const HANDLE update=BeginUpdateResourceW(path.c_str(),FALSE);check(update!=nullptr,"Open the owned synthetic PE for its version resource");
+    const bool added=UpdateResourceW(update,MAKEINTRESOURCEW(16)/*RT_VERSION*/,MAKEINTRESOURCEW(VS_VERSION_INFO),MAKELANGID(LANG_ENGLISH,SUBLANG_ENGLISH_US),root.data(),static_cast<DWORD>(root.size()))!=FALSE;
+    check(EndUpdateResourceW(update,!added)!=FALSE&&added,"Write the synthetic version resource");
+}
 void shellLink(const std::filesystem::path&path,const std::filesystem::path&target,const wchar_t*args){Microsoft::WRL::ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));hr(link->SetPath(target.c_str()));hr(link->SetArguments(args));hr(link->SetWorkingDirectory(target.parent_path().c_str()));Microsoft::WRL::ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Save(path.c_str(),TRUE));}
 void nativeFixtures(){hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struct End{~End(){CoUninitialize();}}end;Temp temp;const auto exe=temp.path/L"中文程序.exe",link=temp.path/L"应用链接.lnk",replacement=temp.path/L"updated.exe";stub(exe);shellLink(link,exe,L"--profile 中文");
     auto operations=n::windowsAppShortcutOS();unsigned launches{};n::AppShortcutResolved last;operations.launch=[&](const auto&r,std::uintptr_t){++launches;last=r;last.lease.reset();return n::AppShortcutLaunchReceipt{123};};n::NativeAppShortcutService service(std::move(operations));
+    // An executable's FileDescription names it; one that is not valid UTF-16
+    // (an unpaired surrogate) threw out of inspection, so the app could not
+    // be added. It now falls back to the file name, as a missing one does.
+    const auto described=temp.path/L"描述程序.exe",unpaired=temp.path/L"坏描述.exe";
+    versioned(described,L"Synthetic \U0001F3B5 Player");versioned(unpaired,std::wstring(L"Bad ")+static_cast<wchar_t>(0xD800)+L" Player");
+    check(service.inspect({n::AppShortcutSelectionKind::file,utf8Path(described)}).name=="Synthetic \xF0\x9F\x8E\xB5 Player","A synthetic FileDescription names the executable");
+    std::string fallback;try{fallback=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(unpaired)}).name;}catch(const std::exception&){fallback="threw";}
+    check(fallback=="坏描述","A FileDescription with an unpaired surrogate falls back to the file name instead of failing inspection");
     const auto app=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(exe)});check(app.name=="中文程序","Real Win32 inspector preserves Unicode filename when no version resource exists");const auto shortcut=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(link)});check(n::NativeAppShortcutService::sameTarget(app.locator,shortcut.locator),"Real ShellLink metadata targets the same owned application");
     check(shortcut.locator["windowsTarget"]["launch"]["arguments"]==J("--profile 中文"),"Real ShellLink reader preserves authored Unicode arguments");
     stub(replacement);check(MoveFileExW(replacement.c_str(),exe.c_str(),MOVEFILE_REPLACE_EXISTING)!=FALSE,"Owned update replaces executable at the same saved path");const auto updated=service.reinspect(app.locator);check(n::NativeAppShortcutService::sameTarget(app.locator,updated.locator),"Real binary file replacement does not invalidate saved application path");
