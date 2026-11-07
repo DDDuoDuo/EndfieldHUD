@@ -912,12 +912,13 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
     }
 
     /// Something the macOS account can fill is showing a chosen value instead.
+    /// The default picture counts only when there is a login picture to show.
     /// Off while Recording mode hides the account.
     private var canUseSystemAccount: Bool {
         guard store != nil, profile.systemAccount != nil else { return false }
         return (canEdit(.name) && !profile.followsSystemName)
             || (canEdit(.playerID) && profile.playerIDOverride != nil)
-            || profile.avatarFilename != nil || !profile.autoAvatar
+            || profile.avatarFilename != nil || (!profile.autoAvatar && profile.systemAccount?.avatarKey != nil)
     }
 
     private func useSystemAccount() {
