@@ -249,6 +249,8 @@ final class AppShortcutCanvas: HUDDesignCanvas {
             reorder = state
         case .ended:
             guard let state = reorder, state.id == id else { return }
+            // Closing the HUD or leaving the module mid-drag puts the row back.
+            guard !isCancellingGestures else { cancelReorder(); return }
             reorder = nil
             state.drop(rows[id]?.layer, env: env)
             guard state.order != items.map(\.id), let store else { return }

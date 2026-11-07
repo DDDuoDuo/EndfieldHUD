@@ -159,6 +159,9 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private(set) var page = HUDDesignPage()
     private let router = HUDInteractionRouter()
     private(set) var isActive = false
+    /// True while leaving or deactivating ends the controls' gestures: an
+    /// `.ended` a control reports then is an interruption, not a drop.
+    private(set) var isCancellingGestures = false
     private(set) var renderedLanguage: AppLanguage?
     /// `HUDColor.paletteGeneration` of the installed page.
     private var renderedPalette = HUDColor.paletteGeneration
@@ -573,6 +576,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     private func cancelGestures() {
+        isCancellingGestures = true
+        defer { isCancellingGestures = false }
         for control in router.controls { (control as? HUDSlider)?.cancelDrag(); control.clearInteractionState() }
         router.cancel()
     }
