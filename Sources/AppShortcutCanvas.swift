@@ -276,9 +276,8 @@ final class AppShortcutCanvas: HUDDesignCanvas {
     }
 
     override func cursor(at point: CGPoint?) -> NSCursor? {
-        if reorder != nil { return .closedHand }
-        guard isActive, items.count > 1, chooser == nil, let point else { return nil }
-        return grips.contains { $0.isUnderPointer(point, in: root) } ? .openHand : nil
+        guard reorder != nil || (isActive && items.count > 1 && chooser == nil) else { return nil }
+        return HUDDragGrip.cursor(lifted: reorder != nil, grips: grips, at: point, in: root)
     }
 
     /// Choose icon: every preset as the tile it would make, in an icon grid.

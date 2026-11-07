@@ -107,6 +107,8 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     /// The task whose title is being edited in place, and its field.
     private var editingTask: (id: UUID, field: HUDDesignTextField)?
     private var reorder: HUDListReorder<UUID>?
+    /// The TODO cards' grips, for the drag-to-reorder cursor hint.
+    private var taskGrips: [HUDDragGrip] = []
     private var expandedBodyHeight: CGFloat = 0
     private var reportedStatus: String?
     private var reportedLoadProblem = false
@@ -190,7 +192,7 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     }
 
     override func buildPage(_ page: HUDDesignPage) {
-        cards = [:]; tabs = nil; formatBar = nil; reorder = nil
+        cards = [:]; tabs = nil; formatBar = nil; reorder = nil; taskGrips = []
         if let editing = editingTask, !editing.field.isEditing { editingTask = nil }
         let doc = document
         let folded = doc.isFolded && storageError == nil
@@ -293,6 +295,7 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
                     list.content.addSublayer(card.layer)
                 }
                 page.add(card.controls); page.add(grip)
+                taskGrips.append(grip)
                 staggered.append(card.layer)
                 cards[task.id] = card
             }
@@ -463,6 +466,12 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
         guard let state = reorder else { return }
         reorder = nil
         state.cancel(restoring: document.tasks.map(\.id), layers: { [cards] in cards[$0]?.layer })
+    }
+
+    /// The open hand over a TODO card's grip, the closed hand while one is lifted.
+    override func cursor(at point: CGPoint?) -> NSCursor? {
+        guard reorder != nil || (isActive && document.tab == .todo) else { return nil }
+        return HUDDragGrip.cursor(lifted: reorder != nil, grips: taskGrips, at: point, in: root)
     }
 
     // MARK: TEXT

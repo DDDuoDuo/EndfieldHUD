@@ -293,6 +293,8 @@ final class HUDDragGrip: HUDControl {
     private let dots = HUDLayer.shape("grip.dots")
     private var start: CGPoint?
     private(set) var isDragging = false
+    /// How far the pointer travels before a press becomes a drag.
+    static let liftDistance: CGFloat = 3
 
     init(id: String, label: String = "", size: CGSize, dotsAt origin: CGPoint, env: HUDDesignEnvironment) {
         super.init(id: id, label: label, env: env)
@@ -327,7 +329,7 @@ final class HUDDragGrip: HUDControl {
     override func pointerDragged(to point: CGPoint) {
         guard let start else { return }
         if !isDragging {
-            guard hypot(point.x - start.x, point.y - start.y) > 3 else { return }
+            guard hypot(point.x - start.x, point.y - start.y) > Self.liftDistance else { return }
             isDragging = true
             onDrag?(.began, start)
         }
@@ -343,6 +345,16 @@ final class HUDDragGrip: HUDControl {
     /// cursor is the open hand there.
     func isUnderPointer(_ point: CGPoint, in root: CALayer) -> Bool {
         layer.isVisible(in: root) && layer.isUnclipped(point, in: root) && contains(layer.convert(point, from: root))
+    }
+
+    /// The drag-to-reorder hint every grip list shares (TODO cards, App
+    /// Shortcut rows, Modules): the closed hand while a row is lifted, the
+    /// open hand over a shown grip, otherwise the owner has no cursor.
+    static func cursor<Grips: Sequence>(lifted: Bool, grips: Grips, at point: CGPoint?, in root: CALayer) -> NSCursor?
+        where Grips.Element == HUDDragGrip {
+        if lifted { return .closedHand }
+        guard let point else { return nil }
+        return grips.contains { $0.isUnderPointer(point, in: root) } ? .openHand : nil
     }
 
     override func clearInteractionState() {
