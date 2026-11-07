@@ -9,9 +9,15 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 namespace gpu=endfield::native;
+// audioEndpointLabel returns one of its arguments: a temporary would dangle
+// once kept, so only lvalues are accepted.
+template<class Name,class ID>concept endpointLabelCallable=requires(Name&&name,ID&&id){gpu::audioEndpointLabel(std::forward<Name>(name),std::forward<ID>(id));};
+static_assert(endpointLabelCallable<std::wstring&,const std::wstring&>,"Endpoint labels are chosen from lvalues");
+static_assert(!endpointLabelCallable<std::wstring,const std::wstring&>&&!endpointLabelCallable<const std::wstring&,std::wstring>&&!endpointLabelCallable<std::wstring,std::wstring>,"A temporary name or ID is refused: the returned reference would dangle");
 unsigned checks{};
 void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
 void references(){
@@ -61,6 +67,8 @@ void labels(){
     check(gpu::audioLabelValid(emoji)&&!gpu::audioLabelValid(emoji+L'a'),"1024 four-byte scalars (4096 bytes) are kept, one more byte is not");
     check(gpu::audioSessionLabel(cjk+L"\u00e9",L"Short",9)==L"Short","A name past 4096 UTF-8 bytes yields to the next candidate");
     check(!gpu::audioLabelValid(nul)&&gpu::audioSessionLabel(nul,process,1)==L"Synthetic Player","An embedded NUL is refused");
+    const std::wstring endpointID=L"{0.0.0.00000000}.{usb}",endpointName=L"USB Headset",longEndpoint=cjk+L"\u00e9";
+    check(&gpu::audioEndpointLabel(endpointName,endpointID)==&endpointName&&&gpu::audioEndpointLabel(longEndpoint,endpointID)==&endpointID,"An endpoint keeps a valid name and is labelled by its ID otherwise");
     check(!gpu::audioLabelValid(L"")&&!gpu::audioLabelValid(high)&&!gpu::audioLabelValid(low)&&!gpu::audioLabelValid(high+L"A")&&!gpu::audioLabelValid(L"A"+low+high),"Empty and unpaired surrogates are refused");
 }
 #ifdef _WIN32

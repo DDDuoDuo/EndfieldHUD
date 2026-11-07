@@ -51,7 +51,12 @@ bool audioLabelValid(std::wstring_view)noexcept;
 // An endpoint's label wherever it is shown (a Volume row, the Event Log's
 // device list): its name when audioLabelValid accepts it, else its endpoint
 // ID, so an empty, ill-formed or over-long name never withholds the endpoint.
+// It returns one of its arguments, so temporaries are refused: a kept result
+// would dangle.
 inline const std::wstring&audioEndpointLabel(const std::wstring&name,const std::wstring&id)noexcept{return audioLabelValid(name)?name:id;}
+const std::wstring&audioEndpointLabel(std::wstring&&,const std::wstring&)=delete;
+const std::wstring&audioEndpointLabel(const std::wstring&,std::wstring&&)=delete;
+const std::wstring&audioEndpointLabel(std::wstring&&,std::wstring&&)=delete;
 // The first valid candidate, else "PID n" (the worker's backstop passes none).
 std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candidates,std::uint32_t pid);
 // The WASAPI session backend's two labels in the source's order (name,
