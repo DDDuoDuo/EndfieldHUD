@@ -1895,7 +1895,22 @@ void Application::Impl::openPresentation(core::Module initial,double time){
         if(placing){placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;}
         holdOpeningDesignDensity();if(placing&&visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
-    open(time);if(visibleMode())host.show();refresh(time);
+    showOpening(time);
+}
+// OverlayController.performSystemAction(.open) orders the panel front in the
+// transaction that already holds the entrance's first pose (a new
+// SystemHUDView: the canvas at 0, the source at its initial pose). Here the
+// opening's first frame presents before the window shows, so the window
+// never composites what its swap chain held before: a close's last retract
+// frame within the graphics grace (its canvas still opaque, the fade waits
+// past the exit), the HUD a lock or sleep hid, a Projection page. It is the
+// frame refresh would post, drawn first; the posted frame continues. (A
+// summon dispatched inside a frame leaves it to that frame, which poses
+// the opening once its nested dispatch returns.)
+void Application::Impl::showOpening(double time){
+    open(time);
+    if(liveScheduling()&&ready&&!stopping&&!framePresenting&&!projectionShown()&&(!presentFrame(time)||stopping))return;
+    if(visibleMode())host.show();refresh(time);
 }
 void Application::Impl::selectModule(core::Module module,double time){
     if(notes){const auto current=notes->selected();

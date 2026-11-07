@@ -387,6 +387,7 @@ struct Application::Impl {
     std::wstring trayTooltip;
     void selectModule(core::Module, double time);
     void open(double time);
+    void showOpening(double time); // open, its first frame, then the window
     void close(double time);
     // OverlayController.finishSystemOpening / finishSystemClosing: the end of
     // an opening (the session visible) and of a close (the session concealed),
@@ -422,6 +423,7 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
+    std::optional<bool> presentFrame(double time);
     double replayDesignDensity(double start, bool exit, double fraction = 1); // the design density stepped through (part of) the retract or deploy
     void retractDesignDensity(); // a retract settled hidden: where the next deploy starts
     void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
@@ -781,6 +783,7 @@ struct Application::Impl {
     struct ProjectionDropInbox {HWND hwnd{};bool enabled{};double scale{1};core::Point point;std::vector<std::string>paths;};
     std::shared_ptr<ProjectionDropInbox> projectionDrop{std::make_shared<ProjectionDropInbox>()};
     bool projectionActionsQueued{}, projectionPainting{}, projectionDisplayPending{};
+    bool framePresenting{}; // inside presentFrame: a summon a frame's nested dispatch runs draws no frame of its own
     std::optional<ClientMetrics> projectionResizePending;
     std::deque<tools::ProjectionPreviewAction> projectionActions;
     std::optional<gpu::TrayAction> projectionTrayAction;

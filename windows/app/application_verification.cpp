@@ -331,14 +331,33 @@ int Application::Impl::runIdleTrace(){
     const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
     const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
     const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
-    const auto openHUD=[&]{perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
+    // A summon, the window shown where openPresentation shows it. Before the
+    // window shows, the opening's first frame is drawn: the window never
+    // composites what was presented before it (as OverlayController orders
+    // the panel front with the entrance's first pose committed). That would
+    // be the last frame of the previous close, whose canvas is still opaque
+    // (its fade waits past the exit), or the HUD a lock or sleep hid. Its
+    // pose is the entrance's first: the session opening, the canvas at 0
+    // (the frame time the design density recorded). Under Reduce Motion the
+    // first frame is the stable HUD.
+    if(chromePlan)need(chromePlan->exitSeconds()<source::DesktopChromeTiming::closingDelay&&source::DesktopChromeTiming::opacity(false,chromePlan->exitSeconds())==1,
+                       "A close's last retract frame draws the canvas at full opacity: the next opening must not show it");
+    const auto drawn=[&]{const auto s=renderer.stats();return s.nativePasses+s.nativePassesSkipped;};
+    const auto summon=[&]{const auto before=drawn();perform(lifecycle.toggle(),clock());
+        const bool first=drawn()>before&&session->phase()!=core::VisibilityPhase::concealed&&(settings.reduceMotion||
+            (session->phase()==core::VisibilityPhase::opening&&(!designOverlay||(designDensityFrameTime&&canvasOpacity(*designDensityFrameTime)<.01))));
+        if(!first)std::cout<<"Idle trace summon before the window shows: frames drawn +"<<drawn()-before<<", session "<<static_cast<unsigned>(session->phase())
+                           <<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
+        need(first,"A summon draws the opening's first pose before the window shows");host.show(false);};
+    const auto openHUD=[&]{summon();host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
     const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
     // An opening as the summon hotkey asks for it (OverlayController toggle):
     // the time to its first frame and to the open phase.
     struct Opening {double firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
-    const auto timedOpening=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;const auto at=OverlayHost::clockNow();Opening o;
-        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
-        pump(10,[&]{if(o.firstFrame<0&&host.stats().frames!=frames)o.firstFrame=OverlayHost::clockNow()-at;return opened();});
+    const auto timedOpening=[&]{const auto before=renderer.stats();const auto at=OverlayHost::clockNow();Opening o;
+        // Its first frame is the one the summon drew before the window showed.
+        summon();o.firstFrame=OverlayHost::clockNow()-at;host.setFrameDemand(demand(clock()));
+        pump(10,[&]{return opened();});
         need(opened(),"The traced HUD opened");const auto after=renderer.stats();
         o.opened=OverlayHost::clockNow()-at;o.resume=after.deviceResumeSeconds-before.deviceResumeSeconds;o.resumes=after.deviceResumes-before.deviceResumes;return o;};
     measure("closed-after-launch");
