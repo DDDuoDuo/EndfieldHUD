@@ -1011,6 +1011,15 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     // When the held frame became due: from then on it samples input for at
     // most sampleWindow(), then runs before the rest.
     double dueAt = runGated ? monotonicSeconds() : 0;
+    // A frame held while this batch runs (WM_TIMER never comes while input
+    // is queued) becomes due between messages: admitted, or past gateBound.
+    // Asked after every message, the ones a key filter consumes included.
+    const auto checkGate = [&] {
+        if (runGated || !p.gated) return;
+        try { runGated = p.gateDue(p.callbacks); }
+        catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
+        if (runGated) dueAt = monotonicSeconds();
+    };
     MSG message{};
     // A finite batch prevents a producer from starving the one animation clock.
     // Another pump immediately observes remaining input through INPUTAVAILABLE.
@@ -1030,7 +1039,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
             if(!p.window||p.stopped)break;
             // A filter may recreate its owner. Never translate an old queued
             // key into the replacement editor, even if Windows reuses HWND.
-            if(consumed||p.window!=owner||p.callbacks!=handlers)continue;
+            if(consumed||p.window!=owner||p.callbacks!=handlers){checkGate();continue;}
         }
         TranslateMessage(&message);
         p.ownFrameDispatch = message.message == frameMessage && message.hwnd == owner;
@@ -1038,13 +1047,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
         p.ownFrameDispatch = false;
         p.rethrow();
         if (!p.window || p.stopped) break;
-        // A frame held while this batch runs (WM_TIMER never comes while
-        // input is queued) becomes due here: admitted, or past gateBound.
-        if (!runGated && p.gated) {
-            try { runGated = p.gateDue(p.callbacks); }
-            catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
-            if (runGated) dueAt = monotonicSeconds();
-        }
+        checkGate();
     }
     if (runGated && p.window && !p.stopped) {
         try { p.runGated(); }

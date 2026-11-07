@@ -765,8 +765,10 @@ LRESULT CALLBACK dropFixtureLeaves(int code, WPARAM remove, LPARAM value) {
 // held frame waited for a whole input batch, and the gate timer's WM_TIMER
 // never comes while input is queued). The held frame runs once admitted, or
 // 50 ms after it was held, after sampling the input that came with its
-// admission. Hidden: posted moves to a never-shown window, an auto-reset event
-// standing in for the swap chain's frame latency object.
+// admission. The same holds for held keys whose auto-repeat a module's key
+// filter consumes. Hidden: posted moves and key repeats to a never-shown
+// window, an auto-reset event standing in for the swap chain's frame latency
+// object.
 void gatedFrameUnderContinuousInput() {
     const HANDLE gate = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     check(gate != nullptr, "Create the stand-in frame latency object");
@@ -783,14 +785,26 @@ void gatedFrameUnderContinuousInput() {
     // frame as admitted before it dispatches the queued input).
     callbacks.presentationHeld = [&] { return admissionHeld; };
     callbacks.presentationAdmitted = [&] { admittedAtMove.push_back(moves); };
-    // One resize step: a move that costs `cost` seconds and, while the drag
-    // lasts, queues the next move before it returns (the mouse moved again).
-    callbacks.pointer = [&](const PointerEvent& event) {
-        if (event.kind != PointerKind::move) return false;
+    // One input step that costs `cost` seconds; true while the input lasts.
+    const auto step = [&] {
         ++moves;
         for (const auto end = OverlayHost::clockNow() + cost; OverlayHost::clockNow() < end;) {}
         if (moves == signalAt) SetEvent(gate);
-        if (moves < limit) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(moves % 16, 1));
+        return moves < limit;
+    };
+    // One resize step: while the drag lasts, a move queues the next move
+    // before it returns (the mouse moved again).
+    callbacks.pointer = [&](const PointerEvent& event) {
+        if (event.kind != PointerKind::move) return false;
+        if (step()) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(moves % 16, 1));
+        return true;
+    };
+    // A held key a module's key filter consumes (a held arrow moving a
+    // selection): each auto-repeat is one step and queues the next.
+    constexpr LPARAM keyRepeat = 1 | (1 << 30);
+    callbacks.beforeKeyTranslation = [&](const NativeMessage& message) {
+        if (message.message != WM_KEYDOWN || message.wParam != VK_RIGHT) return false;
+        if (step()) PostMessageW(window, WM_KEYDOWN, VK_RIGHT, keyRepeat);
         return true;
     };
     OverlayOptions options{L"Hidden gated input fixture", 0, 0, 16, 16, nullptr};
@@ -816,9 +830,10 @@ void gatedFrameUnderContinuousInput() {
         check(host.stats().presentationGated && frameAtMove.empty(), "The frame waits for the swap chain's admission");
         return since;
     };
-    const auto drag = [&](unsigned until, double seconds, unsigned signal) {
+    const auto drag = [&](unsigned until, double seconds, unsigned signal, bool keys = false) {
         limit = until; cost = seconds; signalAt = signal;
-        PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 1));
+        if (keys) PostMessageW(window, WM_KEYDOWN, VK_RIGHT, keyRepeat);
+        else PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 1));
         for (unsigned i = 0; i < 256 && moves < limit; ++i) host.pumpOnce(0);
         limit = signalAt = 0; cost = 0;
     };
@@ -836,6 +851,17 @@ void gatedFrameUnderContinuousInput() {
     check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
         host.stats().presentationFallbacks > before.presentationFallbacks,
         "A held frame the swap chain never admits runs 50 ms after it was held while input keeps arriving");
+    // The same two with a held key whose repeats the key filter consumes.
+    hold(); drag(300, .002, 3, true);
+    std::cout << "Gated frame under consumed key repeats: admitted at repeat 3, first frame after repeat " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() >= 3 && frameAtMove.front() <= 15,
+        "A held frame runs within about half a refresh of admission while consumed key repeats keep arriving");
+    before = host.stats();
+    held = hold(); drag(300, .002, 0, true);
+    std::cout << "Gated frame under consumed key repeats: never admitted, first frame after repeat " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
+        host.stats().presentationFallbacks > before.presentationFallbacks,
+        "A held frame the swap chain never admits runs 50 ms after it was held while consumed key repeats keep arriving");
     // A burst of cheap moves queued while the frame is held, then admitted at
     // once (the Projection contract): the one frame samples the whole burst,
     // whichever edge takes the admission.
