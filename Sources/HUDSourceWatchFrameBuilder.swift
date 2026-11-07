@@ -101,7 +101,7 @@ final class HUDSourceWatchFrameBuilder {
         didSet {
             guard oldValue != desktopRaisedButton else { return }
             cacheGeneration &+= 1
-            raisedNodeIDs = desktopRaisedButton.map(subtree(of:)) ?? []
+            raisedNodeIDs = desktopRaisedButton.map { Self.subtrees(of: [$0], in: document.scene) } ?? []
         }
     }
     private var raisedNodeIDs: Set<HUDSourceID> = []
@@ -391,23 +391,13 @@ final class HUDSourceWatchFrameBuilder {
         desktopProfileNodeIDs = Set(document.desktopProfileCard?.scene.nodes.map(\.id) ?? [])
         ambientRoots = Set(document.animation.ambient.curves.filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
             .union(additionalAmbientRotationIDs)
-        var dynamicNodes = ambientRoots
-        for id in document.scene.traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, dynamicNodes.contains(parent) { dynamicNodes.insert(id) }
-        }
+        let dynamicNodes = Self.subtrees(of: ambientRoots, in: document.scene)
         ambientNodes = dynamicNodes
         pointerRootIDs = ambientRoots.union(sourceLayout.slantRootIDs)
-        var pointerNodes = pointerRootIDs
-        for id in document.scene.traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, pointerNodes.contains(parent) { pointerNodes.insert(id) }
-        }
+        let pointerNodes = Self.subtrees(of: pointerRootIDs, in: document.scene)
         pointerNodeIDs = pointerNodes
         pointerTraversalIDs = document.scene.traversalIDs.filter { pointerNodes.contains($0) }
-        var rowPool = sourceLayout.slantRootIDs
-        for id in document.scene.traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, rowPool.contains(parent) { rowPool.insert(id) }
-        }
-        rowPoolNodeIDs = rowPool
+        rowPoolNodeIDs = Self.subtrees(of: sourceLayout.slantRootIDs, in: document.scene)
         slantIndependentOfAmbient = !document.scene.nodes.contains { node in
             guard let effect = document.component("UIScrollCellSlantEffect", on: node.id) else { return false }
             return dynamicNodes.contains(node.id) || effect["_cells"].array.compactMap(\.targetID).contains { dynamicNodes.contains($0) }
@@ -1554,11 +1544,11 @@ final class HUDSourceWatchFrameBuilder {
         let mesh = try text.build(on: id, rect: rect, sdfScale: sdfScale, literal: replacement)
         textMeshes[id] = (key, literal, mesh); return mesh
     }
-    /// `root` and every node under it.
-    private func subtree(of root: HUDSourceID) -> Set<HUDSourceID> {
-        var result: Set<HUDSourceID> = [root]
-        for id in traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, result.contains(parent) { result.insert(id) }
+    /// `roots` and every node under them (the scene lists parents first).
+    private static func subtrees(of roots: Set<HUDSourceID>, in scene: HUDSourceScene) -> Set<HUDSourceID> {
+        var result = roots
+        for id in scene.traversalIDs {
+            if let parent = scene.node(id)?.parentID, result.contains(parent) { result.insert(id) }
         }
         return result
     }
