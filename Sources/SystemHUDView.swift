@@ -2693,7 +2693,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
             self.updateWorkPresentation(force: true)
             self.hintLabel.string = "ESC / \(self.configuration.summonShortcut.displayName.uppercased()) / " + L10n.text("CLICK OUTSIDE TO CLOSE", "点击外侧关闭")
-            // Display > Battery alert > Close hint. The line sits alone below
+            // Display > Close hint. The line sits alone below
             // the design box, so hiding it leaves no gap to close.
             self.hintLabel.isHidden = !self.configuration.showsCloseHint
             self.setAccessibilityLabel(L10n.text("System interface", "系统界面") + ", " + self.selectedModule.title)

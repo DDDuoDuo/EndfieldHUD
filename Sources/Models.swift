@@ -91,8 +91,9 @@ struct AppConfiguration: Equatable {
     var dailyBootLog = true
     /// Low disk, memory pressure and overheating warnings (spec §3.29).
     var facilityAlerts = true
-    /// Display > Battery alert: the "ESC / hotkey / click outside to close"
-    /// line at the bottom of the HUD. Off hides it; nothing else moves.
+    /// Display > Close hint, the row below Battery alert: the "ESC / hotkey /
+    /// click outside to close" line at the bottom of the HUD. Off hides it;
+    /// nothing else moves.
     var showsCloseHint = true
     /// Order and visibility of the right-hand list (System > Modules).
     var moduleLayout = HUDModuleLayout()
@@ -176,13 +177,12 @@ enum HUDSettingsScope: CaseIterable {
                     Field(\.perspectiveIntensity), Field(\.backgroundDarkness), Field(\.blurAmount), Field(\.theme),
                     Field(\.clockFormat), Field(\.clockStyle), Field(\.centerLogo), Field(\.centerLogoRevision),
                     Field(\.accentHex), Field(\.ambientAnimation), Field(\.reduceMotion), Field(\.lowPowerVisualMode),
-                    Field(\.recordingMode), Field(\.dailyBootLog),
+                    Field(\.recordingMode), Field(\.dailyBootLog), Field(\.showsCloseHint),
                     // App / menu bar icon
                     Field(\.applicationIcon),
                     // Battery alert
                     Field(\.alertMetric), Field(\.displayMode), Field(\.batteryAlertsEnabled), Field(\.displayDuration),
-                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength),
-                    Field(\.showsCloseHint)]
+                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength)]
                 + Self.hudElements.fields
         case .hudElements:
             return [Field(\.overlayLayout), Field(\.facilityAlerts)]

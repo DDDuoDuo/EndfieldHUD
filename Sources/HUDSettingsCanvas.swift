@@ -511,6 +511,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             reading?.setTitle(self.config.alertMetric.title.uppercased()); batteryRow?.label = batteryTitle + ", " + self.config.alertMetric.title
         }
         rows.append(batteryRow)
+        rows.append(toggleRow("closeHint", L10n.text("Close hint", "关闭提示"), \.showsCloseHint, page))
         rows.append(toggleRow("ambient", L10n.text("Ambient animation", "持续环境动画"), \.ambientAnimation, page))
         rows.append(toggleRow("motion", L10n.text("Reduce Motion", "减少动态效果"), \.reduceMotion, page))
         rows.append(toggleRow("lowPower", L10n.text("Low Power visual mode", "低功耗视觉模式"), \.lowPowerVisualMode, page))
@@ -720,7 +721,6 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         rows.append(navRow("editPosition", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
             self?.controller.editBatteryPosition()
         })
-        rows.append(toggleRow("closeHint", L10n.text("Close hint", "关闭提示"), \.showsCloseHint, page))
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["DISPLAY", "BATTERY ALERT"], code: "SYS-02", title: HUDModuleTitle("Battery alert", "电池提醒"),
                          counter: HUDFormat.pad2(rows.count), showsBack: true)
