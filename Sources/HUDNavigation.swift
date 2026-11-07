@@ -217,6 +217,46 @@ final class HUDNavigation {
         entries.first { $0.target == target }?.arrangeMarkPath
     }
 
+    /// The tile dragged on the HUD and where in it the pointer holds it
+    /// (the press point less the slot's centre).
+    private var arrangeDrag: (target: HUDNavigationTarget, grab: CGPoint)?
+    /// Arrange on HUD: the dragged tile lifts and follows `pointer`, held where
+    /// it was first grabbed and kept inside the list; the others keep sliding
+    /// to their slots as the order previews. nil drops it: it slides from where
+    /// it is shown into its slot (at once under Reduce Motion, or `animated` false).
+    func setArrangeDrag(_ target: HUDNavigationTarget?, pointer: CGPoint?, animated: Bool = true) {
+        let entry = pointer == nil ? nil : target.flatMap { target in rightEntries.first { $0.target == target } }
+        if let previous = arrangeDrag.flatMap({ drag in entries.first { $0.target == drag.target } }), previous !== entry {
+            arrangeDrag = nil
+            previous.setDragPosition(nil); previous.setLifted(false, animated: animated)
+            layoutRight(animated: animated)
+        }
+        guard let entry, let pointer else { arrangeDrag = nil; return }
+        if arrangeDrag?.target != entry.target {
+            arrangeDrag = (entry.target, CGPoint(x: pointer.x - entry.rect.midX, y: pointer.y - entry.rect.midY))
+            entry.setLifted(true)
+        }
+        let grab = arrangeDrag!.grab, half = CGSize(width: entry.rect.width / 2, height: entry.rect.height / 2)
+        let room = rightViewport.insetBy(dx: min(half.width, rightViewport.width / 2), dy: min(half.height, rightViewport.height / 2))
+        entry.setDragPosition(CGPoint(x: min(room.maxX, max(room.minX, pointer.x - grab.x)),
+                                      y: min(room.maxY, max(room.minY, pointer.y - grab.y))))
+    }
+    func arrangeDragPositionForTesting(_ target: HUDNavigationTarget) -> (center: CGPoint, slot: CGRect, z: CGFloat)? {
+        entries.first { $0.target == target }.map { ($0.layer.position, $0.rect, $0.layer.zPosition) }
+    }
+    func positionAnimationForTesting(_ target: HUDNavigationTarget) -> CAAnimation? {
+        entries.first { $0.target == target }?.layer.animation(forKey: "navigation.position")
+    }
+
+    /// The right-hand slot under `point` while a tile is dragged: each tile's
+    /// own slot, never where it is shown on its way there, so a neighbour
+    /// sliding under the pointer cannot flip the order back. Over the dragged
+    /// tile's own slot it is that tile (nothing moves).
+    func arrangeSlotTarget(at point: CGPoint) -> HUDNavigationTarget? {
+        guard point.x.isFinite, point.y.isFinite, rightViewport.contains(point) else { return nil }
+        return rightEntries.first { $0.rect.contains(point) }?.target
+    }
+
     /// Only app entries are inserted/removed. Existing module and app layers
     /// survive edits, reordering and reflow so pointer depth is uninterrupted.
     /// Right-hand modules follow `layout`; hidden ones are parked.
@@ -282,7 +322,11 @@ final class HUDNavigation {
         rightScrollOffset = bounded(rightScrollOffset)
         rawScrollOffset = rightScrollOffset
         hoveredTarget = nil
-        for entry in entries { entry.setHovered(false, animated: false) }
+        arrangeDrag = nil
+        for entry in entries {
+            entry.setHovered(false, animated: false)
+            entry.setDragPosition(nil); entry.setLifted(false, animated: false)
+        }
         layoutRight(animated: false)
         for entry in entries { entry.cancelAnimations() }
     }
@@ -561,7 +605,14 @@ final class HUDNavigationEntry {
     let layer = CALayer()
     let faceLayer = CALayer()
     private(set) var isSelected = false
-    private var isHovered = false
+    /// The pointer rests on the tile.
+    private var pointerHovered = false
+    /// Arrange on HUD: the tile is being dragged. It keeps the hover lift
+    /// whatever the pointer hovers, and draws above the other tiles.
+    private(set) var isLifted = false
+    /// The dragged tile follows the pointer here, away from its slot (`rect`).
+    private var dragCenter: CGPoint?
+    private var isHovered: Bool { pointerHovered || isLifted }
     private var arrangeMark: CAShapeLayer?
     fileprivate var arrangeMarkPath: CGPath? { arrangeMark?.path }
 
@@ -881,7 +932,8 @@ final class HUDNavigationEntry {
             self.faceLayer.transform = nextFace
             self.contentLayer.transform = self.contentTransform()
             self.layer.opacity = 1
-            self.layer.zPosition = self.group == .bottom ? 0 : (self.isSelected ? 1 : (self.isHovered ? 0.5 : 0))
+            self.layer.zPosition = self.group == .bottom ? 0
+                : (self.isLifted ? 2 : (self.isSelected ? 1 : (self.isHovered ? 0.5 : 0)))
             self.applyColors()
         }
         faceLayer.removeAnimation(forKey: "navigation.transform")
@@ -1019,7 +1071,7 @@ final class HUDNavigationEntry {
         self.rect = rect
         self.rotation = rotation
         withoutActions {
-            layer.position = CGPoint(x: rect.midX, y: rect.midY)
+            layer.position = dragCenter ?? CGPoint(x: rect.midX, y: rect.midY)
             faceLayer.transform = faceTransform()
             contentLayer.transform = contentTransform()
             side.transform = backingTransform()
@@ -1028,7 +1080,7 @@ final class HUDNavigationEntry {
             layer.isHidden = false
         }
         movementEnvelope = animated ? previousRect.union(projectedRect) : projectedRect
-        guard animated else { return }
+        guard animated, dragCenter == nil else { return }
         if previousPosition != layer.position {
             let move: CABasicAnimation
             if spring {
@@ -1043,6 +1095,29 @@ final class HUDNavigationEntry {
             }
             move.fromValue = NSValue(point: previousPosition); move.toValue = NSValue(point: layer.position)
             layer.add(move, forKey: "navigation.position")
+        }
+    }
+
+    /// Arrange on HUD: a dragged tile takes the hover lift and draws above
+    /// the others until it is dropped; the pose changes like a hover does.
+    fileprivate func setLifted(_ lifted: Bool, animated: Bool = true) {
+        guard lifted != isLifted else { return }
+        let shown = isHovered
+        isLifted = lifted
+        updatePose(animated: animated && isHovered != shown,
+                   duration: lifted ? HUDNavigation.hoverTransitionDuration : HUDNavigation.hoverExitDuration,
+                   activatingHover: lifted && !shown)
+    }
+
+    /// Moves only the dragged tile's position, to `center` (no animation;
+    /// its other layers keep theirs). nil returns it to its slot on the next
+    /// layout, which slides it there from where it is shown.
+    fileprivate func setDragPosition(_ center: CGPoint?) {
+        dragCenter = center
+        guard let center else { return }
+        withoutActions {
+            layer.removeAnimation(forKey: "navigation.position")
+            layer.position = center
         }
     }
 
@@ -1097,8 +1172,9 @@ final class HUDNavigationEntry {
     fileprivate func finishMovement() { movementEnvelope = projectedRect }
 
     fileprivate func setHovered(_ hovered: Bool, animated: Bool = true) {
-        guard hovered != isHovered else { return }
-        isHovered = hovered
+        let shown = isHovered
+        pointerHovered = hovered
+        guard isHovered != shown else { return }
         updatePose(animated: animated,
                    duration: hovered ? HUDNavigation.hoverTransitionDuration : HUDNavigation.hoverExitDuration,
                    activatingHover: hovered)

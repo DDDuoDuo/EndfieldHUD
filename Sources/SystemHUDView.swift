@@ -1404,9 +1404,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             if let box = designBoxPoint(location), editor.stripContains(box, in: overlayEditorHost) { return nil }
             return coreDesignPoint(designPoint(location)).flatMap(overlayElement(at:)) != nil ? .openHand : nil
         }
-        // Arrange on HUD: the open hand over a module button, the closed hand while one is dragged.
+        // Arrange on HUD: the open hand over a module button, the closed hand from
+        // the press on one until it is released, wherever the pointer goes.
         // A drag already running in the module (a Modules row) keeps its own cursor.
-        if arrangingModules, arrangeDrag?.lifted == true { return .closedHand }
+        if arrangingModules, arrangeDrag != nil { return .closedHand }
         if activeDesignCanvas?.isDragging != true, arrangeableModule(atView: location) != nil { return .openHand }
         guard let canvas = activeDesignCanvas, !canvas.capturesPointer, !designContext.overlay.capturesInput,
               let cursor = canvas.cursor(at: designBoxPoint(location)) else { return nil }
@@ -1421,6 +1422,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseMoved(with event: NSEvent) {
         updateHover(event)
         activeDesignCanvas?.pointerMoved(at: designBoxPoint(convert(event.locationInWindow, from: nil)))
+        if arrangingModules, !usesSourceShell { refreshArrangeCursor() }
     }
     override func mouseExited(with event: NSEvent) {
         if !usesSourceShell {
@@ -1572,6 +1574,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseDown(with event: NSEvent) {
         guard !quitCommitted else { return }
         summonedDuringFileDrag = false
+        swallowsArrangePress = false
         // The controller can queue an outside-click dismissal while the finite
         // entrance finishes; controls remain disabled throughout the transition.
         guard interactionEnabled || transitioning else { return }
@@ -1616,6 +1619,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if rightRowTarget(atView: location) != nil {
             if let module = arrangeableModule(atView: location) {
                 arrangeDrag = (module, location, false, configuration.moduleLayout)
+                refreshArrangeCursor()
             }
             window?.makeFirstResponder(self)
             return
@@ -1654,6 +1658,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if bootLog.isPlaying { bootLog.skip(); return }
         guard allowsModuleInput, !event.isARepeat else { return }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        // Esc during a press on a module button (Arrange on HUD) drops it back
+        // in its saved place; the rest of that press does nothing.
+        if arrangeDrag != nil, event.keyCode == 53, modifiers.isEmpty {
+            endModuleArrangeDrag(save: false)
+            swallowsArrangePress = true
+            refreshArrangeCursor()
+            return
+        }
         if let editor = overlayEditor {
             // Esc cancels and Return confirms the placement; the summon shortcut still closes.
             if !(modifiers.isEmpty && editor.key(event.keyCode)), SummonShortcut.active.matches(event: event) { onToggle?() }
@@ -2484,7 +2496,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // The source row pool owns live app navigation. Populate the retained
         // fallback's native cards only when that shell is actually in use.
         navigation.updateAppShortcuts(usesSourceShell ? [] : items, animated: animated && !usesSourceShell, layout: layout)
-        sourceWatch?.setDesktopNavigation(HUDDesktopWatchNavigation.entries(shortcuts: items, layout: layout))
+        // The source shell's tiles slide to new places only for Arrange on HUD.
+        sourceWatch?.setDesktopNavigation(HUDDesktopWatchNavigation.entries(shortcuts: items, layout: layout),
+                                          animated: animated && arrangingModules)
         synchronizeNavigationButtons()
         updateNavigationGeometry()
         updateButtonStates()
@@ -3324,15 +3338,37 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return configuration.moduleLayout
     }
 
+    /// Esc, or arranging ending, dropped the press: its drags and release do nothing.
+    private var swallowsArrangePress = false
+
     private func setModuleArrangement(_ on: Bool) {
-        endModuleArrangeDrag(save: false)
+        if arrangeDrag != nil, NSEvent.pressedMouseButtons & 1 != 0 { swallowsArrangePress = true }
+        endModuleArrangeDrag(save: false, animated: interactionEnabled && !retracting)
         guard on != arrangingModules else { return }
         arrangingModules = on
         updateArrangeMarks()
         updateNavigationButtonStates()
         if !on { updateWorkPresentation(force: true) }
         designInputStateChanged()
-        sourceWatch?.refreshSourceCursor()
+        refreshArrangeCursor()
+    }
+
+    /// The pointer for Arrange on HUD now. The source shell refreshes its own
+    /// on every pointer event; this covers a press starting or ending, and the
+    /// fallback shell, which otherwise picks its cursor only on entering.
+    private func refreshArrangeCursor() {
+        if usesSourceShell { sourceWatch?.refreshSourceCursor(); return }
+        guard let window, window.isVisible else { return }
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(location) { (designCursor(at: location) ?? .arrow).set() }
+    }
+
+    /// Moves the lifted tile in the shell in use to the pointer at `location`.
+    private func moveArrangedTile(to location: CGPoint) {
+        guard let drag = arrangeDrag, drag.lifted else { return }
+        let target = HUDNavigationTarget.module(drag.module)
+        if usesSourceShell { sourceWatch?.setDesktopArrangeDrag(target, pointer: sourceWatchPoint(designPoint(location))) }
+        else if let local = navigationPoint(designPoint(location)) { navigation.setArrangeDrag(target, pointer: local) }
     }
 
     private func updateArrangeMarks() {
@@ -3356,9 +3392,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let p = designPoint(location)
         if let charge = chargeDesignPoint(p), chargeBadge.contains(charge) { return nil }
         let target: HUDNavigationTarget?
+        // While a tile is dragged, the slots at rest decide where it goes, so
+        // the tiles sliding to make room cannot flip the order back.
+        let resting = arrangeDrag?.lifted == true
         if usesSourceShell {
             guard sourceOverviewPresented else { return nil }
-            target = sourceWatch?.desktopRowTarget(at: sourceWatchPoint(p))
+            target = sourceWatch?.desktopRowTarget(at: sourceWatchPoint(p), resting: resting)
+        } else if resting {
+            target = navigationPoint(p).flatMap(navigation.arrangeSlotTarget(at:))
         } else {
             target = navigationPoint(p).flatMap { navigation.hitTarget(point: $0, includingBottom: false) }
                 .flatMap { $0.group == .right ? $0 : nil }
@@ -3372,20 +3413,23 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return module
     }
 
-    /// Past the lift distance the pressed module follows the pointer: over
-    /// another module it takes that place, over an app or Add App it goes
-    /// after the last visible module. The list and the Modules page follow.
-    private func dragArrangedModule(to location: CGPoint) {
+    /// Past the lift distance the pressed module lifts and follows the pointer:
+    /// over another module it takes that place, over an app or Add App it goes
+    /// after the last visible module, and the others slide to make room. The
+    /// Modules page follows. `edgeScroll` false: a wheel already scrolled.
+    private func dragArrangedModule(to location: CGPoint, edgeScroll: Bool = true) {
         guard var drag = arrangeDrag else { return }
         if !drag.lifted {
             guard hypot(location.x - drag.start.x, location.y - drag.start.y) > HUDDragGrip.liftDistance else { return }
             drag.lifted = true; arrangeDrag = drag
             lockParallaxForActiveInput()
             updateArrangeMarks()
+            // Held where it was pressed.
+            moveArrangedTile(to: drag.start)
         }
         // Near the list's edges it scrolls toward the pointer (on pointer events only).
-        if usesSourceShell { sourceWatch?.scrollDesktopNavigationTowardEdge(at: sourceWatchPoint(designPoint(location))) }
-        else if let local = navigationPoint(designPoint(location)) {
+        if edgeScroll, usesSourceShell { sourceWatch?.scrollDesktopNavigationTowardEdge(at: sourceWatchPoint(designPoint(location))) }
+        else if edgeScroll, let local = navigationPoint(designPoint(location)) {
             let viewport = navigation.rightViewport
             if local.x >= viewport.minX, local.x <= viewport.maxX {
                 let step = HUDDragGrip.edgeScrollStep(offset: local.y - viewport.minY, length: viewport.height)
@@ -3397,19 +3441,27 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             refreshAppNavigation(animated: !HUDRuntimeAppearance.reduceMotion)
             settingsCanvases[.display]?.previewModuleOrder(next.order)
         }
-        sourceWatch?.refreshSourceCursor()
+        moveArrangedTile(to: location)
+        if !usesSourceShell { refreshArrangeCursor() }
     }
 
     /// Ends a press on a module button. A lifted drag saves its order (`save`)
     /// or the list returns to the saved one; a press without a lift does nothing.
-    private func endModuleArrangeDrag(save: Bool) {
+    /// The dropped tile settles into its slot, and on a cancel every tile slides
+    /// back, unless `animated` is false (the HUD is closing) or under Reduce Motion.
+    private func endModuleArrangeDrag(save: Bool, animated: Bool = true) {
         guard let drag = arrangeDrag else { return }
         arrangeDrag = nil
         if drag.lifted {
+            let animate = animated && !HUDRuntimeAppearance.reduceMotion
+            // The settle comes from the drop itself: saving the order already
+            // shown changes nothing in either list.
+            navigation.setArrangeDrag(nil, pointer: nil, animated: animate)
+            sourceWatch?.setDesktopArrangeDrag(nil, pointer: nil, animated: animate)
             if save, drag.preview.order != configuration.moduleLayout.order, let settingsController {
                 // The saved layout comes back through set(snapshot:configuration:), which rebinds the list.
                 settingsController.update { $0.moduleLayout = HUDModuleLayout(order: drag.preview.order, hidden: $0.moduleLayout.hidden) }
-            } else { refreshAppNavigation(animated: !HUDRuntimeAppearance.reduceMotion) }
+            } else { refreshAppNavigation(animated: animate) }
             settingsCanvases[.display]?.previewModuleOrder(nil)
             updateArrangeMarks()
         }
@@ -3844,6 +3896,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     override func mouseDragged(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+        if swallowsArrangePress { return }
         if overlayEditor != nil { overlayPointerDragged(location); return }
         if arrangeDrag != nil { dragArrangedModule(to: location); return }
         if notesWorkspaceIsInteractive, notesCanvas.isDragging, let local = notesWorkspacePoint(location) {
@@ -3862,10 +3915,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseUp(with event: NSEvent) {
         summonedDuringFileDrag = false
         let releaseLocation = convert(event.locationInWindow, from: nil), far = CGPoint(x: -10_000, y: -10_000)
+        if swallowsArrangePress { swallowsArrangePress = false; refreshArrangeCursor(); return }
         if overlayEditor != nil { overlayPointerUp(releaseLocation); return }
         if arrangeDrag != nil {
             endModuleArrangeDrag(save: true)
-            sourceWatch?.refreshSourceCursor()
+            refreshArrangeCursor()
             return
         }
         facilityBannerRouter.pointerUp(at: facilityBannerPoint(releaseLocation) ?? far, in: facilityBanner.layer)
@@ -3911,6 +3965,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard !accountGauge.isPopoverOpen, overlayEditor == nil else { return }
         let location = convert(event.locationInWindow, from: nil)
         let design = designPoint(location)
+        // A wheel turned while a module button is dragged scrolls the list under
+        // it; the slot it previews follows at once.
+        defer { if arrangeDrag?.lifted == true { dragArrangedModule(to: location, edgeScroll: false) } }
         if designContext.overlay.capturesInput { return }
         if let canvas = activeDesignCanvas, canvas.capturesPointer {
             if let point = designBoxPoint(location) { _ = canvas.scroll(at: point, delta: designScrollDelta(event), event: event) }
