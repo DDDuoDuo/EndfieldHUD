@@ -780,7 +780,7 @@ private final class ShelfTile: HUDControl {
         let name = redacted ? L10n.text("Redacted", "已隐藏") : item.name
         let details = [name, FileShelfCanvas.kindText(item), FileShelfCanvas.sizeTag(item)]
         let id = "file:\(number)"
-        more = tile.attachMore(id: id + HUDTileMoreButton.suffix, label: L10n.text("More", "更多") + ", " + name)
+        more = tile.attachMore(id: id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: name))
         super.init(id: id, label: details.compactMap { $0 }.joined(separator: ", "), env: env)
         HUDMotion.perform { layer.bounds = tile.layer.bounds; tile.layer.frame = layer.bounds; layer.addSublayer(tile.layer) }
     }

@@ -324,6 +324,8 @@ final class HUDTileMoreButton: HUDControl {
 
     /// The tile id a control id names: a tile's own id, or its ⋯ button's.
     static func tileID(_ id: String) -> String { id.hasSuffix(suffix) ? String(id.dropLast(suffix.count)) : id }
+    /// The button's spoken label for the tile named `name`.
+    static func label(for name: String) -> String { L10n.text("More", "更多") + ", " + name }
 
     override init(id: String, label: String = "", env: HUDDesignEnvironment, layer: CALayer = HUDLayer.plain()) {
         super.init(id: id, label: label, env: env, layer: layer)

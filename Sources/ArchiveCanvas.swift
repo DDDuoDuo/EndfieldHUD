@@ -427,7 +427,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
                                       style: summary.isClassified ? .classified : .standard, env: env)
             tile.label = Self.documentLabel(summary)
             tile.onActivate = { [weak self] in self?.openDocument(summary.id) }
-            let more = tile.attachMore(id: tile.id + HUDTileMoreButton.suffix, label: L10n.text("More", "更多") + ", " + tile.label)
+            let more = tile.attachMore(id: tile.id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: tile.label))
             more.onActivate = { [weak self, weak more] in
                 guard let self, let more else { return }
                 if self.isMenuOpen { self.closeMenu(); return }
@@ -1283,7 +1283,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         return items + shownDocuments.filter { tiles[$0.id] == nil }.flatMap { summary -> [HUDAccessibilityItem] in
             let id = "doc:" + summary.id.uuidString, label = Self.documentLabel(summary)
             return [HUDAccessibilityItem(id: id, label: label, role: .button, rect: frame),
-                    HUDAccessibilityItem(id: id + HUDTileMoreButton.suffix, label: L10n.text("More", "更多") + ", " + label, role: .button, rect: frame)]
+                    HUDAccessibilityItem(id: id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: label), role: .button, rect: frame)]
         }
     }
 
