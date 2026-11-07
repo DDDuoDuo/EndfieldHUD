@@ -48,6 +48,34 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"worldOnlyFrames",std::int64_t(b.frame.worldOnlyFrames-a.frame.worldOnlyFrames)},
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
+// The traced host never spins on a past wake: an owner that keeps reporting
+// a wake already due (one that waits for a frame or an event that does not
+// come) has the host's deadline wake fire about 2,000 times a second, with
+// frames between them or without (alongside 165 Hz frames about 160 a
+// second). Between frames the deadline wakes stay within a small burst and
+// rate, and in each second, whatever its frames, within twice the fastest
+// owner cadence (Now Playing's 30 Hz display); the traces peak at a few a
+// second, and the closed HUD past its grace stays under 20 a second
+// (run_idle_trace.cmake). The most wakes in any one second is reported.
+class WakeSpinCheck {
+    static constexpr double burst=50,rate=100,perSecond=60;
+    std::uint64_t frames_{},wakes_{},secondFrames_{},secondWakes_{},peak_{};double since_{},second_{};bool started_{};
+public:
+    // After each traced pump; throws when a stretch's deadline wakes passed the bound.
+    void sample(const OverlayHostStats&s,double now){
+        if(!started_){started_=true;frames_=secondFrames_=s.frames;wakes_=secondWakes_=s.externalWakes;since_=second_=now;return;}
+        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_,inSecond=s.externalWakes-secondWakes_;
+        if(frameless&&double(wakes)>burst+rate*(now-since_)){
+            std::cout<<"Traced host deadline wakes: "<<wakes<<" in "<<now-since_<<" s without a frame\n";
+            need(false,"No owner's past wake spins the host while no frame runs");}
+        if(double(inSecond)>perSecond*std::max(1.,now-second_)){
+            std::cout<<"Traced host deadline wakes: "<<inSecond<<" in "<<now-second_<<" s with "<<s.frames-secondFrames_<<" frames\n";
+            need(false,"No owner's past wake spins the host in any second, with frames or without");}
+        if(!frameless||now-since_>=1){frames_=s.frames;wakes_=s.externalWakes;since_=now;}
+        if(now-second_>=1){peak_=std::max(peak_,inSecond);secondFrames_=s.frames;secondWakes_=s.externalWakes;second_=now;}
+    }
+    std::uint64_t peak()const{return peak_;}
+};
 }
 
 // watch_session_preview --startup-trace: the production owner with the module
@@ -246,11 +274,13 @@ int Application::Impl::runIdleTrace(){
         if(chrome&&chrome->styleTransitionActive())visit("clock style");
         if(session->demand(at).finiteAnimation)visit("source shell");
     };
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames!=frames&&session->phase()==core::VisibilityPhase::visible){const auto at=clock();
                 if(demand(at).finiteAnimation)requesters(at,[&](std::string_view name){++finiteRequests[std::string(name)];});}}
     };
@@ -472,6 +502,18 @@ int Application::Impl::runIdleTrace(){
      const auto wakes=host.stats().externalWakes-wakesBefore;
      std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
      need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
+    // A Calendar owner a failure disabled (a synthetic one here) cannot
+    // re-arm its midnight wake: the host wakes for that midnight once. The
+    // registry never enables a failed owner again, so this stays the last
+    // scenario before the Quit (run_idle_trace.cmake passes --calendar).
+    need(calendarModuleOwner&&registry.contains(*calendarModuleOwner),"The idle trace runs the Calendar owner");
+    {const bool isolating=registry.isolating();registry.setIsolation(true);
+     (void)registry.guard(*calendarModuleOwner,[]{throw std::runtime_error("Synthetic Calendar failure");},"idle trace");registry.setIsolation(isolating);
+     need(!registry.guard(*calendarModuleOwner,[]{},"idle trace"),"The synthetic failure disables the Calendar owner");
+     const auto wakesBefore=host.stats().externalWakes;calendarNextWake=now();scheduleDeadline();pump(1,{});
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace disabled Calendar midnight: "<<wakes<<" deadline wakes\n";
+     need(!calendarNextWake&&wakes<=20,"A disabled Calendar owner's midnight does not spin the host");}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
@@ -479,6 +521,7 @@ int Application::Impl::runIdleTrace(){
      const auto request="close-"+std::to_string(memoryTrace->closes);
      need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
           "The memory trace records Quit's close request, then the quit");}
+    std::cout<<"Idle trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }
@@ -508,11 +551,13 @@ int Application::Impl::runAnimationTrace(){
     // hysteresis path RC 139 took). The settled HUD must hold exactly it.
     std::optional<double> rc139Density;
     const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames==frames)continue;
             if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
                 rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
@@ -704,7 +749,7 @@ int Application::Impl::runAnimationTrace(){
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
         {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
-    std::cout<<"Wrote hidden animation trace\n";
+    std::cout<<"Wrote hidden animation trace\n"<<"Animation trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }

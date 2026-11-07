@@ -169,4 +169,7 @@ foreach(index RANGE ${last})
   endif()
 endforeach()
 message(STATUS "Hidden idle trace at ${refresh} Hz, grace ${grace_seconds} s (production ${production_grace} s), closed ${closed_seconds} s, shared media ${shared_media}: first opening ${opening} s (device ${resume} s), reopening after ${reopen_closed} s closed ${reopen} s, anticipated opening ${anticipated} s, release ${refusal} s after a media owner let go, reopening within the grace ${quick} s:${summary}")
+# The trace's own wake-spin guard: the most host deadline wakes in one second.
+string(REGEX MATCH "Idle trace peak deadline wakes in a second: [0-9]+" peak "${output}")
+message(STATUS "${peak}")
 file(REMOVE_RECURSE "${WORK}")

@@ -228,7 +228,9 @@ void Application::Impl::onDeadline(double time){
     // so every later hand-off below takes the host time again.
     time=hostTime(time);
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
-    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
+    // Midnight is taken before the Calendar call: a Calendar owner disabled
+    // by a failure (its call skipped) keeps no past wake for the host.
+    if(calendarNextWake&&*calendarNextWake<=time){calendarNextWake.reset();isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
     if(transitionDeadline&&*transitionDeadline<=time){transitionDeadlineExpired(time);if(stopping)return;time=hostTime(time);}
     // The tray icon was pointed at but no opening came: the device prepared

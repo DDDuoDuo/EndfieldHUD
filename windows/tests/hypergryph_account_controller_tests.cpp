@@ -347,6 +347,13 @@ void guardWake() {
     wake=c.nextWakeTime();
     check(api.pending.empty()&&wake&&*wake==start+600,"After the guard the fresh snapshot defers to the 600 s cadence");
     now=*wake;c.tick();check(api.pending.size()==1&&api.pending.front().kind=="bindings","The 600 s wake issues the next sync (bindings older than 300 s are re-read)");
+    // A disconnect whose credential removal is still queued, across a hidden
+    // and shown HUD (which clears busy): the host's deadline loop finds no
+    // refresh wake that tick() cannot act on until the removal lands.
+    c.disconnect();c.setVisible(false,false);c.setVisible(true,true);now+=10;
+    unsigned wakes{};for(auto w=c.nextWakeTime();w&&*w<=now&&wakes<20;w=c.nextWakeTime()){c.tick();++wakes;}
+    check(wakes==0&&queue.items.size()==1&&c.record().linked,"A pending disconnect keeps no due refresh wake");
+    queue.pump();check(!c.record().linked&&!c.hasActiveRequest(),"The removal then unlinks the region");
 }
 // The vault failure names the Windows credential store (Mac: Keychain).
 void vaultWording() {
