@@ -48,6 +48,25 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"worldOnlyFrames",std::int64_t(b.frame.worldOnlyFrames-a.frame.worldOnlyFrames)},
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
+// The traced host never spins on a past wake: an owner that keeps reporting
+// a wake already due (one that waits for a frame or an event that does not
+// come) has the host's deadline wake fire about 2,000 times a second. Between
+// frames (and in each second of a long stretch without one) the deadline
+// wakes stay within a small burst and rate; the closed HUD past its grace
+// stays under 20 a second (run_idle_trace.cmake).
+class WakeSpinCheck {
+    static constexpr double burst=50,rate=100;
+    std::uint64_t frames_{~std::uint64_t{}},wakes_{};double since_{};
+public:
+    // After each traced pump; throws when the stretch's deadline wakes passed the bound.
+    void sample(const OverlayHostStats&s,double now){
+        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_;
+        if(frameless&&double(wakes)>burst+rate*(now-since_)){
+            std::cout<<"Traced host deadline wakes: "<<wakes<<" in "<<now-since_<<" s without a frame\n";
+            need(false,"No owner's past wake spins the host while no frame runs");}
+        if(!frameless||now-since_>=1){frames_=s.frames;wakes_=s.externalWakes;since_=now;}
+    }
+};
 }
 
 // watch_session_preview --startup-trace: the production owner with the module
@@ -246,11 +265,13 @@ int Application::Impl::runIdleTrace(){
         if(chrome&&chrome->styleTransitionActive())visit("clock style");
         if(session->demand(at).finiteAnimation)visit("source shell");
     };
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames!=frames&&session->phase()==core::VisibilityPhase::visible){const auto at=clock();
                 if(demand(at).finiteAnimation)requesters(at,[&](std::string_view name){++finiteRequests[std::string(name)];});}}
     };
@@ -518,11 +539,13 @@ int Application::Impl::runAnimationTrace(){
     // hysteresis path RC 139 took). The settled HUD must hold exactly it.
     std::optional<double> rc139Density;
     const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames==frames)continue;
             if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
                 rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
