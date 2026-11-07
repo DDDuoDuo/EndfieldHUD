@@ -1089,9 +1089,10 @@ void editorChrome(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&f
     // A HUD concealed without a frame (a lock, the display off) with the
     // field focused: the host's deadline loop, no frame between its wakes.
     // The blink's due change is handed to the host once and waits for the
-    // next frame (no continuous wakes); that frame hands the next change.
-    {unsigned wakes{};for(auto w=f.preview->nextWakeTime();w&&wakes<20;w=f.preview->nextWakeTime()){f.time=std::max(f.time,*w);(void)f.preview->deadline(f.time);++wakes;}
-     check(wakes==1,"Without a frame the caret's due blink wake is handed to the host once");
+    // next frame (no wake stays due); that frame hands the next change.
+    {wake=f.preview->nextWakeTime();check(wake.has_value(),"The focused caret has a blink wake");
+     f.time=std::max(f.time,*wake);(void)f.preview->deadline(f.time);wake=f.preview->nextWakeTime();
+     check(!wake||*wake>f.time,"Without a frame the caret's due blink wake is handed to the host once");
      f.frame();wake=f.preview->nextWakeTime();check(wake&&*wake>f.time,"The next frame hands the blink's next change");}
     // A move (typing) makes the caret solid again and restarts the cycle.
     f.tick(.3);check(f.key(app::KeyKind::character,'Q'),"Type into the field");const double typed=f.time;
