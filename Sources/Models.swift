@@ -47,6 +47,10 @@ struct AppConfiguration: Equatable {
     var scale: Double = 1
     var placement: OverlayPlacement = .topCenter
     var customPosition: OverlayPosition = OverlayPosition()
+    /// The compact battery bar's length as a fraction of its display's usable
+    /// width (1 = edge to edge; OverlayGeometry.barWidth applies the 200 pt
+    /// minimum). nil keeps the classic 264 pt bar, so 1.3.0 settings look the same.
+    var chargeBarLength: Double? = nil
     var language: AppLanguage = .system
     var hudScale: Double = 1
     /// Screen-relative offset from the default HUD center; positive Y is down.
@@ -104,6 +108,7 @@ struct AppConfiguration: Equatable {
         result.accentHex = validColor ? raw : Self.defaults.accentHex
         result.scale = scale.isFinite ? min(1.6, max(0.65, scale)) : 1
         result.customPosition = customPosition.normalized
+        result.chargeBarLength = chargeBarLength.flatMap { $0.isFinite && $0 > 0 ? min(1, $0) : nil }
         result.hudScale = Self.clamp(hudScale, to: 0.2...2, fallback: 1)
         result.hudOffsetX = Self.clamp(hudOffsetX, to: -0.5...0.5, fallback: 0)
         result.hudOffsetY = Self.clamp(hudOffsetY, to: -0.5...0.5, fallback: 0)
@@ -199,6 +204,7 @@ final class ConfigurationStore {
                 x: defaults.object(forKey: "customPositionX") == nil ? 0.5 : defaults.double(forKey: "customPositionX"),
                 y: defaults.object(forKey: "customPositionY") == nil ? 0.9 : defaults.double(forKey: "customPositionY")
             ),
+            chargeBarLength: defaults.object(forKey: "chargeBarLength") == nil ? nil : defaults.double(forKey: "chargeBarLength"),
             language: defaults.string(forKey: "language").flatMap(AppLanguage.init(rawValue:)) ?? .system,
             hudScale: Self.double(defaults, "hudScale", fallback: 1),
             hudOffsetX: Self.double(defaults, "hudOffsetX", fallback: 0),
@@ -254,6 +260,8 @@ final class ConfigurationStore {
         }
         defaults.set(next.customPosition.x, forKey: "customPositionX")
         defaults.set(next.customPosition.y, forKey: "customPositionY")
+        if let length = next.chargeBarLength { defaults.set(length, forKey: "chargeBarLength") }
+        else { defaults.removeObject(forKey: "chargeBarLength") }
         defaults.set(next.language.rawValue, forKey: "language")
         defaults.set(next.hudScale, forKey: "hudScale")
         defaults.set(next.hudOffsetX, forKey: "hudOffsetX")
