@@ -334,7 +334,9 @@ final class OverlayController: NSObject {
             ["--ui-test", "--smoke-test", "--system-smoke-test", "--navigation-smoke-test",
              "--render-system-preview", "--render-preview"].contains(argument)
         }
-        profileStore = Result { try UserProfileStore(directory: UserProfileStore.applicationDirectory()) }
+        // Diagnostic runs never read the macOS account (issue #17).
+        profileStore = Result { try UserProfileStore(directory: UserProfileStore.applicationDirectory(),
+                                                     systemAccount: diagnostic ? nil : .current) }
         clipboard = ClipboardWatcher(store: ClipboardStore(),
                                      pasteboard: diagnostic ? .withUniqueName() : .general)
         audio = diagnostic ? .fixture() : AudioDeviceController()
@@ -358,6 +360,7 @@ final class OverlayController: NSObject {
         // still closed, so its first opening does not wait for them.
         HUDFontRegistry.prewarm()
         if let profile = try? profileStore.get() {
+            profile.refreshSystemAccount()
             workMode.restoreTrackedWorkSeconds(profile.profile.accumulatedWorkSeconds)
             workMode.onTrackedWorkSecondsChanged = { [weak profile] seconds in
                 do { try profile?.setWorkSeconds(seconds) }
@@ -850,6 +853,8 @@ final class OverlayController: NSObject {
         case .open(let token):
             var startup = HUDStartupTrace.begin()
             cancelClosedHeapCleanup()
+            // A changed login picture or name shows without a relaunch.
+            (try? profileStore.get())?.refreshSystemAccount(ifOlderThan: 60)
             logSystemPhase()
             if case .failure = mapStore {
                 mapStore = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }

@@ -1,5 +1,52 @@
 import AppKit
+import CoreServices
 import ImageIO
+
+/// The signed-in macOS account (issue #17). It is read at runtime and never
+/// saved; `avatarKey` is the store's image-cache key for the login picture.
+struct SystemAccountIdentity: Equatable {
+    var name: String?
+    var uid: String?
+    var avatarKey: String?
+
+    init(name: String?, uid: String?, avatarKey: String? = nil) {
+        self.name = name.flatMap(Self.normalizedName)
+        self.uid = uid.flatMap { $0.isEmpty || !$0.allSatisfy({ $0.isASCII && $0.isNumber }) ? nil : $0 }
+        self.avatarKey = avatarKey
+    }
+
+    var isEmpty: Bool { name == nil && uid == nil && avatarKey == nil }
+
+    /// The personal card's name rule: no control characters or line breaks,
+    /// trimmed, at most 20 characters; empty is no name.
+    static func normalizedName(_ raw: String) -> String? {
+        let visible = String(String.UnicodeScalarView(raw.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0) && !CharacterSet.newlines.contains($0)
+        }))
+        let clean = String(visible.trimmingCharacters(in: .whitespaces).prefix(20)).trimmingCharacters(in: .whitespaces)
+        return clean.isEmpty ? nil : clean
+    }
+
+    /// The full name (the short name when it is empty) and the numeric user ID.
+    /// Both come from the process itself and need no permission.
+    static func readCurrent() -> SystemAccountIdentity {
+        let full = NSFullUserName()
+        return SystemAccountIdentity(name: normalizedName(full) == nil ? NSUserName() : full, uid: String(getuid()))
+    }
+
+    /// The login picture's encoded bytes from the account's own local directory
+    /// record (CSIdentity: no Contacts access, no privacy prompt). It can take
+    /// tens of milliseconds, so it runs off the main thread.
+    static func readCurrentPicture() -> Data? {
+        guard let query = CSIdentityQueryCreateForCurrentUser(kCFAllocatorDefault)?.takeRetainedValue(),
+              CSIdentityQueryExecute(query, 0, nil),
+              let results = CSIdentityQueryCopyResults(query)?.takeRetainedValue(), CFArrayGetCount(results) > 0,
+              let first = CFArrayGetValueAtIndex(results, 0) else { return nil }
+        let identity = unsafeBitCast(first, to: CSIdentity.self)
+        guard let data = CSIdentityGetImageData(identity)?.takeUnretainedValue() as Data?, !data.isEmpty else { return nil }
+        return data
+    }
+}
 
 struct UserProfile: Codable, Equatable {
     var name = "Endministrator"
@@ -11,7 +58,18 @@ struct UserProfile: Codable, Equatable {
     var gamePlayerID: String?
     var playerIDOverride: String?
     var hasManualAwakeningDate = false
-    var displayedUID: String { playerIDOverride ?? gamePlayerID ?? uid }
+    var displayedUID: String { playerIDOverride ?? gamePlayerID ?? systemAccount?.uid ?? uid }
+    static let defaultName = "Endministrator"
+    /// Until a name or a picture is chosen, the card shows the macOS account's
+    /// (issue #17). A stored name other than the default always wins, so a
+    /// name typed in an older build is kept.
+    var autoName = true
+    var autoAvatar = true
+    /// Runtime only (never encoded); nil keeps the stored defaults.
+    var systemAccount: SystemAccountIdentity?
+    var displayedName: String { autoName && name == Self.defaultName ? systemAccount?.name ?? name : name }
+    /// A chosen or synced picture, then the macOS login picture; nil is the drawn portrait.
+    var avatarKey: String? { avatarFilename ?? (autoAvatar ? systemAccount?.avatarKey : nil) }
     var showsBirthday = false
     var birthdayMonth: Int
     var birthdayDay: Int
@@ -52,6 +110,7 @@ struct UserProfile: Codable, Equatable {
         case backgroundWidth, backgroundZoom, backgroundOffsetX, backgroundOffsetY, thumbnailZoom, thumbnailOffsetX, thumbnailOffsetY
         case accumulatedWorkSeconds
         case gamePlayerID, playerIDOverride, hasManualAwakeningDate
+        case autoName, autoAvatar
     }
 
     init(from decoder: Decoder) throws {
@@ -89,6 +148,10 @@ struct UserProfile: Codable, Equatable {
         thumbnailZoom = try values.decodeIfPresent(Double.self, forKey: .thumbnailZoom) ?? 1
         thumbnailOffsetX = try values.decodeIfPresent(Double.self, forKey: .thumbnailOffsetX) ?? 0
         thumbnailOffsetY = try values.decodeIfPresent(Double.self, forKey: .thumbnailOffsetY) ?? 0
+        // Cards saved before issue #17 follow the macOS account only while
+        // they still carry the default name; nothing is rewritten here.
+        autoName = try values.decodeIfPresent(Bool.self, forKey: .autoName) ?? (name == Self.defaultName)
+        autoAvatar = try values.decodeIfPresent(Bool.self, forKey: .autoAvatar) ?? true
     }
 
     fileprivate func normalizedEditableValues() -> UserProfile {
@@ -179,6 +242,24 @@ final class UserProfileStore {
     private var imageCache: [String: NSImage] = [:]
     private var imageOrientationCache: [String: Int32] = [:]
     private let fileManager = FileManager.default
+    /// Where the macOS account comes from. nil (tests, previews, diagnostics)
+    /// never reads it, so the card keeps Endministrator, the stored UID and
+    /// the drawn portrait.
+    struct SystemAccountSource {
+        var identity: () -> SystemAccountIdentity
+        var picture: () -> Data?
+        static let current = SystemAccountSource(identity: SystemAccountIdentity.readCurrent,
+                                                 picture: SystemAccountIdentity.readCurrentPicture)
+    }
+    private let systemAccountSource: SystemAccountSource?
+    private var systemAccount: SystemAccountIdentity?
+    private var systemPicture: Data?
+    private var systemPictureSerial = 0
+    private var readingSystemPicture = false
+    private var systemAccountReadAt: Date?
+    /// Recording mode: the card shows the stored defaults in place of the
+    /// macOS account. Chosen and synced values are not affected.
+    var hidesSystemAccount = false { didSet { if hidesSystemAccount != oldValue { publishSystemAccount() } } }
     private struct Archive: Codable { let version: Int; let profile: UserProfile }
     private struct Version: Decodable { let version: Int }
     private static let diagnosticDirectory = FileManager.default.temporaryDirectory
@@ -193,7 +274,8 @@ final class UserProfileStore {
         return support.appendingPathComponent("EndfieldCharge/Profile", isDirectory: true)
     }
 
-    init(directory: URL, now: Date = Date()) throws {
+    init(directory: URL, now: Date = Date(), systemAccount: SystemAccountSource? = nil) throws {
+        systemAccountSource = systemAccount
         fileURL = directory.appendingPathComponent("profile.json")
         imagesDirectory = directory.appendingPathComponent("Images", isDirectory: true)
         // The existing app-data directory is the earliest local evidence of use
@@ -309,13 +391,12 @@ final class UserProfileStore {
         }
     }
 
+    /// Restore default picture: the drawn Endfield portrait, not the macOS one.
     func removeImage(kind: UserProfileImageKind) throws {
         try update {
             if kind == .avatar {
-                $0.avatarFilename = nil
-                $0.avatarZoom = 1
-                $0.avatarOffsetX = 0
-                $0.avatarOffsetY = 0
+                Self.clearAvatar(&$0)
+                $0.autoAvatar = false
             } else {
                 $0.backgroundFilename = nil
                 $0.backgroundWidth = 600
@@ -329,11 +410,84 @@ final class UserProfileStore {
         }
     }
 
+    private static func clearAvatar(_ value: inout UserProfile) {
+        value.avatarFilename = nil
+        value.avatarZoom = 1
+        value.avatarOffsetX = 0
+        value.avatarOffsetY = 0
+    }
+
+    /// Personal ID's "Use Mac account info": the macOS name, UID and picture
+    /// again. A field a game sync owns is left to the sync.
+    func useSystemAccount(name: Bool = true, playerID: Bool = true) throws {
+        try update {
+            if name { $0.name = UserProfile.defaultName; $0.autoName = true }
+            if playerID { $0.playerIDOverride = nil }
+            Self.clearAvatar(&$0)
+            $0.autoAvatar = true
+        }
+    }
+
+    /// Reads the macOS account: the name and UID at once, the login picture
+    /// off the main thread. Observers hear only a real change, and nothing
+    /// is written to disk. `interval` skips a read made that recently.
+    func refreshSystemAccount(ifOlderThan interval: TimeInterval = 0, now: Date = Date()) {
+        precondition(Thread.isMainThread)
+        guard let source = systemAccountSource else { return }
+        if let last = systemAccountReadAt, now.timeIntervalSince(last) < interval { return }
+        systemAccountReadAt = now
+        let reading = source.identity()
+        setSystemAccount(SystemAccountIdentity(name: reading.name, uid: reading.uid, avatarKey: systemAccount?.avatarKey))
+        guard !readingSystemPicture else { return }
+        readingSystemPicture = true
+        let read = source.picture
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let data = read()
+            DispatchQueue.main.async { self?.receiveSystemPicture(data) }
+        }
+    }
+
+    private func receiveSystemPicture(_ data: Data?) {
+        readingSystemPicture = false
+        guard data != systemPicture else { return }
+        systemPicture = data
+        if let old = systemAccount?.avatarKey {
+            imageCache.removeValue(forKey: old)
+            imageOrientationCache.removeValue(forKey: old)
+        }
+        var key: String?
+        if let data, let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+           let loaded = Self.loadImage(source: source, kind: .avatar) {
+            // A new key per picture makes every portrait cache rebuild.
+            systemPictureSerial += 1
+            let name = "system-\(systemPictureSerial)"
+            imageCache[name] = loaded.image
+            imageOrientationCache[name] = loaded.orientation
+            key = name
+        }
+        var next = systemAccount ?? SystemAccountIdentity(name: nil, uid: nil)
+        next.avatarKey = key
+        setSystemAccount(next)
+    }
+
+    private func setSystemAccount(_ next: SystemAccountIdentity) {
+        systemAccount = next.isEmpty ? nil : next
+        publishSystemAccount()
+    }
+
+    private func publishSystemAccount() {
+        let shown = hidesSystemAccount ? nil : systemAccount
+        guard profile.systemAccount != shown else { return }
+        profile.systemAccount = shown
+        Array(observers.values).forEach { $0() }
+    }
+
     func image(for kind: UserProfileImageKind) -> NSImage? {
-        let name = kind == .avatar ? profile.avatarFilename : profile.backgroundFilename
-        guard let name, Self.validImageName(name) else { return nil }
+        // The login picture lives only in the cache; files are checked by name.
+        let name = kind == .avatar ? profile.avatarKey : profile.backgroundFilename
+        guard let name else { return nil }
         if let image = imageCache[name] { return image }
-        guard let loaded = Self.loadImage(at: imagesDirectory.appendingPathComponent(name), kind: kind) else { return nil }
+        guard Self.validImageName(name), let loaded = Self.loadImage(at: imagesDirectory.appendingPathComponent(name), kind: kind) else { return nil }
         imageCache[name] = loaded.image
         imageOrientationCache[name] = loaded.orientation
         return loaded.image
@@ -343,7 +497,7 @@ final class UserProfileStore {
     /// normalized on import. Keeping this separate avoids a full-size rotated
     /// bitmap merely to display a small high-resolution portrait crop.
     func imageOrientation(for kind: UserProfileImageKind) -> Int32 {
-        guard kind == .avatar, let name = profile.avatarFilename else { return 1 }
+        guard kind == .avatar, let name = profile.avatarKey else { return 1 }
         _ = image(for: kind)
         return imageOrientationCache[name] ?? 1
     }
@@ -351,6 +505,10 @@ final class UserProfileStore {
     private static func loadImage(at url: URL, kind: UserProfileImageKind) -> (image: NSImage, orientation: Int32)? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL,
             [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return loadImage(source: source, kind: kind)
+    }
+
+    private static func loadImage(source: CGImageSource, kind: UserProfileImageKind) -> (image: NSImage, orientation: Int32)? {
         if kind == .avatar {
             guard validPortraitDimensions(source),
                   let image = CGImageSourceCreateImageAtIndex(source, 0,
