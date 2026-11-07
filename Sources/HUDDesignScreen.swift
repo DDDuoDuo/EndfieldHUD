@@ -252,10 +252,13 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     var contentUnit: CGFloat { context.unit }
 
-    func playEntrance(from offset: CGPoint) {
+    func playEntrance(from offset: CGPoint) { playEntrance(from: offset, delay: 0) }
+
+    /// The module entrance; `delay` holds it back until the centre shows.
+    func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         guard !env.reducesMotion else { return }
-        if showsHeader { header.playEntrance() }
-        HUDMotion.stagger(page.staggered, from: offset, env: env)
+        if showsHeader { header.playEntrance(delay: delay) }
+        HUDMotion.stagger(page.staggered, from: offset, delay: delay, env: env)
     }
 
     func prepareToLeave() {

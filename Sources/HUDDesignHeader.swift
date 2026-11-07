@@ -156,9 +156,9 @@ final class HUDModuleHeader {
     var controls: [HUDControl] { (back.map { [$0] } ?? []) + actionControls }
 
     /// Title wipe with fade (.45 s E) and the rule wipe (.42 s E after .05 s).
-    func playEntrance() {
-        HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, fadeFrom: 0, env: env)
-        HUDMotion.grow(rule, duration: HUDDuration.ruleWipe, delay: HUDDuration.ruleDelay, env: env)
+    func playEntrance(delay: CFTimeInterval = 0) {
+        HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, delay: delay, fadeFrom: 0, env: env)
+        HUDMotion.grow(rule, duration: HUDDuration.ruleWipe, delay: HUDDuration.ruleDelay + delay, env: env)
     }
 
     var titleTextForTesting: (String, String) { (title.text, subtitle.text) }

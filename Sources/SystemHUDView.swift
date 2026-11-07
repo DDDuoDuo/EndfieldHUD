@@ -793,11 +793,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // Prepare native planes without first building an invisible, fully
         // deployed Metal scene that open() immediately discards again.
         showStable(preparingSourceEntrance: usesSourceShell)
-        // The first module of a session enters from the disc centre as the HUD
-        // deploys (spec §1.10); today's boot log keeps the centre hidden instead.
-        if !playsBootLogOnOpen {
-            designCanvases[selectedModule]?.playEntrance(from: HUDShellPosition.entranceOffset(from: nil, to: selectedModule))
-        }
         // Start metadata alongside deployment rather than after its completion.
         // The separate input bridge is still disabled throughout the reveal.
         modulePresentationAllowed = true
@@ -853,7 +848,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         for (plane, delay, duration, scale, depth) in [
             (panelsPlane, 0.19, 0.30, CGFloat(0.90), CGFloat(-35)),
-            (corePlane, 0.32, 0.21, CGFloat(0.82), CGFloat(30)),
+            (corePlane, Self.coreRevealDelay, 0.21, CGFloat(0.82), CGFloat(30)),
             (glassPlane, 0.34, 0.21, CGFloat(0.90), CGFloat(55))
         ] {
             animate(plane.deployment, "opacity", from: 0, to: 1, duration: 0.15, delay: delay)
@@ -866,6 +861,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         enter(notesWorkspace, delay: 0.32, duration: 0.21)
         addDeploymentFlicker(opening: true)
         CATransaction.commit()
+        // Outside the deployment transaction, so its completion (and input)
+        // does not wait for the module's stagger.
+        playOpeningModuleEntrance(delay: Self.coreRevealDelay)
+    }
+
+    /// When the centre starts to show during the open: the core plane's
+    /// deployment, and the source shell's canvas fade after its ready.
+    private static let coreRevealDelay: CFTimeInterval = 0.32
+    private static let sourceRevealDelay: CFTimeInterval = 0.20
+
+    /// The module the HUD opens into enters from the disc centre as the centre
+    /// shows (spec §1.10); today's boot log keeps the centre hidden instead and
+    /// plays the entrance after it. The end of the open keeps it running.
+    private func playOpeningModuleEntrance(delay: CFTimeInterval) {
+        guard !playsBootLogOnOpen else { return }
+        designCanvases[selectedModule]?.playEntrance(from: HUDShellPosition.entranceOffset(from: nil, to: selectedModule), delay: delay)
     }
 
     func animateExit(completion: @escaping () -> Void = {}) {
@@ -1026,16 +1037,21 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         } else { motion.stop(freezePresentation: true) }
         quitPromptOpen = false
-        func remove(_ item: CALayer) {
+        // The end of the open (the only caller preserving Now Playing) keeps the
+        // opening module's entrance running under its canvas.
+        let openingCanvas = preservingNowPlayingPresentation ? designCanvases[selectedModule]?.root : nil
+        func remove(_ item: CALayer, keepingEntrance: Bool = false) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }
             if preservingNowPlayingPresentation && (item === nowPlayingCanvas.root || item === archiveCanvas.root || item === readerCanvas.root
                 || item === mediaAssemblyCanvas.root || item === calendarCanvas.root || item === minigameCanvas.root) { return }
-            if preservingPointerMotion {
-                for key in item.animationKeys() ?? [] where !key.hasPrefix("parallax.") { item.removeAnimation(forKey: key) }
+            let keepingEntrance = keepingEntrance || item === openingCanvas
+            if preservingPointerMotion || keepingEntrance {
+                for key in item.animationKeys() ?? [] where !(preservingPointerMotion && key.hasPrefix("parallax."))
+                    && !(keepingEntrance && HUDMotion.entranceKeys.contains(key)) { item.removeAnimation(forKey: key) }
             } else { item.removeAllAnimations() }
-            item.sublayers?.forEach(remove)
-            if let mask = item.mask { remove(mask) }
+            item.sublayers?.forEach { remove($0, keepingEntrance: keepingEntrance) }
+            if let mask = item.mask { remove(mask, keepingEntrance: keepingEntrance) }
         }
         if let layer = layer { remove(layer) }
         // cancel() restores the last committed screen. Its host pose must be
@@ -2106,8 +2122,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             }
             self.withoutActions { self.canvas.opacity = 1; self.notesWorkspace.opacity = 1 }
             if !HUDRuntimeAppearance.reduceMotion {
-                self.animate(self.canvas, "opacity", from: 0, to: 1, duration: 0.24, delay: 0.20)
-                self.animate(self.notesWorkspace, "opacity", from: 0, to: 1, duration: 0.24, delay: 0.20)
+                self.animate(self.canvas, "opacity", from: 0, to: 1, duration: 0.24, delay: Self.sourceRevealDelay)
+                self.animate(self.notesWorkspace, "opacity", from: 0, to: 1, duration: 0.24, delay: Self.sourceRevealDelay)
+                self.playOpeningModuleEntrance(delay: Self.sourceRevealDelay)
                 self.chargeBadge.animateEntrance()
             }
             self.motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: self.currentPointerTarget())
