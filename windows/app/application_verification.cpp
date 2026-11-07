@@ -50,22 +50,31 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
 // The traced host never spins on a past wake: an owner that keeps reporting
 // a wake already due (one that waits for a frame or an event that does not
-// come) has the host's deadline wake fire about 2,000 times a second. Between
-// frames (and in each second of a long stretch without one) the deadline
-// wakes stay within a small burst and rate; the closed HUD past its grace
-// stays under 20 a second (run_idle_trace.cmake).
+// come) has the host's deadline wake fire about 2,000 times a second, with
+// frames between them or without (alongside 165 Hz frames about 160 a
+// second). Between frames the deadline wakes stay within a small burst and
+// rate, and in each second, whatever its frames, within twice the fastest
+// owner cadence (Now Playing's 30 Hz display); the traces peak at a few a
+// second, and the closed HUD past its grace stays under 20 a second
+// (run_idle_trace.cmake). The most wakes in any one second is reported.
 class WakeSpinCheck {
-    static constexpr double burst=50,rate=100;
-    std::uint64_t frames_{~std::uint64_t{}},wakes_{};double since_{};
+    static constexpr double burst=50,rate=100,perSecond=60;
+    std::uint64_t frames_{},wakes_{},secondFrames_{},secondWakes_{},peak_{};double since_{},second_{};bool started_{};
 public:
-    // After each traced pump; throws when the stretch's deadline wakes passed the bound.
+    // After each traced pump; throws when a stretch's deadline wakes passed the bound.
     void sample(const OverlayHostStats&s,double now){
-        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_;
+        if(!started_){started_=true;frames_=secondFrames_=s.frames;wakes_=secondWakes_=s.externalWakes;since_=second_=now;return;}
+        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_,inSecond=s.externalWakes-secondWakes_;
         if(frameless&&double(wakes)>burst+rate*(now-since_)){
             std::cout<<"Traced host deadline wakes: "<<wakes<<" in "<<now-since_<<" s without a frame\n";
             need(false,"No owner's past wake spins the host while no frame runs");}
+        if(double(inSecond)>perSecond*std::max(1.,now-second_)){
+            std::cout<<"Traced host deadline wakes: "<<inSecond<<" in "<<now-second_<<" s with "<<s.frames-secondFrames_<<" frames\n";
+            need(false,"No owner's past wake spins the host in any second, with frames or without");}
         if(!frameless||now-since_>=1){frames_=s.frames;wakes_=s.externalWakes;since_=now;}
+        if(now-second_>=1){peak_=std::max(peak_,inSecond);secondFrames_=s.frames;secondWakes_=s.externalWakes;second_=now;}
     }
+    std::uint64_t peak()const{return peak_;}
 };
 }
 
@@ -510,6 +519,7 @@ int Application::Impl::runIdleTrace(){
      const auto request="close-"+std::to_string(memoryTrace->closes);
      need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
           "The memory trace records Quit's close request, then the quit");}
+    std::cout<<"Idle trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }
@@ -737,7 +747,7 @@ int Application::Impl::runAnimationTrace(){
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
         {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
-    std::cout<<"Wrote hidden animation trace\n";
+    std::cout<<"Wrote hidden animation trace\n"<<"Animation trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }
