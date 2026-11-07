@@ -644,7 +644,7 @@ private:
         } else if (launch_->phase == LaunchPhase::closing) cancelPendingLaunch(t);
     }
     void requestClose() {
-        if (coverageMode()) {++coverageCloseRequests_;return;} // the coverage harness owns the lifecycle
+        if (coverageMode()) {++coverageCloseRequests_;if (coverageCloseNow_) coverageCloseNow_();return;} // the coverage harness owns the lifecycle
         host_.closeOverlay();
     }
     void requestReopen() {
@@ -870,6 +870,7 @@ private:
     unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, coverageSelectRequests_{}, launchesOpened_{};
     unsigned relinkSyncs_{}, relinkFailures_{};
     m::ShortcutRelinkSync lastRelink_;
+    std::function<void()> coverageCloseNow_; // coverage: the host's close finishes inside the request (Reduce Motion)
 };
 
 // One combined module cycle of hidden coverage on the + Add App canvas. Every
@@ -1320,12 +1321,21 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     // 13. A successful close-first launch records the Event Log entry. Only
     //     in the first cycle: the shared Event Log then shows the same rows
     //     in every later cycle (its raster usage must repeat).
-    const unsigned successes = step.cycle == 0 ? 1 : 0;
+    const unsigned successes = step.cycle == 0 ? 2 : 0;
     if (successes) {
         d.click("apps:" + betaID + ":open");
         d.close(false);
         step.check(!launch_ && synthetic_->launched == launched + 1 && launchesOpened_ == opened + 1 && coverageReopenRequests_ == reopened + 1,
                    "The application starts only after the close and is recorded as opened");
+        d.reopen();
+        // Reduce Motion: the host's close finishes inside the verify
+        // completion's request (Impl::close delivers overlayClosing, then
+        // overlayConcealed); the launch still starts once it returns.
+        coverageCloseNow_ = [&d, this] { closing(d.t, true); concealed(d.t); };
+        d.click("apps:" + betaID + ":open");
+        d.settle();coverageCloseNow_ = {};
+        step.check(!launch_ && !overlayVisible_ && synthetic_->launched == launched + 2 && launchesOpened_ == opened + 2 && coverageReopenRequests_ == reopened + 1,
+                   "A close that finishes inside the launch's request (Reduce Motion) still starts the application after it");
         d.reopen();
     }
     d.clearToast();

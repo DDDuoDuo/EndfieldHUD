@@ -445,14 +445,23 @@ int Application::Impl::runIdleTrace(){
     // opens Windows Settings or registers a chord).
     const auto closedWithoutFrame=[&](std::uint64_t frames){const auto s=host.stats();
         return closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==frames;};
+    // A shortcut recording on the Hotkeys page (its record button; the
+    // recording holds the chord, so the hotkey cannot close the HUD), then a
+    // press outside the displayed circle: the close ends the recording
+    // (SettingsCanvas::didDeactivate) and hides the HUD without a frame.
+    if(settingsUI){openHUD();selectModule(core::Module::hotkeys,clock());auto&hotkeys=settingsUI->canvas(core::Module::hotkeys);
+     pump(3,[&]{return hotkeys.isActive()&&!hotkeys.transitioning();});
+     need(hotkeys.performAccessibilityAction("capture",clock())&&settingsUI->controller().capturingShortcut(),"The Hotkeys page's record button starts a shortcut recording");
+     const core::Point side{2,metrics.height*.5};const auto framesBefore=host.stats().frames;
+     need(backgroundPressCloses(side),"A press on the side of the screen during a recording is a background press");
+     (void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});(void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore)&&!settingsUI->controller().capturingShortcut(),
+          "A press outside the circle during a shortcut recording ends it and closes the Reduce Motion HUD without a frame");}
     // The summon hotkey (WM_HOTKEY and the low-level hook's message reach
-    // trayAction), after a shortcut recording in Settings; the next press opens again.
+    // trayAction) closes; the next press opens again.
     openHUD();
-    {const auto framesBefore=host.stats().frames;
-     if(settingsUI)settingsUI->controller().beginShortcutCapture();
-     trayAction(gpu::TrayAction::openOverlay,true,clock());
-     need(closedWithoutFrame(framesBefore),"The summon hotkey closes the Reduce Motion HUD without a frame, after a shortcut recording");
-     if(settingsUI)settingsUI->controller().endShortcutCapture();
+    {const auto framesBefore=host.stats().frames;trayAction(gpu::TrayAction::openOverlay,true,clock());
+     need(closedWithoutFrame(framesBefore),"The summon hotkey closes the Reduce Motion HUD without a frame");
      trayAction(gpu::TrayAction::openOverlay,true,clock());need(lifecycle.phase()==P::opening,"The next summon hotkey press opens the HUD again");
      host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");}
     // A press outside the displayed circle (SystemHUDView.mouseDown); its release changes nothing.
@@ -504,6 +513,9 @@ int Application::Impl::runIdleTrace(){
      if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");}
      else openHUD();
      closeHUD();}
+    // A fresh memory trace for the rows read below: the transition deadlines
+    // by index, and the close rows (at most eight closes).
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
     reduceMotion(false);
     // OverlayController.transitionDeadline: an opening and a close no frame
     // finishes (the window stays hidden under them, so the host's frame gate
@@ -564,9 +576,7 @@ int Application::Impl::runIdleTrace(){
         shutdownVisible();
         return 0;
     }
-    // The tray's Quit under Reduce Motion ends the run without a frame (a
-    // fresh memory trace: its rows count at most eight closes).
-    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
+    // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
      need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
