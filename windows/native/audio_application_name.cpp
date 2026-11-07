@@ -63,6 +63,7 @@ std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candi
     for(const auto candidate:candidates)if(audioLabelValid(candidate))return std::wstring(candidate);
     return L"PID "+std::to_wstring(pid);
 }
+std::wstring audioSessionLabel(std::wstring_view display,std::wstring_view process,std::uint32_t pid){return audioApplicationLabel({display,process},pid);}
 #ifdef _WIN32
 std::optional<AudioPackageManifestNames>readAudioPackageManifest(const std::filesystem::path&file,std::wstring_view applicationID){
     using Microsoft::WRL::ComPtr;
