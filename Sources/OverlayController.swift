@@ -1387,7 +1387,7 @@ final class OverlayController: NSObject {
                 let body = NSRect(x: anchor.x - width * scale / 2, y: reach.lowerBound,
                                   width: width * scale, height: reach.upperBound - reach.lowerBound)
                 func flipped(_ rect: NSRect) -> NSRect { NSRect(x: rect.minX, y: -rect.maxY, width: rect.width, height: rect.height) }
-                let size = NSSize(width: editor.size.width, height: editor.size.height + HUDPlacementEditor.bubbleClearance)
+                let size = OverlayGeometry.editorStripSize(editor.size)
                 strip = flipped(HUDPlacementEditor.frame(size: size, beside: flipped(body), within: flipped(screen), gap: 10))
             }
             editorStripFrame = strip
@@ -1399,9 +1399,13 @@ final class OverlayController: NSObject {
                                  width: barFrame.width, height: barFrame.height)
         indicator.bounds = NSRect(origin: .zero, size: canvas)
         if let strip, let editor = root.editor {
+            // The host scales the strip (OverlayGeometry.editorStripScale); the
+            // strip keeps its own size and the bubble's room in host points.
             HUDMotion.perform {
-                editor.layer.frame = NSRect(x: strip.minX - frame.minX,
-                                            y: frame.maxY - strip.maxY + HUDPlacementEditor.bubbleClearance,
+                root.editorHost.bounds = NSRect(x: 0, y: 0, width: editor.size.width,
+                                                height: editor.size.height + HUDPlacementEditor.bubbleClearance)
+                root.editorHost.position = NSPoint(x: strip.minX - frame.minX, y: frame.maxY - strip.maxY)
+                editor.layer.frame = NSRect(x: 0, y: HUDPlacementEditor.bubbleClearance,
                                             width: editor.size.width, height: editor.size.height)
             }
             root.updateAccessibility()
@@ -1424,6 +1428,9 @@ private final class PositionCanvas: NSView, HUDControlFeedbackHost {
     var editing = false
     let env = HUDDesignEnvironment()
     private(set) var editor: HUDPlacementEditor?
+    /// Holds the strip at OverlayGeometry.editorStripScale; anchored at its
+    /// top left (the view is flipped), placed by the controller's layout.
+    let editorHost = CALayer()
     private var standIns: HUDAccessibilityStandIns?
     private var tracking: NSTrackingArea?
     private var pointer: CGPoint?
@@ -1447,7 +1454,18 @@ private final class PositionCanvas: NSView, HUDControlFeedbackHost {
         editor?.layer.removeFromSuperlayer()
         editor = next
         if let next, let layer {
-            HUDMotion.perform { next.layer.zPosition = 10; layer.addSublayer(next.layer) }
+            HUDMotion.perform {
+                if editorHost.superlayer !== layer {
+                    editorHost.name = "chargeBar.editor.host"
+                    editorHost.anchorPoint = .zero; editorHost.zPosition = 10
+                    let scale = OverlayGeometry.editorStripScale
+                    editorHost.transform = CATransform3DMakeScale(scale, scale, 1)
+                    layer.addSublayer(editorHost)
+                }
+                editorHost.addSublayer(next.layer)
+            }
+            // Its buffers follow the shrink, as a Display > HUD elements size does.
+            env.applyScale(to: next.layer, magnification: OverlayGeometry.editorStripScale)
         }
         if next == nil { pointer = nil }
         updateAccessibility()
@@ -1478,7 +1496,7 @@ private final class PositionCanvas: NSView, HUDControlFeedbackHost {
         let scale = window?.backingScaleFactor ?? 2
         guard scale != env.renderScale else { return }
         env.renderScale = scale
-        if let editor { env.applyScale(to: editor.layer) }
+        if let editor { env.applyScale(to: editor.layer, magnification: OverlayGeometry.editorStripScale) }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

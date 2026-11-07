@@ -89,6 +89,17 @@ enum OverlayGeometry {
                        y: min(screen.maxY - topMargin, max(screen.minY + bottomMargin, y)))
     }
 
+    /// The editor strip beside the bar is drawn at 70 % of the shared strip
+    /// (HUDPlacementEditor), text and controls alike.
+    static let editorStripScale: CGFloat = 0.7
+
+    /// The room the scaled strip takes on the display: the strip of `size`
+    /// with the value bubble's clearance above it, both at `editorStripScale`.
+    static func editorStripSize(_ size: CGSize) -> CGSize {
+        CGSize(width: size.width * editorStripScale,
+               height: (size.height + HUDPlacementEditor.bubbleClearance) * editorStripScale)
+    }
+
     /// The heights the visible bar (38 pt tall before Size) can cover while
     /// the editor's Size slider moves from `anchor`, up to the largest Size,
     /// including the shift when that Size's margins clamp the anchor by an
