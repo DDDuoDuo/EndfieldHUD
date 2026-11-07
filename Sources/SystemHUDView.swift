@@ -1458,10 +1458,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func refreshChargeHover() {
         guard allowsModuleInput, let window, !window.ignoresMouseEvents else { return }
         let point = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
-        let notesCoverPointer = notesWorkspaceIsInteractive
-            && notesWorkspacePoint(point).map { notesCanvas.containsWorkspacePoint($0) } == true
         let local = chargeDesignPoint(designPoint(point))
-        chargeBadge.setHovered(!notesCoverPointer && local.map { chargeBadge.contains($0) } == true)
+        chargeBadge.setHovered(!notesCover(point) && local.map { chargeBadge.contains($0) } == true)
     }
 
     private func clearControlHighlights() {
@@ -1546,7 +1544,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
            !native.isDescendant(of: blurBackdrop), native !== blurBackdrop { return native }
         let design = designPoint(local)
         // Pinned cards are painted above the map and source controls.
-        if notesWorkspaceIsInteractive, let note = notesWorkspacePoint(local), notesCanvas.containsWorkspacePoint(note) { return self }
+        if notesCover(local) { return self }
         if clockPoint(local) != nil { return self }
         if sourceWatch?.bottomButtonContains(local) == true { return sourceWatch }
         if designControlContains(local) || centreContains(local, module: selectedModule) { return self }
@@ -2446,8 +2444,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         closeHUDButton.target = self; closeHUDButton.action = #selector(closeFromIdentity)
         closeHUDButton.acceptsPoint = { [weak self] point in
             guard let self, let local = self.navigationPoint(self.designPoint(point)) else { return false }
-            if self.notesWorkspaceIsInteractive, let note = self.notesWorkspacePoint(point),
-               self.notesCanvas.containsWorkspacePoint(note) { return false }
+            if self.notesCover(point) { return false }
             return self.identityCard.target(at: local) == .close
         }
         closeHUDButton.projectedAccessibilityFrame = { [weak self] in
@@ -2511,8 +2508,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             }
             button.acceptsPoint = { [weak self] point in
                 guard let self = self else { return false }
-                if self.notesWorkspaceIsInteractive, let local = self.notesWorkspacePoint(point),
-                   self.notesCanvas.containsWorkspacePoint(local) { return false }
+                if self.notesCover(point) { return false }
                 return self.navigationTargetAtDesignPoint(self.designPoint(point)) == entry.target
             }
             button.projectedAccessibilityFrame = { [weak self] in
@@ -4016,7 +4012,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let location = convert(sender.draggingLocation, from: nil)
         guard bounds.contains(location), navigationTargetAtDesignPoint(designPoint(location)) == nil,
               centreContains(location, module: module),
-              !(notesWorkspaceIsInteractive && notesWorkspacePoint(location).map { notesCanvas.containsWorkspacePoint($0) } == true) else { return [] }
+              !notesCover(location) else { return [] }
         let extensions = module == .reader ? Set(["pdf", "epub", "txt"]) : Set(NotesMediaFactory.supportedFileExtensions)
         let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
