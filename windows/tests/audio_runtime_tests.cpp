@@ -9,10 +9,13 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <stdexcept>
 #include <thread>
 
@@ -383,6 +386,31 @@ void noticeRetry(){
     check(adopted,"The owner adopts the later publication");
     runtime->stop();DestroyWindow(window);
 }
+// The application's own wiring (app/, read as text: the hidden owner
+// coverage never constructs AudioRuntime). drain() no longer republishes
+// Volume, so a caller that drains directly would silently freeze the Volume
+// page, and a binding call outside volumeBindingCall would publish outside
+// Volume's isolation. Every AudioRuntime drain goes through drainAudio and
+// every publishing binding call through volumeBindingCall.
+void appWiring(const std::filesystem::path&app){
+    check(std::filesystem::is_directory(app),"The application sources are passed");
+    const std::regex call(R"(audio(->|\.)(drain\(|volume\(\)\.(receive|setVisible|setErrorText)\(|setLanguage\())");
+    unsigned guarded{},drains{};
+    for(const auto&entry:std::filesystem::recursive_directory_iterator(app)){
+        const auto file=entry.path();if(!entry.is_regular_file()||(file.extension()!=".cpp"&&file.extension()!=".hpp")||file.filename()=="application_audio.hpp")continue;
+        std::ifstream in(file,std::ios::binary);check(bool(in),"Read an application source");std::string line;
+        while(std::getline(in,line)){
+            if(line.find("drainAudio(registry,volumeModuleOwner.get(),*audio)")!=line.npos)++drains;
+            for(auto it=std::sregex_iterator(line.begin(),line.end(),call);it!=std::sregex_iterator();++it){
+                if((*it)[2].str()=="drain(")throw std::runtime_error("AudioRuntime::drain() is called outside drainAudio in "+file.filename().string());
+                if(line.find("volumeBindingCall(registry,volumeModuleOwner.get(),")==line.npos)throw std::runtime_error("A Volume binding call publishes outside volumeBindingCall in "+file.filename().string()+": "+(*it)[0].str());
+                ++guarded;
+            }
+        }
+    }
+    check(drains==1,"The audio message drains through drainAudio under the Volume owner");
+    check(guarded>=4,"Open, close, force close and the language run the binding under the Volume owner");
+}
 #endif
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
@@ -462,10 +490,13 @@ void nowPlaying(){
     {std::lock_guard l(h.world->m);check(std::abs(*h.world->sessions[0].volume-.8f)<1e-6f&&!h.world->endpointOpen&&!h.world->sessionWake,"Destruction restores every owned session and unregisters everything");}
 }
 }
-int main(){
+int main(int argc,char**argv){
     try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();longEndpointName();
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
-        volumeFailure();noticeRetry();
+        check(argc==2,"Pass the application source directory (app/)");
+        volumeFailure();noticeRetry();appWiring(argv[1]);
+#else
+        (void)argc;(void)argv;
 #endif
         volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
