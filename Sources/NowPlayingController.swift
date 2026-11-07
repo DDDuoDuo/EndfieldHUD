@@ -90,7 +90,7 @@ enum NowPlayingFailure: Error, Equatable {
     case permissionRequired, permissionDenied, accessibilityRequired, unavailable, unsupported, timedOut, cancelled
     var message: String {
         switch self {
-        case .permissionRequired: return L10n.text("Connect to allow playback controls.", "连接以允许播放控制。")
+        case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。")
         case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then refresh.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。")
         case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls.", "请允许辅助功能访问以读取此播放器的控制。")
         case .unsupported: return L10n.text("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。")
@@ -171,6 +171,7 @@ final class NowPlayingController {
     private var preferred: NowPlayingSource?
     private var pendingCommand: (NowPlayingCommand, NowPlayingApplication, NowPlayingTrack)?
     private var pendingVolume: (Double, NowPlayingApplication)?
+    private var pendingConnect: NowPlayingApplication?
     private var generation = 0
     private let artworkFetch: NowPlayingArtworkLoader.Fetch
     private lazy var artworkLoader: NowPlayingArtworkLoader = {
@@ -191,6 +192,12 @@ final class NowPlayingController {
         set { artworkLoader.setPixelSize(newValue) }
     }
     private(set) var playerVolume: Double?
+    /// Why the player's own volume cannot be read or changed: a missing or
+    /// declined Automation grant (or a failed request for one). It never
+    /// disables transport; the volume pop-up shows its message instead.
+    private(set) var playerVolumeFailure: NowPlayingFailure?
+    /// An Automation request is queued behind in-flight work or showing.
+    var isAwaitingPermission: Bool { isRequestingPermission || pendingConnect != nil }
     private struct PendingSeek {
         let app: NowPlayingApplication
         let track: NowPlayingTrack
@@ -214,6 +221,7 @@ final class NowPlayingController {
     private var lyricsRetryServed: TimeInterval?
     private var warmSnapshot: NowPlayingSnapshot?
     private var warmVolume: Double?
+    private var warmVolumeFailure: NowPlayingFailure?
     var lyrics: NowPlayingLyrics? {
         if snapshot.track?.timedLyrics != nil, let embedded = lyricsLoader.lyrics { return embedded }
         return catalog?.lyrics ?? lyricsLoader.lyrics
@@ -276,7 +284,8 @@ final class NowPlayingController {
         active = true; generation += 1; hasFreshMetadataForPresentation = false
         if let warm = warmSnapshot, let app = warm.application,
            isApplicationAlive(app, running: applications()) {
-            snapshot = warm; snapshot.busy = false; observedTrack = warm.track; playerVolume = warmVolume
+            snapshot = warm; snapshot.busy = false; observedTrack = warm.track
+            playerVolume = warmVolume; playerVolumeFailure = warmVolumeFailure
             changed()
         }
         cancellation = subscribe { [weak self] source in
@@ -293,12 +302,12 @@ final class NowPlayingController {
         if snapshot.track != nil, snapshot.failure == nil || snapshot.failure == .timedOut || snapshot.failure == .unavailable {
             warmSnapshot = snapshot; warmSnapshot?.busy = false; warmSnapshot?.failure = nil
             warmSnapshot?.track = observedTrack ?? snapshot.track
-            warmVolume = playerVolume
+            warmVolume = playerVolume; warmVolumeFailure = playerVolumeFailure
         }
         active = false; generation += 1; hasFreshMetadataForPresentation = false; pendingRefresh = false; isRequestingPermission = false; retryArtworkAfterRefresh = false
-        pendingCommand = nil; pendingVolume = nil; clearOptimisticSeek(); observedTrack = nil
+        pendingCommand = nil; pendingVolume = nil; pendingConnect = nil; clearOptimisticSeek(); observedTrack = nil
         token?.cancel(); cancellation?(); cancellation = nil; backendCancellation?(); backendCancellation = nil
-        snapshot = NowPlayingSnapshot(); artworkLoader.clear(); lyricsLoader.clear(); catalog?.clear(); playerVolume = nil
+        snapshot = NowPlayingSnapshot(); artworkLoader.clear(); lyricsLoader.clear(); catalog?.clear(); playerVolume = nil; playerVolumeFailure = nil
         // Failures are not remembered across presentations: the next opening asks again.
         lyricsLoader.forgetFailures(); catalog?.forgetFailures(); lyricsRetryServed = nil; updateLyricsRetry()
     }
@@ -307,7 +316,8 @@ final class NowPlayingController {
 
     func select(_ source: NowPlayingSource) {
         guard active, applications().contains(where: { $0.source == source }) else { return }
-        selected = source; token?.cancel(); generation += 1; isRequestingPermission = false; retryArtworkAfterRefresh = false
+        selected = source; token?.cancel(); generation += 1; isRequestingPermission = false; pendingConnect = nil; retryArtworkAfterRefresh = false
+        playerVolumeFailure = nil
         snapshot.application = nil; snapshot.track = nil; snapshot.failure = nil; clearOptimisticSeek(); observedTrack = nil
         artworkLoader.clear(); refresh()
     }
@@ -338,7 +348,7 @@ final class NowPlayingController {
         begin { backend, cancelled in
             if let automatic = try? backend.automaticSnapshot(cancelled: cancelled) {
                 return (automatic.0, Optional(automatic.1), Optional<NowPlayingFailure>.none,
-                        try? backend.volume(in: automatic.0, cancelled: cancelled))
+                        Self.readVolume(backend, in: automatic.0, cancelled: cancelled))
             }
             // The first native stream event arrives shortly after launch. Do
             // not hold it behind a full Accessibility scan of fallback apps.
@@ -353,16 +363,17 @@ final class NowPlayingController {
             let result = results.first(where: { $0.0.source == preferred && $0.1?.isPlaying == true })
                 ?? results.first(where: { $0.1?.isPlaying == true })
                 ?? results.first(where: { $0.1 != nil }) ?? results[0]
-            return (result.0, result.1, result.2, try? backend.volume(in: result.0, cancelled: cancelled))
+            return (result.0, result.1, result.2, Self.readVolume(backend, in: result.0, cancelled: cancelled))
         } completion: { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let value):
                 if value.2 == nil {
                     self.hasFreshMetadataForPresentation = true
-                    if value.1 == nil { self.warmSnapshot = nil; self.warmVolume = nil }
+                    if value.1 == nil { self.warmSnapshot = nil; self.warmVolume = nil; self.warmVolumeFailure = nil }
                 }
-                let retain = value.0 == self.snapshot.application && self.snapshot.track != nil
+                let previousApplication = self.snapshot.application
+                let retain = value.0 == previousApplication && self.snapshot.track != nil
                     && (value.2 == .timedOut || value.2 == .unavailable)
                 self.snapshot.application = value.0
                 if !retain {
@@ -376,11 +387,11 @@ final class NowPlayingController {
                     }
                 }
                 self.snapshot.failure = value.2
-                self.playerVolume = self.pendingVolume.flatMap { $0.1 == value.0 ? $0.0 : nil }
-                    ?? value.3.flatMap { $0.isFinite ? min(1, max(0, $0)) : nil }
+                self.applyVolumeRead(value.3, application: value.0, previous: previousApplication)
             case .failure(let failure):
                 if failure != .timedOut || self.snapshot.application.map({ app in self.isApplicationAlive(app, running: running) }) != true {
-                    self.snapshot.track = nil; self.snapshot.application = nil; self.playerVolume = nil; self.clearOptimisticSeek(); self.observedTrack = nil
+                    self.snapshot.track = nil; self.snapshot.application = nil; self.playerVolume = nil; self.playerVolumeFailure = nil
+                    self.clearOptimisticSeek(); self.observedTrack = nil
                 }
                 self.snapshot.failure = failure
             }
@@ -410,15 +421,45 @@ final class NowPlayingController {
         return true
     }
 
+    /// Asks macOS once for Automation of the shown player. Busy work queues
+    /// the request instead of dropping it. A declined or failed request only
+    /// affects the player's volume; transport and the card stay usable.
     func connect() {
-        guard active, !inFlight, let app = snapshot.application else { return }
+        guard active, let app = snapshot.application else { return }
+        if inFlight { pendingConnect = app; notifyObservers(); return }
+        pendingConnect = nil
         isRequestingPermission = true
         begin { backend, cancelled in try backend.requestPermission(for: app, cancelled: cancelled); return () }
         completion: { [weak self] result in
             guard let self else { return }
             self.isRequestingPermission = false
-            if case .failure(let failure) = result { self.snapshot.failure = failure }
+            if case .failure(let failure) = result { self.playerVolumeFailure = failure }
             else { self.pendingRefresh = true }
+        }
+    }
+
+    /// The player's own volume read of a refresh, carried with its failure.
+    private static func readVolume(_ backend: NowPlayingBackend, in app: NowPlayingApplication,
+                                   cancelled: @escaping () -> Bool) -> Result<Double?, NowPlayingFailure> {
+        do { return .success(try backend.volume(in: app, cancelled: cancelled)) }
+        catch { return .failure((error as? NowPlayingFailure) ?? .unavailable) }
+    }
+
+    /// A queued drag wins. A missing or declined grant is kept as the reason
+    /// the volume is unavailable; a slow reply of the same player keeps the
+    /// last value; anything else (the player quit, no volume) clears both.
+    private func applyVolumeRead(_ read: Result<Double?, NowPlayingFailure>, application app: NowPlayingApplication,
+                                 previous: NowPlayingApplication?) {
+        if let pending = pendingVolume, pending.1 == app { playerVolume = pending.0; playerVolumeFailure = nil; return }
+        switch read {
+        case .success(let value):
+            playerVolume = value.flatMap { $0.isFinite ? min(1, max(0, $0)) : nil }; playerVolumeFailure = nil
+        case .failure(let failure) where failure == .permissionRequired || failure == .permissionDenied:
+            playerVolume = nil; playerVolumeFailure = failure
+        case .failure(.timedOut) where app == previous:
+            break
+        case .failure:
+            playerVolume = nil; playerVolumeFailure = nil
         }
     }
 
@@ -497,6 +538,10 @@ final class NowPlayingController {
         if let pending = pendingVolume {
             pendingVolume = nil
             if snapshot.application == pending.1 { _ = setPlayerVolume(pending.0); if inFlight { return } }
+        }
+        if let pending = pendingConnect {
+            pendingConnect = nil
+            if snapshot.application == pending { connect(); if inFlight { return } }
         }
         if pendingRefresh { pendingRefresh = false; refresh() }
     }
