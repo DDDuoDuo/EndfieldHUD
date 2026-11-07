@@ -983,7 +983,7 @@ void Application::Impl::constructAudio(){
     // interface until the first vote; hidden tests never construct it.
     const auto window=static_cast<HWND>(host.hwnd());
     audio=std::make_unique<gpu::AudioRuntime>(gpu::nativeAudioServiceOptions(args.dataRoot),settingsLanguage(configuration),
-        [window]{PostMessageW(window,audioMessage,serviceGeneration,0);});
+        audioNotice(window,audioMessage,serviceGeneration));
     (void)audio->recover(); // crash-recovery journal of owned per-app attenuation
     if(eventRecorder)(void)audio->setDeviceEvents(true); // Event Log device list, app lifetime
 }

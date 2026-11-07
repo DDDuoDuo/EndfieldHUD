@@ -1,8 +1,10 @@
 #pragma once
 #include "app/module_owner.hpp"
 #include "native/audio_runtime.hpp"
+#include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <windows.h>
 
 namespace endfield::app {
 // The shared AudioRuntime's Volume binding publishes synchronously (the
@@ -22,6 +24,14 @@ bool volumeBindingCall(ModuleRegistry& registry, ModuleOwner* volume, native::Au
     if (volume && registry.guard(*volume, std::forward<F>(f), operation)) return true;
     audio.volume().close();
     return false;
+}
+
+// The worker's notice for the HUD window: post the audio owner message. A
+// post that fails throws, as the utility notice and Now Playing's wake do, so
+// AudioRuntime's coalescer re-arms and the next publication posts again; a
+// dropped result left the notice pending and audio silent for the run.
+inline native::AudioRuntime::Notice audioNotice(HWND window, UINT message, WPARAM generation) {
+    return [window, message, generation] { if (!PostMessageW(window, message, generation, 0)) throw std::runtime_error("Post audio change"); };
 }
 
 // The audio owner message (application_events.cpp): adopt the worker's

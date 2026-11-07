@@ -5,6 +5,7 @@
 #include "app/application_audio.hpp"
 #endif
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -297,6 +298,47 @@ void volumeFailure(){
     check(registry.failures().size()==1,"No further failure reaches the registry");
     h.runtime->stop();
 }
+// The production notice (app::audioNotice) dropped PostMessageW's result: one
+// post that failed (here the window's posted-message quota is full) left the
+// coalescer's pending flag set, so no later publication posted the owner
+// message and audio went silent for the run. The failed post now throws, the
+// coalescer re-arms, and the next publication is delivered.
+void noticeRetry(){
+    namespace app=endfield::app;
+    constexpr UINT audioMessage=WM_APP+233,filler=WM_APP+1;constexpr WPARAM generation=7;
+    const HWND window=CreateWindowExW(0,L"STATIC",L"Audio notice fixture",0,0,0,0,0,HWND_MESSAGE,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(window&&!IsWindowVisible(window),"The notice posts to an owned message-only window");
+    const auto world=std::make_shared<World>();{std::lock_guard l(world->m);world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};}
+    n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<Endpoints>(w);};o.sessions=[w=world]{return std::make_unique<Sessions>(w);};o.topologySettleSeconds=.02;
+    // Counts the worker's notice calls around the production notice itself.
+    std::atomic<unsigned>attempts{},failures{};
+    auto runtime=std::make_unique<n::AudioRuntime>(std::move(o),c::Language::english,[notice=app::audioNotice(window,audioMessage,generation),&attempts,&failures]{
+        ++attempts;try{notice();}catch(...){++failures;throw;}});
+    const auto posted=[&]{MSG m{};unsigned count{};while(PeekMessageW(&m,window,audioMessage,audioMessage,PM_REMOVE)){check(m.wParam==generation,"The owner message carries the window's generation");++count;}return count;};
+    const auto attempted=[&](unsigned after){const auto deadline=std::chrono::steady_clock::now()+10s;while(attempts.load()<=after&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);return attempts.load()>after;};
+    unsigned filled{};while(filled<1000000&&PostMessageW(window,filler,0,0))++filled;
+    check(filled>0&&filled<1000000,"The window's posted-message quota is full");
+    check(runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    check(attempted(0),"The first publication calls the notice");
+    std::this_thread::sleep_for(200ms); // the device list settles (.02 s)
+    const unsigned failed=failures.load(),before=attempts.load();
+    {MSG m{};while(PeekMessageW(&m,window,filler,filler,PM_REMOVE)){}}
+    check(posted()==0,"Nothing was posted while the queue was full");
+    // No drain() ran: only the coalescer's re-arm lets the next publication post.
+    {std::lock_guard l(world->m);world->outputs.push_back({usb,L"USB Headset",L"USB",5u});}
+    {n::AudioEndpointBackend::Wake w;{std::lock_guard l(world->m);w=world->topologyWake;}check(bool(w),"Native notification is registered");w();}
+    check(attempted(before),"A later publication calls the notice again after a failed post");
+    const auto deadline=std::chrono::steady_clock::now()+10s;unsigned delivered{};
+    while(!(delivered=posted())&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    check(delivered==1,"The later publication's owner message is delivered");
+    check(failed>0&&failed==before,"Every post into the full queue failed and threw");
+    bool adopted{};
+    for(const auto until=std::chrono::steady_clock::now()+10s;!adopted&&std::chrono::steady_clock::now()<until;){
+        (void)posted();(void)runtime->drain();const auto labels=runtime->deviceLabels();adopted=labels&&labels->count("{0.0.0.00000000}.{usb}");
+        if(!adopted)std::this_thread::sleep_for(1ms);}
+    check(adopted,"The owner adopts the later publication");
+    runtime->stop();DestroyWindow(window);
+}
 #endif
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
@@ -379,7 +421,7 @@ void nowPlaying(){
 int main(){
     try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
-        volumeFailure();
+        volumeFailure();noticeRetry();
 #endif
         volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
