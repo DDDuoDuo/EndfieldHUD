@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <thread>
 #include <string_view>
 #include <vector>
@@ -110,7 +111,7 @@ void versioned(const std::filesystem::path&path,std::wstring_view description){
     const bool added=UpdateResourceW(update,MAKEINTRESOURCEW(16)/*RT_VERSION*/,MAKEINTRESOURCEW(VS_VERSION_INFO),MAKELANGID(LANG_ENGLISH,SUBLANG_ENGLISH_US),root.data(),static_cast<DWORD>(root.size()))!=FALSE;
     check(EndUpdateResourceW(update,!added)!=FALSE&&added,"Write the synthetic version resource");
 }
-void shellLink(const std::filesystem::path&path,const std::filesystem::path&target,const wchar_t*args){Microsoft::WRL::ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));hr(link->SetPath(target.c_str()));hr(link->SetArguments(args));hr(link->SetWorkingDirectory(target.parent_path().c_str()));Microsoft::WRL::ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Save(path.c_str(),TRUE));}
+void shellLink(const std::filesystem::path&path,const std::filesystem::path&target,const wchar_t*args,const wchar_t*directory=nullptr){Microsoft::WRL::ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));hr(link->SetPath(target.c_str()));hr(link->SetArguments(args));hr(link->SetWorkingDirectory(directory?directory:target.parent_path().c_str()));Microsoft::WRL::ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Save(path.c_str(),TRUE));}
 void nativeFixtures(){hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struct End{~End(){CoUninitialize();}}end;Temp temp;const auto exe=temp.path/L"中文程序.exe",link=temp.path/L"应用链接.lnk",replacement=temp.path/L"updated.exe";stub(exe);shellLink(link,exe,L"--profile 中文");
     auto operations=n::windowsAppShortcutOS();unsigned launches{};n::AppShortcutResolved last;operations.launch=[&](const auto&r,std::uintptr_t){++launches;last=r;last.lease.reset();return n::AppShortcutLaunchReceipt{123};};n::NativeAppShortcutService service(std::move(operations));
     // An executable's FileDescription names it; one that is not valid UTF-16
@@ -126,6 +127,21 @@ void nativeFixtures(){hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struc
     stub(replacement);check(MoveFileExW(replacement.c_str(),exe.c_str(),MOVEFILE_REPLACE_EXISTING)!=FALSE,"Owned update replaces executable at the same saved path");const auto updated=service.reinspect(app.locator);check(n::NativeAppShortcutService::sameTarget(app.locator,updated.locator),"Real binary file replacement does not invalidate saved application path");
     service.launch(record(app));check(launches==1&&last.selection.value==updated.locator["windowsTarget"]["path"].string(),"Real reinspection hands the updated selected path to injected launch only");
     shellLink(link,exe,L"--profile 已更新");service.launch(record(shortcut));check(launches==2&&last.launchKind==n::AppShortcutLaunchKind::shellLink&&last.arguments=="--profile 已更新","Updated real link remains launchable through normal selected-link handoff");
+    // A .lnk's recorded arguments, working directory and target path come
+    // from the user's file. Ones that are not valid UTF-16 (an unpaired
+    // surrogate) threw out of inspection, so the shortcut could not be added.
+    // The Shell runs the selected .lnk itself, so each is dropped (empty:
+    // none) and the shortcut is kept; the owned links are never launched.
+    const std::wstring lone(1,static_cast<wchar_t>(0xD800));
+    const auto odd=temp.path/L"坏参数.lnk";shellLink(odd,exe,(L"--profile "+lone).c_str(),(temp.path/(L"目录"+lone)).c_str());
+    std::optional<m::ShortcutCandidate>oddShortcut;try{oddShortcut=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(odd)});}catch(const std::exception&){}
+    check(oddShortcut&&oddShortcut->name=="坏参数","A .lnk whose arguments and working directory hold an unpaired surrogate is kept, named by its file");
+    const auto&oddLaunch=oddShortcut->locator["windowsTarget"]["launch"];
+    check(oddLaunch["arguments"]==J("")&&oddLaunch["workingDirectory"]==J("")&&n::NativeAppShortcutService::sameTarget(app.locator,oddShortcut->locator),"Its unreadable arguments and working directory are dropped and its target is still recorded");
+    check(service.reinspect(oddShortcut->locator).name=="坏参数","The saved link verifies again on launch");
+    const auto oddTarget=temp.path/(L"坏目标"+lone+L".exe"),oddTargetLink=temp.path/L"坏目标链接.lnk";stub(oddTarget);shellLink(oddTargetLink,oddTarget,L"");
+    std::optional<m::ShortcutCandidate>targetShortcut;try{targetShortcut=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(oddTargetLink)});}catch(const std::exception&){}
+    check(targetShortcut&&targetShortcut->name=="坏目标链接"&&!targetShortcut->locator["windowsTarget"].contains("resolvedApplicationKey"),"A .lnk whose target path holds an unpaired surrogate is kept without a resolved application key");
     {std::ofstream broken(temp.path/L"bad.exe");broken<<"not an executable";}rejects([&]{service.inspect({n::AppShortcutSelectionKind::file,utf8Path(temp.path/L"bad.exe")});},"Native binary type rejects malformed direct executable");
     std::filesystem::remove(exe);rejects([&]{service.launch(record(app));},"Missing direct executable returns unavailable without starting a process");check(launches==2,"Native fixture never invokes real launch or any unselected application");
 }
