@@ -262,6 +262,13 @@ void longEndpointName(){
     h.until([&]{return h.runtime->deviceLabels().has_value();},"The Event Log device list arrives");
     const auto labels=h.runtime->deviceLabels();
     check(labels->size()==3&&labels->at("{0.0.0.00000000}.{speaker}")==longLabel,"The Event Log keeps the raw long label");
+    // A name with an unpaired surrogate (valid at both wchar_t widths) made
+    // the whole endpoint list unavailable; the row shows the ID instead.
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800));}
+    threw=false;
+    try{h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";},"The ill-formed endpoint name reaches Volume");}
+    catch(const std::exception&){threw=true;}
+    check(!threw&&delivered.outputs.size()==2&&named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetVolume,"An endpoint name that is not well-formed UTF-16 shows the endpoint ID, and the list stays available");
     h.runtime->stop();
 }
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
