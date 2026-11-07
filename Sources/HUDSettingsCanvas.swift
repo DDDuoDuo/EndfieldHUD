@@ -597,13 +597,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
         binders.append { [weak self, weak placement] in guard let self else { return }; placement?.setValue(self.placementTitle(self.config.placement)) }
         rows.append(row("placement", L10n.text("Display position", "显示位置"), [placement], page))
-        rows.append(navRow("editPosition", L10n.text("Edit position", "编辑位置"), page, chevron: "↗") { [weak self] in
+        // Size and Length are set with the position, in the bar's own editor.
+        rows.append(navRow("editPosition", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
             self?.controller.editBatteryPosition()
-        })
-        rows.append(sliderRow("batterySize", L10n.text("Size", "大小"), value: c.scale * 100,
-                              range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent, page: page,
-                              read: { $0.scale * 100 }) { [weak self] value, _ in
-            self?.controller.update { $0.scale = value / 100 }
         })
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["DISPLAY", "BATTERY ALERT"], code: "SYS-02", title: HUDModuleTitle("Battery alert", "电池提醒"),

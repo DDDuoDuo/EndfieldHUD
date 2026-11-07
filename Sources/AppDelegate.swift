@@ -154,11 +154,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             HUDSourceWatchDocument.prewarmDesktop()
             HUDSourceMetalRenderer.prewarmDesktopResources()
         }
-        overlay.onPositionEditFinished = { [weak self] position in
+        overlay.onPositionEditFinished = { [weak self] layout in
             guard let self = self else { return }
-            if let position = position {
+            if let layout = layout {
                 var configuration = self.store.configuration
-                configuration.customPosition = position
+                configuration.customPosition = layout.position
+                configuration.scale = layout.scale
+                configuration.chargeBarLength = layout.length
                 configuration.placement = .custom
                 self.store.update(configuration)
             }
@@ -1290,7 +1292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.isVisible, "Editing must survive ordinary battery policy dismissal")
                 overlay.cancelPositionEditing()
                 precondition(cancelled && !overlay.isEditingPosition && !overlay.isVisible)
-                var committed: OverlayPosition?
+                var committed: ChargeBarLayout?
                 overlay.onPositionEditFinished = { committed = $0 }
                 overlay.beginPositionEditing(snapshot: demo, configuration: .defaults)
                 overlay.confirmEditedPosition()

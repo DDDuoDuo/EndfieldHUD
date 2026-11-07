@@ -7,15 +7,17 @@ final class OverlayController: NSObject {
     private let panel: PositionPanel
     private let root: PositionCanvas
     private let indicator: ChargeIndicatorView
-    private let cancelButton = PositionActionButton(confirm: false)
-    private let confirmButton = PositionActionButton(confirm: true)
     private var dismissal: DispatchWorkItem?
     private var generation = 0
     private var configuration = AppConfiguration.defaults
+    // The bar editor's drafts: nothing is saved until Confirm.
     private var draftAnchor: NSPoint?
     private var draftScreenID: UInt32?
-    private var dragOrigin: NSPoint?
-    private var dragMouseOrigin: NSPoint?
+    private var draftScale: Double = 1
+    private var draftLength: Double?
+    /// The strip's screen frame, held still while one of its sliders has the pointer.
+    private var editorStripFrame: NSRect?
+    private static let editorSizeID = "chargeBar.size", editorLengthID = "chargeBar.length"
     private var presentationCompleted = false
     private var requestedDuration: Double = 5
     private var documentTerminationInProgress = false
@@ -315,7 +317,7 @@ final class OverlayController: NSObject {
     private(set) var isVisible = false
     private(set) var isPersistent = false
     private(set) var isEditingPosition = false
-    var onPositionEditFinished: ((OverlayPosition?) -> Void)?
+    var onPositionEditFinished: ((ChargeBarLayout?) -> Void)?
 
     override init() {
         let diagnostic = CommandLine.arguments.contains { argument in
@@ -370,35 +372,16 @@ final class OverlayController: NSObject {
         panel.isMovableByWindowBackground = false
         panel.onResignKey = { [weak self] in self?.closeSystemOverlayForFocusLoss() }
         root.addSubview(indicator)
-        root.addSubview(cancelButton)
-        root.addSubview(confirmButton)
         panel.contentView = root
-        cancelButton.target = self
-        cancelButton.action = #selector(discardPosition)
-        confirmButton.target = self
-        confirmButton.action = #selector(confirmPosition)
-        cancelButton.isHidden = true
-        confirmButton.isHidden = true
-        root.onMouseDown = { [weak self] event in
-            guard let self = self, self.isEditingPosition else { return }
-            self.dragMouseOrigin = self.panel.convertPoint(toScreen: event.locationInWindow)
-            self.dragOrigin = self.draftAnchor
-            if CommandLine.arguments.contains("--ui-test") {
-                print("Position drag began")
-                fflush(stdout)
-            }
-        }
-        root.onMouseDragged = { [weak self] event in self?.dragPosition(event: event) }
-        root.onMouseUp = { [weak self] in
-            self?.dragOrigin = nil
-            self?.dragMouseOrigin = nil
-        }
-        root.onConfirm = { [weak self] in self?.confirmPosition() }
-        root.onCancel = { [weak self] in self?.discardPosition() }
+        root.onMouseDown = { [weak self] event in self?.editorPointerDown(event) }
+        root.onMouseDragged = { [weak self] event in self?.editorPointerDragged(event) }
+        root.onMouseUp = { [weak self] event in self?.editorPointerUp(event) }
+        root.onKey = { [weak self] keyCode in self?.root.editor?.key(keyCode) ?? false }
+        // System Theme: the strip's pills bake their colours, so a new
+        // palette rebuilds the strip (the drafts live here).
         root.onAppearanceChange = { [weak self] in
-            guard let self = self else { return }
-            self.cancelButton.dark = self.isDark
-            self.confirmButton.dark = self.isDark
+            guard let self, self.isEditingPosition, HUDRuntimeAppearance.applyPalette() else { return }
+            self.installPositionEditor(); self.reposition()
         }
     }
 
@@ -416,18 +399,13 @@ final class OverlayController: NSObject {
         let geometryChanged = self.configuration.scale != configuration.scale
             || self.configuration.placement != configuration.placement
             || self.configuration.customPosition != configuration.customPosition
+            || self.configuration.chargeBarLength != configuration.chargeBarLength
         self.configuration = configuration.normalized
         facilityAlerts.isEnabled = self.configuration.facilityAlerts && !Self.isDiagnosticRun
         projection?.update(configuration: self.configuration)
-        indicator.set(snapshot: snapshot, configuration: self.configuration, preview: preview)
+        indicator.set(snapshot: snapshot, configuration: barConfiguration, preview: preview)
         systemView?.set(snapshot: snapshot, configuration: self.configuration)
         reconcileChargeMetricTelemetry()
-        cancelButton.dark = isDark
-        confirmButton.dark = isDark
-        cancelButton.setAccessibilityLabel(L10n.text("Discard position", "取消位置更改"))
-        confirmButton.setAccessibilityLabel(L10n.text("Confirm position", "确认位置"))
-        cancelButton.toolTip = L10n.text("Discard (Esc)", "取消（Esc）")
-        confirmButton.toolTip = L10n.text("Confirm (Return)", "确认（回车）")
         if displayChanged, isSystemOverlayActive,
            let screen = HUDDisplayPolicy.targetScreen(configuration: self.configuration) {
             systemScreenID = HUDDisplayPolicy.displayID(for: screen)
@@ -550,14 +528,37 @@ final class OverlayController: NSObject {
         guard let screen = selectedScreen() else { return }
         let anchor: NSPoint
         if isEditingPosition, let draft = draftAnchor {
-            anchor = OverlayGeometry.clampedAnchor(draft, screen: screen.visibleFrame,
-                                                   scale: configuration.scale, editing: true)
+            anchor = clampedDraftAnchor(draft, on: screen)
             draftAnchor = anchor
             draftScreenID = screen.id
+            syncLengthSlider(screen: screen.visibleFrame)
         } else {
             anchor = OverlayGeometry.anchor(configuration: configuration, screen: screen.visibleFrame, editing: false)
         }
-        layout(anchor: anchor)
+        layout(anchor: anchor, screen: screen.visibleFrame)
+    }
+
+    /// The configuration the bar draws with: the editor's Size and Length
+    /// drafts while editing, the saved ones otherwise.
+    private var barConfiguration: AppConfiguration {
+        guard isEditingPosition else { return configuration }
+        var value = configuration
+        value.scale = draftScale
+        value.chargeBarLength = draftLength
+        return value.normalized
+    }
+
+    private func barWidth(on screen: NSRect) -> CGFloat {
+        let bar = barConfiguration
+        return OverlayGeometry.barWidth(length: bar.chargeBarLength, screen: screen, scale: bar.scale)
+    }
+
+    /// The strip flips above the bar near the bottom edge, so the editor no
+    /// longer reserves room below it (`editing: false`).
+    private func clampedDraftAnchor(_ point: NSPoint, on screen: OverlayScreen) -> NSPoint {
+        OverlayGeometry.clampedAnchor(point, screen: screen.visibleFrame, scale: barConfiguration.scale,
+                                      canvasWidth: OverlayGeometry.canvasWidth(barWidth: barWidth(on: screen.visibleFrame)),
+                                      editing: false)
     }
 
     func beginPositionEditing(snapshot: BatterySnapshot, configuration: AppConfiguration) {
@@ -571,7 +572,9 @@ final class OverlayController: NSObject {
         indicator.cancelAnimations()
         guard let screen = selectedScreen() else { return }
         draftScreenID = screen.id
-        draftAnchor = OverlayGeometry.anchor(configuration: configuration, screen: screen.visibleFrame, editing: true)
+        draftAnchor = OverlayGeometry.anchor(configuration: self.configuration, screen: screen.visibleFrame, editing: false)
+        draftScale = self.configuration.scale
+        draftLength = self.configuration.chargeBarLength
         isEditingPosition = true
         isVisible = true
         isPersistent = true
@@ -579,10 +582,10 @@ final class OverlayController: NSObject {
         panel.allowsKey = true
         panel.ignoresMouseEvents = false
         root.editing = true
-        cancelButton.isHidden = false
-        confirmButton.isHidden = false
+        installPositionEditor()
         indicator.setStage(.compact, animated: false)
         reposition()
+        root.editor?.show()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(root)
@@ -595,7 +598,7 @@ final class OverlayController: NSObject {
     }
 
     func cancelPositionEditing() {
-        if isEditingPosition { finishPositionEditing(position: nil) }
+        if isEditingPosition { finishPositionEditing(layout: nil) }
     }
 
     func confirmEditedPosition() { confirmPosition() }
@@ -1229,45 +1232,100 @@ final class OverlayController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
-    @objc private func discardPosition() { finishPositionEditing(position: nil) }
-    @objc private func confirmPosition() {
+    private func discardPosition() { finishPositionEditing(layout: nil) }
+    private func confirmPosition() {
         guard isEditingPosition, let anchor = draftAnchor, let screen = selectedScreen() else { return }
-        finishPositionEditing(position: OverlayGeometry.normalizedPosition(anchor: anchor, screen: screen))
+        let bar = barConfiguration
+        finishPositionEditing(layout: ChargeBarLayout(position: OverlayGeometry.normalizedPosition(anchor: anchor, screen: screen),
+                                                      scale: bar.scale, length: bar.chargeBarLength))
     }
 
-    private func finishPositionEditing(position: OverlayPosition?) {
+    private func finishPositionEditing(layout: ChargeBarLayout?) {
         guard isEditingPosition else { return }
         isEditingPosition = false
         root.editing = false
+        root.install(nil)
         panel.allowsKey = false
         panel.ignoresMouseEvents = true
-        cancelButton.isHidden = true
-        confirmButton.isHidden = true
         draftAnchor = nil
         draftScreenID = nil
-        dragOrigin = nil
-        dragMouseOrigin = nil
+        editorStripFrame = nil
         hide(animated: false)
+        // Drop the drafts' Size and Length; a confirmed layout arrives as configuration.
+        indicator.set(snapshot: latestBatterySnapshot, configuration: configuration)
         if CommandLine.arguments.contains("--ui-test") {
-            print("Position edit finished: \(String(describing: position))")
+            print("Position edit finished: \(String(describing: layout))")
             fflush(stdout)
         }
-        onPositionEditFinished?(position)
+        onPositionEditFinished?(layout)
     }
 
-    private func dragPosition(event: NSEvent) {
-        guard isEditingPosition, let origin = dragOrigin, let mouseOrigin = dragMouseOrigin else { return }
+    /// The strip: Size (the bar's scale, as the former Settings row) and
+    /// Length (a share of this display's usable width), then Cancel and Confirm.
+    private func installPositionEditor() {
+        let size = HUDPlacementEditor.Slider(id: Self.editorSizeID, title: L10n.text("Size", "大小"), value: draftScale * 100,
+                                             range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent)
+        let length = HUDPlacementEditor.Slider(id: Self.editorLengthID, title: L10n.text("Length", "长度"), value: 100,
+                                               range: HUDSlider.Range(minimum: 0, maximum: 100, step: 1), format: .percent)
+        root.env.renderScale = panel.backingScaleFactor
+        let editor = HUDPlacementEditor(id: "chargeBar", sliders: [size, length], env: root.env)
+        editor.onChange = { [weak self] id, value, final in self?.editorChanged(id, value: value, final: final) }
+        editor.onDecision = { [weak self] decision in
+            if decision == .confirm { self?.confirmPosition() } else { self?.discardPosition() }
+        }
+        root.install(editor)
+    }
+
+    /// The Length slider's range follows the display and Size (200 pt minimum).
+    private func syncLengthSlider(screen: NSRect) {
+        guard let editor = root.editor else { return }
+        let range = OverlayGeometry.lengthRange(screen: screen, scale: barConfiguration.scale)
+        let minimum = min(100, (range.lowerBound * 100).rounded(.up))
+        editor.setRange(HUDSlider.Range(minimum: minimum, maximum: 100, step: 1),
+                        value: OverlayGeometry.length(of: barConfiguration, screen: screen) * 100, for: Self.editorLengthID)
+    }
+
+    private func editorChanged(_ id: String, value: Double, final: Bool) {
+        guard isEditingPosition else { return }
+        if id == Self.editorSizeID { draftScale = value / 100 }
+        else if id == Self.editorLengthID { draftLength = value / 100 }
+        indicator.set(snapshot: latestBatterySnapshot, configuration: barConfiguration, preview: true)
+        reposition()
+    }
+
+    private func editorPointerDown(_ event: NSEvent) {
+        guard isEditingPosition, let editor = root.editor, let layer = root.layer, let anchor = draftAnchor else { return }
+        editor.pointerDown(at: root.convert(event.locationInWindow, from: nil), in: layer,
+                           pointer: panel.convertPoint(toScreen: event.locationInWindow), anchor: anchor)
+        if editor.isDragging, CommandLine.arguments.contains("--ui-test") {
+            print("Position drag began")
+            fflush(stdout)
+        }
+    }
+
+    private func editorPointerDragged(_ event: NSEvent) {
+        guard isEditingPosition, let editor = root.editor, let layer = root.layer else { return }
         let mouse = panel.convertPoint(toScreen: event.locationInWindow)
-        let proposed = NSPoint(x: origin.x + mouse.x - mouseOrigin.x,
-                               y: origin.y + mouse.y - mouseOrigin.y)
+        guard let proposed = editor.pointerDragged(to: root.convert(event.locationInWindow, from: nil), in: layer,
+                                                   pointer: mouse) else { return }
         let screens = availableScreens()
         let target = screens.first(where: { $0.visibleFrame.contains(mouse) })
             ?? screens.first(where: { $0.id == draftScreenID }) ?? screens.first
         guard let screen = target else { return }
+        let changedScreen = screen.id != draftScreenID
         draftScreenID = screen.id
-        draftAnchor = OverlayGeometry.clampedAnchor(proposed, screen: screen.visibleFrame,
-                                                    scale: configuration.scale, editing: true)
-        layout(anchor: draftAnchor!)
+        let anchor = clampedDraftAnchor(proposed, on: screen)
+        draftAnchor = anchor
+        if changedScreen { syncLengthSlider(screen: screen.visibleFrame) }
+        layout(anchor: anchor, screen: screen.visibleFrame)
+    }
+
+    private func editorPointerUp(_ event: NSEvent) {
+        guard let editor = root.editor, let layer = root.layer else { return }
+        let released = editor.isAdjusting
+        editor.pointerUp(at: root.convert(event.locationInWindow, from: nil), in: layer)
+        // The strip, held still under a slider, settles beside the bar again.
+        if released, isEditingPosition { editorStripFrame = nil; reposition() }
     }
 
     private func availableScreens() -> [OverlayScreen] {
@@ -1285,27 +1343,43 @@ final class OverlayController: NSObject {
         return screens.first(where: { CGDisplayIsBuiltin($0.id) != 0 }) ?? screens.first
     }
 
-    private func layout(anchor: NSPoint) {
-        let scale = CGFloat(configuration.scale)
-        let canvas = ChargeIndicatorView.canvasSize
-        let width = canvas.width * scale
-        let canvasHeight = canvas.height * scale
-        let height = isEditingPosition ? max(canvasHeight, 66 * scale + 34) : canvasHeight
-        // The indicator's center stays at the saved anchor when edit controls appear below it.
-        panel.setFrame(NSRect(x: anchor.x - width / 2, y: anchor.y + canvasHeight / 2 - height,
-                              width: width, height: height), display: false)
-        root.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        indicator.frame = NSRect(x: 0, y: 0, width: width, height: canvasHeight)
+    /// The panel holds the bar's canvas, centred on the anchor; while editing
+    /// it also holds the strip beside the bar (`HUDPlacementEditor.frame`).
+    private func layout(anchor: NSPoint, screen: NSRect) {
+        let bar = barConfiguration
+        let scale = CGFloat(bar.scale)
+        let width = barWidth(on: screen)
+        indicator.setBarWidth(width)
+        let canvas = NSSize(width: OverlayGeometry.canvasWidth(barWidth: width), height: ChargeIndicatorView.canvasSize.height)
+        let barFrame = NSRect(x: anchor.x - canvas.width * scale / 2, y: anchor.y - canvas.height * scale / 2,
+                              width: canvas.width * scale, height: canvas.height * scale)
+        var frame = barFrame
+        var strip: NSRect?
+        if isEditingPosition, let editor = root.editor {
+            if let held = editorStripFrame, editor.isAdjusting { strip = held } else {
+                // Spaced for the largest Size, so a Size change never moves
+                // the strip vertically; y-down for the shared placement rule.
+                let reach = 19 * CGFloat(1.6)
+                let body = NSRect(x: anchor.x - width * scale / 2, y: anchor.y - reach, width: width * scale, height: 2 * reach)
+                func flipped(_ rect: NSRect) -> NSRect { NSRect(x: rect.minX, y: -rect.maxY, width: rect.width, height: rect.height) }
+                let size = NSSize(width: editor.size.width, height: editor.size.height + HUDPlacementEditor.bubbleClearance)
+                strip = flipped(HUDPlacementEditor.frame(size: size, beside: flipped(body), within: flipped(screen), gap: 10))
+            }
+            editorStripFrame = strip
+            frame = frame.union(strip!)
+        }
+        panel.setFrame(frame, display: false)
+        root.frame = NSRect(origin: .zero, size: frame.size)
+        indicator.frame = NSRect(x: barFrame.minX - frame.minX, y: frame.maxY - barFrame.maxY,
+                                 width: barFrame.width, height: barFrame.height)
         indicator.bounds = NSRect(origin: .zero, size: canvas)
-        cancelButton.frame = NSRect(x: width / 2 - 34, y: 66 * scale, width: 28, height: 28)
-        confirmButton.frame = NSRect(x: width / 2 + 6, y: 66 * scale, width: 28, height: 28)
-    }
-
-    private var isDark: Bool {
-        switch configuration.theme {
-        case .dark: return true
-        case .light: return false
-        case .system: return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if let strip, let editor = root.editor {
+            HUDMotion.perform {
+                editor.layer.frame = NSRect(x: strip.minX - frame.minX,
+                                            y: frame.maxY - strip.maxY + HUDPlacementEditor.bubbleClearance,
+                                            width: editor.size.width, height: editor.size.height)
+            }
+            root.updateAccessibility()
         }
     }
 }
@@ -1318,66 +1392,99 @@ private final class PositionPanel: NSPanel {
     override func resignKey() { super.resignKey(); onResignKey?() }
 }
 
-private final class PositionCanvas: NSView {
+/// The alert panel's content. While editing it hosts the bar editor's strip
+/// (HUDPlacementEditor) in its layer: pointer, hover, keys and VoiceOver
+/// stand-ins for the strip; any other press drags the bar.
+private final class PositionCanvas: NSView, HUDControlFeedbackHost {
     var editing = false
+    let env = HUDDesignEnvironment()
+    private(set) var editor: HUDPlacementEditor?
+    private var standIns: HUDAccessibilityStandIns?
+    private var tracking: NSTrackingArea?
+    private var pointer: CGPoint?
     var onMouseDown: ((NSEvent) -> Void)?
     var onMouseDragged: ((NSEvent) -> Void)?
-    var onMouseUp: (() -> Void)?
-    var onConfirm: (() -> Void)?
-    var onCancel: (() -> Void)?
+    var onMouseUp: ((NSEvent) -> Void)?
+    /// Returns true when the key was handled (Esc, Return).
+    var onKey: ((UInt16) -> Bool)?
     var onAppearanceChange: (() -> Void)?
     override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Shows a strip (nil removes it). Layers exist only while editing.
+    func install(_ next: HUDPlacementEditor?) {
+        editor?.cancelPointer()
+        editor?.layer.removeFromSuperlayer()
+        editor = next
+        if let next, let layer {
+            HUDMotion.perform { next.layer.zPosition = 10; layer.addSublayer(next.layer) }
+        }
+        if next == nil { pointer = nil }
+        updateAccessibility()
+    }
+
+    func updateAccessibility() {
+        guard let editor, let layer else { standIns?.update([]); return }
+        let standIns = self.standIns ?? HUDAccessibilityStandIns(host: self)
+        if self.standIns == nil {
+            standIns.onPerform = { [weak self] id in self?.editor?.perform(id) }
+            standIns.onAdjust = { [weak self] id, value in self?.editor?.adjust(id, to: value) }
+            self.standIns = standIns
+        }
+        standIns.update(editor.accessibilityItems(in: layer))
+    }
+
+    func refreshControlHighlights() {
+        guard let editor, let layer else { return }
+        editor.updateHighlights(in: layer, point: pointer)
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         onAppearanceChange?()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        guard scale != env.renderScale else { return }
+        env.renderScale = scale
+        if let editor { env.applyScale(to: editor.layer) }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let next = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self)
+        addTrackingArea(next); tracking = next
     }
     override var acceptsFirstResponder: Bool { editing }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { editing }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let result = super.hitTest(point)
-        guard editing, let hit = result else { return result }
-        return hit is NSButton ? hit : self
+        guard editing, result != nil else { return result }
+        return self
     }
+    override func mouseMoved(with event: NSEvent) {
+        guard editing, editor != nil else { return }
+        pointer = convert(event.locationInWindow, from: nil); refreshControlHighlights()
+    }
+    override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
+    override func mouseExited(with event: NSEvent) { pointer = nil; refreshControlHighlights() }
     override func mouseDown(with event: NSEvent) { if editing { onMouseDown?(event) } }
-    override func mouseDragged(with event: NSEvent) { if editing { onMouseDragged?(event) } }
-    override func mouseUp(with event: NSEvent) { onMouseUp?() }
+    override func mouseDragged(with event: NSEvent) {
+        guard editing else { return }
+        pointer = convert(event.locationInWindow, from: nil)
+        onMouseDragged?(event)
+    }
+    override func mouseUp(with event: NSEvent) { onMouseUp?(event) }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { onCancel?() }
-        else if event.keyCode == 36 || event.keyCode == 76 { onConfirm?() }
-        else { super.keyDown(with: event) }
-    }
-}
-
-private final class PositionActionButton: NSButton {
-    let confirm: Bool
-    override var isFlipped: Bool { true }
-    var dark = true { didSet { needsDisplay = true } }
-    init(confirm: Bool) {
-        self.confirm = confirm
-        super.init(frame: .zero)
-        isBordered = false
-        title = ""
-        setButtonType(.momentaryChange)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    override func draw(_ dirtyRect: NSRect) {
-        (dark ? NSColor(white: 0.12, alpha: 0.97) : NSColor(white: 0.96, alpha: 0.98)).setFill()
-        let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1))
-        circle.fill()
-        (dark ? NSColor.white : NSColor.black).withAlphaComponent(isHighlighted ? 0.5 : 0.85).setStroke()
-        let symbol = NSBezierPath()
-        symbol.lineWidth = 1.7
-        symbol.lineCapStyle = .round
-        symbol.lineJoinStyle = .round
-        if confirm {
-            symbol.move(to: NSPoint(x: 8, y: 14))
-            symbol.line(to: NSPoint(x: 12, y: 18))
-            symbol.line(to: NSPoint(x: 20, y: 10))
-        } else {
-            symbol.move(to: NSPoint(x: 9, y: 9)); symbol.line(to: NSPoint(x: 19, y: 19))
-            symbol.move(to: NSPoint(x: 9, y: 19)); symbol.line(to: NSPoint(x: 19, y: 9))
-        }
-        symbol.stroke()
+        if editing, onKey?(event.keyCode) == true { return }
+        super.keyDown(with: event)
     }
 }
