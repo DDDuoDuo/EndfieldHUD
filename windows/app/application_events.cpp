@@ -2,6 +2,7 @@
 // ModuleRegistry chains (app/module_owner.hpp); OS/service/picker messages keep
 // their established WM_APP routes and order.
 #include "app/application_impl.hpp"
+#include "app/application_audio.hpp"
 #include "app/fatal_stage.hpp"
 #include <cmath>
 #include <cstring>
@@ -488,8 +489,9 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.message==utilityMessage){utilityCompleted();refresh(now());return 0;}
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
-            // publication, feed the Event Log device list and the areas.
-            const FatalStage audioStage("audio");const auto changes=audio->drain();const auto time=now();
+            // publication, feed the Event Log device list and the areas. The
+            // Volume binding republishes under Volume's isolation only.
+            const FatalStage audioStage("audio");const auto changes=drainAudio(registry,volumeModuleOwner.get(),*audio);const auto time=now();
             if(changes.devices&&eventRecorder)if(const auto deviceNames=audio->deviceLabels())eventRecorder->receiveAudioDevices(*deviceNames);
             std::uint32_t flags{};
             if(changes.snapshot)flags|=HostEvent::audioSnapshot;if(changes.volume)flags|=HostEvent::audioVolume;

@@ -12,7 +12,7 @@ namespace endfield::native {
 // What one owner-message drain adopted. Content events only, never per frame.
 struct AudioRuntimeChanges {
     bool snapshot{};     // a newer worker publication was adopted
-    bool volume{};       // the Volume binding republished (redraw Volume)
+    bool volume{};       // the Volume binding republished (set by the caller's volume().receive())
     bool applications{}; // per-app routes changed (Now Playing volume face)
     bool devices{};      // the Event Log device list settled on a new generation
     bool operator==(const AudioRuntimeChanges&)const=default;
@@ -47,8 +47,12 @@ public:
     AudioRuntime(const AudioRuntime&)=delete;
     AudioRuntime&operator=(const AudioRuntime&)=delete;
 
-    // Owner message handler: adopts the latest publication and fans it out to
-    // the Volume binding (whose receiver updates the Volume owner).
+    // Owner message handler: adopts the latest publication (Now Playing
+    // routes, the Event Log device list). It never publishes Volume: when it
+    // reports `snapshot` the caller republishes the binding with
+    // volume().receive() under the Volume owner's isolation
+    // (app/application_audio.hpp drainAudio), so a Volume failure disables
+    // only Volume while every later message keeps draining.
     AudioRuntimeChanges drain();
     VolumeProviderBinding&volume()noexcept;
     const AudioEndpointSnapshot&snapshot()const noexcept;

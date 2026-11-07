@@ -1,10 +1,14 @@
 #include "native/audio_runtime.hpp"
 #include "native/volume_strings.hpp"
 #include "modules/volume_canvas.hpp"
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+#include "app/application_audio.hpp"
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -58,6 +62,10 @@ struct Harness {
     std::shared_ptr<World>world=std::make_shared<World>();
     std::mutex nm;std::condition_variable ncv;unsigned notices{};
     std::unique_ptr<n::AudioRuntime>runtime;n::AudioRuntimeChanges seen;
+    // The owner message: adopt the publication, then republish the Volume
+    // binding (the application does this under Volume's isolation:
+    // app/application_audio.hpp drainAudio).
+    std::function<n::AudioRuntimeChanges()>message=[this]{auto changes=runtime->drain();if(changes.snapshot)changes.volume|=runtime->volume().receive();return changes;};
     explicit Harness(c::Language language=c::Language::english){
         n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<Endpoints>(w);};o.sessions=[w=world]{return std::make_unique<Sessions>(w);};o.topologySettleSeconds=.02;
         runtime=std::make_unique<n::AudioRuntime>(std::move(o),language,[this]{{std::lock_guard l(nm);++notices;}ncv.notify_all();});
@@ -67,9 +75,9 @@ struct Harness {
         const auto deadline=std::chrono::steady_clock::now()+10s;
         for(;;){
             unsigned count;{std::lock_guard l(nm);count=notices;}
-            const auto changes=runtime->drain();seen.snapshot|=changes.snapshot;seen.volume|=changes.volume;seen.applications|=changes.applications;seen.devices|=changes.devices;
+            const auto changes=message();seen.snapshot|=changes.snapshot;seen.volume|=changes.volume;seen.applications|=changes.applications;seen.devices|=changes.devices;
             if(predicate())return;
-            std::unique_lock l(nm);if(!ncv.wait_until(l,deadline,[&]{return notices!=count;})){l.unlock();runtime->drain();if(predicate())return;throw std::runtime_error(what);}
+            std::unique_lock l(nm);if(!ncv.wait_until(l,deadline,[&]{return notices!=count;})){l.unlock();(void)message();if(predicate())return;throw std::runtime_error(what);}
         }
     }
     void wake(n::AudioEndpointBackend::Wake World::*member){n::AudioEndpointBackend::Wake w;{std::lock_guard l(world->m);w=(*world).*member;}check(bool(w),"Native notification is registered");w();}
@@ -130,7 +138,7 @@ void volume(){
     h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;delivered=s;});
     h.runtime->volume().setVisible(true);callbacks.setActive(true);
     h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume content arrives through the binding");
-    check(h.seen.volume&&received>0,"drain() reports and delivers Volume content");
+    check(h.seen.volume&&received>0,"The owner message reports and delivers Volume content");
     check(delivered.outputs[1].headphones&&!delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
     check(callbacks.setVolume(delivered.outputID,.25),"Slider write accepted");
     h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
@@ -230,6 +238,66 @@ void malformedAppName(){
     check(!threw,"Volume and per-app gain changes with the ill-formed app listed never throw");
     h.runtime->stop();
 }
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+// A Volume publish that throws (here the receiver; in 1.3.1 an ill-formed
+// per-app name reaching the throwing UTF-8 conversion) escaped the UI's audio
+// message, which drained outside module isolation: the overlay host stopped
+// its frames, then the run ended. The application's audio message
+// (drainAudio) and its other binding calls (volumeBindingCall) run Volume
+// under the Volume owner's isolation: only Volume is disabled, the message
+// keeps draining for Now Playing and the Event Log, and the binding closes,
+// so the dead Volume's vote no longer reads endpoints and sessions when the
+// HUD opens again.
+struct VolumeOwner final:endfield::app::ModuleOwner {std::string_view name()const noexcept override{return "volume";}};
+void volumeFailure(){
+    namespace app=endfield::app;
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{player}","4242:100",L"Player",4242,true,true,.8f,0}};}
+    app::ModuleRegistry registry(true);VolumeOwner owner;registry.add(owner);
+    h.message=[&]{return app::drainAudio(registry,&owner,*h.runtime);};
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();
+    n::VolumeSnapshot delivered=binding.snapshot();bool failing{};
+    binding.setReceiver([&](const n::VolumeSnapshot&s){if(failing)throw std::invalid_argument("synthetic Volume publish failure");delivered=s;});
+    const auto visible=[&](bool value,const char*operation){(void)app::volumeBindingCall(registry,&owner,*h.runtime,operation,[&]{(void)binding.setVisible(value);});};
+    check(h.runtime->setDeviceEvents(true)==0&&h.runtime->setNowPlayingVisible(true)==0,"Event Log and Now Playing votes");
+    visible(true,"open");callbacks.setActive(true);
+    h.until([&]{return delivered.canSetVolume&&delivered.applications.size()==1&&h.runtime->deviceLabels()&&route(h.runtime->applications(),"4242:100");},"Volume, Now Playing and the Event Log are served");
+    failing=true;
+    bool escaped{};
+    try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
+        h.until([&]{return !registry.enabled(owner);},"The throwing Volume publish is reached");}
+    catch(const std::invalid_argument&){escaped=true;}
+    check(!escaped,"A throwing Volume publish never escapes the audio message to the host");
+    check(registry.failures().size()==1&&registry.failures()[0].owner=="volume"&&registry.failures()[0].operation=="audio","Only Volume is disabled, by the audio message");
+    check(!binding.active(),"The failed Volume's binding is closed and its vote withdrawn");
+    // The message keeps draining for every other audio user.
+    {std::lock_guard l(h.world->m);h.world->sessions.push_back({"{second}","5151:100",L"Second",5151,true,true,.7f,0});}
+    h.seen={};h.wake(&World::sessionWake);
+    h.until([&]{return h.seen.applications&&route(h.runtime->applications(),"5151:100");},"Now Playing's app list keeps updating");
+    check(h.runtime->setApplicationGain("4242:100",.5),"Now Playing's app volume is accepted");
+    h.until([&]{const auto*r=route(h.runtime->applications(),"4242:100");return r&&r->state==n::AudioApplicationRouteState::active&&r->gain&&*r->gain==.5f;},"Now Playing's app volume keeps updating");
+    {std::lock_guard l(h.world->m);h.world->outputs.push_back({usb,L"USB Headset",L"USB",5u});}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{const auto labels=h.runtime->deviceLabels();return h.seen.devices&&labels&&labels->count("{0.0.0.00000000}.{usb}");},"The Event Log device list keeps updating");
+    check(!h.seen.volume,"The closed binding publishes nothing");
+    // Close the HUD (Now Playing leaves too), then open it again: the dead
+    // Volume reads nothing. A device change the Event Log hears proves the
+    // worker is awake.
+    check(h.runtime->stopApplication("4242:100"),"Restore the route");
+    check(h.runtime->setNowPlayingVisible(false)==0,"Now Playing leaves");visible(false,"close");
+    h.until([&]{return h.runtime->snapshot().applicationsPaused&&h.runtime->snapshot().paused;},"Nothing but the device list is read while closed");
+    const auto before=h.runtime->stats();
+    visible(true,"open");callbacks.setActive(true);
+    {std::lock_guard l(h.world->m);h.world->outputs.pop_back();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{const auto labels=h.runtime->deviceLabels();return h.seen.devices&&labels&&!labels->count("{0.0.0.00000000}.{usb}");},"The Event Log hears the next device change");
+    const auto after=h.runtime->stats();
+    {std::lock_guard l(h.world->m);check(after.sessionReads==before.sessionReads&&after.volumeReads==before.volumeReads&&h.world->bound.empty(),"Opening again reads no endpoint volume and no session for the failed Volume");}
+    check(registry.failures().size()==1,"No further failure reaches the registry");
+    h.runtime->stop();
+}
+#endif
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
 // the page Volume shows when it enters keeps its staggered entrance through
@@ -309,6 +377,10 @@ void nowPlaying(){
 }
 }
 int main(){
-    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
+    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+        volumeFailure();
+#endif
+        volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
