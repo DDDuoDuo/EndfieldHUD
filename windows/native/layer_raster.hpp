@@ -167,6 +167,9 @@ struct LayerRasterStats {
     // repainted for an upload; a repaint counts no raster, layout or node.
     std::size_t releasedPixelBytes{}, repaintSourceBytes{};
     std::uint64_t pixelReleases{}, pixelRepaints{};
+    // Memory images a layer named after their provider released (an icon
+    // retired or evicted): drawn as the empty placeholder.
+    std::uint64_t missingMemoryImages{};
 };
 // Diagnostics (memory trace): the module owner on whose behalf the calling
 // thread rasterizes. ModuleRegistry holds one around every owner call, so a

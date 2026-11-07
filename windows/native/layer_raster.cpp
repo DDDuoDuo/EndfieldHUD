@@ -260,6 +260,7 @@ struct LayerRasterizer::Impl {
     // eighths every away page is tried, so the hard bounds stay guarded.
     unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
+    bool memoryImageMissing{}; // ... or drew the placeholder for a released one (that paint is not cached)
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
     // The families of Fonts/manifest.json that ship on Windows and whose files
     // are present, in manifest order (HUDFontRegistry.families): the Latin
@@ -591,8 +592,18 @@ struct LayerRasterizer::Impl {
             const auto revision=contents["revision"].integer();
             if(revision<=0)invalid("Memory image revision must be positive");
             auto snapshot=options.memoryImages->acquire(contents["memoryImage"].string(),static_cast<std::uint64_t>(revision));
-            if(!snapshot)invalid("Memory image key/revision is missing or retired");
             memoryImageUsed=true;
+            if(!snapshot){
+                // An app or file icon its module released (retired, evicted
+                // from the source's cache) while a row still names it draws as
+                // the empty placeholder, never a failure that blanks the module:
+                // the row's next descriptor (its icon loaded again, or another
+                // app) paints again, and so does this one once published: a
+                // paint with the placeholder is never cached.
+                static constexpr std::array<std::uint8_t,4> clear{};
+                ++counts.missingMemoryImages;memoryImageMissing=true;
+                return ImagePixels{1,1,clear,{}};
+            }
             ImagePixels pixels{snapshot->width(),snapshot->height(),snapshot->premultipliedBGRA(),std::move(snapshot)};
             return pixels;
         }
@@ -1239,11 +1250,15 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::Impl::raster(std::strin
     // What the replaced entry holds now (nothing once its pixels were given back).
     const auto previousReleased=old!=r.entries.end()&&old->second.image->pixelsReleased()?previous:0,previousHeld=previous-previousReleased;
     if(bytes>maximumResourceBytes-(r.heldBytes()-previousHeld))invalid("Retained layer resource budget exceeded");
-    std::vector<ComPtr<IDWriteTextLayout>> layouts;r.memoryImageUsed=false;r.lineBoxPainted=false;
-    const auto bitmap=r.paintRaster(layer,options,*result,layouts);const bool memoryImage=r.memoryImageUsed;r.memoryImageUsed=false;
+    std::vector<ComPtr<IDWriteTextLayout>> layouts;r.memoryImageUsed=false;r.memoryImageMissing=false;r.lineBoxPainted=false;
+    const auto bitmap=r.paintRaster(layer,options,*result,layouts);const bool memoryImage=r.memoryImageUsed,placeholder=r.memoryImageMissing;r.memoryImageUsed=r.memoryImageMissing=false;
     // Image cache growth while drawing also counts against the same bound.
     if(bytes>maximumResourceBytes-(r.heldBytes()-previousHeld))invalid("Retained layer resource budget exceeded after image decode");
     straightPixels(bitmap.Get(),result->width,result->height,result->straightRGBA);
+    // A released memory image drew its placeholder: the caller shows this
+    // paint, the cache keeps what it had (the same id and revision paints
+    // again once the image is there).
+    if(placeholder){++r.counts.rasterizations;return result;}
     std::shared_ptr<const PaintedTextLayout> painted;
     // Editor geometry currently follows the rectangular DWrite viewport only.
     // Keep rendering nonrectangular masks, but do not fabricate matching hits

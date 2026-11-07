@@ -76,14 +76,30 @@ void memoryImages(){
     source["contents"]["asset"]="should-not-be-read.png";
     rejects([&]{raster.rasterize("mixed",1,source,options);},"Mixed memory/file descriptor cannot trigger filesystem fallback");source["contents"].erase("asset");
     source["contents"]["revision"]=0;rejects([&]{raster.rasterize("bad-revision",1,source,options);},"Memory revision zero rejects");
-    source["contents"]["revision"]=2;rejects([&]{raster.rasterize("memory",2,source,options);},"Missing new generation rejects before painted content replacement");
+    // A released icon (retired or evicted by its module) or a generation not
+    // published yet draws as the empty placeholder, never a failure that
+    // blanks the module; that paint is not cached.
+    source["contents"]["revision"]=2;const auto placeholder=raster.rasterize("memory",2,source,options);
+    check(placeholder&&placeholder!=image&&raster.stats().missingMemoryImages==1,"A missing memory image draws the placeholder instead of throwing");
+    pixel(*placeholder,4,4,{0,0,0,0},0,"The placeholder is empty");pixel(*placeholder,12,12,{0,0,0,0},0,"The whole placeholder is empty");
     check(raster.rasterize("memory",1,Json{},options)==image,"Failed new icon keeps prior displayed pixels");
+    {   // Volume's case: more icon keys than its source keeps evicts the oldest
+        // while a row still names it; that row loads again (a new layer id).
+        LayerImageSource evicting;const std::array<std::uint8_t,16> blue{0,0,255,255,0,0,255,255,0,0,255,255,0,0,255,255};
+        (void)evicting.publish("evicted-0",1,2,2,blue);auto evictOptions=options;evictOptions.memoryImages=&evicting;
+        auto row=layer("evicted-row",16,16);row["contents"]=Json::Object{{"memoryImage","evicted-0"},{"revision",1}};
+        check(raster.rasterize("evicted-row",1,row,evictOptions)!=nullptr,"The row draws its icon");
+        for(unsigned n=1;n<=100;++n)(void)evicting.publish("evicted-"+std::to_string(n),1,2,2,blue);
+        const auto missingBefore=raster.stats().missingMemoryImages;
+        const auto reloaded=raster.rasterize("evicted-row-again",1,row,evictOptions);
+        check(reloaded&&raster.stats().missingMemoryImages==missingBefore+1,"A row naming an evicted icon draws the placeholder when it loads again");
+    }
     std::array<std::uint8_t,16> red{};for(unsigned n=0;n<4;++n){red[n*4]=255;red[n*4+3]=255;}
     provider.publish("synthetic-file-icon",2,2,2,red);const auto changed=raster.rasterize("memory",2,source,options);
     pixel(*changed,12,4,{255,0,0,255},0,"New icon revision replaces only requested local artwork");
     provider.clear();snapshot.reset();check(provider.stats().liveBytes==0,"Raster owns no redundant native icon snapshots after drawing");
     check(raster.rasterize("memory",2,Json{},options)==changed,"Already painted snapshot survives provider cache retirement");
-    rejects([&]{raster.rasterize("retired",1,source,options);},"New raster cannot silently substitute retired image");
+    {const auto retired=raster.rasterize("retired",1,source,options);check(retired&&retired!=changed,"A new raster of a retired image draws the placeholder, never the old pixels");pixel(*retired,12,4,{0,0,0,0},0,"The retired image is not substituted");}
 }
 // Releasable rasters (LayerScene's leaves): once a GPU texture holds the
 // pixels they are given back, and painted again byte for byte from what

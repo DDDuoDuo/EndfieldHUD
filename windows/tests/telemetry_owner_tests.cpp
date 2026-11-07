@@ -91,6 +91,8 @@ void run(const std::filesystem::path& shader) {
     activityOptions.iconLoader = [&](const std::string& key, unsigned pixels) -> std::optional<gpu::ActivityIconPixels> {
         { std::lock_guard lock(loadsMutex); ++loads; loadedKeys.push_back(key); }
         if (key.ends_with("4")) return std::nullopt; // unavailable artwork: the generic tile
+        if (key.starts_with("ram-icon-") && key.ends_with("5")) throw std::runtime_error("Synthetic extraction failure"); // a throwing extraction: the generic tile
+        if (key.starts_with("ram-icon-") && key.ends_with("6")) return gpu::ActivityIconPixels{pixels + 1, pixels + 1, std::vector<std::uint8_t>(std::size_t(pixels + 1) * (pixels + 1) * 4, 255)}; // the wrong size
         gpu::ActivityIconPixels icon{pixels, pixels, std::vector<std::uint8_t>(std::size_t(pixels) * pixels * 4, 0)};
         for (std::size_t k = 0; k < icon.straightRGBA.size(); k += 4) { icon.straightRGBA[k] = 40; icon.straightRGBA[k + 1] = 160; icon.straightRGBA[k + 2] = 220; icon.straightRGBA[k + 3] = 255; }
         return icon;
@@ -218,7 +220,11 @@ void run(const std::filesystem::path& shader) {
         const auto batch = [&](double stamp, std::uint64_t shift) {
             m::ActivityAppsSnapshot value; value.timestamp = stamp; value.uptime = stamp;
             for (unsigned n = 0; n < 48; ++n) {
-                m::ActivityApp a; a.identity = {"ram" + std::to_string(n), "RAM " + std::to_string(n), "ram-icon-" + std::to_string(n), {500 + n}};
+                // Awkward icons among them: a packaged (UWP) app's AppsFolder key, an
+                // extraction that throws, an icon of the wrong size, artwork that is
+                // unavailable, and an app with no icon key at all.
+                const std::string key = n % 8 == 1 ? "appsfolder:Synthetic.Package_8wekyb3d8bbwe!App" + std::to_string(n) : n % 8 == 3 ? "" : "ram-icon-" + std::to_string(n);
+                m::ActivityApp a; a.identity = {"ram" + std::to_string(n), "RAM " + std::to_string(n), key, {500 + n}};
                 a.cpuPercent = double(n % 9); a.memoryBytes = 50000000ULL * ((n * 7 + shift) % 48 + 1); a.threads = 4 + n;
                 value.items.push_back(std::move(a));
             }
