@@ -101,7 +101,6 @@ std::string applicationIdentity(HANDLE process)noexcept{
 }
 struct Handle{HANDLE value{};~Handle(){if(value)CloseHandle(value);}Handle()=default;Handle(const Handle&)=delete;Handle&operator=(const Handle&)=delete;};
 struct TaskString{LPWSTR value{};~TaskString(){CoTaskMemFree(value);}};
-std::string utf8(std::wstring_view text){if(text.empty()||text.size()>4096||text.find(L'\0')!=text.npos)throw std::invalid_argument("Invalid audio session identity");const int length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);if(length<=0||length>4096)throw std::invalid_argument("Invalid audio session identity encoding");std::string out(static_cast<std::size_t>(length),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),out.data(),length,nullptr,nullptr)!=length)throw std::runtime_error("Audio identity conversion failed");return out;}
 std::optional<AudioApplicationExecutable>executable(std::wstring_view path)noexcept{
     try{if(path.empty()||path.size()>=32768||path.find(L'\0')!=path.npos)return {};const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(count<=0||count>32768)return {};
         std::string token(static_cast<std::size_t>(count),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),token.data(),count,nullptr,nullptr)!=count)return {};
@@ -185,7 +184,11 @@ class NativeBackend final:public AudioSessionBackend {
     std::map<std::string,Entry,std::less<>>entries;
     HRESULT add(IAudioSessionControl*base){
         ComPtr<IAudioSessionControl2>control;auto hr=base->QueryInterface(IID_PPV_ARGS(&control));if(FAILED(hr))return hr;TaskString nativeID;hr=control->GetSessionInstanceIdentifier(&nativeID.value);if(FAILED(hr)||!nativeID.value)return FAILED(hr)?hr:E_UNEXPECTED;
-        const auto id=utf8(nativeID.value);auto found=entries.find(id);if(found==entries.end()){
+        // An instance identifier that is not a valid UTF-8 token (it holds
+        // the executable path, which may carry an unpaired surrogate or pass
+        // 4096 units) skips only this session; the other apps stay listed.
+        const auto id=utf8Optional(nativeID.value);if(id.empty())return S_OK;
+        auto found=entries.find(id);if(found==entries.end()){
             if(entries.size()>=capacity)return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);Entry next;next.control=control;next.record.id=id;DWORD pid{};
             // S_NO_SINGLE_PROCESS is a success HRESULT but does NOT prove that
             // this session belongs to one application. Do not guess from PID.
