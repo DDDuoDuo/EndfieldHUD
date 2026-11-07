@@ -176,8 +176,11 @@ final class NowPlayingAdapter {
         }
         guard child.terminationStatus == 0, !cancelled() else { throw NowPlayingFailure.unavailable }
     }
+    /// Clears the state the way a helper exit does: the artwork revision keeps
+    /// counting, so the next stream never reuses a revision this adapter has
+    /// already reported, nor one the artwork loader cached as missing.
     private func stop() {
-        lock.lock(); generation &+= 1; streaming = false; input.removeAll(); state = NowPlayingAdapterState(); lock.unlock()
+        lock.lock(); generation &+= 1; streaming = false; input.removeAll(); _ = state.clear(); lock.unlock()
         callback = nil
         let child = process; process = nil
         readHandle?.readabilityHandler = nil; readHandle = nil
