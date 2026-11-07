@@ -2494,7 +2494,7 @@ final class HUDSourceWatchView: NSView {
             let box = CGRect(origin: .zero, size: size)
             if layers.marks.bounds != box { layers.marks.bounds = box }
             layers.marks.path = HUDArchiveTile.bracketPath(box, inset: target == desktopArrangeLifted ? -4 : 0)
-            layers.marks.fillColor = HUDColor.accentInk
+            layers.marks.fillColor = HUDColor.plateInk
             layers.marks.contentsScale = textScale
             layers.marks.transform = Self.projectiveTextTransform(corners, size: size)
         }

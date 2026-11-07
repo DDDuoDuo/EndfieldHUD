@@ -1046,7 +1046,7 @@ final class HUDNavigationEntry {
         }
     }
 
-    /// Corner marks in the accent ink while the tile can be dragged, set
+    /// Corner marks in the plate ink while the tile can be dragged, set
     /// 4 px wider while it is (`lifted`); nil removes them.
     fileprivate func setArrangeMark(lifted: Bool?) {
         guard let lifted else { arrangeMark?.removeFromSuperlayer(); arrangeMark = nil; return }
@@ -1056,7 +1056,7 @@ final class HUDNavigationEntry {
             mark.frame = faceLayer.bounds
             mark.zPosition = 20
             mark.path = HUDArchiveTile.bracketPath(faceLayer.bounds, inset: lifted ? -4 : 0)
-            mark.fillColor = HUDColor.accentInk
+            mark.fillColor = HUDColor.plateInk
             mark.contentsScale = layer.contentsScale
             if mark.superlayer !== faceLayer { faceLayer.addSublayer(mark) }
         }
