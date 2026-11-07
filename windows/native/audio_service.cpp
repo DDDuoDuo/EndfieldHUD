@@ -231,14 +231,15 @@ public:
             if(outputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::output,defaultOutput);})<0)defaultOutput.clear();
             if(inputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::input,defaultInput);})<0)defaultInput.clear();
             // Raw labels for the Event Log: a missing label is an incomplete
-            // read (source watcher), while the UI shows the opaque identity.
+            // read (source watcher), while the UI shows the opaque identity,
+            // as it does for a label past a Volume row's 4096 UTF-8 bytes.
             std::vector<AudioEndpoint>rawOutputs,rawInputs;
             const auto convert=[&](const std::vector<AudioEndpointRecord>&records,std::vector<AudioEndpoint>&raw,std::int32_t&status){
                 std::vector<AudioEndpoint>ui;ui.reserve(records.size());std::set<std::wstring>ids;
                 for(const auto&r:records){
                     if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!audioUtf8(r.name)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
                     AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor),audioEndpointBluetooth(r.enumerator)};
-                    raw.push_back(e);if(e.name.empty())e.name=e.id;ui.push_back(std::move(e));
+                    raw.push_back(e);if(!audioLabelValid(e.name))e.name=e.id;ui.push_back(std::move(e));
                 }
                 sortAudioEndpoints(ui,impl.options.order);return ui;
             };

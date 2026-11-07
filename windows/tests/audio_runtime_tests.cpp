@@ -239,6 +239,31 @@ void malformedAppName(){
     check(!threw,"Volume and per-app gain changes with the ill-formed app listed never throw");
     h.runtime->stop();
 }
+// An endpoint whose name is within the worker's 32767 units but past a Volume
+// row's 4096 UTF-8 bytes (2000 CJK characters, 6000 bytes): it passed the
+// worker, then failed the Volume canvas's snapshot check, which disabled the
+// module. The Volume row shows the endpoint ID instead, as for an empty name;
+// the Event Log keeps the raw label.
+void longEndpointName(){
+    Harness h;const std::wstring longName(2000,L'\u6587');std::string longLabel;for(int n=0;n<2000;++n)longLabel+="\xE6\x96\x87";
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,longName,L"HDAUDIO",1u},{usb,L"USB Headset",L"USB",5u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;}
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
+    // The canvas checks every snapshot it receives (VolumeCanvas::receive).
+    binding.setReceiver([&](const n::VolumeSnapshot&s){n::validateVolumeSnapshot(s);delivered=s;});
+    check(h.runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    bool threw{};
+    try{binding.setVisible(true);callbacks.setActive(true);
+        h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume lists both outputs");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"An endpoint name past 4096 UTF-8 bytes never fails the Volume canvas's snapshot check");
+    const auto named=[&](std::string_view id)->std::string{for(const auto&d:delivered.outputs)if(d.id==id)return d.name;return "missing";};
+    check(named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}","The Volume row shows the endpoint ID for the long name");
+    check(named("{0.0.0.00000000}.{usb}")=="USB Headset"&&delivered.outputID=="{0.0.0.00000000}.{speaker}","Other endpoints keep their names and the default stays selected");
+    h.until([&]{return h.runtime->deviceLabels().has_value();},"The Event Log device list arrives");
+    const auto labels=h.runtime->deviceLabels();
+    check(labels->size()==3&&labels->at("{0.0.0.00000000}.{speaker}")==longLabel,"The Event Log keeps the raw long label");
+    h.runtime->stop();
+}
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
 // A Volume publish that throws (here the receiver; in 1.3.1 an ill-formed
 // per-app name reaching the throwing UTF-8 conversion) escaped the UI's audio
@@ -419,7 +444,7 @@ void nowPlaying(){
 }
 }
 int main(){
-    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();
+    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();longEndpointName();
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
         volumeFailure();noticeRetry();
 #endif
