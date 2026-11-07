@@ -68,6 +68,7 @@ NativeNowPlayingArtwork::Stats NativeNowPlayingArtwork::stats()const{impl_->chec
 #include <wincodec.h>
 #include <propidl.h>
 #include <wrl/client.h>
+#include "native/wic_orientation.hpp"
 namespace endfield::native {namespace {
 using Microsoft::WRL::ComPtr;
 struct Error{NowPlayingImageFailure kind;HRESULT code;};
@@ -86,7 +87,6 @@ unsigned encodedOrientation(std::span<const std::uint8_t>b){if(auto n=tiffOrient
 unsigned orientation(IWICBitmapFrameDecode*frame,std::span<const std::uint8_t>bytes){if(auto n=encodedOrientation(bytes))return n;ComPtr<IWICMetadataQueryReader>reader;if(FAILED(frame->GetMetadataQueryReader(&reader)))return 1;
  for(const auto*query:{L"/app1/ifd/{ushort=274}",L"/ifd/{ushort=274}"}){PROPVARIANT value{};const auto hr=reader->GetMetadataByName(query,&value);const unsigned n=SUCCEEDED(hr)&&value.vt==VT_UI2?value.uiVal:1;PropVariantClear(&value);if(n>=2&&n<=8)return n;}return 1;
 }
-WICBitmapTransformOptions transform(unsigned n){switch(n){case 2:return WICBitmapTransformFlipHorizontal;case 3:return WICBitmapTransformRotate180;case 4:return WICBitmapTransformFlipVertical;case 5:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270|WICBitmapTransformFlipHorizontal);case 6:return WICBitmapTransformRotate90;case 7:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90|WICBitmapTransformFlipHorizontal);case 8:return WICBitmapTransformRotate270;default:return WICBitmapTransformRotate0;}}
 ComPtr<IWICColorContext>colorContext(IWICImagingFactory*f,IWICBitmapFrameDecode*frame){UINT count{};const auto hr=frame->GetColorContexts(0,nullptr,&count);if(hr==WINCODEC_ERR_UNSUPPORTEDOPERATION||hr==E_NOTIMPL)return {};checked(hr);if(!count)return {};ComPtr<IWICColorContext>c;checked(f->CreateColorContext(&c));auto*raw=c.Get();checked(frame->GetColorContexts(1,&raw,&count));WICColorContextType type{};checked(c->GetType(&type));if(type==WICColorContextUninitialized)return {};if(type==WICColorContextProfile){UINT size{};checked(c->GetProfileBytes(0,nullptr,&size));if(size>modules::nowPlayingMaximumArtworkBytes)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}if(type==WICColorContextExifColorSpace){UINT space{};checked(c->GetExifColorSpace(&space));if(space!=1&&space!=2)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}return c;}
 NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,unsigned maximum){
  Apartment apartment;ComPtr<IWICImagingFactory>factory;checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)));
@@ -96,7 +96,7 @@ NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,unsigned maximum){
  ComPtr<IWICBitmapFrameDecode>frame;checked(decoder->GetFrame(0,&frame));UINT width{},height{};checked(frame->GetSize(&width,&height));if(!modules::nowPlayingArtworkMetadata(width,height,bytes.size()))return {{},NowPlayingImageFailure::dimensions};
  const auto scale=std::min(1.,double(maximum)/double(std::max(width,height)));UINT tw=std::max(1u,static_cast<unsigned>(std::floor(width*scale+.5))),th=std::max(1u,static_cast<unsigned>(std::floor(height*scale+.5)));
  ComPtr<IWICBitmapSource>source=frame;ComPtr<IWICBitmapScaler>scaler;if(tw!=width||th!=height){checked(factory->CreateBitmapScaler(&scaler));checked(scaler->Initialize(source.Get(),tw,th,WICBitmapInterpolationModeFant));source=scaler;}
- const auto rotation=orientation(frame.Get(),bytes);ComPtr<IWICBitmapFlipRotator>rotator;if(rotation!=1){checked(factory->CreateBitmapFlipRotator(&rotator));checked(rotator->Initialize(source.Get(),transform(rotation)));source=rotator;if(rotation>=5)std::swap(tw,th);}
+ const auto rotation=orientation(frame.Get(),bytes);{ComPtr<IWICBitmapSource>upright;checked(orientWICSource(factory.Get(),source.Get(),rotation,&upright));source=upright;}if(rotation>=5)std::swap(tw,th);
  const auto profile=colorContext(factory.Get(),frame.Get());ComPtr<IWICColorContext>srgb;ComPtr<IWICColorTransform>color;if(profile){checked(factory->CreateColorContext(&srgb));checked(srgb->InitializeFromExifColorSpace(1));checked(factory->CreateColorTransformer(&color));checked(color->Initialize(source.Get(),profile.Get(),srgb.Get(),GUID_WICPixelFormat32bppRGBA));source=color;}
  ComPtr<IWICFormatConverter>converter;checked(factory->CreateFormatConverter(&converter));checked(converter->Initialize(source.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));auto image=std::make_shared<NotesImageFrame>();image->width=tw;image->height=th;image->straightRGBA.resize(std::size_t(tw)*th*4);checked(converter->CopyPixels(nullptr,tw*4,static_cast<UINT>(image->straightRGBA.size()),image->straightRGBA.data()));return {std::move(image)};
 }

@@ -1,5 +1,7 @@
 #include "native/now_playing_image.hpp"
 #include "modules/now_playing_model.hpp"
+#include "tests/wic_rotated_photo.hpp"
+#include <chrono>
 #include <iostream>
 #include "core/data/json.hpp"
 #include <fstream>
@@ -42,6 +44,18 @@ std::vector<std::uint8_t>bitmap(unsigned w,unsigned h,bool(*white)(unsigned,unsi
 // filter (each output pixel averages its source pixels: no aliasing), a
 // smaller one keeps its size (never enlarged on the CPU), and the source path
 // keeps its 512-pixel thumbnail.
+// A sideways phone photo (EXIF 6) as the source thumbnail and the largest
+// drawn cover: each decodes in well under a second (1.3.0 rotated straight
+// over the decoder and decoded the photo again for the rows it turned) and
+// comes out upright.
+void rotatedCover(){
+ struct Com{HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);~Com(){if(SUCCEEDED(hr))CoUninitialize();}}com;const auto photo=endfield::tests::rotatedPhoto();
+ for(const unsigned pixels:{0u,endfield::modules::nowPlayingMaximumCoverPixels}){const auto start=std::chrono::steady_clock::now();const auto result=pixels?n::decodeNowPlayingCover(photo,pixels):n::decodeNowPlayingImage(photo);const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+  std::cout<<"Now Playing rotated 3000x2000 photo to "<<(pixels?pixels:512u)<<" px s="<<seconds<<'\n';
+  check(result.image&&result.image->height==(pixels?pixels:512u)&&result.image->width<result.image->height,"A sideways photo decodes upright at its bounded size");
+  check(seconds<5,"A sideways photo decodes without decoding the image again per turned row");
+  check(endfield::tests::rotatedPhotoUpright(result.image->straightRGBA.data(),result.image->width,result.image->height,0,2),"EXIF orientation 6 puts the photo's left (red) half on top");}
+}
 void drawnSize(){
  const auto stripes=bitmap(2640,8,[](unsigned x,unsigned){return x%4==0;}); // one white column in four
  const auto cover=n::decodeNowPlayingCover(stripes,660);
@@ -66,6 +80,6 @@ void source(const char*path){std::ifstream in(path,std::ios::binary);check(bool(
 }
 int main(int argc,char**argv){try{check(argc==2,"Pass original owner/artwork source fixture");source(argv[1]);boundedQueue();failuresAndLifetime();invalidResult();coverBound();
 #ifdef _WIN32
-drawnSize();
+drawnSize();rotatedCover();
 #endif
 capacity();std::cout<<"Now Playing artwork: "<<checks<<" checks passed (synthetic bytes/decoder)\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing artwork failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -10,6 +10,8 @@
 #include <tlhelp32.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include "tests/wic_rotated_photo.hpp"
+#include <chrono>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -203,6 +205,15 @@ std::pair<unsigned,unsigned> pngSize(const std::vector<std::uint8_t>& png) {
     const auto be=[&](std::size_t at){return (unsigned(png[at])<<24)|(unsigned(png[at+1])<<16)|(unsigned(png[at+2])<<8)|png[at+3];};return {be(16),be(20)};
 }
 void avatar() {
+    // A sideways phone photo (EXIF 6) as an avatar: decoded in well under a
+    // second (1.3.0 rotated straight over the decoder and decoded the photo
+    // again for the rows it turned) and upright: 341x512, red over blue.
+    {const auto photo=endfield::tests::rotatedPhoto();const auto start=std::chrono::steady_clock::now();const auto avatar=n::downsampleAvatar(photo);const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+     std::cout<<"Avatar rotated 3000x2000 photo s="<<seconds<<'\n';
+     check(pngSize(avatar)==std::pair{341u,512u},"A sideways photo avatar is turned upright at the 512 px bound");check(seconds<5,"A sideways photo avatar decodes without decoding the image again per turned row");
+     using Microsoft::WRL::ComPtr;ComPtr<IWICImagingFactory> wic;check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(wic.GetAddressOf()))),"WIC");ComPtr<IWICStream> stream;wic->CreateStream(stream.GetAddressOf());stream->InitializeFromMemory(const_cast<BYTE*>(avatar.data()),static_cast<DWORD>(avatar.size()));
+     ComPtr<IWICBitmapDecoder> decoder;check(SUCCEEDED(wic->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,decoder.GetAddressOf())),"Avatar PNG decodes");ComPtr<IWICBitmapFrameDecode> frame;decoder->GetFrame(0,frame.GetAddressOf());ComPtr<IWICFormatConverter> bgra;wic->CreateFormatConverter(bgra.GetAddressOf());bgra->Initialize(frame.Get(),GUID_WICPixelFormat32bppBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom);
+     std::vector<std::uint8_t> pixels(341u*512u*4);check(SUCCEEDED(bgra->CopyPixels(nullptr,341*4,static_cast<UINT>(pixels.size()),pixels.data())),"Avatar pixels");check(endfield::tests::rotatedPhotoUpright(pixels.data(),341,512,2,0),"EXIF orientation 6 puts the avatar's left (red) half on top");}
     check(pngSize(n::downsampleAvatar(syntheticPNG(1024,600)))==std::pair{512u,300u},"Avatar is downsampled to the 512 px source thumbnail bound");
     check(pngSize(n::downsampleAvatar(syntheticPNG(100,80)))==std::pair{100u,80u},"Small avatars keep their size (no upscaling)");
     check(throws([]{const std::vector<std::uint8_t> junk(64,7);(void)n::downsampleAvatar(junk);})&&throws([]{(void)n::downsampleAvatar({});}),"Undecodable avatars are rejected");

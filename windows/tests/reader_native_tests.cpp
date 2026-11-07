@@ -3,10 +3,9 @@
 #include "native/layer_raster.hpp"
 #include "core/data/file_io.hpp"
 #include "third_party/zlib/zlib.h"
+#include "tests/wic_rotated_photo.hpp"
 #ifdef _WIN32
 #include <windows.h>
-#include <wincodec.h>
-#include <wrl/client.h>
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -37,29 +36,19 @@ void native(const LayerFontResources&fonts,const LayerFontResources&korean,const
      const auto emptyPath=fixture.path/L"untitled.pdf";write(emptyPath,bytes(pdf("<< /Title () /Author (x) >>")));provider.open(reference(emptyPath),{});check(provider.info().title=="untitled"&&!provider.info().pdfMetadataTitleAvailable,"An empty metadata title keeps the file name");}
     auto imported=reference(textPath);imported.platform=ReaderReferencePlatform::macOS;rejects([&]{provider.open(imported,{});},"Opaque Mac reference needs explicit relink");provider.release();
 }
-// A 3000x2000 JPEG, left half red and right half blue, with EXIF orientation 6
-// (a phone photo taken upright), written by the system encoder.
-std::vector<std::uint8_t>rotatedPhoto(){
-    using Microsoft::WRL::ComPtr;const auto ok=[](HRESULT v,const char*why){check(SUCCEEDED(v),why);};constexpr UINT w=3000,h=2000;
-    ComPtr<IWICImagingFactory>f;ok(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&f)),"WIC factory for the synthetic photo");
-    ComPtr<IStream>stream;ok(CreateStreamOnHGlobal(nullptr,TRUE,&stream),"Photo stream");ComPtr<IWICBitmapEncoder>encoder;ok(f->CreateEncoder(GUID_ContainerFormatJpeg,nullptr,&encoder),"JPEG encoder");ok(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache),"JPEG encoder stream");
-    ComPtr<IWICBitmapFrameEncode>frame;ok(encoder->CreateNewFrame(&frame,nullptr),"JPEG frame");ok(frame->Initialize(nullptr),"JPEG frame options");ok(frame->SetSize(w,h),"JPEG size");WICPixelFormatGUID format=GUID_WICPixelFormat24bppBGR;ok(frame->SetPixelFormat(&format),"JPEG pixel format");
-    ComPtr<IWICMetadataQueryWriter>metadata;ok(frame->GetMetadataQueryWriter(&metadata),"JPEG metadata");PROPVARIANT value{};value.vt=VT_UI2;value.uiVal=6;ok(metadata->SetMetadataByName(L"/app1/ifd/{ushort=274}",&value),"EXIF orientation 6");
-    std::vector<std::uint8_t>row(std::size_t(w)*3);for(UINT x=0;x<w;++x){row[x*3]=x<w/2?0:255;row[x*3+1]=0;row[x*3+2]=x<w/2?255:0;}for(UINT y=0;y<h;++y)ok(frame->WritePixels(1,w*3,UINT(row.size()),row.data()),"JPEG rows");
-    ok(frame->Commit(),"JPEG frame commit");ok(encoder->Commit(),"JPEG commit");STATSTG stat{};ok(stream->Stat(&stat,STATFLAG_NONAME),"Photo size");std::vector<std::uint8_t>out(static_cast<std::size_t>(stat.cbSize.QuadPart));LARGE_INTEGER zero{};ok(stream->Seek(zero,STREAM_SEEK_SET,nullptr),"Photo rewind");ULONG read{};ok(stream->Read(out.data(),ULONG(out.size()),&read),"Photo bytes");check(read==out.size(),"Whole synthetic photo");return out;}
 // An EPUB that opens on an EXIF-rotated photo: the first page appears at once
 // (1.3.0 decoded the photo again for each row it rotated: 14 s at 3000x2000,
 // longer for larger photos, holding the shared file worker) and stays upright.
 void rotatedImage(const LayerFontResources&fonts){
-    Temp fixture;const auto path=fixture.path/L"rotated photo.epub";const auto photo=rotatedPhoto();
+    Temp fixture;const auto path=fixture.path/L"rotated photo.epub";const auto photo=endfield::tests::rotatedPhoto();
     write(path,zip({{"mimetype",bytes("application/epub+zip")},{"META-INF/container.xml",bytes("<container><rootfile full-path='OPS/book.opf'/></container>")},{"OPS/book.opf",bytes("<package><title>Rotated</title><manifest><item id='p' href='photo.jpg' media-type='image/jpeg'/><item id='a' href='a.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='p'/><itemref idref='a'/></spine></package>")},{"OPS/photo.jpg",photo},{"OPS/a.xhtml",bytes("<html><body><p>After the photo.</p></body></html>")}}));
     NativeReaderDocument provider(fonts);const auto prefs=ReaderPreferences::defaults("Noto Sans SC");provider.open(reference(path),{});
     const auto start=std::chrono::steady_clock::now();const auto pages=provider.render({},{},prefs,{376,334},false,2,{});const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     std::cout<<"Reader rotated 3000x2000 photo first render s="<<elapsed<<'\n';
     check(!pages.empty()&&pages[0].illustration&&provider.stats().imageDecodes==1,"The rotated photo is the first page, decoded once");
     check(elapsed<5,"A rotated photo renders without decoding the image again per rotated row");
-    const auto&p=*pages[0].pixels;const auto at=[&](double y){return (std::size_t(p.height*y)*p.width+p.width/2)*4;};const auto top=at(.3),bottom=at(.7);
-    check(p.bytes[top+2]>p.bytes[top]+100&&p.bytes[bottom]>p.bytes[bottom+2]+100,"EXIF orientation 6 still turns the photo upright: its left (red) half on top, its right (blue) half below");
+    const auto&p=*pages[0].pixels;
+    check(endfield::tests::rotatedPhotoUpright(p.bytes.data(),p.width,p.height,2,0),"EXIF orientation 6 still turns the photo upright: its left (red) half on top, its right (blue) half below");
     provider.release();
 }
 }
