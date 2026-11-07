@@ -276,10 +276,13 @@ void longEndpointName(){
     // A name past 4096 UTF-8 bytes only with its trailing spaces: Volume
     // checks the raw name and shows the ID, and the Event Log, which lists
     // trimmed names, chose from the trimmed one and kept the name. Both now
-    // choose on the raw name. The microphone leaves so the list changes.
+    // choose on the raw name. The microphone leaves so the list changes. The
+    // row first gets a valid name back, so Volume must re-label it.
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=L"USB Headset";}
+    h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="USB Headset";},"The endpoint's valid name reaches Volume again");
     {std::lock_guard l(h.world->m);h.world->outputs[1].name=std::wstring(4095,L'a')+L"  ";h.world->inputs.clear();}
     h.seen={};h.wake(&World::topologyWake);
-    h.until([&]{return h.seen.devices&&h.runtime->deviceLabels()&&h.runtime->deviceLabels()->size()==2;},"The microphone's removal reaches the Event Log");
+    h.until([&]{return h.seen.devices&&h.runtime->deviceLabels()&&h.runtime->deviceLabels()->size()==2&&named("{0.0.0.00000000}.{usb}")!="USB Headset";},"The microphone's removal and the padded name reach the Event Log and Volume");
     const auto padded=h.runtime->deviceLabels();
     check(named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}"&&padded->at("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}","A name past 4096 UTF-8 bytes with its trailing spaces is the endpoint ID in both Volume and the Event Log");
     h.runtime->stop();
