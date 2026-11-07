@@ -69,7 +69,10 @@ void sortAudioApplications(std::vector<AudioApplicationRoute>&,const AudioNameOr
 // Union of active render and capture endpoints for the Event Log, ordered by
 // identity. An empty identity or name, or a repeated identity with a
 // different name, makes the whole read incomplete (nullopt) exactly as the
-// source watcher returns without publishing.
+// source watcher returns without publishing. Each name is its Volume row's
+// label (audioEndpointLabel on the untrimmed name), trimmed: the endpoint ID
+// for a name that is ill-formed or past 4096 UTF-8 bytes, so the Event Log and
+// the audio probe's recorder name such an endpoint as Volume does.
 std::optional<std::vector<AudioTopologyDevice>>audioTopology(std::span<const AudioEndpoint>outputs,std::span<const AudioEndpoint>inputs);
 
 // SystemEventRecorder.recordTopology: the first list is a baseline and logs

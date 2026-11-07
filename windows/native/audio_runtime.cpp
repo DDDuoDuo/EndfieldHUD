@@ -11,7 +11,10 @@ namespace endfield::native {
 namespace {
 constexpr std::int32_t wrongThread=static_cast<std::int32_t>(0x8001010Eu); // RPC_E_WRONG_THREAD
 // Source-equivalent label hygiene: the topology list already carries trimmed,
-// nonempty labels; anything that cannot be represented as UTF-8 is withheld.
+// nonempty labels chosen as each Volume row's (audioTopology uses
+// audioEndpointLabel): a name that is not well-formed UTF-16 or is past 4096
+// UTF-8 bytes is the endpoint ID, so the device list keeps updating while it
+// exists.
 std::optional<std::map<std::string,std::string>>labels(const AudioEndpointSnapshot&s){
     if(!s.topologyActive||!s.topologyListed)return std::nullopt;
     std::map<std::string,std::string>out;
