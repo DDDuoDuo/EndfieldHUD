@@ -668,6 +668,8 @@ final class OverlayController: NSObject {
             if self.finishProjectionExternalAction() { return }
             self.returningProjectionScreenID = self.projectionScreenID
             self.projectionHandoff = false
+            // A return to where the HUD was: a chosen Open on module cannot replace it.
+            self.initialModuleRequest = self.configuration.moduleLayout.restorable(self.lastSystemModule)
             self.performSystemAction(self.systemState.toggle(), snapshot: self.latestBatterySnapshot)
             if let previous = self.projectionPreviousApplication { self.previousApplication = previous }
             self.projectionPreviousApplication = nil
