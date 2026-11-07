@@ -141,4 +141,22 @@ struct HUDModuleLayout: Equatable {
         order.remove(at: from); order.insert(module, at: to)
         return true
     }
+
+    /// A tile of the right-hand list: a configurable module, a saved app or Add App.
+    static func listsTarget(_ target: HUDNavigationTarget) -> Bool {
+        guard let module = target.module else { return true }
+        return module == .addApp || configurable.contains(module)
+    }
+
+    /// Display > Modules > Arrange on HUD: the layout with the visible
+    /// `module` dragged over `target`, a tile of the right-hand list. Over
+    /// another module it takes that module's place; over a saved app or Add
+    /// App it goes after the last visible module. Nil when nothing moves.
+    func arranging(_ module: HUDModule, over target: HUDNavigationTarget?) -> HUDModuleLayout? {
+        guard Self.configurable.contains(module), !hidden.contains(module), let target, Self.listsTarget(target) else { return nil }
+        let other = target.module.flatMap { $0 == .addApp ? nil : $0 } ?? visible.last
+        guard let other, other != module, !hidden.contains(other), let index = order.firstIndex(of: other) else { return nil }
+        var next = self
+        return next.move(module, to: index) ? next : nil
+    }
 }

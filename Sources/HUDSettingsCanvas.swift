@@ -47,6 +47,14 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     private weak var modulesScroll: HUDScrollArea?
     /// The row being dragged: its grab offset and the slot it would drop into.
     private var moduleDrag: (module: HUDModule, grab: CGFloat, slot: Int)?
+    /// Display > Modules > Arrange on HUD: while it is on, the HUD's right-hand
+    /// module buttons are dragged to reorder instead of opening. Never saved.
+    private(set) var isArrangingModules = false
+    /// The HUD turns arranging on or off on its module buttons.
+    var onArrangeModules: ((Bool) -> Void)?
+    private weak var arrangeToggle: HUDToggle?
+    /// The order a drag on the HUD previews; the rows follow it until the drop.
+    private var previewedModuleOrder: [HUDModule]?
     var isCapturingShortcut: Bool { module == .hotkeys && controller.isCapturingShortcut }
     private var config: AppConfiguration { controller.configuration }
     var customLogoRevision: String? { config.centerLogoRevision }
@@ -86,6 +94,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func didDeactivate() {
         cancelCapture()
+        setArrangingModules(false)
         // An interrupted drag never creates a preview after the HUD has gone;
         // an unanswered layout preview is reverted with its prompt.
         stagedLayout = (nil, nil, nil)
@@ -147,7 +156,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func buildPage(_ page: HUDDesignPage) {
         binders = []; updateCells = nil; updateText = nil; updateStamp = nil; keycaps = nil
-        moduleRows = [:]; modulesScroll = nil; moduleDrag = nil
+        moduleRows = [:]; modulesScroll = nil; moduleDrag = nil; arrangeToggle = nil
+        // Arranging lasts while Modules is shown (a re-render there keeps it).
+        if section != .modules { setArrangingModules(false) }
         renderedStructure = structure
         switch (module, section) {
         case (.system, _): buildSystem(page)
@@ -163,6 +174,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     private func go(_ next: Section, forward: Bool) {
+        if next != .modules { setArrangingModules(false) }
         section = next
         navigate(dx: forward ? 1 : -1)
     }
@@ -304,9 +316,17 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     /// Order and visibility of the right-hand list: drag a row by its grip
     /// (the others reflow) or use its move buttons; the switch shows or hides it.
+    /// Above the list, Arrange on HUD lets the HUD's own module buttons be dragged.
     private func buildModules(_ page: HUDDesignPage) {
         let layout = config.moduleLayout, width = rowWidth(page)
-        let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
+        let arrange = HUDToggle(id: "modulesArrange", label: L10n.text("Arrange on HUD", "在界面上排列"), isOn: isArrangingModules, env: env)
+        arrange.onChange = { [weak self] on in self?.setArrangingModules(on) }
+        arrangeToggle = arrange
+        stack([row("modulesArrange", L10n.text("Arrange on HUD", "在界面上排列"), [arrange.layer], page,
+                   sublabel: L10n.text("Drag the module buttons on the right", "拖动右侧的模块按钮"), controls: [arrange])],
+              in: page.layer, page: page, top: HUDMetric.headerHeight, width: width)
+        let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight + Self.modulePitch,
+                                                                  width: HUDMetric.box.width, height: HUDMetric.bodyHeight - Self.modulePitch))
         modulesScroll = scroll
         var plates: [HUDRowPlate] = []
         for module in layout.order {
@@ -349,8 +369,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             guard let self else { return }
             self.renderModuleStates()
             restore?.isEnabled = !self.config.moduleLayout.isDefault
-            // A drag in progress owns the positions until it drops.
-            if self.moduleDrag == nil { self.layoutModuleRows(self.config.moduleLayout.order, animated: true) }
+            // A drag in progress (here or on the HUD) owns the positions until it drops.
+            if self.moduleDrag == nil { self.layoutModuleRows(self.previewedModuleOrder ?? self.config.moduleLayout.order, animated: true) }
         }
         restore.isEnabled = !layout.isDefault
         header.configure(crumbs: ["DISPLAY", "MODULES"], code: "SYS-02", title: HUDModuleTitle("Modules", "模块"),
@@ -371,6 +391,25 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             row.down.isEnabled = index < layout.order.count - 1
             HUDMotion.animate(row.glyph, "opacity", to: Float(hidden ? 0.35 : 1), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
         }
+    }
+
+    /// Turns Arrange on HUD on or off (the switch, Back, leaving the page or the
+    /// HUD); the HUD hears only real changes. It turns on only on this page.
+    func setArrangingModules(_ on: Bool) {
+        let next = on && module == .display && section == .modules
+        guard next != isArrangingModules else { arrangeToggle?.setOn(next, animated: true); return }
+        isArrangingModules = next
+        arrangeToggle?.setOn(next, animated: true)
+        if !next { previewModuleOrder(nil) }
+        onArrangeModules?(next)
+    }
+
+    /// The rows follow a drag on the HUD (`order`) and return to the saved
+    /// order with nil, when it drops or is cancelled.
+    func previewModuleOrder(_ order: [HUDModule]?) {
+        guard order != previewedModuleOrder else { return }
+        previewedModuleOrder = order
+        if moduleDrag == nil, !moduleRows.isEmpty { layoutModuleRows(order ?? config.moduleLayout.order, animated: true) }
     }
 
     /// Places each row at its slot of `order`; the dragged row follows the pointer instead.
