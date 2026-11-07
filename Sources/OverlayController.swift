@@ -164,7 +164,12 @@ final class OverlayController: NSObject {
     private var forceCloseAfterShelfDrag = false
     private var shelfDragPresentation = ShelfDragPresentationState()
     private var shelfDragDeadline: DispatchWorkItem?
-    private var lastSystemModule: HUDModule = .map
+    /// "Last opened" (Display > HUD elements > Open on): kept across relaunches,
+    /// except in diagnostic runs, which never touch the user's preferences.
+    private var lastSystemModule: HUDModule = HUDOverlayLayout.lastModule(in: OverlayController.lastModuleDefaults) {
+        didSet { HUDOverlayLayout.saveLastModule(lastSystemModule, to: Self.lastModuleDefaults) }
+    }
+    private static var lastModuleDefaults: UserDefaults? { isDiagnosticRun ? nil : .standard }
     private var systemState = SystemOverlayState()
     private var transitionDeadline: DispatchWorkItem?
     private var previousApplication: NSRunningApplication?
@@ -861,6 +866,7 @@ final class OverlayController: NSObject {
             previousApplication = NSWorkspace.shared.frontmostApplication
             systemScreenID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
             HUDStartupTrace.end("open.preparation", since: &startup)
+            let opening = HUDOverlayLayout.initialModule(request: initialModuleRequest, configuration: configuration, last: lastSystemModule)
             let view = SystemHUDView(frame: NSRect(origin: .zero, size: screen.frame.size),
                                      notesStore: notesStore, shelfStore: shelfStore, clipboard: clipboard,
                                      audio: audio, perAppAudio: perAppAudio, workMode: workMode, eventLog: eventLog, nowPlaying: nowPlaying,
@@ -869,7 +875,7 @@ final class OverlayController: NSObject {
                                      archive: archiveController, reader: readerController,
                                      mediaAssembly: mediaAssemblyController, calendar: calendarController, minigame: minigameSession, account: accountController,
                                      facility: facilityAlerts, initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
-                                     initialModule: initialModuleRequest ?? configuration.moduleLayout.restorable(lastSystemModule))
+                                     initialModule: opening)
             HUDStartupTrace.end("open.fullNativeView", since: &startup)
             systemView = view
             view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
@@ -886,7 +892,7 @@ final class OverlayController: NSObject {
             let dragBoard = NSPasteboard(name: .drag)
             view.summonedDuringFileDrag = NSEvent.pressedMouseButtons & 1 != 0 && (
                 HUDFileShelfInteraction.acceptsFiles(dragBoard) ||
-                (lastSystemModule == .notes && HUDNotesInteraction.acceptsImages(dragBoard)))
+                (opening == .notes && HUDNotesInteraction.acceptsImages(dragBoard)))
             initialModuleRequest = nil
             if let appLaunchError { view.showAppShortcutError(appLaunchError) }
             view.onLaunchAppShortcut = { [weak self] id in self?.requestAppShortcutLaunch(id) }
@@ -990,7 +996,8 @@ final class OverlayController: NSObject {
                 // Keep a failed target editable and report the error in the HUD.
                 // A forced shutdown invalidates this completion before it can reopen.
                 guard self.systemState.phase == .closed else { return }
-                self.lastSystemModule = .addApp
+                // An explicit request: a chosen Open on module cannot replace it.
+                self.initialModuleRequest = .addApp
                 self.hide(animated: false)
                 self.performSystemAction(self.systemState.toggle())
             }
