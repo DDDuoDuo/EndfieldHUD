@@ -238,12 +238,16 @@ struct OverlayHost::Impl {
     }
     // The topmost band (Mac: the HUD panel's .statusBar level, above every
     // normal window, set once and kept through every orderOut): the window is
-    // created in it and keeps it while hidden; show() asks again only when
-    // Windows kept the window out of it. Only the z-order changes, never
-    // geometry, visibility or activation.
-    void setBand(HWND target) {
-        if (testBand) { bandState = testBand(true); return; }
-        (void)SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // created in it and keeps it while hidden; this raise puts it at the top
+    // of the band (entering it if Windows kept it out). Only the z-order
+    // changes, never geometry; show() passes SWP_SHOWWINDOW and its
+    // activation so its one SetWindowPos both raises and shows the window.
+    // A hidden test's band stand-in replaces the raise only.
+    bool setBand(HWND target, UINT flags = SWP_NOACTIVATE) {
+        flags |= SWP_NOMOVE | SWP_NOSIZE;
+        if (!testBand) return SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, flags) != FALSE;
+        bandState = testBand(true);
+        return !(flags & SWP_SHOWWINDOW) || SetWindowPos(target, nullptr, 0, 0, 0, 0, flags | SWP_NOZORDER) != FALSE;
     }
     // Windows applies its foreground rules to raising a window too: for a
     // process that may not set the foreground window, SetWindowPos into the
@@ -254,14 +258,16 @@ struct OverlayHost::Impl {
     // window (when the process holds that right) enters it.
     void enterBand(HWND target) {
         ++counts.bandRequests;
-        setBand(target);
+        (void)setBand(target);
         if (window != target) return;
         judgeBand();
     }
     // Out of the band, the window waits for its next activation (counted as
-    // a refusal); back in it, the wait ends. Also judged after every show:
-    // whether Windows' refusal of an activating show can take a window out
-    // of the band is not known, so the same wait covers it.
+    // a refusal); back in it, the wait ends. Also judged after every show,
+    // whose raise Windows may decline: a window it leaves in the band (at the
+    // top or where it was) is no refusal, and one the raise took out of the
+    // band waits like a refused raise. Judged before the show's activation,
+    // so a granted one enters the band at once, and after a refused one.
     void judgeBand() {
         if (topmost()) { if (std::exchange(bandPending, false)) ++counts.deferredBands; }
         else { bandPending = true; ++counts.bandRefusals; }
@@ -870,26 +876,24 @@ void OverlayHost::show(bool activate) {
         p.visible = true; p.minimized = false; p.refreshSchedule(); p.rethrow(); return;
     }
     const auto window=p.window;
-    // Above every normal application window: the window already holds the
-    // topmost band (created in it, kept while hidden), so it appears there
-    // whatever Windows decides about this opening. Only a window Windows
-    // kept out of the band asks for it again, before it appears, as far as
-    // the foreground rules allow (enterBand); a window in the band is never
-    // sent a raise Windows may refuse. A granted activation (below) brings it
-    // to the top of the band.
-    if(!p.topmost())p.enterBand(window);
-    // Held now: created in the band, kept while hidden, or just granted it.
-    const bool inBand=p.topmost();
-    p.rethrow();
-    if(p.window!=window||p.stopped)return;
+    // At the top of the topmost band, above every normal application window
+    // and every topmost window opened since (another program's Always On Top
+    // window, a picture-in-picture player), as the Mac orders the panel front
+    // on every opening: the one SetWindowPos that shows the window raises it
+    // (setBand). The window holds the band from creation and keeps it while
+    // hidden, so an opening whose raise Windows declines (no foreground
+    // right) still appears above every normal window; a window Windows kept
+    // out of the band asks to enter it here. Judged after the show.
+    ++p.counts.bandRequests;
     // An explicit owner request must not inherit a launcher's STARTUPINFO
     // SW_HIDE. Preserve geometry and style; show(false) also preserves
     // keyboard focus and activation.
-    if(p.testVisibility)p.visible=p.testVisibility(true,activate);
-    else{
-        const UINT flags=SWP_SHOWWINDOW|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|(activate?0u:SWP_NOACTIVATE);
-        if(!SetWindowPos(window,nullptr,0,0,0,0,flags))fail("Show owned overlay");
-    }
+    if(p.testVisibility){
+        (void)p.setBand(window);
+        p.rethrow();
+        if(p.window!=window||p.stopped)return;
+        p.visible=p.testVisibility(true,activate);
+    }else if(!p.setBand(window,SWP_SHOWWINDOW|(activate?0u:SWP_NOACTIVATE)))fail("Show owned overlay");
     p.rethrow();
     if(p.window==window&&!p.stopped){
         // WM_SHOWWINDOW precedes completed native visibility. A refresh in
@@ -898,10 +902,16 @@ void OverlayHost::show(bool activate) {
         if(!p.testVisibility)p.visible=IsWindowVisible(window)!=FALSE;
         p.minimized=IsIconic(window)!=FALSE;
         p.refreshSchedule();
-        if(activate&&p.visible&&p.window==window)p.requestForeground(window);
-        // A show that cost the window its band (only the style is read)
-        // waits for the next activation like a refused raise.
-        if(inBand&&p.window==window)p.judgeBand();
+        // The raise and the show judged before the activation (only the style
+        // is read): out of the band, the window waits for its next activation,
+        // so a granted request below enters the band through its WM_ACTIVATE.
+        if(p.window==window)p.judgeBand();
+        if(activate&&p.visible&&p.window==window){
+            p.requestForeground(window);
+            // An activation that took the window out of the band waits the
+            // same way; one already waiting is not counted twice.
+            if(p.window==window&&!p.bandPending)p.judgeBand();
+        }
     }
     p.rethrow();
 }
@@ -1008,6 +1018,15 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     // When the held frame became due: from then on it samples input for at
     // most sampleWindow(), then runs before the rest.
     double dueAt = runGated ? monotonicSeconds() : 0;
+    // A frame held while this batch runs (WM_TIMER never comes while input
+    // is queued) becomes due between messages: admitted, or past gateBound.
+    // Asked after every message, the ones a key filter consumes included.
+    const auto checkGate = [&] {
+        if (runGated || !p.gated) return;
+        try { runGated = p.gateDue(p.callbacks); }
+        catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
+        if (runGated) dueAt = monotonicSeconds();
+    };
     MSG message{};
     // A finite batch prevents a producer from starving the one animation clock.
     // Another pump immediately observes remaining input through INPUTAVAILABLE.
@@ -1027,7 +1046,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
             if(!p.window||p.stopped)break;
             // A filter may recreate its owner. Never translate an old queued
             // key into the replacement editor, even if Windows reuses HWND.
-            if(consumed||p.window!=owner||p.callbacks!=handlers)continue;
+            if(consumed||p.window!=owner||p.callbacks!=handlers){checkGate();continue;}
         }
         TranslateMessage(&message);
         p.ownFrameDispatch = message.message == frameMessage && message.hwnd == owner;
@@ -1035,13 +1054,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
         p.ownFrameDispatch = false;
         p.rethrow();
         if (!p.window || p.stopped) break;
-        // A frame held while this batch runs (WM_TIMER never comes while
-        // input is queued) becomes due here: admitted, or past gateBound.
-        if (!runGated && p.gated) {
-            try { runGated = p.gateDue(p.callbacks); }
-            catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
-            if (runGated) dueAt = monotonicSeconds();
-        }
+        checkGate();
     }
     if (runGated && p.window && !p.stopped) {
         try { p.runGated(); }
