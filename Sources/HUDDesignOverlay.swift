@@ -50,6 +50,73 @@ struct HUDConfirmState: Equatable {
     mutating func close() { request = nil; decision = nil }
 }
 
+/// The confirm bar's surface (spec §2.18): an edge-faded charcoal band with a
+/// hairline along each long edge, plus the yellow (or red) double-bar marker.
+/// HUDConfirmBar and HUDPlacementEditor share it, so both read as one family.
+final class HUDConfirmBand {
+    let layer = HUDLayer.gradient("confirm.band")
+    private var hairlines: [CAGradientLayer] = []
+    /// The charcoal band of the standard style, restored after an alert.
+    private var standardColors: [Any]?
+
+    init(size: CGSize) {
+        let bounds = CGRect(origin: .zero, size: size)
+        HUDMotion.perform {
+            layer.frame = bounds
+            layer.startPoint = CGPoint(x: 0, y: 0.5); layer.endPoint = CGPoint(x: 1, y: 0.5)
+            layer.locations = [0, 0.06, 0.94, 1]
+            for y in [CGFloat(0), bounds.height - 1] {
+                let hairline = HUDLayer.gradient()
+                hairline.frame = CGRect(x: bounds.width * 0.05, y: y, width: bounds.width * 0.9, height: 1)
+                hairline.startPoint = CGPoint(x: 0, y: 0.5); hairline.endPoint = CGPoint(x: 1, y: 0.5)
+                hairline.locations = [0, 0.2, 0.8, 1]
+                layer.addSublayer(hairline); hairlines.append(hairline)
+            }
+        }
+        applyPalette()
+    }
+
+    /// The standard band in the current Theme (light: a pale band).
+    func applyPalette() {
+        let charcoal = HUDColor.tone(0x181818, 0.97)
+        standardColors = [HUDColor.tone(0x181818, 0), charcoal, charcoal, HUDColor.tone(0x181818, 0)]
+        HUDMotion.perform {
+            layer.colors = standardColors
+            for hairline in hairlines {
+                hairline.colors = [HUDColor.foreground(0), HUDColor.foreground(0.22), HUDColor.foreground(0.22), HUDColor.foreground(0)]
+            }
+        }
+    }
+
+    /// `alert` is the red band with white text (Settings' facility-alert easter egg).
+    func setStyle(alert: Bool) {
+        HUDMotion.perform {
+            if alert {
+                let red = HUDColor.red.copy(alpha: 0.97) ?? HUDColor.red
+                layer.colors = [HUDColor.red.copy(alpha: 0) ?? HUDColor.clear, red, red, HUDColor.red.copy(alpha: 0) ?? HUDColor.clear]
+            } else {
+                layer.colors = standardColors
+            }
+        }
+    }
+
+    /// The 12 x 18 double-bar marker beside a band's title; its host positions it.
+    static func marker() -> CAGradientLayer {
+        let marker = HUDLayer.gradient("confirm.marker")
+        HUDMotion.perform {
+            marker.frame = CGRect(x: 0, y: 0, width: 12, height: 18)
+            marker.startPoint = CGPoint(x: 0, y: 0.5); marker.endPoint = CGPoint(x: 1, y: 0.5)
+            marker.locations = [0, 0.6, 0.6, 0.75, 0.75, 1]
+        }
+        setMarker(marker, tone: HUDColor.accentInk)
+        return marker
+    }
+
+    static func setMarker(_ marker: CAGradientLayer, tone: CGColor) {
+        HUDMotion.perform { marker.colors = [tone, tone, HUDColor.clear, HUDColor.clear, tone, tone] }
+    }
+}
+
 /// The projected band across the lower disc (spec §2.18): edge-faded charcoal,
 /// hairlines, a yellow (or red) double-bar marker, title and description on
 /// the left, Cancel above Confirm on the right. The spec's pixel-step blocks
@@ -58,14 +125,11 @@ final class HUDConfirmBar {
     static let size = CGSize(width: 620, height: 112)
     let layer = HUDLayer.plain("confirm")
     let env: HUDDesignEnvironment
-    private let band = HUDLayer.gradient("confirm.band")
+    private let band = HUDConfirmBand(size: HUDConfirmBar.size)
     private let column = HUDLayer.plain("confirm.text")
-    private let marker = HUDLayer.gradient("confirm.marker")
+    private let marker = HUDConfirmBand.marker()
     private let title = HUDTextLayer(style: HUDType.confirmTitle)
     private let message = HUDTextLayer(style: HUDType.confirmDescription)
-    /// The charcoal band of the standard style, restored after an alert.
-    private var standardBand: [Any]?
-    private var hairlines: [CAGradientLayer] = []
     private(set) var pills: [HUDPill] = []
     var onDecision: ((HUDConfirmState.Decision) -> Void)?
 
@@ -74,22 +138,10 @@ final class HUDConfirmBar {
         let bounds = CGRect(origin: .zero, size: Self.size)
         HUDMotion.perform {
             layer.bounds = bounds; layer.zPosition = HUDLayerOrder.confirmBar
-            band.frame = bounds
-            band.startPoint = CGPoint(x: 0, y: 0.5); band.endPoint = CGPoint(x: 1, y: 0.5)
-            band.locations = [0, 0.06, 0.94, 1]
-            for y in [CGFloat(0), bounds.height - 1] {
-                let hairline = HUDLayer.gradient()
-                hairline.frame = CGRect(x: bounds.width * 0.05, y: y, width: bounds.width * 0.9, height: 1)
-                hairline.startPoint = CGPoint(x: 0, y: 0.5); hairline.endPoint = CGPoint(x: 1, y: 0.5)
-                hairline.locations = [0, 0.2, 0.8, 1]
-                band.addSublayer(hairline); hairlines.append(hairline)
-            }
-            marker.frame = CGRect(x: 0, y: 1.5, width: 12, height: 18)
-            marker.startPoint = CGPoint(x: 0, y: 0.5); marker.endPoint = CGPoint(x: 1, y: 0.5)
-            marker.locations = [0, 0.6, 0.6, 0.75, 0.75, 1]
+            marker.frame.origin = CGPoint(x: 0, y: 1.5)
             column.frame = CGRect(x: 46, y: 18, width: 320, height: 80)
             [marker, title, message].forEach(column.addSublayer)
-            layer.addSublayer(band); layer.addSublayer(column)
+            layer.addSublayer(band.layer); layer.addSublayer(column)
             layer.isHidden = true
         }
         applyPalette()
@@ -97,16 +149,7 @@ final class HUDConfirmBar {
 
     /// The standard band in the current Theme (light: a pale band with dark
     /// ink); `configure` takes it for every request that is not an alert.
-    func applyPalette() {
-        let charcoal = HUDColor.tone(0x181818, 0.97)
-        standardBand = [HUDColor.tone(0x181818, 0), charcoal, charcoal, HUDColor.tone(0x181818, 0)]
-        HUDMotion.perform {
-            band.colors = standardBand
-            for hairline in hairlines {
-                hairline.colors = [HUDColor.foreground(0), HUDColor.foreground(0.22), HUDColor.foreground(0.22), HUDColor.foreground(0)]
-            }
-        }
-    }
+    func applyPalette() { band.applyPalette() }
 
     func configure(_ request: HUDConfirmRequest) {
         pills.forEach { $0.layer.removeFromSuperlayer() }
@@ -120,15 +163,10 @@ final class HUDConfirmBar {
         pills = [cancel, confirm]
         let alert = request.style == .alert
         let tone = alert ? HUDColor.white(1) : request.danger ? HUDColor.red : HUDColor.accentInk
+        band.setStyle(alert: alert)
+        HUDConfirmBand.setMarker(marker, tone: tone)
         HUDMotion.perform {
-            if alert {
-                let red = HUDColor.red.copy(alpha: 0.97) ?? HUDColor.red
-                band.colors = [HUDColor.red.copy(alpha: 0) ?? HUDColor.clear, red, red, HUDColor.red.copy(alpha: 0) ?? HUDColor.clear]
-            } else {
-                band.colors = standardBand
-            }
             title.textStyle = alert ? HUDType.confirmTitle.colored(HUDColor.white(1)) : HUDType.confirmTitle
-            marker.colors = [tone, tone, HUDColor.clear, HUDColor.clear, tone, tone]
             let columnWidth = Self.size.width - 46 - 34 - 16 - max(cancel.layer.bounds.width, confirm.layer.bounds.width)
             column.frame.size.width = columnWidth
             title.text = request.title
@@ -170,7 +208,7 @@ final class HUDConfirmBar {
     func show() {
         HUDMotion.perform { layer.isHidden = false; layer.opacity = 1 }
         layer.removeAnimation(forKey: "hud.bandOut")
-        HUDMotion.wipe(band, from: .centerX, duration: HUDDuration.bandIn, timing: HUDEasing.snap, env: env)
+        HUDMotion.wipe(band.layer, from: .centerX, duration: HUDDuration.bandIn, timing: HUDEasing.snap, env: env)
         HUDMotion.enter(column, from: CGPoint(x: -12, y: 0), duration: HUDDuration.confirmText, delay: HUDDuration.confirmTextDelay, env: env)
         for (index, pill) in pills.enumerated() {
             HUDMotion.enter(pill.layer, from: CGPoint(x: 12, y: 0), duration: HUDDuration.confirmText,

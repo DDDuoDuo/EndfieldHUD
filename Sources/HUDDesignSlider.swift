@@ -20,7 +20,7 @@ final class HUDSlider: HUDControl {
     }
 
     static let readoutWidth: CGFloat = 58, height: CGFloat = 30
-    let range: Range
+    private(set) var range: Range
     let format: HUDValueFormat
     let dark: Bool
     private(set) var value: Double
@@ -78,6 +78,16 @@ final class HUDSlider: HUDControl {
         let next = range.clamp(newValue)
         guard next != value else { return }
         value = next; render()
+    }
+
+    /// A range that depends on other values (the battery bar's Length minimum
+    /// follows its Size and display); the value is clamped into it.
+    func setRange(_ next: Range, value newValue: Double) {
+        let clamped = next.clamp(newValue)
+        guard next != range || clamped != value else { return }
+        range = next; value = clamped
+        HUDMotion.perform { zeroMark.isHidden = range.zero == nil }
+        render()
     }
 
     /// ± one step (arrow keys, accessibility increment).

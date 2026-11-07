@@ -519,6 +519,10 @@ extension LocalizationCatalog {
         // Volume
         R("MUTED", "已静音", "已靜音", "消音中", "음소거됨"),
         R("Route failed", "路由失败", "路由失敗", "ルート失敗", "경로 실패"),
+        // Battery bar editor (HUDPlacementEditor)
+        R("Edit position and size", "编辑位置和大小", "編輯位置和大小", "位置とサイズを編集", "위치 및 크기 편집"),
+        R("Length", "长度", "長度", "長さ", "길이"),
+        R("Confirm", "确认", "確認", "確定", "확인"),
         // Work Mode
         R("Focus on", "专注中", "專注中", "集中モード中", "집중 중"),
         R("Standby", "待机", "待機", "待機中", "대기 중"),
