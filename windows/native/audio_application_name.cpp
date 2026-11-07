@@ -1,4 +1,5 @@
 #include "native/audio_application_name.hpp"
+#include "native/audio_endpoint_model.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cwctype>
@@ -56,12 +57,7 @@ std::wstring_view audioPackageApplicationID(std::wstring_view aumid)noexcept{
 bool audioLabelValid(std::wstring_view v)noexcept{
     if(v.empty()||v.size()>maximumText)return false;
     std::size_t bytes{};
-    for(std::size_t n=0;n<v.size();++n){auto c=static_cast<std::uint32_t>(v[n]);
-        if constexpr(sizeof(wchar_t)==2){if(c>=0xd800&&c<=0xdbff){if(++n==v.size())return false;const auto low=static_cast<std::uint32_t>(v[n]);if(low<0xdc00||low>0xdfff)return false;c=0x10000+((c-0xd800)<<10)+low-0xdc00;}}
-        if(!c||c>0x10ffff||(c>=0xd800&&c<=0xdfff))return false;
-        bytes+=c<0x80?1:c<0x800?2:c<0x10000?3:4;
-    }
-    return bytes<=maximumText;
+    return audioScalars(v,[&](std::uint32_t c)noexcept{char out[4];bytes+=audioUtf8Encode(c,out);return bytes<=maximumText;});
 }
 std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candidates,std::uint32_t pid){
     for(const auto candidate:candidates)if(audioLabelValid(candidate))return std::wstring(candidate);

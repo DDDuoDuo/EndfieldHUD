@@ -1,5 +1,6 @@
 #include "native/volume_provider.hpp"
 #include "native/audio_default_device.hpp"
+#include "native/audio_endpoint_model.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -20,14 +21,7 @@ case Kind::native:return "Windows could not complete the audio operation ("+std:
 // event. Compare UTF-16/32 to UTF-8 without allocating during a slider write.
 bool sameText(std::wstring_view wide,std::string_view utf8)noexcept{
     std::size_t at{};
-    const auto byte=[&](std::uint32_t value){return at<utf8.size()&&static_cast<unsigned char>(utf8[at++])==value;};
-    for(std::size_t n=0;n<wide.size();++n){auto c=static_cast<std::uint32_t>(wide[n]);
-        if constexpr(sizeof(wchar_t)==2){if(c>=0xd800&&c<=0xdbff){if(++n==wide.size())return false;const auto low=static_cast<std::uint32_t>(wide[n]);if(low<0xdc00||low>0xdfff)return false;c=0x10000+((c-0xd800)<<10)+low-0xdc00;}}
-        if(!c||c>0x10ffff||(c>=0xd800&&c<=0xdfff))return false;
-        if(c<0x80){if(!byte(c))return false;}else if(c<0x800){if(!byte(0xc0|(c>>6))||!byte(0x80|(c&63)))return false;}
-        else if(c<0x10000){if(!byte(0xe0|(c>>12))||!byte(0x80|((c>>6)&63))||!byte(0x80|(c&63)))return false;}
-        else if(!byte(0xf0|(c>>18))||!byte(0x80|((c>>12)&63))||!byte(0x80|((c>>6)&63))||!byte(0x80|(c&63)))return false;
-    }return at==utf8.size();
+    return audioScalars(wide,[&](std::uint32_t c)noexcept{char bytes[4];const auto n=audioUtf8Encode(c,bytes);if(utf8.substr(at,n)!=std::string_view(bytes,n))return false;at+=n;return true;})&&at==utf8.size();
 }
 void validate(const AudioEndpointSnapshot&s){
     if(s.outputs.size()>512||s.inputs.size()>512||s.applications.size()>AudioSessionRoutes::maximumApplications)throw std::invalid_argument("Audio provider snapshot exceeds native bounds");
