@@ -17,6 +17,9 @@ final class OverlayController: NSObject {
     private var draftLength: Double?
     /// Whether the bar was dragged; Size or Length alone keeps the placement.
     private var draftMoved = false
+    /// The Length slider's value as last shown; a press that leaves it there
+    /// keeps a classic (nil) bar classic.
+    private var shownLength: Double?
     /// The strip's screen frame, held still while one of its sliders has the pointer.
     private var editorStripFrame: NSRect?
     private static let editorSizeID = "chargeBar.size", editorLengthID = "chargeBar.length"
@@ -535,7 +538,8 @@ final class OverlayController: NSObject {
         guard let screen = selectedScreen() else { return }
         let anchor: NSPoint
         if isEditingPosition, let draft = draftAnchor {
-            anchor = clampedDraftAnchor(draft, on: screen)
+            anchor = OverlayGeometry.editorAnchor(draft: draft, moved: draftMoved, configuration: barConfiguration,
+                                                  screen: screen.visibleFrame)
             draftAnchor = anchor
             draftScreenID = screen.id
             syncLengthSlider(screen: screen.visibleFrame)
@@ -563,9 +567,7 @@ final class OverlayController: NSObject {
     /// The strip flips above the bar near the bottom edge, so the editor no
     /// longer reserves room below it (`editing: false`).
     private func clampedDraftAnchor(_ point: NSPoint, on screen: OverlayScreen) -> NSPoint {
-        OverlayGeometry.clampedAnchor(point, screen: screen.visibleFrame, scale: barConfiguration.scale,
-                                      canvasWidth: OverlayGeometry.canvasWidth(barWidth: barWidth(on: screen.visibleFrame)),
-                                      editing: false)
+        OverlayGeometry.clampedAnchor(point, configuration: barConfiguration, screen: screen.visibleFrame, editing: false)
     }
 
     func beginPositionEditing(snapshot: BatterySnapshot, configuration: AppConfiguration) {
@@ -1259,6 +1261,7 @@ final class OverlayController: NSObject {
         panel.ignoresMouseEvents = true
         draftAnchor = nil
         draftScreenID = nil
+        shownLength = nil
         editorStripFrame = nil
         hide(animated: false)
         // Drop the drafts' Size and Length; a confirmed layout arrives as configuration.
@@ -1293,14 +1296,19 @@ final class OverlayController: NSObject {
         guard let editor = root.editor else { return }
         let range = OverlayGeometry.lengthRange(screen: screen, scale: barConfiguration.scale)
         let minimum = min(100, (range.lowerBound * 100).rounded(.up))
-        editor.setRange(HUDSlider.Range(minimum: minimum, maximum: 100, step: 1),
-                        value: OverlayGeometry.length(of: barConfiguration, screen: screen) * 100, for: Self.editorLengthID)
+        let slider = HUDSlider.Range(minimum: minimum, maximum: 100, step: 1)
+        let value = slider.clamp(OverlayGeometry.length(of: barConfiguration, screen: screen) * 100)
+        editor.setRange(slider, value: value, for: Self.editorLengthID)
+        shownLength = value
     }
 
     private func editorChanged(_ id: String, value: Double, final: Bool) {
         guard isEditingPosition else { return }
         if id == Self.editorSizeID { draftScale = value / 100 }
-        else if id == Self.editorLengthID { draftLength = value / 100 }
+        else if id == Self.editorLengthID {
+            guard let next = OverlayGeometry.draftLength(reported: value, shown: shownLength) else { return }
+            draftLength = next
+        }
         indicator.set(snapshot: latestBatterySnapshot, configuration: barConfiguration, preview: true)
         reposition()
     }

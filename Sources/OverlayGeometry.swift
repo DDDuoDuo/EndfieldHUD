@@ -99,9 +99,30 @@ enum OverlayGeometry {
             point = NSPoint(x: screen.minX + CGFloat(configuration.customPosition.x) * screen.width,
                             y: screen.minY + CGFloat(configuration.customPosition.y) * screen.height)
         }
+        return clampedAnchor(point, configuration: configuration, screen: screen, editing: editing)
+    }
+
+    /// `clampedAnchor` for the bar `configuration` draws (its Size and Length).
+    static func clampedAnchor(_ point: NSPoint, configuration: AppConfiguration, screen: NSRect, editing: Bool) -> NSPoint {
+        let configuration = configuration.normalized
         let width = barWidth(length: configuration.chargeBarLength, screen: screen, scale: configuration.scale)
         return clampedAnchor(point, screen: screen, scale: configuration.scale,
                              canvasWidth: canvasWidth(barWidth: width), editing: editing)
+    }
+
+    /// The bar editor's preview at the drafts in `configuration`: a dragged
+    /// bar where it was dropped, otherwise where Confirm keeps it (Top centre
+    /// or the saved custom point, placed at the drafts' Size and Length).
+    static func editorAnchor(draft: NSPoint, moved: Bool, configuration: AppConfiguration, screen: NSRect) -> NSPoint {
+        moved ? clampedAnchor(draft, configuration: configuration, screen: screen, editing: false)
+            : anchor(configuration: configuration, screen: screen, editing: false)
+    }
+
+    /// The Length draft a Length slider report (in percent) sets, or nil when
+    /// it reports the value the slider already showed (a press or release
+    /// without movement), so a classic (nil) bar stays classic.
+    static func draftLength(reported value: Double, shown: Double?) -> Double? {
+        value == shown ? nil : value / 100
     }
 
     static func normalizedPosition(anchor: NSPoint, screen: OverlayScreen) -> OverlayPosition {
