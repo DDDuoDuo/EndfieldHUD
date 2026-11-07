@@ -2,9 +2,10 @@ import AppKit
 import QuartzCore
 
 /// The dark panel shared by menus and pop-overs (spec §2.6, §2.17): #1A1A1A,
-/// a 1 px ring, a deep shadow and the yellow corner L at the top-left.
+/// a 1 px ring, a deep shadow and, unless `corner` is false, the yellow
+/// corner L at the top-left.
 enum HUDPanelChrome {
-    static func apply(to panel: CALayer, size: CGSize) {
+    static func apply(to panel: CALayer, size: CGSize, corner showsCorner: Bool = true) {
         HUDMotion.perform {
             panel.bounds = CGRect(origin: .zero, size: size)
             panel.backgroundColor = HUDColor.panel
@@ -12,6 +13,7 @@ enum HUDPanelChrome {
             panel.shadowColor = HUDColor.black(1); panel.shadowOpacity = HUDColor.isLight ? 0.25 : 0.6
             panel.shadowRadius = 20; panel.shadowOffset = CGSize(width: 0, height: 18)
             panel.shadowPath = CGPath(rect: panel.bounds, transform: nil)
+            guard showsCorner else { panel.sublayers?.first { $0.name == "panel.corner" }?.removeFromSuperlayer(); return }
             let corner = panel.sublayers?.first { $0.name == "panel.corner" } as? CAShapeLayer ?? {
                 let shape = HUDLayer.shape("panel.corner"); panel.addSublayer(shape); return shape
             }()

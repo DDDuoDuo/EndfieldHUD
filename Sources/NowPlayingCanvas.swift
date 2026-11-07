@@ -859,9 +859,7 @@ private final class NowPlayingVolumePopup: HUDControl {
             rail.frame = Self.track; rail.backgroundColor = HUDColor.separator
             fill.backgroundColor = HUDColor.accentInk
             knob.bounds = CGRect(x: 0, y: 0, width: 16, height: 6); knob.backgroundColor = HUDColor.textOnDark
-            noticeLayer.backgroundColor = HUDColor.panel; noticeLayer.borderWidth = 1; noticeLayer.borderColor = HUDColor.ringMenu
-            noticeLayer.shadowColor = HUDColor.black(1); noticeLayer.shadowOpacity = 0.6; noticeLayer.shadowRadius = 20
-            noticeLayer.shadowOffset = CGSize(width: 0, height: 18); noticeLayer.isHidden = true
+            noticeLayer.isHidden = true
             noticeText.maximumLines = Self.noticeLines
             noticeLayer.addSublayer(noticeText)
             [text, rail, fill, knob].forEach(layer.addSublayer)
@@ -894,8 +892,10 @@ private final class NowPlayingVolumePopup: HUDControl {
                                       maximumLines: Self.noticeLines, truncate: true).count
             let height = HUDText.metrics(Self.noticeStyle, language: language).height * CGFloat(max(1, lines))
             let frame = CGRect(x: layer.frame.minX - 8 - Self.noticeWidth, y: layer.frame.minY, width: Self.noticeWidth, height: height + 24)
-            noticeLayer.frame = frame
-            noticeLayer.shadowPath = CGPath(rect: CGRect(origin: .zero, size: frame.size), transform: nil)
+            // The shared panel look, without the corner mark the pop-up
+            // beside it does not carry either.
+            HUDPanelChrome.apply(to: noticeLayer, size: frame.size, corner: false)
+            noticeLayer.frame.origin = frame.origin
             noticeText.lineFrame = CGRect(x: 12, y: 12, width: width, height: height)
         }
     }
