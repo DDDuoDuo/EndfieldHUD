@@ -106,7 +106,8 @@ final class NowPlayingAppleEvents: NowPlayingBackend {
     func requestPermission(for app: NowPlayingApplication, cancelled: () -> Bool) throws {
         try check(app, cancelled: cancelled)
         _ = try scriptingDictionary(app)
-        // This is the only call permitted to prompt, reached by Connect only.
+        // This is the only call permitted to prompt, reached from the Now
+        // Playing volume button only.
         try permission(app, ask: true)
     }
 
