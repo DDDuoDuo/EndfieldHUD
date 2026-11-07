@@ -1175,24 +1175,28 @@ final class HUDSourceWatchView: NSView {
         }
     }
 
-    private func updateAnimatorStates(at time: Double) {
+    /// `settled`: this button takes its new look at once, as under Reduce Motion.
+    private func updateAnimatorStates(at time: Double, settled: HUDSourceID? = nil) {
         settledButtonPose = nil
         settledRenderPacket = nil
         let reduce = HUDRuntimeAppearance.reduceMotion
         let tintHovered = desktopMode ? desktopHoverFeedback.groupedButton(hovered) : hovered
         let tintPressed = desktopMode ? desktopHoverFeedback.groupedButton(pressed) : pressed
+        let tintSettled = desktopMode ? desktopHoverFeedback.groupedButton(settled) : settled
         for binding in selectableColor.bindings {
             let desired: HUDSourceSelectableColor.State = !binding.sourceInteractable ? .disabled
                 : (binding.buttonNodeID == tintPressed ? .pressed : (binding.buttonNodeID == tintHovered ? .highlighted : .normal))
             if selectableColor.state(on: binding.buttonNodeID) != desired {
-                selectableColor.setState(desired, on: binding.buttonNodeID, at: time, reduceMotion: reduce)
+                selectableColor.setState(desired, on: binding.buttonNodeID, at: time,
+                                         reduceMotion: reduce || (tintSettled != nil && binding.buttonNodeID == tintSettled))
             }
         }
         for (root, button) in animatorButtons {
             if buttonAnimation.state(on: root) == .disabled { continue }
             let desired: HUDSourceWatchButtonAnimation.State = button == pressed ? .pressed : (button == hovered ? .highlighted : .normal)
-            buttonAnimation.setState(desired, on: root, at: time, reduceMotion: reduce)
-            buttonAnimation.setHovered(button == hovered, on: root, at: time, reduceMotion: reduce)
+            let endpoint = reduce || (settled != nil && button == settled)
+            buttonAnimation.setState(desired, on: root, at: time, reduceMotion: endpoint)
+            buttonAnimation.setHovered(button == hovered, on: root, at: time, reduceMotion: endpoint)
         }
     }
 
@@ -1894,7 +1898,12 @@ final class HUDSourceWatchView: NSView {
         }
         if frameBuilder.desktopTilePlacements != placements { frameBuilder.desktopTilePlacements = placements }
         frameBuilder.desktopRaisedButton = raised
+        let wasHeld = desktopArrangeLiftedButton != nil
         if lifted != desktopArrangeLiftedButton { desktopArrangeLiftedButton = lifted; lastHitQuery = nil }
+        // Rebinding (the order or the scroll changed) puts every button at
+        // rest, and the dragged tile can move to another button: the button
+        // holding it keeps the held look instead of lifting again.
+        if wasHeld, let lifted, hovered != lifted { hovered = lifted; updateAnimatorStates(at: time, settled: lifted) }
     }
 
     /// Arrange on HUD: while a tile is dragged, the list scrolls no further
