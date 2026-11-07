@@ -550,8 +550,12 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// An enabled control is drawn under this point; the host gives such a
     /// press to the module before the shell's cards and navigation beneath it.
-    func containsControl(atBox point: CGPoint) -> Bool {
-        isActive && swapWork == nil && router.control(at: point, in: root) != nil
+    func containsControl(atBox point: CGPoint) -> Bool { control(atBox: point) != nil }
+
+    /// The enabled control a left press at this point would pick, so a
+    /// right-click resolves its target exactly as a left-click does.
+    func control(atBox point: CGPoint) -> HUDControl? {
+        isActive && swapWork == nil ? router.control(at: point, in: root) : nil
     }
 
     /// Wheel: an open menu, then the module's zoom surfaces, then scroll areas.

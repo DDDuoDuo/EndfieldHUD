@@ -317,6 +317,46 @@ final class HUDListCard: HUDControl {
 /// Archive / File Shelf tile (spec §2.15): gradient well with a code bar and
 /// number, folded doc glyph with its extension, size/date tags, label strip;
 /// selection tightens yellow L-brackets and inverts the label.
+/// The round ⋯ button at a tile's top right (spec §3.15). Reader books,
+/// Archive documents and File Shelf tiles open their item menu from it, the
+/// same menu a right-click on the tile opens.
+final class HUDTileMoreButton: HUDControl {
+    static let size: CGFloat = 22
+    static let suffix = ":more"
+    private let plate = HUDLayer.plain("tile.more")
+
+    /// The tile id a control id names: a tile's own id, or its ⋯ button's.
+    static func tileID(_ id: String) -> String { id.hasSuffix(suffix) ? String(id.dropLast(suffix.count)) : id }
+
+    override init(id: String, label: String = "", env: HUDDesignEnvironment, layer: CALayer = HUDLayer.plain()) {
+        super.init(id: id, label: label, env: env, layer: layer)
+        let size = Self.size
+        HUDMotion.perform {
+            layer.bounds = CGRect(x: 0, y: 0, width: size, height: size); layer.zPosition = 2
+            plate.frame = layer.bounds; plate.cornerRadius = size / 2; plate.backgroundColor = HUDColor.rgb(0x141414, 0.8)
+            let dots = HUDTextLayer("⋯", style: HUDTextStyle(size: 12, weight: .black, color: HUDColor.white(1)), alignment: .center)
+            dots.lineFrame = CGRect(x: 0, y: 5, width: size, height: 12)
+            layer.addSublayer(plate); layer.addSublayer(dots)
+        }
+        setTarget(layer.bounds, path: CGPath(ellipseIn: layer.bounds, transform: nil))
+    }
+
+    /// Places the button at the top right of a tile `width` wide, inside
+    /// `parent` and below `sibling` (the selection brackets) when given.
+    func attach(to parent: CALayer, width: CGFloat, below sibling: CALayer? = nil) {
+        HUDMotion.perform {
+            layer.frame.origin = CGPoint(x: width - 4 - Self.size, y: 8)
+            if let sibling, sibling.superlayer === parent { parent.insertSublayer(layer, below: sibling) } else { parent.addSublayer(layer) }
+        }
+    }
+
+    override func hoverChanged() {
+        HUDMotion.animate(plate, "backgroundColor", to: isHovered && isEnabled ? HUDColor.rgb(0x141414, 0.95) : HUDColor.rgb(0x141414, 0.8),
+                          duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
+        HUDMotion.animate(layer, "transform.scale", to: isHovered && isEnabled ? 1.08 : 1, duration: HUDDuration.hover, env: env)
+    }
+}
+
 final class HUDArchiveTile: HUDControl {
     enum Extension: String {
         case pdf, img, zip, vid, txt
@@ -396,6 +436,20 @@ final class HUDArchiveTile: HUDControl {
         renderSelection(animated: false)
         setTarget(bounds)
         env.applyScale(to: layer)
+    }
+
+    /// The tile's ⋯ button (Archive and File Shelf). The id and label come
+    /// from the caller, whose registered control may wrap this tile.
+    private(set) var more: HUDTileMoreButton?
+
+    @discardableResult
+    func attachMore(id: String, label: String) -> HUDTileMoreButton {
+        if let more { return more }
+        let button = HUDTileMoreButton(id: id, label: label, env: env)
+        button.attach(to: layer, width: layer.bounds.width, below: brackets)
+        env.applyScale(to: button.layer)
+        more = button
+        return button
     }
 
     /// The folded document glyph (spec §2.15 `.doc`): 40 × 50, ruled lines and
