@@ -1312,6 +1312,10 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
               << ", UI loop wakes " << per(open.loops) << "\n";
     check(reference || reader1.readings > reader0.readings, "The bar is read while Now Playing is presented");
     owner.setActive(false, seconds());
+    // A bar reading the presented page started just before it closed may
+    // still finish on the OS pool: let it land before counting.
+    unsigned settling{};
+    loop(.3, settling);
     const auto e1 = desktop->enumerations.load();
     const auto r1 = desktop->reader().stats();
     const auto s1 = state->reads.load();
