@@ -314,9 +314,6 @@ final class HUDListCard: HUDControl {
     }
 }
 
-/// Archive / File Shelf tile (spec §2.15): gradient well with a code bar and
-/// number, folded doc glyph with its extension, size/date tags, label strip;
-/// selection tightens yellow L-brackets and inverts the label.
 /// The round ⋯ button at a tile's top right (spec §3.15). Reader books,
 /// Archive documents and File Shelf tiles open their item menu from it, the
 /// same menu a right-click on the tile opens.
@@ -357,6 +354,9 @@ final class HUDTileMoreButton: HUDControl {
     }
 }
 
+/// Archive / File Shelf tile (spec §2.15): gradient well with a code bar and
+/// number, folded doc glyph with its extension, size/date tags, label strip;
+/// selection tightens yellow L-brackets and inverts the label.
 final class HUDArchiveTile: HUDControl {
     enum Extension: String {
         case pdf, img, zip, vid, txt
