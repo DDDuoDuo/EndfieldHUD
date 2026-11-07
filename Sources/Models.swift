@@ -95,10 +95,10 @@ struct AppConfiguration: Equatable {
     /// click outside to close" line at the bottom of the HUD. Off hides it;
     /// nothing else moves.
     var showsCloseHint = true
-    /// Order and visibility of the right-hand list (System > Modules).
+    /// Order and visibility of the right-hand list (Display > Modules).
     var moduleLayout = HUDModuleLayout()
     /// Display > HUD elements: the title, Sanity gauge and alert tags on the
-    /// HUD, and the module it opens on.
+    /// HUD. Also stores Display > Open on (the module the HUD opens on).
     var overlayLayout = HUDOverlayLayout()
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
@@ -151,12 +151,13 @@ struct AppConfiguration: Equatable {
 /// once, here; `AppConfiguration.restoring(_:)` copies only those from
 /// `.defaults`, so a new setting joins a Restore by adding one line.
 enum HUDSettingsScope: CaseIterable {
-    /// The System page and System > Modules.
+    /// The System page.
     case system
-    /// The Display page and every page under it: Battery alert (with the bar's
-    /// position, size and length), App / menu bar icon and HUD elements.
+    /// The Display page and every page under it: Open on, Modules, HUD
+    /// elements, App / menu bar icon and Battery alert (with the bar's
+    /// position, size and length).
     case display
-    /// Display > HUD elements only.
+    /// Display > HUD elements only. Open on, a Display row since 1.3.1, is kept.
     case hudElements
 
     /// One saved setting: copies its value from `source` into `target`.
@@ -165,13 +166,21 @@ enum HUDSettingsScope: CaseIterable {
         init<Value>(_ key: WritableKeyPath<AppConfiguration, Value>) {
             copy = { $0[keyPath: key] = $1[keyPath: key] }
         }
+        /// `key` from `source`, except its `kept` part, which stays as `target` had it.
+        init<Value, Kept>(_ key: WritableKeyPath<AppConfiguration, Value>, keeping kept: WritableKeyPath<Value, Kept>) {
+            copy = { target, source in
+                let held = target[keyPath: key][keyPath: kept]
+                target[keyPath: key] = source[keyPath: key]
+                target[keyPath: key][keyPath: kept] = held
+            }
+        }
     }
 
     var fields: [Field] {
         switch self {
         case .system:
             return [Field(\.language), Field(\.launchAtLogin), Field(\.closeOnFocusLost), Field(\.openOnActiveDisplay),
-                    Field(\.hudDisplayUUID), Field(\.hudDisplayName), Field(\.moduleLayout)]
+                    Field(\.hudDisplayUUID), Field(\.hudDisplayName)]
         case .display:
             return [Field(\.hudScale), Field(\.hudOffsetX), Field(\.hudOffsetY), Field(\.parallaxIntensity),
                     Field(\.perspectiveIntensity), Field(\.backgroundDarkness), Field(\.blurAmount), Field(\.theme),
@@ -182,10 +191,13 @@ enum HUDSettingsScope: CaseIterable {
                     Field(\.applicationIcon),
                     // Battery alert
                     Field(\.alertMetric), Field(\.displayMode), Field(\.batteryAlertsEnabled), Field(\.displayDuration),
-                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength)]
-                + Self.hudElements.fields
+                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength),
+                    // Modules
+                    Field(\.moduleLayout),
+                    // Open on and HUD elements
+                    Field(\.overlayLayout), Field(\.facilityAlerts)]
         case .hudElements:
-            return [Field(\.overlayLayout), Field(\.facilityAlerts)]
+            return [Field(\.overlayLayout, keeping: \.openModule), Field(\.facilityAlerts)]
         }
     }
 

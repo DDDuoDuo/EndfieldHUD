@@ -1,10 +1,11 @@
 import AppKit
 
 /// Display > HUD elements: where the HUD's own overlays sit on the core plane,
-/// their size, whether they show and the title's text, plus the module the
-/// HUD opens on. The overlays are the ENDFIELDHUD / SYSTEM INTERFACE title,
-/// the Sanity gauge and the facility alert tags; the alerts' Show switch is
-/// the existing `facilityAlerts` setting, which also runs their monitor.
+/// their size, whether they show and the title's text. The module the HUD
+/// opens on is stored here too but shown as Display > Open on. The overlays
+/// are the ENDFIELDHUD / SYSTEM INTERFACE title, the Sanity gauge and the
+/// facility alert tags; the alerts' Show switch is the existing
+/// `facilityAlerts` setting, which also runs their monitor.
 ///
 /// Saved as one JSON object under `key`, removed while it holds the defaults,
 /// so builds before 1.3.1 (which ignore the key) and untouched settings look
@@ -95,7 +96,7 @@ struct HUDOverlayLayout: Equatable {
 
     /// The module a new HUD opens on: an explicit request (a failed app launch
     /// reopening on Add App, a notification, the menu) wins, then the chosen
-    /// module, then the module last opened. A module hidden in System > Modules
+    /// module, then the module last opened. A module hidden in Display > Modules
     /// is replaced by the first visible one.
     static func initialModule(request: HUDModule?, configuration: AppConfiguration, last: HUDModule) -> HUDModule {
         if let request { return request }

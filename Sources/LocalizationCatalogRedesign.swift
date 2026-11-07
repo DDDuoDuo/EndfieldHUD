@@ -528,13 +528,14 @@ extension LocalizationCatalog {
         R("Confirm", "确认", "確認", "確定", "확인"),
         // Display > Battery alert: the "ESC / hotkey / click outside to close" line
         R("Close hint", "关闭提示", "關閉提示", "閉じるヒント", "닫기 안내"),
-        // Display > HUD elements (the title, Sanity gauge and alert tags, and the module on open)
+        // Display > HUD elements (the title, Sanity gauge and alert tags)
         R("HUD elements", "界面元素", "介面元素", "HUD 要素", "HUD 요소"),
         R("Show title", "显示标题", "顯示標題", "タイトルを表示", "제목 표시"),
         R("Title text", "标题文字", "標題文字", "タイトルの文字", "제목 텍스트"),
         R("Subtitle text", "副标题文字", "副標題文字", "サブタイトルの文字", "부제목 텍스트"),
         R("Show Sanity", "显示理智", "顯示理智", "理性を表示", "이성 표시"),
         R("Show facility alerts", "显示设施警报", "顯示設施警報", "施設アラートを表示", "시설 경보 표시"),
+        // Display > Open on: the module a new HUD opens on
         R("Open on", "打开时显示", "開啟時顯示", "開いたときの表示", "열 때 표시"),
         R("Last opened", "上次打开的模块", "上次開啟的模組", "前回開いたモジュール", "마지막으로 연 모듈"),
         R("Restore defaults", "恢复默认", "恢復預設", "既定に戻す", "기본값 복원"),
@@ -542,11 +543,11 @@ extension LocalizationCatalog {
         R("Only this page's settings change.", "仅恢复本页设置。", "僅恢復本頁設定。", "このページの設定のみ戻します。", "이 페이지의 설정만 복원됩니다."),
         R("HUD elements restored", "已恢复界面元素", "已恢復介面元素", "HUD 要素を既定に戻しました", "HUD 요소 복원됨"),
         // System and Display Restore default settings: what each resets and keeps
-        R("Only System and Modules are reset. Display, the hotkey, notes, files and shortcuts are kept.",
-          "仅恢复系统设置与模块。保留显示设置、快捷键、便笺、文件与应用快捷方式。",
-          "僅恢復系統設定與模組。保留顯示設定、快速鍵、便箋、檔案與應用程式捷徑。",
-          "システムとモジュールのみ戻します。表示、ショートカットキー、メモ、ファイル、ショートカットは保持されます。",
-          "시스템 설정과 모듈만 복원됩니다. 화면 설정, 단축키, 메모, 파일 및 바로가기는 유지됩니다."),
+        R("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept.",
+          "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式。",
+          "僅恢復系統設定。保留顯示設定、快速鍵、便箋、檔案與應用程式捷徑。",
+          "システムのみ戻します。表示、ショートカットキー、メモ、ファイル、ショートカットは保持されます。",
+          "시스템 설정만 복원됩니다. 화면 설정, 단축키, 메모, 파일 및 바로가기는 유지됩니다."),
         R("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.",
           "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。",
           "僅恢復顯示設定及其子頁面。保留系統設定、快速鍵、便箋、檔案與應用程式捷徑。",
