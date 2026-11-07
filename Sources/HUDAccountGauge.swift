@@ -184,11 +184,20 @@ final class HUDAccountGauge {
     func setScale(_ scale: CGFloat) {
         baseScale = scale.isFinite ? scale : 2
         let scale = targetScale
+        // The HUD's raster pass may have reset the arrow; an unchanged scale redraws nothing else.
+        applyRefreshScale()
         guard renderScale != 0, renderScale != scale else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         drawNumber(value, scale: scale); drawIcon(scale: scale); renderScale = scale
         CATransaction.commit()
         if isPopoverOpen { renderTooltip() }
+    }
+
+    /// The refresh arrow is vector art: it rasters at the HUD's rule for its
+    /// size (as the HUD's own raster pass sets it), not the glyph scale.
+    private func applyRefreshScale() {
+        let target = HUDRenderScale.contentScale(for: refresh, baseScale: baseScale, magnification: sizeFactor)
+        if refresh.contentsScale != target { refresh.contentsScale = target }
     }
 
     private func drawNumber(_ text: String, scale: CGFloat) {
@@ -290,7 +299,7 @@ final class HUDAccountGauge {
             item.contents = Self.renderText(text, style: Layout.style, in: frame.size, scale: renderScale)
             item.contentsScale = renderScale; tooltipContentKeys[index] = contentKey; tooltipRasterCount += 1
         }
-        refresh.contentsScale = renderScale
+        applyRefreshScale()
         let enabled = presentation.refreshAvailable && !presentation.isRefreshing
         refresh.opacity = enabled ? 1 : 0.38; refreshFeedback.setEnabled(enabled)
         CATransaction.commit(); onChange?()

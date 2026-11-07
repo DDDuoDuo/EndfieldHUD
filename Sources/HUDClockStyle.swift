@@ -160,7 +160,7 @@ final class HUDClockStyleArtwork {
         work.foregroundColor = workActive ? accent.cgColor : Self.statusOff
         recordLabel.foregroundColor = recording ? HUDColor.red : Self.statusOff
         recordDot.backgroundColor = recording ? HUDColor.red : Self.statusOff
-        let recordWidth = ceil(Self.width(of: recordLabel))
+        let recordWidth = ceil(recordLabel.measuredWidth)
         let recordX = row.maxX - recordWidth
         place(recordLabel, x: recordX, capTop: row.minY + 5, width: recordWidth + 1)
         recordDot.position = CGPoint(x: recordX - 10, y: row.minY + 9.5)
@@ -205,7 +205,7 @@ final class HUDClockStyleArtwork {
             place(time, x: area.minX, capTop: 17, width: area.width)
             if !meridiem.isEmpty { aux.fontSize = 14; place(aux, x: area.maxX - 40, capTop: 17, width: 40); aux.alignmentMode = .right }
             date.fontSize = 13; place(date, x: area.minX, capTop: 68, width: 120)
-            let start = area.minX + min(124, ceil(Self.width(of: date)) + 14), end = area.maxX
+            let start = area.minX + min(124, ceil(date.measuredWidth) + 14), end = area.maxX
             for index in 0...60 {
                 let x = start + (end - start) * CGFloat(index) / 60, tall: CGFloat = index % 15 == 0 ? 9 : index % 5 == 0 ? 6 : 3
                 (index <= Int(second) ? solid : dim).addRect(CGRect(x: x - 0.5, y: 80 - tall, width: 1, height: tall))
@@ -298,7 +298,7 @@ final class HUDClockStyleArtwork {
     /// The largest size up to `size` at which the layer's text fits `width`.
     private func fit(_ text: HUDStandardTextLayer, size: CGFloat, width: CGFloat) {
         text.fontSize = size
-        let measured = Self.width(of: text)
+        let measured = text.measuredWidth
         if measured > width { text.fontSize = max(10, floor(size * width / measured * 2) / 2) }
     }
 
@@ -307,12 +307,6 @@ final class HUDClockStyleArtwork {
         let font = (text.font as? NSFont) ?? HUDFontResolver.nsFont(size: text.fontSize, weight: text.weight)
         let lineHeight = ceil(font.ascender - font.descender + font.leading) + 1
         text.frame = CGRect(x: x, y: capTop - (font.ascender - font.capHeight), width: max(0, width), height: lineHeight)
-    }
-
-    static func width(of text: HUDStandardTextLayer) -> CGFloat {
-        guard let string = text.string as? String, !string.isEmpty,
-              let font = text.font as? NSFont else { return 0 }
-        return (string as NSString).size(withAttributes: [.font: font]).width
     }
 }
 

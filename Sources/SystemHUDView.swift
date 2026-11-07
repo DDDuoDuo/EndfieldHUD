@@ -2811,15 +2811,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // Keep the factory's scale current too, so a page created after layout
         // uses the same glyph resolution as pages already on screen.
         moduleContent?.update(dark: currentDark, accent: currentAccent, contentsScale: scale)
-        func apply(_ item: CALayer) {
+        func apply(_ item: CALayer, magnification: CGFloat) {
+            let magnification = magnification * overlayMagnification(of: item)
             if !(item is CATransformLayer) {
-                let target = HUDRenderScale.contentScale(for: item, baseScale: scale)
+                let target = HUDRenderScale.contentScale(for: item, baseScale: scale, magnification: magnification)
                 if item.contentsScale != target { item.contentsScale = target }
             }
-            item.sublayers?.forEach(apply)
-            if let mask = item.mask { apply(mask) }
+            item.sublayers?.forEach { apply($0, magnification: magnification) }
+            if let mask = item.mask { apply(mask, magnification: magnification) }
         }
-        apply(canvas)
+        apply(canvas, magnification: 1)
         chargeBadge.update(snapshot: snapshot, configuration: configuration, dark: currentDark, contentsScale: scale)
         identityCard.update(dark: currentDark, accent: currentAccent, contentsScale: scale)
         // HUD Scale, layout and display changes redraw the gauge's text and icon now.
@@ -3035,17 +3036,18 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         layoutOverlayEditor()
     }
 
+    /// How much a Display > HUD elements size enlarges `layer` by its
+    /// transform (1 for every other layer), so its buffers grow with it.
+    private func overlayMagnification(of layer: CALayer) -> CGFloat {
+        layer === accountGauge.layer ? accountGauge.sizeFactor : layer === facilityTags.layer ? facilityTags.magnification : 1
+    }
+
     /// An element's size at 100 %, in core-plane points.
     private func overlayNatural(_ element: HUDOverlayLayout.Element) -> CGSize {
         switch element {
         case .title:
-            func width(_ label: HUDStandardTextLayer) -> CGFloat {
-                guard let text = label.string as? String, let font = label.font as? NSFont else { return 0 }
-                let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
-                return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-            }
             let size = max(0.01, titleLabel.fontSize / 20)
-            return CGSize(width: ceil(max(width(titleLabel), width(subtitleLabel)) / size), height: 49)
+            return CGSize(width: ceil(max(titleLabel.measuredWidth, subtitleLabel.measuredWidth) / size), height: 49)
         case .sanity: return HUDAccountGauge.size
         case .alerts:
             return CGSize(width: HUDFacilityTagStack.width * designUnit,
@@ -3263,7 +3265,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             facilityTags.layer.position = CGPoint(x: tags.maxX, y: tags.minY)
             facilityTags.layer.transform = CATransform3DMakeScale(unit * size, unit * size, 1)
         }
-        for item in [facilityBanner.layer, facilityTags.layer, bootLog.layer] { designContext.env.applyScale(to: item) }
+        for item in [facilityBanner.layer, bootLog.layer] { designContext.env.applyScale(to: item) }
+        facilityTags.magnification = size
+        facilityTags.applyScale()
     }
 
     private func facilityBannerPoint(_ location: CGPoint) -> CGPoint? {

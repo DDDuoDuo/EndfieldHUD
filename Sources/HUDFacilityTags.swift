@@ -26,6 +26,9 @@ final class HUDFacilityTagStack {
     var isActive = true { didSet { if isActive != oldValue { tags.forEach { $0.setLooping(isActive && $0.state != .collapsing) } } } }
     /// The settled height of the column (the layer's height animates to it).
     private(set) var preferredHeight: CGFloat = 0
+    /// How much the host's transform enlarges the column (Display > HUD
+    /// elements > Alerts size); the tags raster at it to stay sharp.
+    var magnification: CGFloat = 1 { didSet { if magnification != oldValue { tags.forEach { $0.magnification = magnification } } } }
 
     private let timers: HUDTimers
     /// Every tag on screen in column order, leaving ones included.
@@ -68,8 +71,13 @@ final class HUDFacilityTagStack {
         layout(animated: animate)
     }
 
+    /// The column's backing scale at the current `magnification`; the host
+    /// calls it when it places or rescales the column.
+    func applyScale() { env.applyScale(to: layer, magnification: magnification) }
+
     private func makeTag(_ alert: FacilityAlert) -> FacilityTag {
         let tag = FacilityTag(kind: alert.kind, env: env)
+        tag.magnification = magnification
         tag.render(alert)
         tag.control.onActivate = { [weak self, weak tag] in
             guard let self, let tag, tag.state == .live else { return }
@@ -80,7 +88,7 @@ final class HUDFacilityTagStack {
             self.dismiss(tag)
         }
         HUDMotion.perform { layer.addSublayer(tag.layer) }
-        env.applyScale(to: tag.layer)
+        env.applyScale(to: tag.layer, magnification: magnification)
         tag.setLooping(isActive)
         return tag
     }
@@ -173,6 +181,8 @@ private final class FacilityTag {
     let text = HUDTextLayer(style: FacilityTag.textStyle)
     var state = State.live
     var isNew = false
+    /// The stack's magnification, for the text re-laid out by `render`.
+    var magnification: CGFloat = 1
     private(set) var width: CGFloat = 0
     private(set) var origin = CGPoint.zero
     private(set) var isStruck = false
@@ -257,7 +267,7 @@ private final class FacilityTag {
         control.setTarget(bounds, path: silhouette, container: true)
         control.hitPath = silhouette
         close.setTarget(CGRect(x: 0, y: 0, width: 20, height: 20))
-        env.applyScale(to: text)
+        env.applyScale(to: text, magnification: magnification)
     }
 
     func place(at point: CGPoint) {

@@ -14,14 +14,17 @@ final class HUDDesignEnvironment {
 
     var reducesMotion: Bool { reduceMotionProvider() }
 
-    /// Backing scale for one layer (text is oversampled for the tilted plane).
-    func scale(for layer: CALayer) -> CGFloat { HUDRenderScale.contentScale(for: layer, baseScale: renderScale) }
+    /// Backing scale for one layer (text is oversampled for the tilted plane);
+    /// `magnification` is a transform that enlarges the layer on screen.
+    func scale(for layer: CALayer, magnification: CGFloat = 1) -> CGFloat {
+        HUDRenderScale.contentScale(for: layer, baseScale: renderScale, magnification: magnification)
+    }
 
     /// Applies the backing scale to a subtree; called when it is built or the scale changes.
-    func applyScale(to layer: CALayer) {
-        if !(layer is CATransformLayer), !layer.isArtwork { layer.contentsScale = scale(for: layer) }
-        layer.sublayers?.forEach(applyScale)
-        layer.mask.map(applyScale)
+    func applyScale(to layer: CALayer, magnification: CGFloat = 1) {
+        if !(layer is CATransformLayer), !layer.isArtwork { layer.contentsScale = scale(for: layer, magnification: magnification) }
+        layer.sublayers?.forEach { applyScale(to: $0, magnification: magnification) }
+        if let mask = layer.mask { applyScale(to: mask, magnification: magnification) }
     }
 }
 

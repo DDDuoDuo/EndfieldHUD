@@ -7,8 +7,12 @@ enum HUDRenderScale {
     /// The highest pixels-per-point any HUD buffer is drawn at.
     static let maximum: CGFloat = 4
 
-    static func contentScale(for layer: CALayer, baseScale: CGFloat) -> CGFloat {
-        layer is CATextLayer || layer is HUDTextLayer ? glyphScale(baseScale: baseScale) : clamped(baseScale)
+    /// `magnification` is a layer transform above `layer` that enlarges it on
+    /// screen (a Display > HUD elements size); every buffer grows with it.
+    static func contentScale(for layer: CALayer, baseScale: CGFloat, magnification: CGFloat = 1) -> CGFloat {
+        layer is CATextLayer || layer is HUDTextLayer
+            ? glyphScale(baseScale: baseScale, magnification: magnification)
+            : clamped(baseScale) * factor(magnification)
     }
 
     /// Glyph buffers on the tilted plane: the base scale with a 1.35x
@@ -17,8 +21,12 @@ enum HUDRenderScale {
     /// screen; the buffer grows with it, so the cap stays `maximum` pixels
     /// per on-screen point, as for text that is enlarged by its font size.
     static func glyphScale(baseScale: CGFloat, magnification: CGFloat = 1) -> CGFloat {
-        let factor = magnification.isFinite && magnification > 0 ? magnification : 1
+        let factor = factor(magnification)
         return min(maximum * factor, ceil(clamped(baseScale) * 1.35 * factor))
+    }
+
+    private static func factor(_ magnification: CGFloat) -> CGFloat {
+        magnification.isFinite && magnification > 0 ? magnification : 1
     }
 
     private static func clamped(_ scale: CGFloat) -> CGFloat {
