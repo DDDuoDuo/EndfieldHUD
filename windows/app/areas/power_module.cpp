@@ -379,6 +379,7 @@ public:
         return true;
     }
     bool editingPosition() const override { return power_->panel().state().editingPosition(); }
+    bool projectionActive() const override { return power_->panel().state().projectionActive(); }
     void setProjectionActive(bool active, double time) override {
         clock(time);
         if (active) {

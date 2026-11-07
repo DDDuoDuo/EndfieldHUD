@@ -394,7 +394,8 @@ struct Application::Impl {
     // reached by a frame, by a close that concealed the session at once
     // (Reduce Motion) or by the transition deadline.
     void finishOpening(double time);
-    void finishConcealment(double time);
+    // inRequest: Reduce Motion finished the close inside close() itself.
+    void finishConcealment(double time, bool inRequest = false);
     void finishQuit(double time);
     void forceConceal(double time);
     // The Shelf drag-out (application_events.cpp): the drag loop with the
@@ -829,6 +830,8 @@ struct Application::Impl {
     std::optional<double> designDensityFrameTime; // the opening's last frame (close(): where a cut deploy got to)
     std::function<void()> placementForTest;
     std::function<void()> openingFrameForTest; // the hidden idle trace: once an opening's first frame is drawn, before its window shows
+    // The hidden trace's stand-in for the displays Projection's hand-off finds (projectionDisplay).
+    std::function<std::optional<gpu::DisplayDescriptor>(std::uintptr_t)> projectionDisplayForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
@@ -929,6 +932,7 @@ struct Application::Impl {
     std::optional<std::string> pendingLink;
     std::uint64_t linkRequests{}; // hidden runs: links that would have opened (never opened)
     bool pendingStorageSettings{};
+    bool afterCloseQueued{}; // afterCloseMessage posted (finishConcealment inside a request)
     // Activity telemetry for the Power charge metric (OverlayController.reconcileChargeMetricTelemetry).
     std::unique_ptr<modules::ActivityTelemetryLink> activityTelemetry;
     // System animation preference (SPI_GETCLIENTAREAANIMATION), folded into
@@ -1080,7 +1084,7 @@ struct Application::Impl {
     static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,archiveMediaMessage=WM_APP+221,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
-        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
+        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,afterCloseMessage=WM_APP+241,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
     // ApplicationHost::registerMessage range for module areas.
     static constexpr UINT areaMessageFirst=WM_APP+0x1000,areaMessageLimit=0x3000;
     static constexpr UINT_PTR serviceGeneration=1;

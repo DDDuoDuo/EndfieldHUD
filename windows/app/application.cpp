@@ -1879,7 +1879,7 @@ void Application::Impl::repositionHUD(double time){
     const auto preference=displayPreference();
     if(!preference.persistentID)for(std::size_t i=0;i<displays.size();++i)if(displays[i].bounds.valid()&&displayKey(displays[i])==hudDisplayID){index=i;break;}
     if(!index){POINT pointer{};(void)GetCursorPos(&pointer);index=gpu::resolveDisplay(preference,displays,{pointer.x,pointer.y});}
-    if(!index){(void)lifecycle.forceClose();forceConceal(time);return;}
+    if(!index){const auto closed=lifecycle.forceClose();forceConceal(time);perform(closed,time);return;} // an accepted Quit still quits (tearDownSystemPresentation)
     placeOnDisplay(displays[*index]);
 }
 void Application::Impl::openPresentation(core::Module initial,double time){
@@ -1985,7 +1985,7 @@ void Application::Impl::close(double time){
     // Reduce Motion conceals the source at once: as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), the close
     // finishes here. No frame would: the concealed demand presents nothing.
-    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time);
+    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time,true);
 }
 void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
@@ -2881,6 +2881,7 @@ void Application::Impl::openPendingStorageSettings(){
 // ---------------------------------------------------------------------------
 // Projection (unchanged handoff)
 std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::uintptr_t preferred){
+    if(projectionDisplayForTest)return projectionDisplayForTest(preferred);
     const auto displays=gpu::readConnectedDisplays();for(const auto&display:displays)if(display.handle==preferred)return display;
     POINT pointer{};GetCursorPos(&pointer);if(const auto index=gpu::resolveDisplay({},displays,{pointer.x,pointer.y}))return displays[*index];return {};
 }

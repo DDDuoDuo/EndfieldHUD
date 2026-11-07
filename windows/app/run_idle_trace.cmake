@@ -20,9 +20,13 @@
 # icon pointed at) is taken by the opening or discarded without one. After
 # its report it checks the ends of the transitions: a normal close ends on
 # its frames before its transition deadline; under Reduce Motion a close
-# (summon, Escape, Quit) hides the HUD and completes without a frame; and an
-# opening and a close that get no frame end on the transition deadline; a
-# conceal inside an opening's first frame keeps the window hidden.
+# (summon, Escape, the summon hotkey, a press outside the circle, an area's
+# close, Storage Settings, a link, Projection's hand-off, Quit) hides the HUD
+# and completes without a frame; an opening and a close that get no frame
+# end on the transition deadline; and a conceal inside an opening's first
+# frame keeps the window hidden. EXTRA=--idle-trace-quit-button ends the run
+# with the Quit button answered on the confirm bar instead of the tray's Quit,
+# EXTRA=--idle-trace-quit-locked with a lock during an accepted Quit's close.
 # NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)

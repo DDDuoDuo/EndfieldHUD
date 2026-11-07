@@ -488,6 +488,83 @@ int Application::Impl::runIdleTrace(){
     openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
     {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // The other closes a user reaches, each through Impl::close: inside the
+    // request the window hides, leaves the topmost band and the lifecycle
+    // closes, with no frame (the hidden run never launches an application,
+    // opens Windows Settings or registers a chord).
+    const auto closedWithoutFrame=[&](std::uint64_t frames){const auto s=host.stats();
+        return closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==frames;};
+    // A shortcut recording on the Hotkeys page (its record button; the
+    // recording holds the chord, so the hotkey cannot close the HUD), then a
+    // press outside the displayed circle: the close ends the recording
+    // (SettingsCanvas::didDeactivate) and hides the HUD without a frame.
+    if(settingsUI){openHUD();selectModule(core::Module::hotkeys,clock());auto&hotkeys=settingsUI->canvas(core::Module::hotkeys);
+     pump(3,[&]{return hotkeys.isActive()&&!hotkeys.transitioning();});
+     need(hotkeys.performAccessibilityAction("capture",clock())&&settingsUI->controller().capturingShortcut(),"The Hotkeys page's record button starts a shortcut recording");
+     const core::Point side{2,metrics.height*.5};const auto framesBefore=host.stats().frames;
+     need(backgroundPressCloses(side),"A press on the side of the screen during a recording is a background press");
+     (void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});(void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore)&&!settingsUI->controller().capturingShortcut(),
+          "A press outside the circle during a shortcut recording ends it and closes the Reduce Motion HUD without a frame");}
+    // The summon hotkey (WM_HOTKEY and the low-level hook's message reach
+    // trayAction) closes; the next press opens again.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;trayAction(gpu::TrayAction::openOverlay,true,clock());
+     need(closedWithoutFrame(framesBefore),"The summon hotkey closes the Reduce Motion HUD without a frame");
+     trayAction(gpu::TrayAction::openOverlay,true,clock());need(lifecycle.phase()==P::opening,"The next summon hotkey press opens the HUD again");
+     host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");}
+    // A press outside the displayed circle (SystemHUDView.mouseDown); its release changes nothing.
+    {const core::Point side{2,metrics.height*.5};need(backgroundPressCloses(side),"A press on the side of the screen is a background press");
+     const auto framesBefore=host.stats().frames;(void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore),"A press outside the displayed circle closes the Reduce Motion HUD without a frame");
+     (void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});need(closedWithoutFrame(framesBefore),"Its release changes nothing");}
+    // An area's close (App Shortcut's launch: its overlayConcealed starts the launch).
+    if(areaHost){openHUD();const auto framesBefore=host.stats().frames;areaHost->closeOverlay();
+     need(closedWithoutFrame(framesBefore),"An area's close (App Shortcut's launch) finishes under Reduce Motion without a frame");}
+    // The hand-offs that open once the HUD is hidden: Storage Settings and a
+    // link. The request (a canvas event) hides the HUD; the Shell opens from
+    // the posted notice after it, never inside the event.
+    if(storageFixture){openHUD();const auto framesBefore=host.stats().frames;const auto before=storageFixture->settingsRequests;openStorageSettingsAfterClose(clock());
+     need(closedWithoutFrame(framesBefore)&&pendingStorageSettings&&afterCloseQueued&&storageFixture->settingsRequests==before,"Storage Settings closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingStorageSettings;});
+     need(closedWithoutFrame(framesBefore)&&!pendingStorageSettings&&!afterCloseQueued&&storageFixture->settingsRequests==before+1,"Windows Settings opens once, after the request");}
+    {openHUD();const auto framesBefore=host.stats().frames;const auto links=linkRequests;openAfterClose("https://github.com/DDDuoDuo/EndfieldHUD",clock());
+     need(closedWithoutFrame(framesBefore)&&pendingLink&&afterCloseQueued&&linkRequests==links,"A Settings link closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingLink;});
+     need(closedWithoutFrame(framesBefore)&&!pendingLink&&!afterCloseQueued&&linkRequests==links+1,"The browser opens once, after the request");}
+    // Projection (openProjection, the page's button) under Reduce Motion
+    // with no display left: the hand-off ends inside the click, the HUD
+    // closes without a frame and no Projection stays active (charge alerts
+    // show again, OverlayController.cancelProjection).
+    openHUD();
+    {const auto framesBefore=host.stats().frames;
+     projectionDisplayForTest=[](std::uintptr_t){return std::optional<gpu::DisplayDescriptor>{};};
+     const bool projectionPage=std::exchange(args.projection,true);openProjection(clock());args.projection=projectionPage;projectionDisplayForTest={};
+     auto*power=powerArea();
+     need(power&&!power->projectionActive()&&!projectionHandoff.active()&&closedWithoutFrame(framesBefore),
+          "Projection with no display left ends its hand-off: the Reduce Motion HUD closes without a frame and no Projection stays active");}
+    // Projection's hand-off closes the HUD, then takes the window over in
+    // finishConcealment. The workspace needs the visible HUD (--projection),
+    // so this hand-off only carries a summon queued during the close
+    // (projectionActionMessage's external action), which reopens the HUD;
+    // without a display the hand-off ends with the HUD closed.
+    openHUD();
+    {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
+     const auto framesBefore=host.stats().frames;
+     const auto command=projectionHandoff.open({session->phase()==core::VisibilityPhase::visible,quitRequested,pendingClose,false},{hudDisplay,previousApplication});
+     need(command&&command->action==ProjectionHandoff::Action::closeHUD,"Projection's hand-off closes the HUD first");
+     (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
+     const bool reopened=lifecycle.phase()==P::opening;
+     need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),
+          "Projection's hand-off with a summon queued finishes the Reduce Motion close without a frame and goes on");
+     // The hand-off placed the window on its display: the trace's own place back.
+     need(host.place(placed.left,placed.top,placed.right-placed.left,placed.bottom-placed.top),"The traced window returns to its place");
+     if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");}
+     else openHUD();
+     closeHUD();}
+    // A fresh memory trace for the rows read below: the transition deadlines
+    // by index, and the close rows (at most eight closes).
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
     reduceMotion(false);
     // OverlayController.transitionDeadline: an opening and a close no frame
     // finishes (the window kept hidden under them, so the host's frame gate
@@ -546,6 +623,33 @@ int Application::Impl::runIdleTrace(){
      const auto wakes=host.stats().externalWakes-wakesBefore;
      std::cout<<"Idle trace disabled Calendar midnight: "<<wakes<<" deadline wakes\n";
      need(!calendarNextWake&&wakes<=20,"A disabled Calendar owner's midnight does not spin the host");}
+    // The bottom-left Quit button answered on the confirm bar under Reduce
+    // Motion (--idle-trace-quit-button): the bar accepts at once and the run
+    // ends inside the key press, without a frame.
+    if(args.idleTraceQuit==1){
+        reduceMotion(true);openHUD();pump(.5,{});
+        need(designOverlay&&!quitButtons.empty(),"The traced HUD has its Quit button and the confirm bar");
+        const auto framesBefore=host.stats().frames;
+        const auto activation=session->activate(*quitButtons.begin(),clock());need(activation&&activation->action==quitAction,"The Quit button is a source button");
+        activate(*activation);need(quitPromptOpen&&designOverlay->context().overlay().capturesInput()&&lifecycle.phase()==P::open&&!quitRequested,"The Quit button asks on the confirm bar");
+        need(onKey({KeyKind::down,VK_RETURN}),"The confirm bar takes Return");
+        const auto after=host.stats();
+        need(stopping&&quitRequested&&lifecycle.phase()==P::closed&&!after.visible&&!after.topmost&&after.frames==framesBefore,
+             "Quit on the confirm bar under Reduce Motion closes the HUD and stops without a frame");
+        shutdownVisible();
+        return 0;
+    }
+    // A lock during an accepted Quit's close (--idle-trace-quit-locked):
+    // suspend's forced close hides the HUD and the quit still runs, as on
+    // the Mac (forceCloseSystemOverlay, then onQuitAfterSystemClose).
+    if(args.idleTraceQuit==2){
+        reduceMotion(false);openHUD();
+        perform(lifecycle.requestQuit(),clock());need(quitRequested&&lifecycle.phase()==P::closing&&closing&&!stopping,"The accepted Quit's close plays");
+        suspend(Suspension::session,clock());
+        need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&!host.stats().topmost,"A lock during an accepted Quit's close hides the HUD and quits");
+        shutdownVisible();
+        return 0;
+    }
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
