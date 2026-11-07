@@ -576,9 +576,12 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private func renderPopup() {
         guard let popup, !popup.isDragging else { return }
+        let enabled = popup.isEnabled, notice = popup.notice
         popup.isEnabled = volumeAvailable
         popup.show(volumeValue)
         popup.showNotice(volumeNotice)
+        // VoiceOver's slider copies both only when the stand-ins update.
+        if popup.isEnabled != enabled || popup.notice != notice { context.onInputStateChange?() }
     }
 
     // MARK: Input
