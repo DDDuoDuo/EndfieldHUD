@@ -305,15 +305,16 @@ void Application::Impl::finishConcealment(double time,bool inRequest){
         setProjectionActive(false,time);
     }
     if(!closed.empty()){perform(closed,time);if(stopping)return;}
+    // A development preview quits with its window; the hidden idle and animation traces keep running closed.
+    const bool previewQuits=!production()&&!tray&&!quitRequested&&!realClockTrace();
     // A close Reduce Motion finished inside its request (a canvas event:
     // Storage Settings, a Settings link): the Shell hand-offs, which may
     // pump messages, run from a posted notice, as a frame's close runs them
-    // after the event.
-    if(inRequest&&!afterCloseQueued&&(pendingShelfReveal||pendingStorageSettings||pendingLink))
+    // after the event. A preview that quits now opens them before it quits.
+    if(inRequest&&!previewQuits&&!afterCloseQueued&&(pendingShelfReveal||pendingStorageSettings||pendingLink))
         afterCloseQueued=PostMessageW(static_cast<HWND>(host.hwnd()),afterCloseMessage,serviceGeneration,0)!=FALSE;
     if(!afterCloseQueued)openAfterConcealed();
-    // A development preview quits with its window; the hidden idle and animation traces keep running closed.
-    if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
+    if(previewQuits)finishQuit(time);else if(!stopping)scheduleDeadline();
 }
 // OverlayController.transitionDeadline expired with the transition still
 // running (no frame reached its end): the opening is shown stable and
