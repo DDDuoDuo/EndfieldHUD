@@ -287,7 +287,7 @@ void volumeFailure(){
     Harness h;
     {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
         h.world->sessions={{"{player}","4242:100",L"Player",4242,true,true,.8f,0}};}
-    app::ModuleRegistry registry(true);VolumeOwner owner;registry.add(owner);
+    VolumeOwner owner;app::ModuleRegistry registry(true);registry.add(owner); // the owner outlives its registration
     h.message=[&]{return app::drainAudio(registry,&owner,*h.runtime);};
     auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();
     n::VolumeSnapshot delivered=binding.snapshot();bool failing{};
@@ -352,7 +352,19 @@ void noticeRetry(){
     check(filled>0&&filled<1000000,"The window's posted-message quota is full");
     check(runtime->setDeviceEvents(true)==0,"Event Log device list vote");
     check(attempted(0),"The first publication calls the notice");
-    std::this_thread::sleep_for(200ms); // the device list settles (.02 s)
+    // Wait for the worker to go quiet (the device list settles after .02 s):
+    // the counters read together only once no post is in flight, so a late
+    // publication cannot fall between them.
+    const auto quiet=[&]{
+        const auto deadline=std::chrono::steady_clock::now()+10s;auto since=std::chrono::steady_clock::now();
+        unsigned a=attempts.load(),f=failures.load();
+        while(std::chrono::steady_clock::now()<deadline){
+            std::this_thread::sleep_for(1ms);const unsigned na=attempts.load(),nf=failures.load();
+            if(na!=a||nf!=f){a=na;f=nf;since=std::chrono::steady_clock::now();}
+            else if(a==f&&std::chrono::steady_clock::now()-since>=100ms)return true;
+        }
+        return false;};
+    check(quiet(),"Every post into the full queue failed and threw, and the worker is quiet");
     const unsigned failed=failures.load(),before=attempts.load();
     {MSG m{};while(PeekMessageW(&m,window,filler,filler,PM_REMOVE)){}}
     check(posted()==0,"Nothing was posted while the queue was full");
