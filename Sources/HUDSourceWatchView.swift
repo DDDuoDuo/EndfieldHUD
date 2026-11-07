@@ -1295,17 +1295,12 @@ final class HUDSourceWatchView: NSView {
                     renderedCursor.hide()
                     return true
                 }
-            } else if view is NSTextView || (view as? NSTextField).map({ $0.isEditable || $0.isSelectable }) == true {
-                // AppKit chooses the editor cursor during cursorUpdate. Do not
-                // install an intermediate arrow while yielding that decision.
-                renderedCursor.hide(); return true
-            } else if view !== self, view.trackingAreas.contains(where: {
-                $0.options.contains(.cursorUpdate) && ($0.options.contains(.inVisibleRect)
-                    || $0.rect.contains(view.convert(windowPoint, from: nil)))
-            }) {
-                // Child-owned resize and other native cursor regions take
+            } else if view !== self, view.ownsNativeCursor(atWindowPoint: windowPoint) {
+                // AppKit chooses the editor cursor during cursorUpdate, and
+                // child-owned resize and other native cursor regions take
                 // priority over the whole-HUD owner, including queued mouse
-                // delivery and native-control tracking loops.
+                // delivery and native-control tracking loops. Do not install
+                // an intermediate arrow while yielding that decision.
                 renderedCursor.hide(); return true
             }
             hit = view.superview

@@ -377,6 +377,18 @@ final class HUDDragGrip: HUDControl {
     override var accessibilityRole: HUDAccessibilityItem.Role? { label.isEmpty ? nil : .button }
 }
 
+extension NSView {
+    /// AppKit picks this view's cursor at a window point: a text editor, an
+    /// editable or selectable field, or its own cursor-update region. The HUD
+    /// shells yield to it instead of setting a pointer there.
+    func ownsNativeCursor(atWindowPoint windowPoint: CGPoint) -> Bool {
+        if self is NSTextView || (self as? NSTextField).map({ $0.isEditable || $0.isSelectable }) == true { return true }
+        return trackingAreas.contains {
+            $0.options.contains(.cursorUpdate) && ($0.options.contains(.inVisibleRect) || $0.rect.contains(convert(windowPoint, from: nil)))
+        }
+    }
+}
+
 /// A row lifted by its HUDDragGrip in a scrolling list (the Notes TODO cards,
 /// the App Shortcut rows). Lift: the row rises over the others. Drag: it
 /// follows the pointer, the list scrolls under it past its edges and the

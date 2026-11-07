@@ -3380,11 +3380,20 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// The pointer for Arrange on HUD now. The source shell refreshes its own
     /// on every pointer event; this covers a press starting or ending, and the
     /// fallback shell, which otherwise picks its cursor only on entering.
+    /// Like the source shell, it leaves native editors (a pinned note's text)
+    /// and child cursor regions to AppKit, except while a press holds the closed hand.
     private func refreshArrangeCursor() {
         if usesSourceShell { sourceWatch?.refreshSourceCursor(); return }
         guard let window, window.isVisible else { return }
-        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        if bounds.contains(location) { (designCursor(at: location) ?? .arrow).set() }
+        let windowPoint = window.mouseLocationOutsideOfEventStream
+        let location = convert(windowPoint, from: nil)
+        guard bounds.contains(location) else { return }
+        var hit = arrangeDrag == nil ? hitTest(convert(location, to: superview)) : nil
+        while let view = hit, view !== self {
+            if view.ownsNativeCursor(atWindowPoint: windowPoint) { return }
+            hit = view.superview
+        }
+        (designCursor(at: location) ?? .arrow).set()
     }
 
     /// Moves the lifted tile in the shell in use to the pointer at `location`.
