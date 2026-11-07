@@ -112,6 +112,12 @@ void versioned(const std::filesystem::path&path,std::wstring_view description){
     check(EndUpdateResourceW(update,!added)!=FALSE&&added,"Write the synthetic version resource");
 }
 void shellLink(const std::filesystem::path&path,const std::filesystem::path&target,const wchar_t*args,const wchar_t*directory=nullptr){Microsoft::WRL::ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));hr(link->SetPath(target.c_str()));hr(link->SetArguments(args));hr(link->SetWorkingDirectory(directory?directory:target.parent_path().c_str()));Microsoft::WRL::ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Save(path.c_str(),TRUE));}
+// What the saved .lnk itself holds, read back raw, so a test can show the
+// Shell kept an odd value before the service inspects it.
+struct StoredLink {std::wstring arguments,workingDirectory;};
+StoredLink stored(const std::filesystem::path&path){Microsoft::WRL::ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));Microsoft::WRL::ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Load(path.c_str(),STGM_READ));
+    std::vector<wchar_t>buffer(32768,0);StoredLink out;hr(link->GetArguments(buffer.data(),static_cast<int>(buffer.size())));out.arguments=buffer.data();
+    std::fill(buffer.begin(),buffer.end(),0);hr(link->GetWorkingDirectory(buffer.data(),static_cast<int>(buffer.size())));out.workingDirectory=buffer.data();return out;}
 void nativeFixtures(){hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struct End{~End(){CoUninitialize();}}end;Temp temp;const auto exe=temp.path/L"中文程序.exe",link=temp.path/L"应用链接.lnk",replacement=temp.path/L"updated.exe";stub(exe);shellLink(link,exe,L"--profile 中文");
     auto operations=n::windowsAppShortcutOS();unsigned launches{};n::AppShortcutResolved last;operations.launch=[&](const auto&r,std::uintptr_t){++launches;last=r;last.lease.reset();return n::AppShortcutLaunchReceipt{123};};n::NativeAppShortcutService service(std::move(operations));
     // An executable's FileDescription names it; one that is not valid UTF-16
@@ -132,13 +138,24 @@ void nativeFixtures(){hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struc
     // surrogate) threw out of inspection, so the shortcut could not be added.
     // The Shell runs the selected .lnk itself, so each is dropped (empty:
     // none) and the shortcut is kept; the owned links are never launched.
+    // One link per field, each holding the surrogate in only that field, so
+    // each conversion is pinned on its own.
     const std::wstring lone(1,static_cast<wchar_t>(0xD800));
-    const auto odd=temp.path/L"坏参数.lnk";shellLink(odd,exe,(L"--profile "+lone).c_str(),(temp.path/(L"目录"+lone)).c_str());
-    std::optional<m::ShortcutCandidate>oddShortcut;try{oddShortcut=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(odd)});}catch(const std::exception&){}
-    check(oddShortcut&&oddShortcut->name=="坏参数","A .lnk whose arguments and working directory hold an unpaired surrogate is kept, named by its file");
-    const auto&oddLaunch=oddShortcut->locator["windowsTarget"]["launch"];
-    check(oddLaunch["arguments"]==J("")&&oddLaunch["workingDirectory"]==J("")&&n::NativeAppShortcutService::sameTarget(app.locator,oddShortcut->locator),"Its unreadable arguments and working directory are dropped and its target is still recorded");
-    check(service.reinspect(oddShortcut->locator).name=="坏参数","The saved link verifies again on launch");
+    const auto inspected=[&](const std::filesystem::path&path){std::optional<m::ShortcutCandidate>out;try{out=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(path)});}catch(const std::exception&){}return out;};
+    const auto oddArguments=temp.path/L"坏参数.lnk";shellLink(oddArguments,exe,(L"--profile "+lone).c_str());
+    check(stored(oddArguments).arguments==L"--profile "+lone,"The owned link stores the unpaired surrogate in its arguments");
+    const auto argumentsShortcut=inspected(oddArguments);
+    check(argumentsShortcut&&argumentsShortcut->name=="坏参数","A .lnk whose arguments hold an unpaired surrogate is kept, named by its file");
+    const auto&argumentsLaunch=argumentsShortcut->locator["windowsTarget"]["launch"];
+    check(argumentsLaunch["arguments"]==J("")&&argumentsLaunch["workingDirectory"]==J(utf8Path(temp.path))&&n::NativeAppShortcutService::sameTarget(app.locator,argumentsShortcut->locator),"Its unreadable arguments are dropped, its working directory and target are kept");
+    check(service.reinspect(argumentsShortcut->locator).name=="坏参数","The saved link verifies again on launch");
+    const auto oddDirectory=temp.path/L"坏目录.lnk";const auto badDirectory=temp.path/(L"目录"+lone);shellLink(oddDirectory,exe,L"--profile 中文",badDirectory.c_str());
+    check(stored(oddDirectory).workingDirectory==badDirectory.native(),"The owned link stores the unpaired surrogate in its working directory");
+    const auto directoryShortcut=inspected(oddDirectory);
+    check(directoryShortcut&&directoryShortcut->name=="坏目录","A .lnk whose working directory holds an unpaired surrogate is kept, named by its file");
+    const auto&directoryLaunch=directoryShortcut->locator["windowsTarget"]["launch"];
+    check(directoryLaunch["workingDirectory"]==J("")&&directoryLaunch["arguments"]==J("--profile 中文")&&n::NativeAppShortcutService::sameTarget(app.locator,directoryShortcut->locator),"Its unreadable working directory is dropped, its arguments and target are kept");
+    check(service.reinspect(directoryShortcut->locator).name=="坏目录","The saved link verifies again on launch");
     const auto oddTarget=temp.path/(L"坏目标"+lone+L".exe"),oddTargetLink=temp.path/L"坏目标链接.lnk";stub(oddTarget);shellLink(oddTargetLink,oddTarget,L"");
     std::optional<m::ShortcutCandidate>targetShortcut;try{targetShortcut=service.inspect({n::AppShortcutSelectionKind::file,utf8Path(oddTargetLink)});}catch(const std::exception&){}
     check(targetShortcut&&targetShortcut->name=="坏目标链接"&&!targetShortcut->locator["windowsTarget"].contains("resolvedApplicationKey"),"A .lnk whose target path holds an unpaired surrogate is kept without a resolved application key");
