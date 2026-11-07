@@ -11,6 +11,7 @@
 #include "modules/battery_canvas.hpp"
 #include "modules/storage_canvas.hpp"
 #include "modules/telemetry_format.hpp"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -147,6 +148,9 @@ void appIcons() {
     icons.schedule();
     check(batches.size() == 1 && batches[0].first.size() == m::ActivityAppIcons::batch && batches[0].first[0].pixels == 40 && icons.queued() == 2,
         "Four per pass at 20 px x the render scale; one pass at a time");
+    // A row rebound while its app's icon loads (a scroll, a RAM re-sort) asks
+    // again: it stays pending and is not requested a second time.
+    check(icons.icon(app("a1", "key1")).kind == Kind::pending && icons.queued() == 2, "An icon in the batch in flight is not queued again");
     auto image = [](std::string key) { return std::optional(d::ImageSource{d::ImageSource::Kind::memory, std::move(key), {}, 1}); };
     check(batches[0].second({image("i0"), std::nullopt, image("i2"), image("i3")}), "The cache takes a finished pass");
     check(loaded.size() == 4 && batches.size() == 2 && batches[1].first.size() == 2, "Loaded ids are reported; the next pass follows");
@@ -165,8 +169,12 @@ void appIcons() {
     check(small.cached() == m::ActivityAppIcons::capacity, "256 entries fill the cache");
     (void)small.icon(app("over", "k"));
     small.schedule();
+    std::vector<std::string> changed;
+    small.onLoad = [&](const std::vector<std::string>& ids) { changed = ids; };
     (void)batches.back().second({image("y")});
     check(small.cached() == 1, "On overflow the whole cache is cleared");
+    check(changed.size() == m::ActivityAppIcons::capacity + 1 && std::count(changed.begin(), changed.end(), "c0") == 1 && changed.back() == "over",
+        "The overflow reports every released icon with the loaded one, so rows drawing them take their icon again");
 }
 
 // ---------------------------------------------------------------------------

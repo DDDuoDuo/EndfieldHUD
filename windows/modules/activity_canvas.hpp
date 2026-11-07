@@ -64,12 +64,18 @@ public:
     ActivityAppIcons& operator=(const ActivityAppIcons&) = delete;
     void setScale(double);
     unsigned pixels() const noexcept;
-    // A lookup: a miss is queued (pending) and loads on a later pass.
+    // A lookup: a miss is queued (pending) and loads on a later pass; an
+    // icon in the batch that is loading stays pending without a second
+    // request (its image would replace and release the first one).
     Icon icon(const ActivityApp&);
     // The end of the caller's pass (the Mac's DispatchQueue.main.async):
     // starts the next batch of up to `batch` queued icons unless one loads.
     void schedule();
-    std::function<void(const std::vector<std::string>&)> onLoad; // ids that just loaded
+    // Ids whose icon changed: the ones that just loaded, and the ones whose
+    // image the cache released (an overflow clears it). Every row showing one
+    // of them takes its current icon before the next frame: a released image
+    // is retired and can never be drawn again.
+    std::function<void(const std::vector<std::string>&)> onLoad;
     std::uint64_t loadCount() const noexcept { return loads_; }
     std::size_t cached() const noexcept { return images_.size(); }
     std::size_t queued() const noexcept { return queue_.size(); }
@@ -78,7 +84,7 @@ private:
     Loader loader_;
     std::shared_ptr<State> state_;          // completions after destruction are dropped
     std::map<std::string, std::optional<design::ImageSource>> images_;
-    std::vector<Request> queue_;
+    std::vector<Request> queue_, loading_;     // waiting; the batch in flight
     double scale_{1};
     bool inFlight_{};
     std::uint64_t generation_{}, loads_{};

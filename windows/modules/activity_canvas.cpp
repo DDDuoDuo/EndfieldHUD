@@ -59,7 +59,7 @@ void ActivityAppIcons::clear() {
 void ActivityAppIcons::setScale(double scale) {
     if (scale == scale_) return;
     scale_ = scale;
-    clear(); queue_.clear();
+    clear(); queue_.clear(); loading_.clear();
     ++generation_; inFlight_ = false;
 }
 unsigned ActivityAppIcons::pixels() const noexcept { return unsigned(std::ceil(side * std::max(1., scale_))); }
@@ -67,7 +67,8 @@ ActivityAppIcons::Icon ActivityAppIcons::icon(const ActivityApp& item) {
     if (item.identity.iconKey.empty() || !loader_.load) return {Icon::Kind::generic, {}};
     if (const auto found = images_.find(item.identity.id); found != images_.end())
         return found->second ? Icon{Icon::Kind::image, *found->second} : Icon{Icon::Kind::generic, {}};
-    if (std::none_of(queue_.begin(), queue_.end(), [&](const Request& r) { return r.id == item.identity.id; }))
+    const auto same = [&](const Request& r) { return r.id == item.identity.id; };
+    if (std::none_of(queue_.begin(), queue_.end(), same) && std::none_of(loading_.begin(), loading_.end(), same))
         queue_.push_back({item.identity.id, item.identity.iconKey, pixels()});
     return {};
 }
@@ -82,18 +83,22 @@ void ActivityAppIcons::schedule() {
         const auto state = weak.lock();
         return state && state->owner && state->owner->loaded(generation, next, std::move(results));
     };
+    loading_ = next;
     if (!loader_.load(next, std::move(done))) {
         // Not accepted now (executor backpressure): the next lookup retries.
         queue_.insert(queue_.begin(), next.begin(), next.end());
-        inFlight_ = false;
+        loading_.clear(); inFlight_ = false;
     }
 }
 bool ActivityAppIcons::loaded(std::uint64_t generation, const std::vector<Request>& requests, std::vector<std::optional<d::ImageSource>> results) {
     if (generation != generation_) return false;          // loaded for another scale: not taken
     results.resize(requests.size());
-    inFlight_ = false;
-    if (images_.size() + requests.size() > capacity) clear();
+    inFlight_ = false; loading_.clear();
     std::vector<std::string> ids;
+    if (images_.size() + requests.size() > capacity) {
+        for (const auto& [id, image] : images_) if (image) ids.push_back(id); // released: their rows take their icon again
+        clear();
+    }
     for (std::size_t n = 0; n < requests.size(); ++n) {
         auto& slot = images_[requests[n].id];
         if (slot && loader_.release) loader_.release(*slot);
@@ -322,6 +327,7 @@ public:
         std::optional<ActivityApp> item;
         std::optional<ActivitySort> sortKey;
         std::optional<std::string> iconID;  // the app whose icon the row shows
+        std::optional<ActivityAppIcons::Icon> shown; // and the icon it draws
     };
 
     AppTable(d::Page& page, d::ScrollArea& area, std::vector<SortColumn*> columns, ActivityAppIcons& icons)
@@ -378,13 +384,16 @@ public:
         for (std::size_t offset = 0; offset < rows_.size() && first + offset < items_.size(); ++offset) show(*rows_[offset], items_[first + offset], sortKey);
         icons_->schedule();
     }
-    // Icons that finished loading go to the visible rows showing their apps.
+    // Icons that loaded or were released go to every row showing their apps,
+    // hidden ones too: a row never keeps drawing a released (retired) image.
     void showIcons(const std::vector<std::string>& ids) {
         for (const auto& row : rows_) {
-            if (row->plate->layer().hidden() || !row->item) continue;
+            if (!row->item) continue;
             const auto& id = row->item->identity.id;
-            if (std::find(ids.begin(), ids.end(), id) == ids.end() || row->iconID == id) continue;
-            showIcon(*row, icons_->icon(*row->item), id);
+            if (std::find(ids.begin(), ids.end(), id) == ids.end()) continue;
+            const auto icon = icons_->icon(*row->item);
+            if (row->iconID == id && row->shown == icon) continue;
+            showIcon(*row, icon, id);
         }
     }
 private:
@@ -430,6 +439,7 @@ private:
     static void showIcon(Row& row, const ActivityAppIcons::Icon& value, const std::string& id) {
         using Kind = ActivityAppIcons::Icon::Kind;
         row.iconID = value.kind == Kind::pending ? std::nullopt : std::optional(id);
+        row.shown = value;
         if (value.kind == Kind::image) row.icon->setContent(d::image(row.icon->id(), d::localBounds(*row.icon), value.image));
         else row.icon->clearContent();
         row.icon->setHidden(value.kind != Kind::image);
