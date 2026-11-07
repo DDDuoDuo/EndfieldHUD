@@ -3255,12 +3255,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         var safeTop: CGFloat = 0
         if #available(macOS 12.0, *) { safeTop = window?.screen?.safeAreaInsets.top ?? 0 }
         let bannerTop = max(14, safeTop + 10)
+        let size = CGFloat(shownOverlayLayout.alerts.size)
         withoutActions {
             facilityBanner.layer.anchorPoint = CGPoint(x: 0.5, y: 0)
             facilityBanner.layer.position = CGPoint(x: 500, y: (bannerTop - designOrigin.y) / max(0.01, designScale))
             facilityBanner.layer.transform = CATransform3DMakeScale(unit, unit, 1)
             // Display > HUD elements places and sizes the column (top-right anchor).
-            let tags = overlayFrame(.alerts, shownOverlayLayout), size = CGFloat(shownOverlayLayout.alerts.size)
+            let tags = overlayFrame(.alerts, shownOverlayLayout)
             facilityTags.layer.anchorPoint = CGPoint(x: 1, y: 0)
             facilityTags.layer.position = CGPoint(x: tags.maxX, y: tags.minY)
             facilityTags.layer.transform = CATransform3DMakeScale(unit * size, unit * size, 1)
