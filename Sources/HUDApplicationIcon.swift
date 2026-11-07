@@ -416,29 +416,38 @@ enum HUDApplicationIcon: String, CaseIterable {
 
     /// Original vector interpretation of the in-game watch button: a round
     /// face with one hand, a lug pair and a strap block at each end, turned
-    /// so the strap runs from the upper left to the lower right. It is drawn
-    /// in white at the target's own pixel size, so it stays sharp at any size
-    /// and becomes an adaptive silhouette through the menu-bar template path.
+    /// so the strap runs from the upper left to the lower right. The ring is
+    /// split along the strap axis at both ends and notched where the hand
+    /// points, with a notch as wide as the hand. It is drawn in white at the
+    /// target's own pixel size, so it stays sharp at any size and becomes an
+    /// adaptive silhouette through the menu-bar template path.
     private static func drawWatch(in context: CGContext, rect: CGRect) {
         // A 100-unit square around the face's centre, strap upright before
-        // the turn; the turned strap corners reach 49.9 units from the centre.
+        // the turn; the turned strap corners reach about 49.2 units out.
         let unit = min(rect.width, rect.height) / 100
         context.saveGState(); defer { context.restoreGState() }
         context.translateBy(x: rect.midX, y: rect.midY); context.scaleBy(x: unit, y: unit)
         context.rotate(by: .pi / 4)
         context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        // The face: a thick ring around an open dial.
-        context.addEllipse(in: CGRect(x: -37, y: -37, width: 74, height: 74))
+        // The face: a thick ring around an open dial, with the strap-axis
+        // slit and the hand's notch cut out of the ring only.
+        context.saveGState()
+        context.addRect(CGRect(x: -60, y: -60, width: 120, height: 120))
+        context.addRect(CGRect(x: -2.5, y: -40, width: 5, height: 80))
+        context.addRect(CGRect(x: 21, y: -2.95, width: 17, height: 5.9))
+        context.clip(using: .evenOdd)
+        context.addEllipse(in: CGRect(x: -36, y: -36, width: 72, height: 72))
         context.addEllipse(in: CGRect(x: -22, y: -22, width: 44, height: 44))
         context.fillPath(using: .evenOdd)
-        // The hand, from near the centre into the ring at a right angle to the strap.
-        context.fill(CGRect(x: 3, y: -3.3, width: 21, height: 6.6))
+        context.restoreGState()
+        // The hand, from near the centre into the notch at a right angle to the strap.
+        context.fill(CGRect(x: 3.3, y: -2.95, width: 20.3, height: 5.9))
         for end: CGFloat in [1, -1] {
             // Lugs grow out of the ring; a clear gap separates the strap block.
-            for lug: CGFloat in [-16, 8] {
-                context.fill(CGRect(x: lug, y: end > 0 ? 30 : -41, width: 8, height: 11))
+            for lug: CGFloat in [-23.9, 17.1] {
+                context.fill(CGRect(x: lug, y: end > 0 ? 28 : -41, width: 6.8, height: 13))
             }
-            context.fill(CGRect(x: -16, y: end > 0 ? 44.5 : -54.5, width: 32, height: 10))
+            context.fill(CGRect(x: -14.9, y: end > 0 ? 40.3 : -54.7, width: 29.8, height: 14.4))
         }
     }
 }
