@@ -951,7 +951,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             motion.stop(freezePresentation: false)
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
             headerClock.setActive(window != nil && interactionEnabled)
-            sourceWatch?.inputEnabled = allowsModuleInput
+            sourceWatch?.inputEnabled = allowsInputBesidePlacement
             sourceWatch?.refreshMotionPreferences()
             return
         }
@@ -2009,7 +2009,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if overview && sourceOverviewPresented && sourceWatchFailureReason == nil {
             sourceWatch.isHidden = false
             if stable, sourceWatch.playback.phase == .concealed { sourceWatch.showStable() }
-            sourceWatch.inputEnabled = allowsModuleInput
+            sourceWatch.inputEnabled = allowsInputBesidePlacement
         } else { sourceWatch.conceal() }
     }
 
@@ -2464,7 +2464,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// ⏻ asks with the confirm bar on the disc (spec §2.18), like every other
     /// confirmation; Esc or Cancel keep the HUD, Enter or Quit quit.
     func presentQuitConfirmation() {
-        guard allowsModuleInput, window != nil else { return }
+        guard allowsInputBesidePlacement, window != nil else { return }
         if accountGauge.isPopoverOpen { accountGauge.dismiss(); return }
         clearControlHighlights()
         navigation.hover(nil); identityCard.resetInteraction(animated: true)
@@ -2505,7 +2505,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         accountController.setVisible(window != nil && interactionEnabled && !retracting, accountModule: selectedModule == .account)
         updateAccountPresentation()
         layoutClockControls()
-        sourceWatch?.inputEnabled = usesSourceShell && sourceOverviewPresented && allowsModuleInput
         notesInteraction?.setVisible(window != nil && interactionEnabled)
         notesInteraction?.setActive(notesWorkspaceIsInteractive)
         // Presentation changes come first: Now Playing retires the shared audio
@@ -2526,9 +2525,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         updateNavigationButtonStates()
     }
 
-    /// The quit, module and scroll buttons; disabled while HUD elements are placed.
+    /// The quit, module and scroll buttons, native or drawn by the source
+    /// watch; disabled while HUD elements are placed.
     private func updateNavigationButtonStates() {
         let allowsInput = allowsInputBesidePlacement
+        sourceWatch?.inputEnabled = usesSourceShell && sourceOverviewPresented && allowsInput
         closeHUDButton.isHidden = usesSourceShell
         closeHUDButton.isEnabled = allowsInput && !usesSourceShell
         closeHUDButton.setAccessibilityLabel(L10n.text("Quit EndfieldHUD", "退出 EndfieldHUD"))
