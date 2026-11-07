@@ -245,10 +245,10 @@ void malformedAppName(){
 // An endpoint whose name is within the worker's 32767 units but past a Volume
 // row's 4096 UTF-8 bytes (2000 CJK characters, 6000 bytes): it passed the
 // worker, then failed the Volume canvas's snapshot check, which disabled the
-// module. The Volume row shows the endpoint ID instead, as for an empty name;
-// the Event Log keeps the raw label.
+// module. The Volume row shows the endpoint ID instead, as for an empty name,
+// and so does the Event Log (endpointLabelsInEventLog).
 void longEndpointName(){
-    Harness h;const std::wstring longName(2000,L'\u6587');std::string longLabel;for(int n=0;n<2000;++n)longLabel+="\xE6\x96\x87";
+    Harness h;const std::wstring longName(2000,L'\u6587');
     {std::lock_guard l(h.world->m);h.world->outputs={{speaker,longName,L"HDAUDIO",1u},{usb,L"USB Headset",L"USB",5u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;}
     auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
     // The canvas checks every snapshot it receives (VolumeCanvas::receive).
@@ -264,7 +264,7 @@ void longEndpointName(){
     check(named("{0.0.0.00000000}.{usb}")=="USB Headset"&&delivered.outputID=="{0.0.0.00000000}.{speaker}","Other endpoints keep their names and the default stays selected");
     h.until([&]{return h.runtime->deviceLabels().has_value();},"The Event Log device list arrives");
     const auto labels=h.runtime->deviceLabels();
-    check(labels->size()==3&&labels->at("{0.0.0.00000000}.{speaker}")==longLabel,"The Event Log keeps the raw long label");
+    check(labels->size()==3&&labels->at("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}","The Event Log labels the long name with the endpoint ID, as Volume does");
     // A name with an unpaired surrogate (valid at both wchar_t widths) made
     // the whole endpoint list unavailable; the row shows the ID instead.
     {std::lock_guard l(h.world->m);h.world->outputs[1].name=L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800));}
@@ -272,6 +272,33 @@ void longEndpointName(){
     try{h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";},"The ill-formed endpoint name reaches Volume");}
     catch(const std::exception&){threw=true;}
     check(!threw&&delivered.outputs.size()==2&&named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetVolume,"An endpoint name that is not well-formed UTF-16 shows the endpoint ID, and the list stays available");
+    h.runtime->stop();
+}
+// The Event Log's device list labels each endpoint as its Volume row does
+// (audioEndpointLabel). An endpoint name that is not well-formed UTF-16 made
+// deviceLabels() withhold every list while it existed, so no device change was
+// recorded; a name past 4096 UTF-8 bytes was handed over raw, and the Event
+// Log drops a device name that long. Both now give the endpoint ID, and a
+// device arriving and leaving beside them is still reported.
+void endpointLabelsInEventLog(){
+    Harness h;const std::wstring longName(2000,L'\u6587'),illFormed=L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800));
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,longName,L"HDAUDIO",1u},{usb,illFormed,L"USB",5u}};}
+    check(h.runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    h.until([&]{return h.seen.devices;},"The first device list settles");
+    const auto labelled=[](const std::map<std::string,std::string>&labels){
+        return labels.at("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&labels.at("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";};
+    auto labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==2&&labelled(*labels),"The over-long and ill-formed names are listed with their endpoint IDs");
+    {std::lock_guard l(h.world->m);h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices;},"The microphone's arrival settles");
+    labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==3&&labels->at("{0.0.1.00000000}.{mic}")=="Microphone"&&labelled(*labels),"A device arriving beside them reaches the Event Log");
+    {std::lock_guard l(h.world->m);h.world->inputs.clear();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices;},"The microphone's removal settles");
+    labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==2&&!labels->contains("{0.0.1.00000000}.{mic}")&&labelled(*labels),"A device leaving beside them reaches the Event Log");
     h.runtime->stop();
 }
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
@@ -491,7 +518,7 @@ void nowPlaying(){
 }
 }
 int main(int argc,char**argv){
-    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();longEndpointName();
+    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();longEndpointName();endpointLabelsInEventLog();
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
         check(argc==2,"Pass the application source directory (app/)");
         volumeFailure();noticeRetry();appWiring(argv[1]);

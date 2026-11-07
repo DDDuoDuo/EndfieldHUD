@@ -48,6 +48,10 @@ std::optional<AudioPackageManifestNames>readAudioPackageManifest(const std::file
 // only when it is non-empty, holds no NUL, is well-formed UTF-16 and its UTF-8
 // form fits a Volume row's 4096 bytes. Checked without allocating.
 bool audioLabelValid(std::wstring_view)noexcept;
+// An endpoint's label wherever it is shown (a Volume row, the Event Log's
+// device list): its name when audioLabelValid accepts it, else its endpoint
+// ID, so an empty, ill-formed or over-long name never withholds the endpoint.
+inline const std::wstring&audioEndpointLabel(const std::wstring&name,const std::wstring&id)noexcept{return audioLabelValid(name)?name:id;}
 // The first valid candidate, else "PID n" (the worker's backstop passes none).
 std::wstring audioApplicationLabel(std::initializer_list<std::wstring_view>candidates,std::uint32_t pid);
 // The WASAPI session backend's two labels in the source's order (name,

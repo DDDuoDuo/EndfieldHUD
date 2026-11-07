@@ -65,7 +65,9 @@ public:
     // Event Log device list (application lifetime). >= 0 when accepted.
     std::int32_t setDeviceEvents(bool);
     // UTF-8 identity -> trimmed label of every active render/capture
-    // endpoint, for ApplicationEventRecorder::receiveAudioDevices. Present
+    // endpoint (audioEndpointLabel, as its Volume row: the identity for a
+    // name that is ill-formed or past 4096 UTF-8 bytes), for
+    // ApplicationEventRecorder::receiveAudioDevices. Present
     // only while the device list is listening and a complete read exists; it
     // changes exactly when drain() reports `devices`. Labels only are logged.
     std::optional<std::map<std::string,std::string>>deviceLabels()const;
