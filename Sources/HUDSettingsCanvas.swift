@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 
 /// The four left-navigation screens of the redesign (spec §3.1–§3.5):
-/// System (with its Modules page), Display (with its Battery alert and App icon pages),
+/// System, Display (with its Modules, HUD elements, Battery alert and App icon pages),
 /// Hotkeys and About. Preferences and platform side effects belong to
 /// HUDSettingsController; this canvas only presents and edits them.
 final class HUDSettingsCanvas: HUDDesignCanvas {
@@ -10,12 +10,15 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     var onChooseLogo: (() -> Void)?
     var onLogoSelection: (() -> Void)?
     var onCaptureChanged: ((Bool) -> Void)?
+    /// Display > HUD elements > Edit position and size: the HUD places its title,
+    /// Sanity gauge and alert tags by drag, with a Cancel / Confirm strip.
+    var onEditOverlay: (() -> Void)?
     private let controller: HUDSettingsController
     private let displayProvider: () -> [HUDDisplayDescriptor]
     private var displays: [HUDDisplayDescriptor] = []
     private var observer: UUID?
     private var screenObserver: NSObjectProtocol?
-    private enum Section: Equatable { case main, battery, icons, credits, modules }
+    private enum Section: Equatable { case main, overlay, battery, icons, credits, modules }
     private var section: Section = .main
     /// What the current page's layout depends on; anything else updates the
     /// existing controls in place (toggles keep their knob animation).
@@ -38,12 +41,20 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     private weak var updateSpoken: HUDReadout?
     private var updateStamp: CALayer?
     private var keycaps: HUDKeycapGroup?
-    /// System > Modules: one row per right-hand module, keyed by module.
+    /// Display > Modules: one row per right-hand module, keyed by module.
     private struct ModuleRow { let plate: HUDRowPlate, grip: HUDDragGrip, glyph: CALayer, toggle: HUDToggle, up: HUDIconButton, down: HUDIconButton }
     private var moduleRows: [HUDModule: ModuleRow] = [:]
     private weak var modulesScroll: HUDScrollArea?
     /// The row being dragged: its grab offset and the slot it would drop into.
     private var moduleDrag: (module: HUDModule, grab: CGFloat, slot: Int)?
+    /// Display > Modules > Arrange on HUD: while it is on, the HUD's right-hand
+    /// module buttons are dragged to reorder instead of opening. Never saved.
+    private(set) var isArrangingModules = false
+    /// The HUD turns arranging on or off on its module buttons.
+    var onArrangeModules: ((Bool) -> Void)?
+    private weak var arrangeToggle: HUDToggle?
+    /// The order a drag on the HUD previews; the rows follow it until the drop.
+    private var previewedModuleOrder: [HUDModule]?
     var isCapturingShortcut: Bool { module == .hotkeys && controller.isCapturingShortcut }
     private var config: AppConfiguration { controller.configuration }
     var customLogoRevision: String? { config.centerLogoRevision }
@@ -83,6 +94,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func didDeactivate() {
         cancelCapture()
+        setArrangingModules(false)
         // An interrupted drag never creates a preview after the HUD has gone;
         // an unanswered layout preview is reverted with its prompt.
         stagedLayout = (nil, nil, nil)
@@ -144,11 +156,14 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     override func buildPage(_ page: HUDDesignPage) {
         binders = []; updateCells = nil; updateText = nil; updateStamp = nil; keycaps = nil
-        moduleRows = [:]; modulesScroll = nil; moduleDrag = nil
+        moduleRows = [:]; modulesScroll = nil; moduleDrag = nil; arrangeToggle = nil
+        // Arranging lasts while Modules is shown (a re-render there keeps it).
+        if section != .modules { setArrangingModules(false) }
         renderedStructure = structure
         switch (module, section) {
-        case (.system, .modules): buildModules(page)
         case (.system, _): buildSystem(page)
+        case (.display, .modules): buildModules(page)
+        case (.display, .overlay): buildOverlay(page)
         case (.display, .battery): buildBattery(page)
         case (.display, .icons): buildIcons(page)
         case (.display, _): buildDisplay(page)
@@ -159,6 +174,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     private func go(_ next: Section, forward: Bool) {
+        if next != .modules { setArrangingModules(false) }
         section = next
         navigate(dx: forward ? 1 : -1)
     }
@@ -188,20 +204,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             screen?.setValue(HUDDisplayPolicy.selectionTitle(configuration: self.config, displays: self.displays))
         }
         rows.append(row("screen", L10n.text("Display", "显示器"), [screen], page))
-        // Battery alerts live on Display > Battery alert (its Display method).
-        let shown = HUDChip(modulesCount, variant: .dark, env: env)
-        let modulesTitle = L10n.text("Modules", "模块")
-        let modules = navRow("modules", modulesTitle, page, cluster: [shown.layer]) { [weak self] in self?.go(.modules, forward: true) }
-        modules.label = modulesTitle + ", " + modulesCount
-        binders.append { [weak self, weak shown, weak modules] in
-            guard let self else { return }
-            shown?.setTitle(self.modulesCount); modules?.label = modulesTitle + ", " + self.modulesCount
-        }
-        rows.append(modules)
-        let restore = HUDButton(id: "restore", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
-        restore.place(at: .zero)
-        restore.onActivate = { [weak self] in self?.confirmRestore() }
-        rows.append(row("restore", L10n.text("Restore default settings", "恢复默认设置"), [restore.layer], page, controls: [restore]))
+        // Battery alerts live on Display > Battery alert, and Modules on Display > Modules.
+        rows.append(restoreRow(.system, page))
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["SYSTEM"], code: "SYS-01", title: HUDModuleTitle("System", "系统设置"),
                          counter: HUDFormat.pad2(rows.count), showsBack: false)
@@ -235,16 +239,61 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
     }
 
-    private func confirmRestore() {
-        confirm(HUDConfirmRequest(id: "restore", title: L10n.text("Restore default settings?", "恢复默认设置？"),
-                                  message: L10n.text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。"),
-                                  confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
-            self?.controller.restoreDefaults()
-            self?.toast(icon: .reset, "Settings restored", "已恢复默认设置")
+    // MARK: Restore defaults (System, Display, Display > HUD elements)
+
+    /// What a scoped Restore row is called, what its confirm says it resets
+    /// and keeps, and the toast after it.
+    private struct RestoreCopy {
+        let id: String, title: String, question: String, message: String
+        let toast: (english: L10n.Text, chinese: L10n.Text)
+    }
+
+    private func restoreCopy(_ scope: HUDSettingsScope) -> RestoreCopy {
+        switch scope {
+        case .system:
+            return RestoreCopy(id: "restore", title: L10n.text("Restore default settings", "恢复默认设置"),
+                               question: L10n.text("Restore default settings?", "恢复默认设置？"),
+                               message: L10n.text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept.",
+                                                  "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式。"),
+                               toast: ("Settings restored", "已恢复默认设置"))
+        case .display:
+            return RestoreCopy(id: "displayRestore", title: L10n.text("Restore default settings", "恢复默认设置"),
+                               question: L10n.text("Restore default settings?", "恢复默认设置？"),
+                               message: L10n.text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.",
+                                                  "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。"),
+                               toast: ("Settings restored", "已恢复默认设置"))
+        case .hudElements:
+            return RestoreCopy(id: "overlayRestore", title: L10n.text("Restore defaults", "恢复默认"),
+                               question: L10n.text("Restore HUD elements?", "恢复界面元素默认设置？"),
+                               message: L10n.text("Only this page's settings change.", "仅恢复本页设置。"),
+                               toast: ("HUD elements restored", "已恢复界面元素"))
         }
     }
 
-    // MARK: Modules (System > Modules)
+    /// The Restore row for `scope`: enabled while something it resets differs
+    /// from its default, and it asks before resetting.
+    private func restoreRow(_ scope: HUDSettingsScope, _ page: HUDDesignPage) -> HUDRowPlate {
+        let copy = restoreCopy(scope)
+        let restore = HUDButton(id: copy.id, title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
+        restore.place(at: .zero)
+        restore.onActivate = { [weak self] in self?.confirmRestore(scope) }
+        restore.isEnabled = !controller.isDefault(scope)
+        binders.append { [weak self, weak restore] in guard let self else { return }; restore?.isEnabled = !self.controller.isDefault(scope) }
+        return row(copy.id, copy.title, [restore.layer], page, controls: [restore])
+    }
+
+    private func confirmRestore(_ scope: HUDSettingsScope) {
+        let copy = restoreCopy(scope)
+        confirm(HUDConfirmRequest(id: copy.id, title: copy.question, message: copy.message,
+                                  confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
+            guard let self else { return }
+            if scope == .display { self.stagedLayout = (nil, nil, nil) } // A slider mid-drag must not show its old value.
+            self.controller.restoreDefaults(scope)
+            self.toast(icon: .reset, copy.toast.english, copy.toast.chinese)
+        }
+    }
+
+    // MARK: Modules (Display > Modules)
 
     private var modulesCount: String {
         let layout = config.moduleLayout
@@ -252,11 +301,33 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
     private static let modulePitch = HUDMetric.rowHeight + HUDMetric.rowGap
 
+    /// The Display row that opens Modules, with the shown / total count.
+    private func modulesRow(_ page: HUDDesignPage) -> HUDRowPlate {
+        let shown = HUDChip(modulesCount, variant: .dark, env: env)
+        let modulesTitle = L10n.text("Modules", "模块")
+        let modules = navRow("modules", modulesTitle, page, cluster: [shown.layer]) { [weak self] in self?.go(.modules, forward: true) }
+        modules.label = modulesTitle + ", " + modulesCount
+        binders.append { [weak self, weak shown, weak modules] in
+            guard let self else { return }
+            shown?.setTitle(self.modulesCount); modules?.label = modulesTitle + ", " + self.modulesCount
+        }
+        return modules
+    }
+
     /// Order and visibility of the right-hand list: drag a row by its grip
     /// (the others reflow) or use its move buttons; the switch shows or hides it.
+    /// Above the list, Arrange on HUD lets the HUD's own module buttons be dragged.
     private func buildModules(_ page: HUDDesignPage) {
         let layout = config.moduleLayout, width = rowWidth(page)
-        let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
+        let title = L10n.text("Arrange on HUD", "在界面上排列"), hint = L10n.text("Drag the module buttons on the right", "拖动右侧的模块按钮")
+        // VoiceOver hears the hint with the switch: the row itself is not spoken.
+        let arrange = HUDToggle(id: "modulesArrange", label: title + ", " + hint, isOn: isArrangingModules, env: env)
+        arrange.onChange = { [weak self] on in self?.setArrangingModules(on) }
+        arrangeToggle = arrange
+        stack([row("modulesArrange", title, [arrange.layer], page, sublabel: hint, controls: [arrange])],
+              in: page.layer, page: page, top: HUDMetric.headerHeight, width: width)
+        let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight + Self.modulePitch,
+                                                                  width: HUDMetric.box.width, height: HUDMetric.bodyHeight - Self.modulePitch))
         modulesScroll = scroll
         var plates: [HUDRowPlate] = []
         for module in layout.order {
@@ -299,11 +370,11 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             guard let self else { return }
             self.renderModuleStates()
             restore?.isEnabled = !self.config.moduleLayout.isDefault
-            // A drag in progress owns the positions until it drops.
-            if self.moduleDrag == nil { self.layoutModuleRows(self.config.moduleLayout.order, animated: true) }
+            // A drag in progress (here or on the HUD) owns the positions until it drops.
+            if self.moduleDrag == nil { self.layoutModuleRows(self.previewedModuleOrder ?? self.config.moduleLayout.order, animated: true) }
         }
         restore.isEnabled = !layout.isDefault
-        header.configure(crumbs: ["SYSTEM", "MODULES"], code: "SYS-01", title: HUDModuleTitle("Modules", "模块"),
+        header.configure(crumbs: ["DISPLAY", "MODULES"], code: "SYS-02", title: HUDModuleTitle("Modules", "模块"),
                          counter: HUDFormat.pad2(layout.order.count), showsBack: true)
         wireBack(page) { [weak self] in self?.go(.main, forward: false) }
     }
@@ -321,6 +392,25 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             row.down.isEnabled = index < layout.order.count - 1
             HUDMotion.animate(row.glyph, "opacity", to: Float(hidden ? 0.35 : 1), duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
         }
+    }
+
+    /// Turns Arrange on HUD on or off (the switch, Back, leaving the page or the
+    /// HUD); the HUD hears only real changes. It turns on only on this page.
+    func setArrangingModules(_ on: Bool) {
+        let next = on && module == .display && section == .modules
+        guard next != isArrangingModules else { arrangeToggle?.setOn(next, animated: true); return }
+        isArrangingModules = next
+        arrangeToggle?.setOn(next, animated: true)
+        if !next { previewModuleOrder(nil) }
+        onArrangeModules?(next)
+    }
+
+    /// The rows follow a drag on the HUD (`order`) and return to the saved
+    /// order with nil, when it drops or is cancelled.
+    func previewModuleOrder(_ order: [HUDModule]?) {
+        guard order != previewedModuleOrder else { return }
+        previewedModuleOrder = order
+        if moduleDrag == nil, !moduleRows.isEmpty { layoutModuleRows(order ?? config.moduleLayout.order, animated: true) }
     }
 
     /// Places each row at its slot of `order`; the dragged row follows the pointer instead.
@@ -358,9 +448,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         case .moved:
             guard var drag = moduleDrag, drag.module == module else { return }
             // Near an edge the list follows the pointer (on pointer events only).
-            let shown = y - scroll.offset, edge: CGFloat = 36
-            if shown < edge { scroll.scroll(by: -min(12, edge - shown)) }
-            else if shown > scroll.layer.bounds.height - edge { scroll.scroll(by: min(12, shown - scroll.layer.bounds.height + edge)) }
+            let step = HUDDragGrip.edgeScrollStep(offset: y - scroll.offset, length: scroll.layer.bounds.height)
+            if step != 0 { scroll.scroll(by: step) }
             let top = min(CGFloat(order.count - 1) * Self.modulePitch, max(0, y - drag.grab))
             HUDMotion.perform { plate.removeAnimation(forKey: "hud.position.y"); plate.position.y = top + plate.bounds.height / 2 }
             let slot = min(order.count - 1, max(0, Int((top / Self.modulePitch).rounded())))
@@ -389,12 +478,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     override func cursor(at point: CGPoint?) -> NSCursor? {
-        if moduleDrag != nil { return .closedHand }
-        guard isActive, section == .modules, let point else { return nil }
-        return moduleRows.values.contains { row in
-            row.grip.layer.isVisible(in: root) && row.grip.layer.isUnclipped(point, in: root)
-                && row.grip.contains(row.grip.layer.convert(point, from: root))
-        } ? .openHand : nil
+        guard moduleDrag != nil || (isActive && section == .modules) else { return nil }
+        return HUDDragGrip.cursor(lifted: moduleDrag != nil, grips: moduleRows.values.lazy.map(\.grip), at: point, in: root)
     }
 
     private func buildDisplay(_ page: HUDDesignPage) {
@@ -454,6 +539,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         binders.append { [weak self, weak style] in guard let self else { return }; style?.setValue(self.clockStyleTitle(self.config.clockStyle)) }
         rows.append(row("clockStyle", L10n.text("Clock style", "时钟样式"), [style], page))
         rows.append(logoRow(page))
+        rows.append(openModuleRow(page))
+        rows.append(modulesRow(page))
+        rows.append(navRow("overlay", L10n.text("HUD elements", "界面元素"), page) { [weak self] in self?.go(.overlay, forward: true) })
         rows.append(navRow("appIcon", L10n.text("App / menu bar icon", "应用 / 菜单栏图标"), page) { [weak self] in self?.go(.icons, forward: true) })
         rows.append(paletteRow(page))
         let reading = HUDChip(c.alertMetric.title.uppercased(), variant: .dark, env: env)
@@ -467,6 +555,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             reading?.setTitle(self.config.alertMetric.title.uppercased()); batteryRow?.label = batteryTitle + ", " + self.config.alertMetric.title
         }
         rows.append(batteryRow)
+        rows.append(toggleRow("closeHint", L10n.text("Close hint", "关闭提示"), \.showsCloseHint, page))
         rows.append(toggleRow("ambient", L10n.text("Ambient animation", "持续环境动画"), \.ambientAnimation, page))
         rows.append(toggleRow("motion", L10n.text("Reduce Motion", "减少动态效果"), \.reduceMotion, page))
         rows.append(toggleRow("lowPower", L10n.text("Low Power visual mode", "低功耗视觉模式"), \.lowPowerVisualMode, page))
@@ -475,13 +564,91 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             else { self?.toast(icon: .eye, "Recording mode off", "私密内容已恢复") }
         }))
         rows.append(toggleRow("bootLog", L10n.text("Daily boot log", "每日启动日志"), \.dailyBootLog, page))
-        rows.append(toggleRow("facility", L10n.text("Facility alerts", "设施警报"), \.facilityAlerts, page,
-                              confirmOff: { [weak self] commit in self?.confirmFacilityOff(commit) }))
+        rows.append(restoreRow(.display, page))
         let height = stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10)
         scroll.setContentHeight(height)
         page.restoreOffset(of: scroll)
         header.configure(crumbs: ["DISPLAY"], code: "SYS-02", title: HUDModuleTitle("Display", "显示"),
                          counter: HUDFormat.pad2(rows.count), showsBack: false)
+    }
+
+    // MARK: HUD elements (Display > HUD elements)
+
+    /// The HUD's title, Sanity gauge and facility alert tags: whether each
+    /// shows, the title's text, their places and sizes (set on the HUD itself),
+    /// and a Restore for this page only.
+    private func buildOverlay(_ page: HUDDesignPage) {
+        let scroll = page.scrollArea(id: "overlay", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
+        var rows: [HUDRowPlate] = []
+        rows.append(toggleRow("overlayTitle", L10n.text("Show title", "显示标题"), \.overlayLayout.showsTitle, page))
+        rows.append(overlayTextRow("overlayTitleText", L10n.text("Title text", "标题文字"), HUDOverlayLayout.defaultTitle,
+                                   \.overlayLayout.titleText, page))
+        rows.append(overlayTextRow("overlaySubtitleText", L10n.text("Subtitle text", "副标题文字"), HUDOverlayLayout.defaultSubtitle,
+                                   \.overlayLayout.subtitleText, page))
+        rows.append(toggleRow("overlaySanity", L10n.text("Show Sanity", "显示理智"), \.overlayLayout.showsSanity, page))
+        // The former Display > Facility alerts switch: off also stops the monitor.
+        rows.append(toggleRow("facility", L10n.text("Show facility alerts", "显示设施警报"), \.facilityAlerts, page,
+                              confirmOff: { [weak self] commit in self?.confirmFacilityOff(commit) }))
+        rows.append(navRow("overlayEdit", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
+            self?.onEditOverlay?()
+        })
+        rows.append(restoreRow(.hudElements, page))
+        scroll.setContentHeight(stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10))
+        page.restoreOffset(of: scroll)
+        header.configure(crumbs: ["DISPLAY", "HUD ELEMENTS"], code: "SYS-02", title: HUDModuleTitle("HUD elements", "界面元素"),
+                         counter: HUDFormat.pad2(rows.count), showsBack: true)
+        wireBack(page) { [weak self] in self?.go(.main, forward: false) }
+    }
+
+    /// One line of custom text, for every language: Return or a click
+    /// elsewhere saves it, and an empty field brings back `placeholder`.
+    private func overlayTextRow(_ id: String, _ title: String, _ placeholder: String,
+                                _ key: WritableKeyPath<AppConfiguration, String>, _ page: HUDDesignPage) -> HUDRowPlate {
+        var options = HUDDesignTextField.Options()
+        options.maximumLength = HUDOverlayLayout.textLimit
+        let field = HUDDesignTextField(id: id, label: title, text: config[keyPath: key], placeholder: placeholder,
+                                       size: CGSize(width: 220, height: 30), options: options, env: env)
+        field.onCommit = { [weak self, weak field] text in
+            guard let self else { return }
+            let value = HUDOverlayLayout.cleanText(text)
+            if value != text { field?.setText(value) }
+            self.controller.update { $0[keyPath: key] = value }
+        }
+        register(field)
+        binders.append { [weak self, weak field] in
+            guard let self, let field, !field.isEditing, field.text != self.config[keyPath: key] else { return }
+            field.setText(self.config[keyPath: key])
+        }
+        return row(id, title, [field.layer], page, controls: [field])
+    }
+
+    /// Display > Open on: the module a new HUD opens on.
+    private func openModuleRow(_ page: HUDDesignPage) -> HUDRowPlate {
+        let opening = dropdown("openModule", L10n.text("Open on", "打开时显示"), openModuleTitle(config.overlayLayout.openModule)) { [weak self] anchor in
+            self?.openModuleMenu(anchor)
+        }
+        binders.append { [weak self, weak opening] in
+            guard let self else { return }; opening?.setValue(self.openModuleTitle(self.config.overlayLayout.openModule))
+        }
+        return row("openModule", L10n.text("Open on", "打开时显示"), [opening], page)
+    }
+
+    private func openModuleTitle(_ module: HUDModule?) -> String {
+        module?.title ?? L10n.text("Last opened", "上次打开的模块")
+    }
+
+    /// Last opened, then every module the navigation can open (not Add App).
+    private func openModuleMenu(_ anchor: HUDControl) {
+        let chosen = config.overlayLayout.openModule
+        var items = [HUDMenu.Item(id: "last", title: openModuleTitle(nil), selected: chosen == nil)]
+        for (index, module) in HUDOverlayLayout.openableModules.enumerated() {
+            items.append(HUDMenu.Item(id: module.rawValue, title: module.title, selected: chosen == module, separatorBefore: index == 0))
+        }
+        openMenu(id: "openModule", items: items, anchor: anchor) { [weak self] item in
+            let module = HUDModule(rawValue: item.id)
+            guard let self, module != self.config.overlayLayout.openModule else { return }
+            self.controller.update { $0.overlayLayout.openModule = module }
+        }
     }
 
     /// Switching the facility alerts off asks first, in red: both answers
@@ -597,13 +764,9 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         }
         binders.append { [weak self, weak placement] in guard let self else { return }; placement?.setValue(self.placementTitle(self.config.placement)) }
         rows.append(row("placement", L10n.text("Display position", "显示位置"), [placement], page))
-        rows.append(navRow("editPosition", L10n.text("Edit position", "编辑位置"), page, chevron: "↗") { [weak self] in
+        // Size and Length are set with the position, in the bar's own editor.
+        rows.append(navRow("editPosition", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
             self?.controller.editBatteryPosition()
-        })
-        rows.append(sliderRow("batterySize", L10n.text("Size", "大小"), value: c.scale * 100,
-                              range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent, page: page,
-                              read: { $0.scale * 100 }) { [weak self] value, _ in
-            self?.controller.update { $0.scale = value / 100 }
         })
         stack(rows, in: page.layer, page: page, top: HUDMetric.headerHeight)
         header.configure(crumbs: ["DISPLAY", "BATTERY ALERT"], code: "SYS-02", title: HUDModuleTitle("Battery alert", "电池提醒"),
@@ -974,7 +1137,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     private func rowWidth(_ page: HUDDesignPage) -> CGFloat {
-        (module == .display && section == .main) || section == .modules ? HUDMetric.box.width - 10 : HUDMetric.box.width
+        (module == .display && [.main, .overlay].contains(section)) || section == .modules ? HUDMetric.box.width - 10 : HUDMetric.box.width
     }
 
     private func navRow(_ id: String, _ title: String, _ page: HUDDesignPage, chevron: String = "›", cluster: [CALayer] = [],

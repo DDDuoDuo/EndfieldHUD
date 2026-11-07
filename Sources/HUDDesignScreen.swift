@@ -159,6 +159,9 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private(set) var page = HUDDesignPage()
     private let router = HUDInteractionRouter()
     private(set) var isActive = false
+    /// True while leaving or deactivating ends the controls' gestures: an
+    /// `.ended` a control reports then is an interruption, not a drop.
+    private(set) var isCancellingGestures = false
     private(set) var renderedLanguage: AppLanguage?
     /// `HUDColor.paletteGeneration` of the installed page.
     private var renderedPalette = HUDColor.paletteGeneration
@@ -403,7 +406,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func refreshRouter() {
         var controls = page.controls
         if showsHeader { controls.insert(contentsOf: header.controls, at: 0) }
-        controls += textFields
+        // A field placed in its row keeps that place; others follow the page.
+        controls += textFields.filter { field in !controls.contains { $0 === field } }
         if let state = popoverState { controls += state.controls + (state.popover.close.map { [$0] } ?? []) }
         if let state = menuState { controls += state.menu.controls }
         router.set(controls)
@@ -433,7 +437,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         }
         menu.onClose = { [weak self] in self?.closeMenu() }
         HUDMotion.perform { top.addSublayer(menu.layer) }
-        (anchor as? HUDDropdown)?.isOpen = true
+        (anchor as? HUDMenuAnchor)?.isOpen = true
         menuState = (menu, anchor)
         menu.playEntrance()
         refreshRouter()
@@ -444,7 +448,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func closeMenu() {
         guard let state = menuState else { return }
         menuState = nil
-        (state.anchor as? HUDDropdown)?.isOpen = false
+        (state.anchor as? HUDMenuAnchor)?.isOpen = false
         state.menu.controls.forEach { $0.clearInteractionState() }
         HUDMotion.perform { state.menu.layer.removeFromSuperlayer() }
         refreshRouter()
@@ -546,8 +550,12 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// An enabled control is drawn under this point; the host gives such a
     /// press to the module before the shell's cards and navigation beneath it.
-    func containsControl(atBox point: CGPoint) -> Bool {
-        isActive && swapWork == nil && router.control(at: point, in: root) != nil
+    func containsControl(atBox point: CGPoint) -> Bool { control(atBox: point) != nil }
+
+    /// The enabled control a left press at this point would pick, so a
+    /// right-click resolves its target exactly as a left-click does.
+    func control(atBox point: CGPoint) -> HUDControl? {
+        isActive && swapWork == nil ? router.control(at: point, in: root) : nil
     }
 
     /// Wheel: an open menu, then the module's zoom surfaces, then scroll areas.
@@ -572,6 +580,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     private func cancelGestures() {
+        isCancellingGestures = true
+        defer { isCancellingGestures = false }
         for control in router.controls { (control as? HUDSlider)?.cancelDrag(); control.clearInteractionState() }
         router.cancel()
     }

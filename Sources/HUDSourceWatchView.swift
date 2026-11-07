@@ -105,6 +105,16 @@ final class HUDSourceWatchView: NSView {
         let path: CGPath?
     }
     private var desktopButtonClips: [HUDSourceID: DesktopLabelClip] = [:]
+    /// Display > Modules > Arrange on HUD: the right-hand tiles that can be
+    /// dragged carry corner marks in the plate ink, a little wider on the one
+    /// being dragged. They are projected with the labels, only when the pose changes.
+    var desktopArrangeTargets: Set<HUDNavigationTarget> = [] {
+        didSet { if desktopArrangeTargets != oldValue { refreshDesktopArrangeMarks() } }
+    }
+    var desktopArrangeLifted: HUDNavigationTarget? {
+        didSet { if desktopArrangeLifted != oldValue { refreshDesktopArrangeMarks() } }
+    }
+    private var desktopArrangeMarks: [HUDSourceID: (container: CALayer, marks: CAShapeLayer, clip: CAShapeLayer)] = [:]
     private var desktopViewportClip: DesktopLabelClip?
     private var lastDesktopProjection: (root: simd_double4x4, bounds: CGRect, scroll: Double)?
     private var desktopProjectionWasAnimating = true
@@ -1365,6 +1375,30 @@ final class HUDSourceWatchView: NSView {
     func navigationTarget(at point: CGPoint) -> HUDNavigationTarget? {
         button(at: point).flatMap { actionsByID[$0]?.target }
     }
+    /// The right-hand list's tile under `point`: a module, a saved app or Add
+    /// App (never the profile card, banner, chevrons, Quit or the left and
+    /// bottom buttons).
+    func desktopRowTarget(at point: CGPoint) -> HUDNavigationTarget? {
+        guard let id = button(at: point), desktopRightButtonIDs.contains(id) else { return nil }
+        return actionsByID[id]?.target
+    }
+    /// The action is a tile of the right-hand list.
+    func isRowAction(_ action: ButtonAction) -> Bool { desktopRightButtonIDs.contains(action.source.nodeID) }
+    /// While a tile is dragged: near the top or bottom edge of the right-hand
+    /// list, or past it, the list scrolls a little toward the pointer, by the
+    /// same on-screen band and step as the other dragged lists.
+    @discardableResult func scrollDesktopNavigationTowardEdge(at point: CGPoint) -> Bool {
+        guard desktopMode, let frame = renderedFrame, let camera = renderedCamera, let scroll = frame.layoutReport.scroll,
+              let node = frame.node(scroll.viewportID), let rect = node.rect,
+              let local = camera.camera.pointOnPlane(point, world: camera.worldRoot * node.worldMatrix, viewport: bounds),
+              local.x >= rect.origin.x, local.x <= rect.origin.x + rect.size.x else { return false }
+        // Source UI space is y-up: the list's top edge is its rect's maxY.
+        let unitsPerPoint = max(.ulpOfOne, sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera))
+        let step = HUDDragGrip.edgeScrollStep(offset: CGFloat((rect.origin.y + rect.size.y - local.y) / unitsPerPoint),
+                                              length: CGFloat(rect.size.y / unitsPerPoint))
+        guard step != 0 else { return false }
+        return scrollDesktopNavigation(step < 0 ? -1 : 1, points: Double(abs(step)))
+    }
     var desktopNavigationTargets: [HUDNavigationTarget] { desktopEntries.map(\.target) }
     private func refreshDesktopScrollIndicators() {
         let scrollable = (renderedFrame?.layoutReport.scroll?.hiddenLength ?? 0) > 0
@@ -1389,12 +1423,12 @@ final class HUDSourceWatchView: NSView {
         guard points.count == 2 else { return 1 }
         return rect.size.y / max(1, hypot(Double(points[1].x - points[0].x), Double(points[1].y - points[0].y)))
     }
-    @discardableResult func scrollDesktopNavigation(_ direction: Int, animated: Bool = false) -> Bool {
+    @discardableResult func scrollDesktopNavigation(_ direction: Int, points: Double = 32, animated: Bool = false) -> Bool {
         guard desktopMode, inputEnabled, playback.phase == .visible,
               let frame = renderedFrame, let camera = renderedCamera, let scroll = frame.layoutReport.scroll,
               scroll.hiddenLength > 0, let node = frame.node(scroll.viewportID), let rect = node.rect,
               desktopScrollMotion.canScroll(direction) else { return false }
-        let delta = -Double(direction) * 32 * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / max(1, scroll.hiddenLength)
+        let delta = -Double(direction) * points * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / max(1, scroll.hiddenLength)
         desktopScrollMotion.scroll(by: delta, hiddenLength: scroll.hiddenLength, at: now,
             reduceMotion: !animated || HUDRuntimeAppearance.reduceMotion)
         verticalNormalizedPosition = desktopScrollMotion.position
@@ -1770,6 +1804,26 @@ final class HUDSourceWatchView: NSView {
         updateAnimatorStates(at: time)
     }
 
+    /// What a bound button does: open its module or app, or, while it can be
+    /// arranged (Display > Modules > Arrange on HUD), be dragged to reorder.
+    private func desktopAccessibilityHelp(for entry: HUDDesktopWatchNavigation.Entry) -> String {
+        if !desktopArrangeTargets.isEmpty, entry.target.group == .right {
+            return HUDModuleLayout.arrangeHelp(draggable: desktopArrangeTargets.contains(entry.target))
+        }
+        return entry.target.module?.title ?? (L10n.text("Open ", "打开 ") + entry.title)
+    }
+
+    /// Arranging started, ended or lifted another tile: the bound buttons'
+    /// help follows, and the marks are projected again on the next render.
+    private func refreshDesktopArrangeMarks() {
+        guard desktopMode else { return }
+        for (id, index) in desktopBindings where desktopEntries.indices.contains(index) {
+            accessibilityButtons[id]?.setAccessibilityHelp(desktopAccessibilityHelp(for: desktopEntries[index]))
+        }
+        settledRenderPacket = nil; lastDesktopProjection = nil
+        refreshPlaybackScheduling()
+    }
+
     private func bindDesktopButtons(_ bindings: [HUDSourceID: Int]) {
         desktopBindings = bindings
         lastDesktopProjection = nil
@@ -1789,7 +1843,7 @@ final class HUDSourceWatchView: NSView {
             let entry = desktopEntries[index]
             actionsByID[button.nodeID] = ButtonAction(source: button, target: entry.target)
             accessibilityButtons[button.nodeID]?.setAccessibilityLabel(entry.title)
-            accessibilityButtons[button.nodeID]?.setAccessibilityHelp(entry.target.module?.title ?? (L10n.text("Open ", "打开 ") + entry.title))
+            accessibilityButtons[button.nodeID]?.setAccessibilityHelp(desktopAccessibilityHelp(for: entry))
             let isReport = button.path.hasSuffix("/ReportBtn") && entry.target == .module(.activityMonitor)
             let reportArtwork = isReport ? desktopReportArtwork() : nil
             if !isReport || reportArtwork != nil,
@@ -1900,7 +1954,7 @@ final class HUDSourceWatchView: NSView {
         guard desktopMode, let card = document.desktopProfileCard else { return }
         desktopProfileInput = (profile, avatar, background, avatarOrientation)
         let accent = profile.resolvedAccent(fallback: HUDRuntimeAppearance.accent).usingColorSpace(.sRGB) ?? .white
-        let key = ProfileKey(strings: [profile.name, desktopUIDRedacted ? "" : profile.displayedUID, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
+        let key = ProfileKey(strings: [profile.displayedName, desktopUIDRedacted ? "" : profile.displayedUID, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
             values: [Double(profile.permissionLevel), profile.avatarZoom, profile.avatarOffsetX, profile.avatarOffsetY,
                 profile.thumbnailOffsetX, profile.thumbnailOffsetY, profile.thumbnailZoom, Double(avatarOrientation),
                 Double(accent.redComponent), Double(accent.greenComponent), Double(accent.blueComponent)],
@@ -1908,7 +1962,7 @@ final class HUDSourceWatchView: NSView {
         guard desktopProfileKey != key else { return }
         desktopProfileKey = key
         let level = min(60, max(1, profile.permissionLevel))
-        let captions = ["managerName": profile.name, "managerNumber": desktopUIDRedacted ? "UID:" : "UID: " + profile.displayedUID,
+        let captions = ["managerName": profile.displayedName, "managerNumber": desktopUIDRedacted ? "UID:" : "UID: " + profile.displayedUID,
             "managerLevel": String(level), "managerLevelLabel": L10n.text("Authority", "权限等级"),
             "progressTxt": level == 60 ? L10n.text("MAX", "满级") : ""]
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -2405,6 +2459,43 @@ final class HUDSourceWatchView: NSView {
             }
             present(layers.container, mask: layers.clip, clip: projectedClip, opacity: Float(frame.inheritedAlpha[iconID] ?? 1))
             layers.content.transform = Self.projectiveTextTransform(corners, size: CGSize(width: 32, height: 32))
+        }
+        // Arrange on HUD: corner marks around each draggable tile, in its own
+        // button's masks, sized in points on the projected tile.
+        for buttonID in desktopRightButtonIDs where !desktopArrangeTargets.isEmpty || desktopArrangeMarks[buttonID] != nil {
+            let target = actionsByID[buttonID]?.target
+            var corners: [CGPoint] = []
+            if let target, desktopArrangeTargets.contains(target), frame.node(buttonID)?.activeInHierarchy == true,
+               let hit = frame.hits.first(where: { $0.buttonID == buttonID && $0.graphicID == buttonID })
+                ?? frame.hits.first(where: { $0.buttonID == buttonID }) {
+                let r = hit.rect
+                corners = [SIMD3(r.origin.x, r.origin.y + r.size.y, 0), SIMD3(r.origin.x + r.size.x, r.origin.y + r.size.y, 0),
+                           SIMD3(r.origin.x + r.size.x, r.origin.y, 0), SIMD3(r.origin.x, r.origin.y, 0)]
+                    .compactMap { camera.camera.project($0, world: hit.world, viewport: bounds)?.point }
+            }
+            let projectedClip = corners.count == 4 ? clip(for: buttonID) : nil
+            guard let projectedClip, projectedClip.path != nil else {
+                if let layers = desktopArrangeMarks[buttonID], !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
+            let layers: (container: CALayer, marks: CAShapeLayer, clip: CAShapeLayer)
+            if let existing = desktopArrangeMarks[buttonID] { layers = existing }
+            else {
+                let container = CALayer(), marks = CAShapeLayer(), mask = CAShapeLayer()
+                container.name = "desktop.watch.arrange." + buttonID.rawValue
+                container.zPosition = 11; container.addSublayer(marks); container.mask = mask
+                marks.anchorPoint = .zero; marks.position = .zero
+                layer?.addSublayer(container)
+                layers = (container, marks, mask); desktopArrangeMarks[buttonID] = layers
+            }
+            present(layers.container, mask: layers.clip, clip: projectedClip, opacity: Float(frame.inheritedAlpha[buttonID] ?? 1))
+            let size = CGSize(width: max(1, hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y)),
+                              height: max(1, hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y)))
+            let box = CGRect(origin: .zero, size: size)
+            if layers.marks.bounds != box { layers.marks.bounds = box }
+            HUDArchiveTile.applyArrangeMark(layers.marks, in: box, lifted: target == desktopArrangeLifted)
+            layers.marks.contentsScale = textScale
+            layers.marks.transform = Self.projectiveTextTransform(corners, size: size)
         }
     }
 

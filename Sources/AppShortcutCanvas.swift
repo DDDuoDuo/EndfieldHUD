@@ -3,13 +3,16 @@ import QuartzCore
 import UniformTypeIdentifiers
 
 /// The App Shortcuts screen of the redesign (spec §3.23): one row per saved
-/// launcher with its icon tile (Choose icon), an editable name, Open and
-/// Remove; Add App chooses an application. Launching is delegated to the
-/// overlay owner (`onLaunch`) so the HUD can finish closing first.
+/// launcher with its grip (drag to reorder, press for the item menu), its icon
+/// tile (Change icon), an editable name, Open and Remove; Add App chooses an
+/// application. Launching is delegated to the overlay owner (`onLaunch`) so
+/// the HUD can finish closing first. The list order is the right-hand order.
 final class AppShortcutCanvas: HUDDesignCanvas {
     var onLaunch: ((UUID) -> Void)?
     var onSaved: ((AppShortcut) -> Void)?
     var onRemoved: ((String) -> Void)?
+    /// The order changed (a grip drag or Move up / Move down).
+    var onReordered: (() -> Void)?
     private let store: AppShortcutStore?
     private let storeError: String?
     private(set) var items: [AppShortcut] = []
@@ -20,7 +23,13 @@ final class AppShortcutCanvas: HUDDesignCanvas {
     private var dialogGeneration = 0
     private(set) var isDropTarget = false
     private var revealsEnd = false
+    private var rows: [UUID: HUDRowPlate] = [:]
+    private var tiles: [UUID: AppShortcutTile] = [:]
+    private var grips: [HUDDragGrip] = []
+    private weak var list: HUDScrollArea?
+    private var reorder: HUDListReorder<UUID>?
     static let rowHeight: CGFloat = 56
+    static var pitch: CGFloat { rowHeight + HUDMetric.rowGap }
     static let nameLimit = 24
     override var isPresentingPanel: Bool { chooser != nil }
     override var isInputLocked: Bool { super.isInputLocked || chooser != nil || isDropTarget }
@@ -36,8 +45,8 @@ final class AppShortcutCanvas: HUDDesignCanvas {
         if let storeError { showError(storeError) }
     }
 
-    override func didDeactivate() { closeChooser(); isDropTarget = false }
-    override func willLeave() { closeChooser() }
+    override func didDeactivate() { cancelReorder(); closeChooser(); isDropTarget = false }
+    override func willLeave() { cancelReorder(); closeChooser() }
 
     /// Rebuilds from the store when its records changed.
     func reload() {
@@ -86,7 +95,7 @@ final class AppShortcutCanvas: HUDDesignCanvas {
             revealsEnd = true
             reload()
             onSaved?(saved)
-            toast(icon: .plus, "App added", "已添加到右侧列表")
+            toast(icon: .plus, "App added", "已添加到右侧列表", detail: L10n.text("Click the icon to change it", "点击图标即可更换"))
             return true
         } catch { showError(error.localizedDescription); return false }
     }
@@ -94,6 +103,7 @@ final class AppShortcutCanvas: HUDDesignCanvas {
     // MARK: Page
 
     override func buildPage(_ page: HUDDesignPage) {
+        rows = [:]; tiles = [:]; grips = []; reorder = nil
         let add = HUDButton(id: "apps:add", title: L10n.text("Add App", "添加应用"), icon: .plus, kind: .primary, size: .small, env: env)
         add.place(at: .zero)
         add.isEnabled = store != nil
@@ -106,14 +116,15 @@ final class AppShortcutCanvas: HUDDesignCanvas {
             HUDMotion.perform { empty.frame.origin = CGPoint(x: 0, y: top); page.layer.addSublayer(empty) }
             page.stagger(empty)
         } else {
-            let height = CGFloat(items.count) * (Self.rowHeight + HUDMetric.rowGap) - HUDMetric.rowGap
+            let height = CGFloat(items.count) * Self.pitch - HUDMetric.rowGap
             let scroll = page.scrollArea(id: "apps", frame: CGRect(x: 0, y: top, width: HUDMetric.box.width, height: min(420, HUDMetric.box.height - top)))
             scroll.setContentHeight(height)
+            list = scroll
             let width = scroll.contentWidth
             for (index, item) in items.enumerated() {
                 let row = makeRow(item, width: width, page: page)
                 HUDMotion.perform {
-                    row.layer.frame.origin = CGPoint(x: 0, y: CGFloat(index) * (Self.rowHeight + HUDMetric.rowGap))
+                    row.layer.frame.origin = CGPoint(x: 0, y: CGFloat(index) * Self.pitch)
                     scroll.content.addSublayer(row.layer)
                 }
                 page.stagger(row.layer)
@@ -134,11 +145,21 @@ final class AppShortcutCanvas: HUDDesignCanvas {
         }
     }
 
-    /// Row plate, min-height 56, padding 8 10 6 16: tile, name field, Open, Remove.
+    /// Row plate, min-height 56, padding 8 10 6 16: grip (in the left padding),
+    /// tile, name field, Open, Remove.
     private func makeRow(_ item: AppShortcut, width: CGFloat, page: HUDDesignPage) -> HUDRowPlate {
         let row = HUDRowPlate(id: "apps:\(item.id.uuidString)", title: "", width: width, height: Self.rowHeight, env: env)
         let centre: CGFloat = 8 + (Self.rowHeight - 14) / 2
-        let tile = AppShortcutTile(id: "apps:\(item.id.uuidString):icon", label: L10n.text("Choose icon", "选择图标") + ", " + item.name,
+        // The row's left edge: drag to reorder; a press opens the item menu (Change icon, move,
+        // Remove), which is also how keyboard and VoiceOver reach those actions.
+        let grip = HUDDragGrip(id: "apps:\(item.id.uuidString):grip", label: L10n.text("App options", "应用选项") + ", " + item.name,
+                               size: CGSize(width: 14, height: Self.rowHeight), dotsAt: CGPoint(x: 5, y: centre - 5), env: env)
+        grip.onActivate = { [weak self, weak grip] in self?.openItemMenu(item.id, anchor: grip) }
+        grip.onDrag = { [weak self, weak grip] phase, point in
+            guard let self, let grip else { return }
+            self.dragRow(item.id, phase: phase, at: self.root.convert(point, from: grip.layer))
+        }
+        let tile = AppShortcutTile(id: "apps:\(item.id.uuidString):icon", label: L10n.text("Change icon", "更换图标") + ", " + item.name,
                                    artwork: artwork(item.iconPreset, for: item), env: env)
         tile.onActivate = { [weak self, weak tile] in
             guard let self, let tile else { return }
@@ -160,15 +181,103 @@ final class AppShortcutCanvas: HUDDesignCanvas {
         field.onCommit = { [weak self, weak field] text in self?.rename(item.id, to: text, field: field) }
         register(field)
         HUDMotion.perform {
+            grip.layer.frame.origin = .zero
             tile.layer.frame.origin = CGPoint(x: 16, y: centre - 20)
             field.layer.frame.origin = CGPoint(x: fieldX, y: centre - 15)
             open.layer.frame.origin = CGPoint(x: openX, y: centre - 15)
             remove.layer.frame.origin = CGPoint(x: removeX, y: centre - 15)
-            [tile.layer, field.layer, open.layer, remove.layer].forEach(row.layer.addSublayer)
+            [grip.layer, tile.layer, field.layer, open.layer, remove.layer].forEach(row.layer.addSublayer)
         }
         env.applyScale(to: row.layer)
-        page.add(row); page.add([tile, field, open, remove])
+        page.add(row); page.add([grip, tile, field, open, remove])
+        rows[item.id] = row; tiles[item.id] = tile; grips.append(grip)
         return row
+    }
+
+    /// The item menu (grip press): Change icon, Move up, Move down, Remove.
+    private func openItemMenu(_ id: UUID, anchor: HUDControl?) {
+        guard let index = items.firstIndex(where: { $0.id == id }), let row = rows[id] else { return }
+        if isMenuOpen { closeMenu(); return }
+        let item = items[index]
+        let entries = [HUDMenu.Item(id: "icon", title: L10n.text("Change icon", "更换图标")),
+                       HUDMenu.Item(id: "up", title: L10n.text("Move up", "上移"), separatorBefore: true, enabled: index > 0),
+                       HUDMenu.Item(id: "down", title: L10n.text("Move down", "下移"), enabled: index + 1 < items.count),
+                       HUDMenu.Item(id: "remove", title: L10n.text("Remove", "移除"), danger: true, separatorBefore: true)]
+        openMenu(id: "apps:item", items: entries, anchorRect: anchor?.rect(in: root) ?? row.rect(in: root), anchor: anchor,
+                 minimumWidth: 168) { [weak self] picked in
+            guard let self else { return }
+            switch picked.id {
+            case "icon": if let tile = self.tiles[id] { self.openIconMenu(item, anchor: tile) }
+            case "up": self.moveRow(id, to: index - 1)
+            case "down": self.moveRow(id, to: index + 1)
+            default: self.confirmRemove(item)
+            }
+        }
+    }
+
+    /// Move up / Move down: one store write, then the list and the right-hand order follow.
+    private func moveRow(_ id: UUID, to index: Int) {
+        guard let store else { return }
+        let before = store.items.map(\.id)
+        do { try store.move(id: id, to: index) } catch { showError(error.localizedDescription); rerender(); return }
+        guard store.items.map(\.id) != before else { return }
+        reload()
+        onReordered?()
+        if let list, let slot = items.firstIndex(where: { $0.id == id }) {
+            list.reveal(CGRect(x: 0, y: CGFloat(slot) * Self.pitch, width: list.contentWidth, height: Self.rowHeight))
+        }
+    }
+
+    // MARK: Reordering by the grip
+
+    /// Lift, drag and drop as the Notes TODO cards (HUDListReorder); the drop
+    /// is one store write. Nothing lifts with one row, the chooser or a drop.
+    private func dragRow(_ id: UUID, phase: HUDDragGrip.Phase, at point: CGPoint) {
+        guard let list else { return }
+        let local = list.content.convert(point, from: root)
+        switch phase {
+        case .began:
+            guard items.count > 1, chooser == nil, !isDropTarget, let row = rows[id] else { return }
+            closePopups(); endEditing(commit: true)
+            guard let lifted = HUDListReorder(lifting: id, order: items.map(\.id), layer: row.layer, grabY: local.y,
+                                              top: 0, pitch: Self.pitch, env: env) else { return }
+            reorder = lifted
+            context.onLockParallax?()
+        case .moved:
+            guard var state = reorder, state.id == id else { return }
+            state.move(to: point, list: list, root: root, layers: { [rows] in rows[$0]?.layer }, env: env)
+            reorder = state
+        case .ended:
+            guard let state = reorder, state.id == id else { return }
+            // Closing the HUD or leaving the module mid-drag puts the row back.
+            guard !isCancellingGestures else { cancelReorder(); return }
+            reorder = nil
+            state.drop(rows[id]?.layer, env: env)
+            guard state.order != items.map(\.id), let store else { return }
+            do { try store.move(id: id, to: state.index) } catch {
+                // Refused (for example the file changed on disk): the rows return to the saved order.
+                showError(error.localizedDescription); rerender(); return
+            }
+            items = store.items
+            onReordered?()
+            // The page order (VoiceOver) follows once the row has landed.
+            HUDListReorder<UUID>.afterLanding(env: env) { [weak self] in
+                guard let self, self.isActive, self.reorder == nil else { return }
+                self.rerender()
+            }
+        }
+    }
+
+    /// A lifted row returns to its slot (the module was left mid-drag).
+    private func cancelReorder() {
+        guard let state = reorder else { return }
+        reorder = nil
+        state.cancel(restoring: items.map(\.id), layers: { [rows] in rows[$0]?.layer })
+    }
+
+    override func cursor(at point: CGPoint?) -> NSCursor? {
+        guard reorder != nil || (isActive && items.count > 1 && chooser == nil) else { return nil }
+        return HUDDragGrip.cursor(lifted: reorder != nil, grips: grips, at: point, in: root)
     }
 
     /// Choose icon: every preset as the tile it would make, in an icon grid.
@@ -262,6 +371,18 @@ final class AppShortcutCanvas: HUDDesignCanvas {
         return true
     }
 
+    // MARK: Verification
+
+    func tileForTesting(_ id: UUID) -> AppShortcutTile? { tiles[id] }
+    func gripForTesting(_ id: UUID) -> HUDDragGrip? { grips.first { $0.id == "apps:\(id.uuidString):grip" } }
+    func dragRowForTesting(_ id: UUID, toSlot slot: Int) {
+        guard let grip = gripForTesting(id) else { return }
+        let start = root.convert(CGPoint(x: 7, y: 28), from: grip.layer)
+        HUDListReorder<UUID>.simulate(from: start, slots: slot - (items.firstIndex { $0.id == id } ?? 0), pitch: Self.pitch) {
+            dragRow(id, phase: $0, at: $1)
+        }
+    }
+
     static func applicationURLs(_ pasteboard: NSPasteboard) -> [URL] {
         (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
             .filter { $0.pathExtension.lowercased() == "app" }
@@ -320,11 +441,19 @@ final class AppShortcutCanvas: HUDDesignCanvas {
 }
 
 /// The 40 × 40 app icon tile (spec §3.23): the shortcut's artwork with an
-/// inset ring rgba(0,0,0,.25); it opens Choose icon.
-final class AppShortcutTile: HUDControl {
+/// inset ring rgba(0,0,0,.25) and, on its lower right corner, a dark chip
+/// with the yellow chooser caret of the dropdowns (Display > Center logo),
+/// so it reads as a chooser; it opens Choose icon.
+final class AppShortcutTile: HUDControl, HUDMenuAnchor {
     private let brighten = HUDLayer.plain("apps.tile.brighten")
+    private let badge = HUDLayer.shape("apps.tile.badge")
+    private let caret: CAShapeLayer
+    static let badgeSide: CGFloat = 14
+    var isOpen = false { didSet { if isOpen != oldValue { renderCaret() } } }
 
     init(id: String, label: String, artwork: HUDMenu.Icon, env: HUDDesignEnvironment) {
+        let side = Self.badgeSide
+        caret = HUDDropdown.caretLayer("apps.tile.caret", size: CGSize(width: 8, height: 5), position: CGPoint(x: side / 2 + 0.5, y: side / 2 + 0.5))
         super.init(id: id, label: label, env: env)
         let bounds = CGRect(origin: .zero, size: artwork.size)
         HUDMotion.perform {
@@ -336,12 +465,17 @@ final class AppShortcutTile: HUDControl {
             let ring = HUDLayer.plain("apps.tile.ring")
             ring.frame = bounds; ring.borderWidth = 1; ring.borderColor = HUDColor.black(0.25)
             brighten.frame = bounds; brighten.backgroundColor = HUDColor.white(0.07); brighten.opacity = 0
-            [picture, brighten, ring].forEach(layer.addSublayer)
+            badge.frame = CGRect(x: bounds.maxX - side, y: bounds.maxY - side, width: side, height: side)
+            badge.path = HUDShape.chamfer(CGRect(x: 0.5, y: 0.5, width: side - 1, height: side - 1), cut: 4, corners: .topLeft)
+            badge.fillColor = HUDColor.control; badge.strokeColor = HUDColor.ringField; badge.lineWidth = 1
+            badge.addSublayer(caret)
+            [picture, brighten, ring, badge].forEach(layer.addSublayer)
         }
         setTarget(bounds)
     }
 
-    override func hoverChanged() { applyHoverMotion(lift: 1, pressScale: 0.965, brighten: brighten) }
+    private func renderCaret() { HUDDropdown.renderCaret(caret, open: isOpen, hovered: isHovered && isEnabled, env: env) }
+    override func hoverChanged() { applyHoverMotion(lift: 1, pressScale: 0.965, brighten: brighten); renderCaret() }
     override func pressChanged() { applyHoverMotion(lift: 1, pressScale: 0.965, brighten: brighten) }
     override var accessibilityRole: HUDAccessibilityItem.Role? { .popUp(label) }
 }

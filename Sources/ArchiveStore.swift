@@ -791,10 +791,46 @@ final class ArchiveController {
         dirtyCategories[value.id] = value; upsertCategory(value); flush(); changed(); return value.id
     }
     func moveSelected(to categoryID: UUID?) {
-        guard var entry = selected, !isLocked(entry.id), entry.categoryID != categoryID,
-              categoryID.map({ id in categories.contains { $0.id == id } }) ?? true else { return }
-        entry.categoryID = categoryID; update(entry); categoryChanges[entry.id] = revision; flush(); changed()
+        guard let entry = selected, !isLocked(entry.id), entry.categoryID != categoryID, isKnownCategory(categoryID) else { return }
+        commitMove(entry, to: categoryID, selecting: true)
     }
+    /// Moves any document from the gallery. The open document goes through
+    /// moveSelected; another one is loaded (or its unsaved draft is used),
+    /// re-checked on delivery and saved through the same dirty/flush path.
+    func moveEntry(_ id: UUID, to categoryID: UUID?, completion: @escaping (Bool) -> Void = { _ in }) {
+        let moveOpen = { [self] in
+            let before = selected?.categoryID
+            moveSelected(to: categoryID)
+            completion(before != categoryID && selected?.categoryID == categoryID)
+        }
+        if id == selected?.id { moveOpen(); return }
+        guard canModify(id), isKnownCategory(categoryID),
+              let summary = entries.first(where: { $0.id == id }), summary.categoryID != categoryID else { completion(false); return }
+        if let pending = dirty[id] { commitMove(pending.entry, to: categoryID, selecting: false); completion(true); return }
+        perform({ [store] in try store.entry(id) }) { [self] result in
+            if id == selected?.id { moveOpen(); return }
+            switch result {
+            case .success(let loaded):
+                guard canModify(id), isKnownCategory(categoryID), entries.contains(where: { $0.id == id }),
+                      let entry = dirty[id]?.entry ?? loaded.map(applyingCategoryRemovals), entry.isValid,
+                      entry.categoryID != categoryID else {
+                    if loaded == nil { readError = ArchiveError.invalid.localizedDescription; changed() }
+                    completion(false); return
+                }
+                commitMove(entry, to: categoryID, selecting: false)
+                completion(true)
+            case .failure(let failure):
+                readError = failure.localizedDescription; changed(); completion(false)
+            }
+        }
+    }
+    /// The one move write: the payload and its category column are saved together.
+    private func commitMove(_ entry: ArchiveEntry, to categoryID: UUID?, selecting: Bool) {
+        var entry = entry; entry.categoryID = categoryID
+        if selecting { update(entry) } else { stage(entry, selecting: false) }
+        categoryChanges[entry.id] = revision; flush(); changed()
+    }
+    private func isKnownCategory(_ id: UUID?) -> Bool { id.map { id in categories.contains { $0.id == id } } ?? true }
     /// Confirmed deletion removes the category only. Pending references become
     /// uncategorized immediately and remain owned until the transaction commits.
     func deleteCategory(_ id: UUID) {
@@ -876,6 +912,12 @@ final class ArchiveController {
     /// A classify, unlock, declassify or recovery request is running.
     var isClassificationBusy: Bool { unlocking != nil || !classificationWork.isEmpty }
     private func isLocked(_ id: UUID) -> Bool { classified.contains(id) && unlockedID != id }
+    /// A gallery move or delete may touch this document now: it is not
+    /// locked, being deleted, (de)classified or held by a category removal.
+    func canModify(_ id: UUID) -> Bool {
+        !isLocked(id) && !deleting.contains(id) && !classificationWork.contains(id)
+            && !categoryRemovals.values.contains { $0.contains(id) }
+    }
     private func relock() { unlockedID = nil; visit &+= 1 }
 
     /// Saves the latest title and body first, then sets the flag and stores
@@ -1025,10 +1067,17 @@ final class ArchiveController {
     }
     func update(_ entry: ArchiveEntry) {
         guard entry.isValid, selected?.id == entry.id, !deleting.contains(entry.id), !isLocked(entry.id),
-              entry.categoryID.map({ id in categories.contains { $0.id == id } }) ?? true else { return }
-        var entry = entry; entry.modified = Date(); selected = entry
+              isKnownCategory(entry.categoryID) else { return }
+        stage(entry, selecting: true)
+    }
+    /// Records an edit as the newest dirty revision. Only the open document's
+    /// edits debounce; other documents are flushed by their caller.
+    private func stage(_ entry: ArchiveEntry, selecting: Bool) {
+        var entry = entry; entry.modified = Date()
+        if selecting { selected = entry }
         revision &+= 1; dirty[entry.id] = Pending(entry: entry, revision: revision)
         upsertSummary(entry)
+        guard selecting else { return }
         saveWork?.cancel()
         let task = DispatchWorkItem { [weak self] in self?.flush() }; saveWork = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: task)
@@ -1122,12 +1171,20 @@ final class ArchiveController {
     }
     func retryPendingSaves() { readError = nil; flush(); changed() }
     /// Locked documents cannot be deleted; unlock (or recover) first.
-    func deleteSelected() {
-        guard let entry = selected, !deleting.contains(entry.id), !isLocked(entry.id) else { return }
-        let id = entry.id, unsaved = dirty.removeValue(forKey: entry.id)
-        saveWork?.cancel(); saveWork = nil
-        deleting.insert(id); relock(); invalidatePresentation(); selected = nil
-        if let removed = entries.first(where: { $0.id == id }) { summaryThumbnailBytes -= thumbnailCost(removed.thumbnail) }
+    func deleteSelected() { if let id = selected?.id { delete(id) } }
+    /// Deletes the open document or, from the gallery, any other one. Only the
+    /// open document relocks and invalidates the presentation: that bumps the
+    /// generation, which would drop an activate() or select() still in flight.
+    func delete(_ id: UUID) {
+        let entry = selected?.id == id ? selected : nil
+        if entry != nil { guard !deleting.contains(id), !isLocked(id) else { return } }
+        else { guard canModify(id), entries.contains(where: { $0.id == id }) else { return } }
+        let unsaved = dirty.removeValue(forKey: id)
+        if entry != nil { saveWork?.cancel(); saveWork = nil }
+        deleting.insert(id)
+        if entry != nil { relock(); invalidatePresentation(); selected = nil }
+        let index = entries.firstIndex { $0.id == id }, removed = index.map { entries[$0] }
+        if let removed { summaryThumbnailBytes -= thumbnailCost(removed.thumbnail) }
         entries.removeAll { $0.id == id }; changed()
         // FIFO guarantees any already queued save completes before DELETE.
         // Clearing selection and tombstoning now rejects late editor callbacks.
@@ -1139,7 +1196,11 @@ final class ArchiveController {
                 classified.remove(id); verifierProblems.removeValue(forKey: id); onEvent?("deleted")
             case .failure(let failure):
                 if let unsaved { dirty[id] = unsaved }
-                upsertSummary(entry); writeErrors[id] = failure.localizedDescription
+                if let entry { upsertSummary(entry) }
+                else if let removed, let index, !entries.contains(where: { $0.id == id }) {
+                    entries.insert(removed, at: min(index, entries.count)); summaryThumbnailBytes += thumbnailCost(removed.thumbnail)
+                }
+                writeErrors[id] = failure.localizedDescription
             }
             changed()
         }

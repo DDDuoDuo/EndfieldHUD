@@ -155,6 +155,17 @@ final class AppShortcutStore {
         iconCache.removeValue(forKey: id)
     }
 
+    /// Moves a shortcut to `index` (clamped) in the list, which is also the
+    /// right-hand order: one write through `commit`, none when nothing moves.
+    func move(id: UUID, to index: Int) throws {
+        guard let from = items.firstIndex(where: { $0.id == id }) else { return }
+        let target = min(max(0, index), items.count - 1)
+        guard target != from else { return }
+        var next = items
+        next.insert(next.remove(at: from), at: target)
+        try commit(next)
+    }
+
     /// Resolves bookmarks without UI or mounting unavailable volumes. Missing
     /// applications remain editable/removable; they never launch a substitute.
     func resolvedURL(for id: UUID) throws -> URL {

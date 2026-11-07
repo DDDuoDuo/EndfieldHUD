@@ -266,8 +266,8 @@ enum LocalizationCatalog {
         "Next track\u{1F}下一首": "다음 곡",
         "Playback position\u{1F}播放进度": "재생 위치",
         "Playing app volume\u{1F}当前播放应用音量": "재생 중인 앱 음량",
-        "Connect to allow playback controls.\u{1F}连接以允许播放控制。": "연결하여 재생 제어를 허용하세요.",
-        "Allow this player in System Settings > Privacy & Security > Automation, then refresh.\u{1F}请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。": "시스템 설정 > 개인정보 보호 및 보안 > 자동화에서 이 플레이어를 허용한 다음 새로 고침하세요.",
+        "Allow EndfieldHUD to control this player when macOS asks.\u{1F}请在 macOS 询问时允许 EndfieldHUD 控制此播放器。": "macOS에서 묻는 경우 EndfieldHUD가 이 플레이어를 제어하도록 허용하세요.",
+        "Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.\u{1F}请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。": "시스템 설정 > 개인정보 보호 및 보안 > 자동화에서 이 플레이어를 허용한 다음 HUD를 다시 여세요.",
         "This version of the player does not expose the required playback controls.\u{1F}此版本的播放器未提供所需的播放控制。": "이 버전의 플레이어는 필요한 재생 제어 기능을 제공하지 않습니다.",
         "The player did not respond. Try refreshing.\u{1F}播放器未响应，请尝试刷新。": "플레이어가 응답하지 않습니다. 새로 고침해 보세요.",
 
@@ -484,6 +484,7 @@ enum LocalizationCatalog {
         "Cambrian\u{1F}寒武纪": "캄브리안",
         "Marthe\u{1F}玛尔特": "마르트",
         "Icefield Messenger\u{1F}冰原信使": "아이스필드 메신저",
+        "Watch\u{1F}腕表": "손목시계",
         "Power / Device Battery\u{1F}电量 / 设备电池": "전원 / 기기 배터리",
         ". Arrow keys select; Return copies; Delete removes the cached item.\u{1F}。方向键选择，回车复制，Delete 删除缓存项目。": ". 방향키로 선택, Return으로 복사, Delete로 캐시 항목을 삭제합니다.",
         "Pointer display\u{1F}鼠标所在显示器": "포인터가 있는 디스플레이",
@@ -1105,8 +1106,8 @@ enum LocalizationCatalog {
         Entry("Next track", "下一首", "下一首", "次の曲"),
         Entry("Playback position", "播放进度", "播放進度", "再生位置"),
         Entry("Playing app volume", "当前播放应用音量", "目前播放應用程式的音量", "再生中のアプリの音量"),
-        Entry("Connect to allow playback controls.", "连接以允许播放控制。", "連線以允許播放控制。", "接続して再生の操作を許可してください。"),
-        Entry("Allow this player in System Settings > Privacy & Security > Automation, then refresh.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。", "請在「系統設定」>「隱私權與安全性」>「自動化」中允許此播放器，然後重新整理。", "「システム設定」>「プライバシーとセキュリティ」>「オートメーション」でこのプレーヤーを許可してから更新してください。"),
+        Entry("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。", "請在 macOS 詢問時允許 EndfieldHUD 控制此播放器。", "macOS で確認されたら、EndfieldHUD によるこのプレーヤーの操作を許可してください。"),
+        Entry("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。", "請在「系統設定」>「隱私權與安全性」>「自動化」中允許此播放器，然後重新開啟介面。", "「システム設定」>「プライバシーとセキュリティ」>「オートメーション」でこのプレーヤーを許可してから、HUDを開き直してください。"),
         Entry("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。", "此版本的播放器未提供所需的播放控制。", "このバージョンのプレーヤーは必要な再生操作を提供していません。"),
         Entry("The player did not respond. Try refreshing.", "播放器未响应，请尝试刷新。", "播放器未回應，請嘗試重新整理。", "プレーヤーから応答がありません。更新してみてください。"),
 
@@ -1305,8 +1306,9 @@ enum LocalizationCatalog {
         Entry("Choose an application", "选择应用", "選擇應用程式", "アプリを選択"),
         Entry("Choose", "选择", "選擇", "選択"),
         Entry("Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。", "按 Return 套用名稱，按一下「儲存捷徑」以儲存變更。", "Returnで名前を適用します。「ショートカットを保存」で変更を保存します。"),
-        // HUDApplicationIcon.swift
+        // HUDChargeMetric.swift and BatteryCanvas.swift
         Entry("Battery", "电池", "電池", "バッテリー"),
+        // HUDApplicationIcon.swift
         Entry("Originium", "源石", "源石", "源石"),
         Entry("Orundum", "合成玉", "合成玉", "合成玉"),
         Entry("Perlica", "佩丽卡", "佩麗卡", "ペリカ"),
@@ -1338,6 +1340,7 @@ enum LocalizationCatalog {
         Entry("Cambrian", "寒武纪", "寒武紀", "カンブリアン"),
         Entry("Marthe", "玛尔特", "瑪爾特", "マルト"),
         Entry("Icefield Messenger", "冰原信使", "冰原信使", "アイスフィールドメッセンジャー"),
+        Entry("Watch", "腕表", "腕錶", "腕時計"),
         // HUDChargeBadge.swift
         Entry("Power / Device Battery", "电量 / 设备电池", "電量 / 裝置電池", "電源 / デバイスのバッテリー"),
         // ClipboardCanvas.swift

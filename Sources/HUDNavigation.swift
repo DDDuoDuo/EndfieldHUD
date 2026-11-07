@@ -174,6 +174,7 @@ final class HUDNavigation {
         self.dark = dark
         self.accent = accent; self.contentsScale = contentsScale
         for entry in entries { entry.update(dark: dark, accent: accent, contentsScale: contentsScale) }
+        if !arrangeTargets.isEmpty { applyArrangeMarks() }
         let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
         for arrow in [scrollUp, scrollDown] {
             arrow.contentsScale = scale
@@ -193,9 +194,28 @@ final class HUDNavigation {
         if let target { entries.first { $0.target == target }?.setHovered(true) }
     }
 
-    /// Right-hand modules hidden in System > Modules keep their entry here,
+    /// Right-hand modules hidden in Display > Modules keep their entry here,
     /// off screen, so showing them again reuses the same layers.
     private var parkedEntries: [HUDModule: HUDNavigationEntry] = [:]
+
+    /// Display > Modules > Arrange on HUD: the right-hand tiles that can be
+    /// dragged carry corner marks, a little wider on the one being dragged.
+    private var arrangeTargets: Set<HUDNavigationTarget> = []
+    private var arrangeLifted: HUDNavigationTarget?
+    func setArrangeMarks(_ targets: Set<HUDNavigationTarget>, lifted: HUDNavigationTarget? = nil) {
+        guard targets != arrangeTargets || lifted != arrangeLifted else { return }
+        arrangeTargets = targets; arrangeLifted = lifted
+        applyArrangeMarks()
+    }
+    private func applyArrangeMarks() {
+        for entry in entries + Array(parkedEntries.values) {
+            let marked = entry.group == .right && arrangeTargets.contains(entry.target)
+            entry.setArrangeMark(lifted: marked ? entry.target == arrangeLifted : nil)
+        }
+    }
+    func arrangeMarkPathForTesting(_ target: HUDNavigationTarget) -> CGPath? {
+        entries.first { $0.target == target }?.arrangeMarkPath
+    }
 
     /// Only app entries are inserted/removed. Existing module and app layers
     /// survive edits, reordering and reflow so pointer depth is uninterrupted.
@@ -542,6 +562,8 @@ final class HUDNavigationEntry {
     let faceLayer = CALayer()
     private(set) var isSelected = false
     private var isHovered = false
+    private var arrangeMark: CAShapeLayer?
+    fileprivate var arrangeMarkPath: CGPath? { arrangeMark?.path }
 
     /// Bounding boxes are in navigation-local coordinates. The host can union
     /// these before projecting through its parent plane for a native hit view.
@@ -1024,6 +1046,22 @@ final class HUDNavigationEntry {
         }
     }
 
+    /// Corner marks in the plate ink while the tile can be dragged, set
+    /// 4 px wider while it is (`lifted`); nil removes them.
+    fileprivate func setArrangeMark(lifted: Bool?) {
+        guard let lifted else { arrangeMark?.removeFromSuperlayer(); arrangeMark = nil; return }
+        let mark = arrangeMark ?? CAShapeLayer()
+        withoutActions {
+            mark.name = "navigation.arrangeMarks"
+            mark.frame = faceLayer.bounds
+            mark.zPosition = 20
+            HUDArchiveTile.applyArrangeMark(mark, in: faceLayer.bounds, lifted: lifted)
+            mark.contentsScale = layer.contentsScale
+            if mark.superlayer !== faceLayer { faceLayer.addSublayer(mark) }
+        }
+        arrangeMark = mark
+    }
+
     fileprivate func update(dark: Bool, accent: NSColor, contentsScale: CGFloat) {
         let appearanceChanged = self.dark != dark || !self.accent.isEqual(accent)
         self.dark = dark
@@ -1182,7 +1220,7 @@ final class HUDNavigationEntry {
     }
 
     /// The right-hand list's glyph for `module` as one `side`-px layer, the
-    /// game artwork where the list uses it, else the vector (System > Modules).
+    /// game artwork where the list uses it, else the vector (Display > Modules).
     static func glyphLayer(for module: HUDModule, side: CGFloat, ink: NSColor, scale: CGFloat) -> CALayer {
         let frame = CGRect(x: 0, y: 0, width: side, height: side)
         if let image = gameIcon(for: module)?.cgImage(size: 96, tint: ink) {

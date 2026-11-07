@@ -226,12 +226,21 @@ final class HUDSettingsController {
         }
     }
 
-    /// Restore only app preferences. Notes, shelf items, clipboard and shortcuts
-    /// are separate data stores and must not be deleted by this action.
-    func restoreDefaults() {
-        clearLayoutPreview()
-        endShortcutCapture()
-        applyPersistent(.defaults, forceShortcutRegistration: true)
+    /// Restore one page's preferences (see HUDSettingsScope); every other
+    /// preference is kept. Notes, shelf items, clipboard and shortcuts are
+    /// separate data stores and must not be deleted by this action.
+    /// A scope with the UI scale and position writes them at once, with no
+    /// keep-or-revert countdown, and drops a pending preview of them.
+    func restoreDefaults(_ scope: HUDSettingsScope) {
+        let restored = store.configuration.restoring(scope)
+        if Layout(restored) != Layout(store.configuration)
+            || Layout(configuration.restoring(scope)) != Layout(configuration) { clearLayoutPreview() }
+        applyPersistent(restored)
+    }
+
+    /// Nothing `scope` restores differs from its default.
+    func isDefault(_ scope: HUDSettingsScope) -> Bool {
+        configuration.restoring(scope) == configuration
     }
 
     @discardableResult
@@ -296,12 +305,11 @@ final class HUDSettingsController {
         endShortcutCapture()
     }
 
-    private func applyPersistent(_ proposed: AppConfiguration, shortcutAlreadyApplied: Bool = false,
-                                 forceShortcutRegistration: Bool = false) {
+    private func applyPersistent(_ proposed: AppConfiguration, shortcutAlreadyApplied: Bool = false) {
         let previous = store.configuration
         var candidate = proposed
         status = nil
-        if !shortcutAlreadyApplied && (forceShortcutRegistration || candidate.summonShortcut != previous.summonShortcut) {
+        if !shortcutAlreadyApplied && candidate.summonShortcut != previous.summonShortcut {
             let error = candidate.summonShortcut.validationError ?? onShortcutChange?(candidate.summonShortcut)
             shortcutChangeError = error
             if let error {

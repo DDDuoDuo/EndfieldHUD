@@ -2,16 +2,33 @@ import AppKit
 import ImageIO
 import QuartzCore
 
-/// Original MoneyCell artwork and a retained recovery tooltip. The HUD's
+/// Original MoneyCell wallet artwork, a vector Sanity icon, and a retained
+/// recovery tooltip. Its numbers and labels are real text (HarmonyOS Sans
+/// Medium through HUDText), drawn at the HUD's render scale. The HUD's
 /// existing visible clock supplies updates; this object owns no timer.
+/// The recovery menu draws in `layer`, or in `popoverHost` when the host
+/// gives it one above the rest of the HUD.
 final class HUDAccountGauge {
     struct Action {
         let id: String, label: String, rect: CGRect, enabled: Bool
     }
     let layer = CALayer()
-    private let number = CALayer()
+    private let icon = CALayer(), number = CALayer()
     private let feedback: HUDControlHighlightLayer
     private let popover = CALayer()
+    /// The recovery menu's layer, wherever it is hosted.
+    var popoverLayer: CALayer { popover }
+    /// A layer that draws the recovery menu instead of `layer` (nil: `layer`).
+    /// The host keeps it on the gauge's position and transform, so the menu's
+    /// frame (`popoverRect`) and every point stay in the gauge's coordinates.
+    var popoverHost: CALayer? {
+        didSet {
+            guard popoverHost !== oldValue else { return }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            (popoverHost ?? layer).addSublayer(popover)
+            CATransaction.commit()
+        }
+    }
     private let nextLabel = CALayer(), fullLabel = CALayer()
     private let nextValue = CALayer(), fullValue = CALayer()
     private let refresh = CAShapeLayer()
@@ -28,15 +45,65 @@ final class HUDAccountGauge {
     private(set) var value = ""
     private(set) var accessibilityLabel = ""
     private(set) var updateCount = 0
-    private var renderScale: CGFloat = 0
+    /// Pixels per point of the drawn number, icon and tooltip text.
+    private(set) var renderScale: CGFloat = 0
+    private var iconScale: CGFloat = 0
+    /// The HUD's backing x design scale, from the last `update` or `setScale`.
+    private var baseScale: CGFloat = 2
+    /// The gauge's drawn size relative to its 168 x 42 design. A placement
+    /// that scales the gauge sets this, so the text and icon are redrawn at
+    /// the new size instead of being stretched.
+    var sizeFactor: CGFloat = 1 {
+        didSet {
+            let clamped = AppConfiguration.clamp(sizeFactor, to: 0.25...4, fallback: 1)
+            if sizeFactor != clamped { sizeFactor = clamped }
+            if sizeFactor != oldValue { setScale(baseScale) }
+        }
+    }
+    /// The raster scale for the current base scale and size, by the HUD's
+    /// glyph rule (the tilted plane's oversample, capped like other text).
+    /// The size is a layer transform, so the cap is per on-screen point.
+    var targetScale: CGFloat { HUDRenderScale.glyphScale(baseScale: baseScale, magnification: sizeFactor) }
     static let size = CGSize(width: 168, height: 42)
+    /// Which way the recovery menu opens: left and down from the wallet's
+    /// bottom-right corner as designed, mirrored by an edge it would cross.
+    struct PopoverDirection: Equatable {
+        var opensRight = false, opensUp = false
+    }
+    /// Set by the host from where the gauge sits (`popoverDirection(gauge:within:)`).
+    var popoverDirection = PopoverDirection() {
+        didSet {
+            guard popoverDirection != oldValue else { return }
+            popoverRect = Layout.frame(width: popoverRect.width, direction: popoverDirection)
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            popover.frame = popoverRect
+            CATransaction.commit(); onChange?()
+        }
+    }
+    /// The direction that keeps the widest recovery menu inside `bounds` for
+    /// a gauge drawn at `gauge` (its 168 x 42 design times its size), in the
+    /// same coordinates. The designed direction wins wherever it fits.
+    static func popoverDirection(gauge: CGRect, within bounds: CGRect) -> PopoverDirection {
+        guard gauge.width > 0 else { return PopoverDirection() }
+        let scale = gauge.width / size.width
+        func extent(_ direction: PopoverDirection) -> CGRect {
+            let menu = Layout.frame(width: Layout.maximumWidth, direction: direction)
+            return CGRect(x: gauge.minX + menu.minX * scale, y: gauge.minY + menu.minY * scale,
+                          width: menu.width * scale, height: menu.height * scale)
+        }
+        let designed = extent(PopoverDirection()), mirrored = extent(PopoverDirection(opensRight: true, opensUp: true))
+        return PopoverDirection(opensRight: designed.minX < bounds.minX && mirrored.maxX <= bounds.maxX,
+                                opensUp: designed.maxY > bounds.maxY && mirrored.minY >= bounds.minY)
+    }
     /// The recovery menu grows left from the wallet's right edge, away from
     /// the adjacent clock, to fit its labels and values (`Layout`).
-    private(set) var popoverRect = Layout.frame(width: Layout.minimumWidth)
+    private(set) var popoverRect = Layout.frame(width: Layout.minimumWidth, direction: PopoverDirection())
     private var refreshRect: CGRect { Layout.refresh(width: popoverRect.width) }
     // Mirror the heading's x=270 inset around the 1,000-point HUD plane.
     static let headerPosition = CGPoint(x: 292, y: 0)
-    static var sourceNumberFont: String? { Numerals.font.map { $0.family + " " + $0.style } }
+    /// The face that draws the value and the recovery text.
+    static var sourceNumberFont: String? { CTFontCopyFullName(HUDText.font(numberStyle, language: HUDTextLanguage.tag())) as String }
+    private static var numberStyle: HUDTextStyle { HUDTextStyle(size: 18, weight: .medium, color: NSColor.white.cgColor) }
     private(set) var numberRenderCount = 0
     private(set) var tooltipRenderCount = 0
     private(set) var tooltipRasterCount = 0
@@ -66,8 +133,9 @@ final class HUDAccountGauge {
             bar.contentsCenter = CGRect(x: border / 60, y: 0, width: (60 - border * 2) / 60, height: 1)
             layer.addSublayer(bar)
         }
-        let icon = CALayer(); icon.name = "hud.account.stamina.item_ap"
-        icon.frame = CGRect(x: 3, y: -6, width: 54, height: 54); icon.contents = Artwork.icon; icon.contentsGravity = .resizeAspect; layer.addSublayer(icon)
+        icon.name = "hud.account.stamina.item_ap"
+        icon.frame = CGRect(x: 3, y: -6, width: 54, height: 54); icon.contentsGravity = .resizeAspect
+        icon.actions = ["contents": NSNull()]; layer.addSublayer(icon)
         number.name = "hud.account.stamina.value"; number.frame = CGRect(x: 39, y: 6, width: 121, height: 30)
         number.contentsGravity = .resize; number.actions = ["contents": NSNull()]; layer.addSublayer(number)
         feedback = HUDControlHighlightLayer.add(to: layer, rect: barRect, shape: .rounded)
@@ -103,19 +171,19 @@ final class HUDAccountGauge {
         popover.addSublayer(refresh)
         refreshFeedback = HUDControlHighlightLayer.add(to: popover, rect: refreshFrame, shape: .rounded)
         refreshFeedback.accentOverride = NSColor(white: 0.75, alpha: 1)
+        drawIcon(scale: targetScale)
     }
 
     func update(value next: String, accessibilityLabel label: String, visible: Bool, accent: NSColor, scale: CGFloat,
                 sanity: HypergryphSanityPresentation? = nil, at date: Date = Date()) {
-        let scale = scale.isFinite ? min(3, max(1, scale)) : 2
+        baseScale = scale.isFinite ? scale : 2
+        let scale = targetScale
         let next = String(next.prefix(24)), wasAvailable = canOpen, wasLink = opensWorkMode
         presentation = sanity; self.date = date
         if value != next || accessibilityLabel != label || layer.isHidden == visible || renderScale != scale {
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            if value != next || renderScale != scale {
-                number.contents = Numerals.render(next, in: number.bounds.size, scale: scale)
-                number.contentsScale = scale; numberRenderCount += 1
-            }
+            if value != next || renderScale != scale { drawNumber(next, scale: scale) }
+            drawIcon(scale: scale)
             value = next; accessibilityLabel = label; renderScale = scale; updateCount += 1
             layer.isHidden = !visible
             CATransaction.commit()
@@ -123,6 +191,42 @@ final class HUDAccountGauge {
         if !canOpen { dismiss(animated: false) }
         if isPopoverOpen { renderTooltip() }
         if wasAvailable != canOpen || wasLink != opensWorkMode { onChange?() }
+    }
+
+    /// Follows a HUD Scale, layout or display change between clock ticks.
+    /// `scale` is the HUD's backing x design scale; an unchanged result
+    /// draws nothing.
+    func setScale(_ scale: CGFloat) {
+        baseScale = scale.isFinite ? scale : 2
+        let scale = targetScale
+        // The HUD's raster pass may have reset the arrow; an unchanged scale redraws nothing else.
+        applyRefreshScale()
+        guard renderScale != 0, renderScale != scale else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        drawNumber(value, scale: scale); drawIcon(scale: scale); renderScale = scale
+        CATransaction.commit()
+        if isPopoverOpen { renderTooltip() }
+    }
+
+    /// The refresh arrow is vector art: it rasters at the HUD's rule for its
+    /// size (as the HUD's own raster pass sets it), not the glyph scale.
+    private func applyRefreshScale() {
+        let target = HUDRenderScale.contentScale(for: refresh, baseScale: baseScale, magnification: sizeFactor)
+        if refresh.contentsScale != target { refresh.contentsScale = target }
+    }
+
+    private func drawNumber(_ text: String, scale: CGFloat) {
+        // Source Text autosizes between 18 and 30 points, then the complete
+        // wallet is displayed at 0.6x. Extreme local work durations shrink
+        // further to stay inside the bar.
+        number.contents = Self.renderText(text, style: Self.numberStyle, in: number.bounds.size, scale: scale,
+                                          rightAligned: true, minimumFit: 4.0 / 18)
+        number.contentsScale = scale; numberRenderCount += 1
+    }
+    private func drawIcon(scale: CGFloat) {
+        guard iconScale != scale else { return }
+        icon.contents = HUDApplicationIcon.sanityImage(size: icon.bounds.width, scale: scale)
+        icon.contentsScale = scale; iconScale = scale
     }
 
     func perform(_ id: String) {
@@ -145,6 +249,10 @@ final class HUDAccountGauge {
     }
     func hover(at point: CGPoint?) {
         HUDControlHighlightLayer.update(in: layer, point: isInteractive ? point : nil)
+        // A hosted menu's refresh feedback (the host shares the gauge's coordinates).
+        if let host = popover.superlayer, host !== layer {
+            HUDControlHighlightLayer.update(in: host, point: isInteractive ? point : nil)
+        }
     }
     func dismiss(animated: Bool = true) { setOpen(false, animated: animated) }
     private func setOpen(_ value: Bool, animated: Bool = true) {
@@ -167,7 +275,8 @@ final class HUDAccountGauge {
         popover.removeAllAnimations(); popover.isHidden = false; popover.opacity = value ? 1 : 0
         if animated && !HUDRuntimeAppearance.reduceMotion {
             let alpha = CABasicAnimation(keyPath: "opacity"); alpha.fromValue = value ? 0 : 1; alpha.toValue = value ? 1 : 0
-            let shift = CABasicAnimation(keyPath: "transform.translation.y"); shift.fromValue = value ? -5 : 0; shift.toValue = value ? 0 : -3
+            let away: CGFloat = popoverDirection.opensUp ? -1 : 1
+            let shift = CABasicAnimation(keyPath: "transform.translation.y"); shift.fromValue = value ? -5 * away : 0; shift.toValue = value ? 0 : -3 * away
             let group = CAAnimationGroup(); group.animations = [alpha, shift]; group.duration = 0.16
             group.timingFunction = CAMediaTimingFunction(name: .easeOut); popover.add(group, forKey: "account.gauge.menu")
         } else { popover.isHidden = !value }
@@ -192,11 +301,9 @@ final class HUDAccountGauge {
         let key = [first, second, nextRecoveryText, fullRecoveryText, String(Double(renderScale)), String(presentation.refreshAvailable), String(presentation.isRefreshing)].joined(separator: "|")
         guard key != renderedTooltip else { return }
         renderedTooltip = key; tooltipRenderCount += 1
-        // English labels are the source glyphs; other languages take the
-        // standard faces (HarmonyOS Sans, the region's Noto for CJK).
-        let sourceLabels = !L10n.isCJK
-        let layout = Layout(labels: [first, second].map { sourceLabels ? Numerals.width($0) ?? Layout.labelWidth($0) : Layout.labelWidth($0) },
-                            values: [nextRecoveryText, fullRecoveryText].map { Numerals.width($0) ?? Layout.labelWidth($0) })
+        // HarmonyOS Sans, with the region's Noto for CJK labels.
+        let layout = Layout(labels: [first, second].map(Layout.labelWidth), values: [nextRecoveryText, fullRecoveryText].map(Layout.labelWidth),
+                            direction: popoverDirection)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if popoverRect != layout.frame {
             popoverRect = layout.frame; popover.frame = layout.frame
@@ -208,12 +315,10 @@ final class HUDAccountGauge {
             let contentKey = text + "|" + String(Double(renderScale)) + "|" + String(Double(frame.width))
             if item.frame != frame { item.frame = frame }
             guard tooltipContentKeys[index] != contentKey else { continue }
-            let source = index >= 2 || sourceLabels
-            item.contents = (source ? Numerals.render(text, in: frame.size, scale: renderScale, preferredSize: Layout.textSize, rightAligned: false) : nil)
-                ?? Layout.renderLabel(text, in: frame.size, scale: renderScale)
+            item.contents = Self.renderText(text, style: Layout.style, in: frame.size, scale: renderScale)
             item.contentsScale = renderScale; tooltipContentKeys[index] = contentKey; tooltipRasterCount += 1
         }
-        refresh.contentsScale = renderScale
+        applyRefreshScale()
         let enabled = presentation.refreshAvailable && !presentation.isRefreshing
         refresh.opacity = enabled ? 1 : 0.38; refreshFeedback.setEnabled(enabled)
         CATransaction.commit(); onChange?()
@@ -228,24 +333,27 @@ final class HUDAccountGauge {
         static let height: CGFloat = 65, rowHeight: CGFloat = 25, rows: [CGFloat] = [6, 33]
         static let leading: CGFloat = 10, columnGap: CGFloat = 14, refreshGap: CGFloat = 10, trailing: CGFloat = 6
         static let refreshSize = CGSize(width: 23, height: 25)
-        /// The source numerals shrink unless their cell is 2 px wider than the text.
+        /// Room beside each measured column, so text is never shrunk to fit.
         static let slack: CGFloat = 2
         /// Room for the longest countdowns ("00:00", "000:00:00") so the menu
         /// keeps its width while they count down.
         static let valueTemplate = "000:00:00"
         let frame: CGRect, labelWidth: CGFloat, valueWidth: CGFloat
 
-        init(labels: [CGFloat], values: [CGFloat]) {
-            let value = ceil(max(values.max() ?? 0, Numerals.width(Self.valueTemplate) ?? Self.labelWidth(Self.valueTemplate))) + Self.slack
+        init(labels: [CGFloat], values: [CGFloat], direction: PopoverDirection) {
+            let value = ceil(max(values.max() ?? 0, Self.labelWidth(Self.valueTemplate))) + Self.slack
             let fixed = Self.leading + Self.columnGap + Self.refreshGap + Self.refreshSize.width + Self.trailing
             let width = min(Self.maximumWidth, max(Self.minimumWidth, fixed + ceil(labels.max() ?? 0) + Self.slack + value))
-            frame = Self.frame(width: width)
+            frame = Self.frame(width: width, direction: direction)
             valueWidth = value
             labelWidth = width - fixed - value
         }
 
-        static func frame(width: CGFloat) -> CGRect {
-            CGRect(x: HUDAccountGauge.size.width - width, y: 40, width: width, height: height)
+        /// Under the wallet, overlapping its bottom 2 pt; mirrored, above it.
+        static func frame(width: CGFloat, direction: PopoverDirection) -> CGRect {
+            let gauge = HUDAccountGauge.size
+            return CGRect(x: direction.opensRight ? 0 : gauge.width - width,
+                          y: direction.opensUp ? gauge.height - 40 - height : 40, width: width, height: height)
         }
         static func refresh(width: CGFloat) -> CGRect {
             CGRect(origin: CGPoint(x: width - trailing - refreshSize.width, y: 19), size: refreshSize)
@@ -257,119 +365,34 @@ final class HUDAccountGauge {
                 : CGRect(x: Self.leading + labelWidth + Self.columnGap, y: y, width: valueWidth, height: Self.rowHeight)
         }
 
-        private static var style: HUDTextStyle { HUDTextStyle(size: textSize, weight: .medium, color: NSColor(white: 0.92, alpha: 1).cgColor) }
+        static var style: HUDTextStyle { HUDTextStyle(size: textSize, weight: .medium, color: NSColor.white.cgColor) }
         static func labelWidth(_ text: String) -> CGFloat { HUDText.width(text, style) }
-
-        /// One line in the standard faces, shrunk to fit and centred on its
-        /// ink like the source numerals beside it.
-        static func renderLabel(_ text: String, in size: CGSize, scale: CGFloat) -> CGImage? {
-            let natural = labelWidth(text)
-            let fit = natural > size.width ? max(0.6, size.width / natural) : 1
-            let language = HUDTextLanguage.tag()
-            let line = CTLineCreateWithAttributedString(HUDText.attributed([HUDText.Run(text, style)], language: language, scale: fit))
-            let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
-            guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
-                  let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                          space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-            context.scaleBy(x: scale, y: scale)
-            let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-            context.textPosition = CGPoint(x: 0, y: (size.height - ink.height) / 2 - ink.minY)
-            CTLineDraw(line, context)
-            return context.makeImage()
-        }
     }
 
-    static var sourceArtworkAvailable: Bool { Artwork.icon != nil && Artwork.background != nil && Artwork.decoration != nil }
-    /// The source wallet uses HarmonyOS Sans SC Medium, not a monospaced
-    /// macOS font. Its compact original SDF glyphs cover the wallet and tooltip. Keep
-    /// one tiny raster per changed value; no font atlas, timer or render loop.
-    private enum Numerals {
-        struct Glyph: Decodable {
-            let character: String
-            let width, height, bearingX, bearingY, advance: Double
-            let columns, rows: Int
-            let samples: Data
-        }
-        struct Font: Decodable {
-            let schema: Int
-            let family, style: String
-            let pointSize, padding, gradientScale: Double
-            let glyphs: [Glyph]
-        }
-        static let font: Font? = {
-            guard let url = HUDResources.url(for: "WatchSource/Scene/account-numerals.json"),
-                  let data = try? HUDSourceResourceData.read(url), data.count <= 65_536,
-                  let value = try? JSONDecoder().decode(Font.self, from: data), value.schema == 1,
-                  value.pointSize == 42, value.padding == 4, value.gradientScale == 5,
-                  value.family == "HarmonyOS Sans SC", value.style == "Medium",
-                  Set(value.glyphs.map(\.character)) == Set("0123456789/ —:：下次回复全部Next recoveryFull".map(String.init)),
-                  value.glyphs.allSatisfy({ glyph in
-                      [glyph.width, glyph.height, glyph.bearingX, glyph.bearingY, glyph.advance].allSatisfy { $0.isFinite && abs($0) <= 64 }
-                      && glyph.advance > 0 && (0...64).contains(glyph.columns) && (0...64).contains(glyph.rows)
-                      && glyph.samples.count == glyph.columns * glyph.rows
-                  }) else { return nil }
-            return value
-        }()
+    static var sourceArtworkAvailable: Bool { Artwork.background != nil && Artwork.decoration != nil }
 
-        /// Advance width at `preferredSize`; nil when a glyph is not in the source set.
-        static func width(_ text: String, preferredSize: Double = 14.4) -> CGFloat? {
-            guard let font, !text.isEmpty else { return nil }
-            let glyphs = text.compactMap { character in font.glyphs.first { $0.character == String(character) } }
-            guard glyphs.count == text.count else { return nil }
-            return CGFloat(glyphs.reduce(0) { $0 + $1.advance } * preferredSize / font.pointSize)
-        }
-
-        static func render(_ text: String, in size: CGSize, scale: CGFloat, preferredSize: Double = 18, rightAligned: Bool = true) -> CGImage? {
-            guard let font, !text.isEmpty else { return nil }
-            let glyphs = text.compactMap { character in font.glyphs.first { $0.character == String(character) } }
-            guard glyphs.count == text.count else { return nil }
-            let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
-            let advance = glyphs.reduce(0) { $0 + $1.advance }
-            // Source Text autosizes between 18–30 points, then the complete
-            // wallet is displayed at 0.6×. Fit by source advances, not count.
-            // Extreme local work durations can shrink further to stay readable.
-            let pointSize = min(preferredSize, max(4, (Double(size.width) - 2) * font.pointSize / advance))
-            let factor = pointSize / font.pointSize * Double(scale)
-            let ascent = glyphs.map(\.bearingY).max() ?? 0
-            let descent = glyphs.map { $0.bearingY - $0.height }.min() ?? 0
-            let baseline = (Double(height) - (ascent - descent) * factor) / 2 + ascent * factor
-            var x = rightAligned ? Double(width) - advance * factor : 0, pixels = [UInt8](repeating: 0, count: width * height * 4)
-            for glyph in glyphs {
-                defer { x += glyph.advance * factor }
-                guard glyph.columns > 0, glyph.rows > 0, glyph.width > 0, glyph.height > 0 else { continue }
-                let left = x + (glyph.bearingX - font.padding) * factor
-                let top = baseline - (glyph.bearingY + font.padding) * factor
-                let drawnWidth = (glyph.width + 2 * font.padding) * factor
-                let drawnHeight = (glyph.height + 2 * font.padding) * factor
-                let bytes = [UInt8](glyph.samples)
-                let minX = max(0, Int(floor(left))), maxX = min(width, Int(ceil(left + drawnWidth)))
-                let minY = max(0, Int(floor(top))), maxY = min(height, Int(ceil(top + drawnHeight)))
-                guard minX < maxX, minY < maxY else { continue }
-                for py in minY..<maxY {
-                    for px in minX..<maxX {
-                        let sx = min(Double(glyph.columns - 1), max(0, (Double(px) + 0.5 - left) / drawnWidth * Double(glyph.columns) - 0.5))
-                        let sy = min(Double(glyph.rows - 1), max(0, (Double(py) + 0.5 - top) / drawnHeight * Double(glyph.rows) - 0.5))
-                        let x0 = Int(sx), y0 = Int(sy), x1 = min(x0 + 1, glyph.columns - 1), y1 = min(y0 + 1, glyph.rows - 1)
-                        let dx = sx - Double(x0), dy = sy - Double(y0)
-                        let upper = Double(bytes[y0 * glyph.columns + x0]) * (1 - dx) + Double(bytes[y0 * glyph.columns + x1]) * dx
-                        let lower = Double(bytes[y1 * glyph.columns + x0]) * (1 - dx) + Double(bytes[y1 * glyph.columns + x1]) * dx
-                        let distance = (upper * (1 - dy) + lower * dy) / 255 - 0.5
-                        let alpha = UInt8((min(1, max(0, distance * font.gradientScale * factor + 0.5)) * 255).rounded())
-                        let offset = (py * width + px) * 4
-                        for channel in 0..<4 { pixels[offset + channel] = max(pixels[offset + channel], alpha) }
-                    }
-                }
-            }
-            guard let provider = CGDataProvider(data: Data(pixels) as CFData), let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-            return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                           bytesPerRow: width * 4, space: colorSpace,
-                           bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                           provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-        }
+    /// One line of text in the standard faces (HarmonyOS Sans, the region's
+    /// Noto for CJK), shrunk to fit and centred on its ink. One small raster
+    /// per changed value; no font atlas, timer or render loop.
+    private static func renderText(_ text: String, style: HUDTextStyle, in size: CGSize, scale: CGFloat,
+                                   rightAligned: Bool = false, minimumFit: CGFloat = 0.6) -> CGImage? {
+        guard !text.isEmpty else { return nil }
+        let natural = HUDText.width(text, style)
+        let fit = natural > size.width ? max(minimumFit, size.width / natural) : 1
+        let line = CTLineCreateWithAttributedString(HUDText.attributed([HUDText.Run(text, style)], language: HUDTextLanguage.tag(), scale: fit))
+        let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
+        guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        let advance = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        context.textPosition = CGPoint(x: rightAligned ? size.width - advance : 0, y: (size.height - ink.height) / 2 - ink.minY)
+        CTLineDraw(line, context)
+        return context.makeImage()
     }
 
     private enum Artwork {
-        static let icon = load("item_ap--2524b69d--8210737671276829403.png", crop: CGRect(x: 1, y: 3, width: 80, height: 80))
         static let backgroundMask = load("bg_walletbar_1--cfe92272--8572312840272182184.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50))
         static let background = tinted(backgroundMask, white: 0.2666666806, alpha: 0.6980392337)
         static let decoration = tinted(load("bg_walletbar_2--cfe92272--7683125525266349835.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50)), white: 0.2117647082, alpha: 0.1019607857)

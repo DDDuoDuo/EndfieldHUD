@@ -41,6 +41,12 @@ final class ChargeIndicatorView: NSView {
     private var embeddedContentsScale: CGFloat?
     private var embeddedHovered = false
     private(set) var stage: OverlayStage = .hidden
+    /// The compact bar's width in canvas points (`OverlayGeometry.barWidth`).
+    /// Only the charging alert sets it; the HUD's embedded badge keeps the
+    /// classic 264 pt bar in the classic 300 x 84 canvas.
+    private(set) var barWidth = OverlayGeometry.classicBarWidth
+    /// At least the classic 300 pt, so the circle and banner never clip.
+    var canvasWidth: CGFloat { OverlayGeometry.canvasWidth(barWidth: barWidth) }
 
     override var isFlipped: Bool { true }
 
@@ -124,7 +130,7 @@ final class ChargeIndicatorView: NSView {
         CATransaction.setDisableActions(true)
         // Bounds may stay at canvasSize while the containing view frame scales.
         // A caller that changes bounds instead is supported too.
-        canvas.setAffineTransform(CGAffineTransform(scaleX: bounds.width / Self.canvasSize.width,
+        canvas.setAffineTransform(CGAffineTransform(scaleX: bounds.width / canvasWidth,
                                                    y: bounds.height / Self.canvasSize.height))
         CATransaction.commit()
     }
@@ -160,6 +166,19 @@ final class ChargeIndicatorView: NSView {
         return CGRect(x: visible.position.x - bounds.width * scaleX / 2,
                       y: visible.position.y - bounds.height * scaleY / 2,
                       width: bounds.width * scaleX, height: bounds.height * scaleY)
+    }
+
+    /// A longer or shorter compact bar (the Length setting). The circle and
+    /// banner keep their size, centred in the canvas; the stage is redrawn in
+    /// place without replaying the entrance. Nothing happens when unchanged.
+    func setBarWidth(_ width: CGFloat) {
+        let next = width.isFinite ? max(OverlayGeometry.minimumBarWidth, width) : OverlayGeometry.classicBarWidth
+        guard next != barWidth else { return }
+        barWidth = next
+        withoutActions { self.canvas.bounds = CGRect(x: 0, y: 0, width: self.canvasWidth, height: Self.canvasSize.height) }
+        needsLayout = true
+        updateContent()
+        apply(stage, duration: 0)
     }
 
     /// Hover feedback belongs to the embedded control only; the charging
@@ -382,7 +401,8 @@ final class ChargeIndicatorView: NSView {
             }
             var scale: CGFloat = 1
             var line = metricLine(scale: scale)
-            while line.size().width > 143 && scale > 0.6 { scale -= 0.05; line = metricLine(scale: scale) }
+            let lineWidth = self.capacityWidth
+            while line.size().width > lineWidth && scale > 0.6 { scale -= 0.05; line = metricLine(scale: scale) }
             self.capacityLabel.string = line
             var valueFont = HUDFontResolver.nsFont(size: 13, weight: .semibold, tabular: true)
             while valueFont.pointSize > 9,
@@ -417,9 +437,16 @@ final class ChargeIndicatorView: NSView {
         }
     }
 
+    /// The capacity reading's room between the emblem and the percentage.
+    private var capacityWidth: CGFloat { barWidth - 121 }
+
     private func apply(_ next: OverlayStage, duration: TimeInterval) {
         stage = next
-        let center = CGPoint(x: 150, y: 42)
+        // The classic canvas is 300 x 84 around (150, 42). The circle and the
+        // banner stay centred; the compact bar's parts keep their distances
+        // from its ends (emblem 19, reading 37, percentage 77, ring 19).
+        let center = CGPoint(x: canvasWidth / 2, y: 42)
+        let bar = CGRect(x: center.x - barWidth / 2, y: 23, width: barWidth, height: 38)
         let bodyRect: CGRect
         let radius: CGFloat
         let emblemCenter: CGPoint
@@ -428,23 +455,23 @@ final class ChargeIndicatorView: NSView {
         let boltScale: CGFloat
         switch next {
         case .hidden, .circle:
-            bodyRect = CGRect(x: 131, y: 23, width: 38, height: 38)
+            bodyRect = CGRect(x: center.x - 19, y: 23, width: 38, height: 38)
             radius = 19
             emblemCenter = center
             emblemSize = CGSize(width: 23, height: 23)
             emblemRadius = 11.5
             boltScale = 0.69
         case .supercharge:
-            bodyRect = CGRect(x: 30, y: 18, width: 240, height: 48)
+            bodyRect = CGRect(x: center.x - 120, y: 18, width: 240, height: 48)
             radius = 14
-            emblemCenter = CGPoint(x: 107, y: 42)
+            emblemCenter = CGPoint(x: center.x - 43, y: 42)
             emblemSize = CGSize(width: 23, height: 23)
             emblemRadius = 11.5
             boltScale = 0.70
         case .compact:
-            bodyRect = CGRect(x: 18, y: 23, width: 264, height: 38)
+            bodyRect = bar
             radius = 19
-            emblemCenter = CGPoint(x: 37, y: 42)
+            emblemCenter = CGPoint(x: bar.minX + 19, y: 42)
             emblemSize = CGSize(width: 17, height: 20)
             emblemRadius = 3
             boltScale = 0.60
@@ -461,6 +488,10 @@ final class ChargeIndicatorView: NSView {
             change(surface, key: "transform", to: NSValue(caTransform3D: CATransform3DMakeScale(scale, scale, 1)), duration: duration)
             change(surface, key: "opacity", to: hidden ? 0 : 1, duration: duration)
         }
+        // An explicit path: a long bar's shadow is never rendered offscreen
+        // from its alpha on every frame of a morph.
+        change(shadowLayer, key: "shadowPath", to: CGPath(roundedRect: CGRect(origin: .zero, size: bodyRect.size),
+                                                          cornerWidth: radius, cornerHeight: radius, transform: nil), duration: duration)
         change(emblem, key: "bounds", to: NSValue(rect: CGRect(origin: .zero, size: emblemSize)), duration: duration)
         change(emblem, key: "position", to: NSValue(point: emblemCenter), duration: duration)
         change(emblem, key: "path", to: CGPath(roundedRect: CGRect(origin: .zero, size: emblemSize),
@@ -472,15 +503,15 @@ final class ChargeIndicatorView: NSView {
         change(bolt, key: "opacity", to: hidden ? 0 : 1, duration: duration)
 
         // The text translates with the morph; it is never squashed with the body.
-        place(bannerEnglish, at: CGRect(x: isBanner ? 126 : 150, y: 27, width: 116, height: 12),
+        place(bannerEnglish, at: CGRect(x: center.x + (isBanner ? -24 : 0), y: 27, width: 116, height: 12),
               visible: isBanner, duration: duration)
-        place(bannerTitle, at: CGRect(x: isBanner ? 124 : 149, y: 36, width: Self.bannerTitleWidth, height: 28),
+        place(bannerTitle, at: CGRect(x: center.x + (isBanner ? -26 : -1), y: 36, width: Self.bannerTitleWidth, height: 28),
               visible: isBanner, duration: duration)
-        place(capacityLabel, at: CGRect(x: isCompact ? 55 : 83, y: 33, width: 143, height: 19),
+        place(capacityLabel, at: CGRect(x: bar.minX + 37 + (isCompact ? 0 : 28), y: 33, width: capacityWidth, height: 19),
               visible: isCompact, duration: duration)
-        place(percentageLabel, at: CGRect(x: isCompact ? 205 : 192, y: 32.5, width: 40, height: 20),
+        place(percentageLabel, at: CGRect(x: bar.maxX - 77 - (isCompact ? 0 : 13), y: 32.5, width: 40, height: 20),
               visible: isCompact, duration: duration)
-        change(ringContainer, key: "position", to: NSValue(point: CGPoint(x: isCompact ? 263 : 239, y: 42)), duration: duration)
+        change(ringContainer, key: "position", to: NSValue(point: CGPoint(x: bar.maxX - 19 - (isCompact ? 0 : 24), y: 42)), duration: duration)
         change(ringContainer, key: "opacity", to: isCompact ? 1 : 0, duration: duration)
         for ripple in ripples {
             change(ripple, key: "position", to: NSValue(point: CGPoint(x: emblemCenter.x - bodyRect.minX,

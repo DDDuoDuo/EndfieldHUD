@@ -47,6 +47,10 @@ struct AppConfiguration: Equatable {
     var scale: Double = 1
     var placement: OverlayPlacement = .topCenter
     var customPosition: OverlayPosition = OverlayPosition()
+    /// The compact battery bar's length as a fraction of its display's usable
+    /// width (1 = edge to edge; OverlayGeometry.barWidth applies the 200 pt
+    /// minimum). nil keeps the classic 264 pt bar, so 1.3.0 settings look the same.
+    var chargeBarLength: Double? = nil
     var language: AppLanguage = .system
     var hudScale: Double = 1
     /// Screen-relative offset from the default HUD center; positive Y is down.
@@ -87,8 +91,15 @@ struct AppConfiguration: Equatable {
     var dailyBootLog = true
     /// Low disk, memory pressure and overheating warnings (spec §3.29).
     var facilityAlerts = true
-    /// Order and visibility of the right-hand list (System > Modules).
+    /// Display > Close hint, the row below Battery alert: the "ESC / hotkey /
+    /// click outside to close" line at the bottom of the HUD. Off hides it;
+    /// nothing else moves.
+    var showsCloseHint = true
+    /// Order and visibility of the right-hand list (Display > Modules).
     var moduleLayout = HUDModuleLayout()
+    /// Display > HUD elements: the title, Sanity gauge and alert tags on the
+    /// HUD. Also stores Display > Open on (the module the HUD opens on).
+    var overlayLayout = HUDOverlayLayout()
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
                                            displayDuration: 3, accentHex: "FAD41F")
@@ -102,8 +113,9 @@ struct AppConfiguration: Equatable {
         var result = self
         result.displayDuration = displayDuration.isFinite ? min(60, max(1, displayDuration)) : Self.defaults.displayDuration
         result.accentHex = validColor ? raw : Self.defaults.accentHex
-        result.scale = scale.isFinite ? min(1.6, max(0.65, scale)) : 1
+        result.scale = Self.clamp(scale, to: OverlayGeometry.scaleRange, fallback: 1)
         result.customPosition = customPosition.normalized
+        result.chargeBarLength = chargeBarLength.flatMap { $0.isFinite && $0 > 0 ? min(1, $0) : nil }
         result.hudScale = Self.clamp(hudScale, to: 0.2...2, fallback: 1)
         result.hudOffsetX = Self.clamp(hudOffsetX, to: -0.5...0.5, fallback: 0)
         result.hudOffsetY = Self.clamp(hudOffsetY, to: -0.5...0.5, fallback: 0)
@@ -118,10 +130,12 @@ struct AppConfiguration: Equatable {
         if result.hudDisplayName?.isEmpty == true { result.hudDisplayName = nil }
         result.centerLogoRevision = centerLogoRevision.flatMap { UUID(uuidString: $0)?.uuidString }
         if summonShortcut.validationError != nil { result.summonShortcut = .default }
+        result.overlayLayout = overlayLayout.normalized
         return result
     }
 
-    private static func clamp(_ value: Double, to range: ClosedRange<Double>, fallback: Double) -> Double {
+    /// The settings' clamp: `value` inside `range`, or `fallback` when it is not finite.
+    static func clamp<Value: BinaryFloatingPoint>(_ value: Value, to range: ClosedRange<Value>, fallback: Value) -> Value {
         value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
     }
 
@@ -130,6 +144,74 @@ struct AppConfiguration: Equatable {
         return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255,
                        green: CGFloat((value >> 8) & 255) / 255,
                        blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+}
+
+/// The settings a page's Restore defaults resets. Each scope lists its fields
+/// once, here; `AppConfiguration.restoring(_:)` copies only those from
+/// `.defaults`, so a new setting joins a Restore by adding one line.
+enum HUDSettingsScope: CaseIterable {
+    /// The System page.
+    case system
+    /// The Display page and every page under it: Open on, Modules, HUD
+    /// elements, App / menu bar icon and Battery alert (with the bar's
+    /// position, size and length).
+    case display
+    /// Display > HUD elements only. Open on, a Display row since 1.3.1, is kept.
+    case hudElements
+
+    /// One saved setting: copies its value from `source` into `target`.
+    struct Field {
+        let copy: (_ target: inout AppConfiguration, _ source: AppConfiguration) -> Void
+        init<Value>(_ key: WritableKeyPath<AppConfiguration, Value>) {
+            copy = { $0[keyPath: key] = $1[keyPath: key] }
+        }
+        /// `key` from `source`, except its `kept` part, which stays as `target` had it.
+        init<Value, Kept>(_ key: WritableKeyPath<AppConfiguration, Value>, keeping kept: WritableKeyPath<Value, Kept>) {
+            copy = { target, source in
+                let held = target[keyPath: key][keyPath: kept]
+                target[keyPath: key] = source[keyPath: key]
+                target[keyPath: key][keyPath: kept] = held
+            }
+        }
+    }
+
+    var fields: [Field] {
+        switch self {
+        case .system:
+            return [Field(\.language), Field(\.launchAtLogin), Field(\.closeOnFocusLost), Field(\.openOnActiveDisplay),
+                    Field(\.hudDisplayUUID), Field(\.hudDisplayName)]
+        case .display:
+            return [Field(\.hudScale), Field(\.hudOffsetX), Field(\.hudOffsetY), Field(\.parallaxIntensity),
+                    Field(\.perspectiveIntensity), Field(\.backgroundDarkness), Field(\.blurAmount), Field(\.theme),
+                    Field(\.clockFormat), Field(\.clockStyle), Field(\.centerLogo), Field(\.centerLogoRevision),
+                    Field(\.accentHex), Field(\.ambientAnimation), Field(\.reduceMotion), Field(\.lowPowerVisualMode),
+                    Field(\.recordingMode), Field(\.dailyBootLog), Field(\.showsCloseHint),
+                    // App / menu bar icon
+                    Field(\.applicationIcon),
+                    // Battery alert
+                    Field(\.alertMetric), Field(\.displayMode), Field(\.batteryAlertsEnabled), Field(\.displayDuration),
+                    Field(\.placement), Field(\.customPosition), Field(\.scale), Field(\.chargeBarLength),
+                    // Modules
+                    Field(\.moduleLayout),
+                    // Open on and HUD elements
+                    Field(\.overlayLayout), Field(\.facilityAlerts)]
+        case .hudElements:
+            return [Field(\.overlayLayout, keeping: \.openModule), Field(\.facilityAlerts)]
+        }
+    }
+
+    /// Kept by every scope: the hotkey has its own Restore on the Hotkeys page,
+    /// and the device popup has no setting to show.
+    static let unscopedFields = [Field(\.summonShortcut), Field(\.summonHotkeyEnabled), Field(\.devicePopupEnabled)]
+}
+
+extension AppConfiguration {
+    /// This configuration with only `scope`'s settings back at their defaults.
+    func restoring(_ scope: HUDSettingsScope) -> AppConfiguration {
+        var result = self
+        scope.fields.forEach { $0.copy(&result, .defaults) }
+        return result
     }
 }
 
@@ -199,6 +281,7 @@ final class ConfigurationStore {
                 x: defaults.object(forKey: "customPositionX") == nil ? 0.5 : defaults.double(forKey: "customPositionX"),
                 y: defaults.object(forKey: "customPositionY") == nil ? 0.9 : defaults.double(forKey: "customPositionY")
             ),
+            chargeBarLength: defaults.object(forKey: "chargeBarLength") == nil ? nil : defaults.double(forKey: "chargeBarLength"),
             language: defaults.string(forKey: "language").flatMap(AppLanguage.init(rawValue:)) ?? .system,
             hudScale: Self.double(defaults, "hudScale", fallback: 1),
             hudOffsetX: Self.double(defaults, "hudOffsetX", fallback: 0),
@@ -217,7 +300,7 @@ final class ConfigurationStore {
             batteryAlertsEnabled: Self.bool(defaults, "batteryAlertsEnabled", fallback: true),
             devicePopupEnabled: Self.bool(defaults, "devicePopupEnabled", fallback: true),
             lowPowerVisualMode: Self.bool(defaults, "lowPowerVisualMode", fallback: false),
-            applicationIcon: defaults.string(forKey: "applicationIcon").flatMap(HUDApplicationIcon.init(rawValue:)) ?? .endfield,
+            applicationIcon: defaults.string(forKey: "applicationIcon").flatMap(HUDApplicationIcon.init(savedValue:)) ?? .endfield,
             clockFormat: defaults.string(forKey: "clockFormat").flatMap(HUDClockFormat.init(rawValue:)) ?? .twentyFourHour,
             clockStyle: defaults.string(forKey: "clockStyle").flatMap(HUDClockStyle.init(rawValue:)) ?? .digital,
             centerLogo: defaults.string(forKey: "centerLogo").flatMap(HUDCenterLogo.init(rawValue:)) ?? .endfield,
@@ -229,10 +312,12 @@ final class ConfigurationStore {
             summonHotkeyEnabled: Self.bool(defaults, "summonHotkeyEnabled", fallback: true),
             recordingMode: Self.bool(defaults, "recordingMode", fallback: false),
             dailyBootLog: Self.bool(defaults, "dailyBootLog", fallback: true),
-            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true)
+            facilityAlerts: Self.bool(defaults, "facilityAlerts", fallback: true),
+            showsCloseHint: Self.bool(defaults, "showsCloseHint", fallback: true)
         ).normalized
         configuration = ReleaseFallback.restore(configuration, from: defaults)
         configuration.moduleLayout = HUDModuleLayout(defaults: defaults)
+        configuration.overlayLayout = HUDOverlayLayout(defaults: defaults)
         L10n.language = configuration.language
     }
 
@@ -254,6 +339,8 @@ final class ConfigurationStore {
         }
         defaults.set(next.customPosition.x, forKey: "customPositionX")
         defaults.set(next.customPosition.y, forKey: "customPositionY")
+        if let length = next.chargeBarLength { defaults.set(length, forKey: "chargeBarLength") }
+        else { defaults.removeObject(forKey: "chargeBarLength") }
         defaults.set(next.language.rawValue, forKey: "language")
         defaults.set(next.hudScale, forKey: "hudScale")
         defaults.set(next.hudOffsetX, forKey: "hudOffsetX")
@@ -283,10 +370,27 @@ final class ConfigurationStore {
         defaults.set(next.recordingMode, forKey: "recordingMode")
         defaults.set(next.dailyBootLog, forKey: "dailyBootLog")
         defaults.set(next.facilityAlerts, forKey: "facilityAlerts")
+        defaults.set(next.showsCloseHint, forKey: "showsCloseHint")
         ReleaseFallback.save(next, to: defaults)
         next.moduleLayout.save(to: defaults)
+        next.overlayLayout.save(to: defaults)
         onChange?(next)
         Array(observers.values).forEach { $0(next) }
+    }
+
+    /// Set once the hidden-gauge migration below has run.
+    static let sanityMigrationKey = "hudOverlaySanityMigrated"
+
+    /// Runs once: a Sanity gauge hidden through Account > Header display
+    /// (1.3.0 and earlier, `headerHidden`) starts 1.3.1 with its Show switch
+    /// off. The account cache, which v1.2.0 also reads, is left as it is.
+    func migrateHiddenSanity(headerHidden: () -> Bool) {
+        guard defaults.object(forKey: Self.sanityMigrationKey) == nil else { return }
+        defaults.set(true, forKey: Self.sanityMigrationKey)
+        guard headerHidden() else { return }
+        var next = configuration
+        next.overlayLayout.showsSanity = false
+        update(next)
     }
 
     @discardableResult

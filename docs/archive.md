@@ -4,4 +4,4 @@ Keep rich-text documents in custom categories. All and Uncategorized are always 
 
 Add a document, then click its title or body to edit. The formatting controls offer font, size, color, bold, italic, underline and strikethrough. Add pictures or videos from Finder or the Temporary File Shelf. The first attached image or video can become the gallery thumbnail.
 
-The category menu at the top right moves a document between categories. Categories and documents scroll; documents also have a scrollbar. Your archive stays on this Mac.
+The category menu at the top right moves a document between categories. In the gallery, right-click a document or click its ⋯ button to open, move or delete it. Categories and documents scroll; documents also have a scrollbar. Your archive stays on this Mac.

@@ -314,6 +314,48 @@ final class HUDListCard: HUDControl {
     }
 }
 
+/// The round ⋯ button at a tile's top right (spec §3.15). Reader books,
+/// Archive documents and File Shelf tiles open their item menu from it, the
+/// same menu a right-click on the tile opens.
+final class HUDTileMoreButton: HUDControl {
+    static let size: CGFloat = 22
+    static let suffix = ":more"
+    private let plate = HUDLayer.plain("tile.more")
+
+    /// The tile id a control id names: a tile's own id, or its ⋯ button's.
+    static func tileID(_ id: String) -> String { id.hasSuffix(suffix) ? String(id.dropLast(suffix.count)) : id }
+    /// The button's spoken label for the tile named `name`.
+    static func label(for name: String) -> String { L10n.text("More", "更多") + ", " + name }
+
+    override init(id: String, label: String = "", env: HUDDesignEnvironment, layer: CALayer = HUDLayer.plain()) {
+        super.init(id: id, label: label, env: env, layer: layer)
+        let size = Self.size
+        HUDMotion.perform {
+            layer.bounds = CGRect(x: 0, y: 0, width: size, height: size); layer.zPosition = 2
+            plate.frame = layer.bounds; plate.cornerRadius = size / 2; plate.backgroundColor = HUDColor.rgb(0x141414, 0.8)
+            let dots = HUDTextLayer("⋯", style: HUDTextStyle(size: 12, weight: .black, color: HUDColor.white(1)), alignment: .center)
+            dots.lineFrame = CGRect(x: 0, y: 5, width: size, height: 12)
+            layer.addSublayer(plate); layer.addSublayer(dots)
+        }
+        setTarget(layer.bounds, path: CGPath(ellipseIn: layer.bounds, transform: nil))
+    }
+
+    /// Places the button at the top right of a tile `width` wide, inside
+    /// `parent` and below `sibling` (the selection brackets) when given.
+    func attach(to parent: CALayer, width: CGFloat, below sibling: CALayer? = nil) {
+        HUDMotion.perform {
+            layer.frame.origin = CGPoint(x: width - 4 - Self.size, y: 8)
+            if let sibling, sibling.superlayer === parent { parent.insertSublayer(layer, below: sibling) } else { parent.addSublayer(layer) }
+        }
+    }
+
+    override func hoverChanged() {
+        HUDMotion.animate(plate, "backgroundColor", to: isHovered && isEnabled ? HUDColor.rgb(0x141414, 0.95) : HUDColor.rgb(0x141414, 0.8),
+                          duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
+        HUDMotion.animate(layer, "transform.scale", to: isHovered && isEnabled ? 1.08 : 1, duration: HUDDuration.hover, env: env)
+    }
+}
+
 /// Archive / File Shelf tile (spec §2.15): gradient well with a code bar and
 /// number, folded doc glyph with its extension, size/date tags, label strip;
 /// selection tightens yellow L-brackets and inverts the label.
@@ -398,6 +440,20 @@ final class HUDArchiveTile: HUDControl {
         env.applyScale(to: layer)
     }
 
+    /// The tile's ⋯ button (Archive and File Shelf). The id and label come
+    /// from the caller, whose registered control may wrap this tile.
+    private(set) var more: HUDTileMoreButton?
+
+    @discardableResult
+    func attachMore(id: String, label: String) -> HUDTileMoreButton {
+        if let more { return more }
+        let button = HUDTileMoreButton(id: id, label: label, env: env)
+        button.attach(to: layer, width: layer.bounds.width, below: brackets)
+        env.applyScale(to: button.layer)
+        more = button
+        return button
+    }
+
     /// The folded document glyph (spec §2.15 `.doc`): 40 × 50, ruled lines and
     /// the extension in the kind's colour, rotated −6°. `label` replaces the
     /// kind's name (a file's own extension).
@@ -434,6 +490,14 @@ final class HUDArchiveTile: HUDControl {
             path.addRect(CGRect(x: left ? rect.minX : rect.maxX - 2, y: rect.minY, width: 2, height: rect.height))
         }
         return path
+    }
+
+    /// Display > Modules > Arrange on HUD: the corner marks on a right-hand
+    /// tile that can be dragged, in the plate ink, set 4 px wider while it is
+    /// being dragged (`lifted`). Both HUD shells draw their marks with this.
+    static func applyArrangeMark(_ mark: CAShapeLayer, in bounds: CGRect, lifted: Bool) {
+        mark.path = bracketPath(bounds, inset: lifted ? -4 : 0)
+        mark.fillColor = HUDColor.plateInk
     }
 
     /// The red stamp of a classified tile: padding 3 × 7, 2 px ring, 900 10 px, rotated −10°.

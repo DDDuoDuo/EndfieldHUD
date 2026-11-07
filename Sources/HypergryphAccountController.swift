@@ -109,7 +109,36 @@ final class HypergryphAccountController {
     var isPresentingAccountPanel: Bool { isPresentingLogin || pendingCredentialCommits > 0 }
     var region: HypergryphAccountRegion { cache.region }
     var record: RegionRecord { cache.records[region.rawValue] ?? RegionRecord() }
-    var headerMode: HUDAccountPresentation.HeaderMode { .init(rawValue: cache.header) ?? .workMode }
+    /// 1.3.0's "hidden" header now lives in Display > HUD elements (Show
+    /// Sanity, migrated once by the configuration store). The cache keeps the
+    /// value for v1.2.0, which also reads it; here it reads as the default game.
+    var headerMode: HUDAccountPresentation.HeaderMode {
+        cache.header == Self.hiddenHeader ? .endfield : .init(rawValue: cache.header) ?? .workMode
+    }
+    static let hiddenHeader = "hidden"
+    /// Display > HUD elements > Show Sanity. While it is off the gauge shows
+    /// nothing and only the open Account module refreshes the account.
+    /// Turning it on fetches the header role now, as choosing a game did.
+    var showsHeaderGauge = true { didSet { if showsHeaderGauge, !oldValue { nextRefresh = .distantPast; tick() } } }
+    /// The game the header gauge shows sanity for; nil while the gauge shows
+    /// Work Mode time or is hidden, so a hidden gauge fetches nothing extra.
+    private var headerGame: HypergryphGame? {
+        guard showsHeaderGauge else { return nil }
+        return headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
+    }
+    /// Whether the saved cache hides the header gauge (1.3.0 and earlier), read
+    /// without loading the rest of the account.
+    static func storedHeaderIsHidden(at url: URL?) -> Bool {
+        struct Header: Decodable { let version: Int?; let header: String? }
+        guard let saved = readCache(Header.self, at: url), saved.version == 1 else { return false }
+        return saved.header == hiddenHeader
+    }
+    /// The saved cache file decoded as `type`, read only while it is at most 1 MB.
+    private static func readCache<T: Decodable>(_ type: T.Type, at url: URL?) -> T? {
+        guard let url, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
     var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
     var selectedSnapshot: HypergryphProfileSnapshot? { record.selectedRoleID.flatMap { record.snapshots[$0] } }
@@ -129,8 +158,7 @@ final class HypergryphAccountController {
          api: HypergryphAccountServing = HypergryphAccountAPI(),
          vault: HypergryphAccountCredentialVault = HypergryphMemoryCredentialVault(), now: @escaping () -> Date = Date.init) {
         self.profile = profile; self.fileURL = fileURL; self.api = api; self.vault = vault; self.now = now
-        if let fileURL, let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size <= 1_048_576, let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode(Cache.self, from: data), saved.version == 1 {
+        if let saved = Self.readCache(Cache.self, at: fileURL), saved.version == 1 {
             cache = saved; cacheWritesAllowed = true
         } else {
             cache = Cache()
@@ -176,7 +204,7 @@ final class HypergryphAccountController {
     }
     func tick() {
         guard visible, record.linked, !record.requiresReconnect, !busy,
-              moduleVisible || headerMode == .endfield || headerMode == .arknights,
+              moduleVisible || headerGame != nil,
               now() >= nextRefresh else { return }
         refresh()
     }
@@ -200,9 +228,7 @@ final class HypergryphAccountController {
     }
     private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MM/dd HH:mm:ss"; return f }()
     func sanityPresentation(at date: Date? = nil) -> HypergryphSanityPresentation? {
-        guard record.linked else { return nil }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        guard let game else { return nil }
+        guard record.linked, let game = headerGame else { return nil }
         let role = selectedRole?.game == game ? selectedRole : record.roles.first { $0.game == game && $0.isAvailable }
         guard let role, let snapshot = record.snapshots[role.id] else { return nil }
         let date = date ?? now()
@@ -211,9 +237,8 @@ final class HypergryphAccountController {
                 && date.timeIntervalSince(lastAttempt) >= 5)
     }
     func gaugeValue(work: WorkModeSnapshot) -> (String, String, Bool) {
-        if headerMode == .hidden { return ("", "", false) }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if record.linked, game != nil {
+        if !showsHeaderGauge { return ("", "", false) }
+        if record.linked, headerGame != nil {
             let stamina = sanityPresentation()
             let value = stamina.map { "\($0.current) / \($0.maximum)" } ?? "— / —"
             return (value, headerMode.title + ", " + L10n.text("Sanity", "理智") + " " + value, true)
@@ -446,8 +471,7 @@ final class HypergryphAccountController {
     }
     private var rolesNeededForPresentation: [HypergryphRole] {
         var roles = selectedRole.map { [$0] } ?? []
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if let game, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
+        if let game = headerGame, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
         return roles
     }
     private func fetchProfiles(_ credentials: HypergryphCredentials, token: Int) {
@@ -491,7 +515,7 @@ final class HypergryphAccountController {
                 value.gamePlayerID = snapshot.role.roleID
                 value.playerIDOverride = nil
             }
-            if fields.contains(.name), let name = identity.name { value.name = name }
+            if fields.contains(.name), let name = identity.name { value.name = name; value.autoName = false }
             if fields.contains(.tag), let tag = identity.tag { value.tag = tag }
             if fields.contains(.awakening), let date = snapshot.createdAt {
                 value.awakeningDate = date
