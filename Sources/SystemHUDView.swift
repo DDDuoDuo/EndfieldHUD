@@ -1934,12 +1934,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         settingsController?.update { $0.clockStyle = style }
     }
     @objc private func clockAction(_ sender: HUDClockActionButton) {
-        guard allowsModuleInput else { return }
+        guard allowsInputBesidePlacement else { return }
         if sender.styleIndex < 0 { selectModule(.workMode) }
         else { selectClockStyle(HUDClockStyle.allCases[sender.styleIndex]) }
     }
     private func layoutClockControls() {
-        let interactive = allowsModuleInput
+        // Hidden while HUD elements are placed, as the gauge's controls are.
+        let interactive = allowsInputBesidePlacement
         let hidden = !usesSourceShell || !interactive
         let language = L10n.resolvedLanguage
         let workLabel = L10n.text("Work Mode", "工作模式", language: language)
@@ -2568,7 +2569,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func updateButtonStates() {
         accountController.setVisible(window != nil && interactionEnabled && !retracting, accountModule: selectedModule == .account)
         updateAccountPresentation()
-        layoutClockControls()
         notesInteraction?.setVisible(window != nil && interactionEnabled)
         notesInteraction?.setActive(notesWorkspaceIsInteractive)
         // Presentation changes come first: Now Playing retires the shared audio
@@ -2590,9 +2590,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     /// The quit, module and scroll buttons, native or drawn by the source
-    /// watch; disabled while HUD elements are placed.
+    /// watch, and the clock's controls; disabled while HUD elements are placed.
     private func updateNavigationButtonStates() {
         let allowsInput = allowsInputBesidePlacement
+        layoutClockControls()
         sourceWatch?.inputEnabled = usesSourceShell && sourceOverviewPresented && allowsInput
         closeHUDButton.isHidden = usesSourceShell
         closeHUDButton.isEnabled = allowsInput && !usesSourceShell
