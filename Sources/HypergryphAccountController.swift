@@ -118,7 +118,8 @@ final class HypergryphAccountController {
     static let hiddenHeader = "hidden"
     /// Display > HUD elements > Show Sanity. While it is off the gauge shows
     /// nothing and only the open Account module refreshes the account.
-    var showsHeaderGauge = true
+    /// Turning it on fetches the header role now, as choosing a game did.
+    var showsHeaderGauge = true { didSet { if showsHeaderGauge, !oldValue { nextRefresh = .distantPast; tick() } } }
     /// The game the header gauge shows sanity for; nil while the gauge shows
     /// Work Mode time or is hidden, so a hidden gauge fetches nothing extra.
     private var headerGame: HypergryphGame? {
