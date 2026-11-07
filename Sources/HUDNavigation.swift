@@ -228,6 +228,8 @@ final class HUDNavigation {
         let entry = pointer == nil ? nil : target.flatMap { target in rightEntries.first { $0.target == target } }
         if let previous = arrangeDrag.flatMap({ drag in entries.first { $0.target == drag.target } }), previous !== entry {
             arrangeDrag = nil
+            // Its settle is no scroll slide.
+            if scrollSlideSample == previous.target { scrollSlideSample = nil }
             previous.setDragPosition(nil); previous.setLifted(false, animated: animated)
             layoutRight(animated: animated)
         }
@@ -507,8 +509,17 @@ final class HUDNavigation {
         return CGRect(x: x + CGFloat(index % 2) * 84, y: y, width: 78, height: 74)
     }
 
+    /// The offset the right-hand list was last laid out at, and a tile that
+    /// only the last animated scroll moves (it kept its slot): its shown
+    /// position gives the offset shown mid-scroll. Drop settles and reflows
+    /// move tiles between slots, so they never stand in for the scroll.
+    private var laidOutScrollOffset: CGFloat = 0
+    private var scrollSlideSample: HUDNavigationTarget?
+
     private func layoutRight(animated: Bool, spring: Bool = false) {
         let animate = animated && !HUDRuntimeAppearance.reduceMotion
+        let scrolls = rightScrollOffset != laidOutScrollOffset
+        var sample: HUDNavigationTarget?
         if animate {
             scrollAnimationGeneration += 1
             let token = scrollAnimationGeneration
@@ -522,8 +533,11 @@ final class HUDNavigation {
         }
         for (index, entry) in rightEntries.enumerated() {
             let rect = Self.rightRect(index: index, offset: rightScrollOffset)
+            if animate, sample == nil, scrolls || entry.target == scrollSlideSample, entry.target != arrangeDrag?.target,
+               entry.rect == Self.rightRect(index: index, offset: laidOutScrollOffset) { sample = entry.target }
             entry.setGeometry(rect: rect, rotation: 0, animated: animate, spring: spring)
         }
+        scrollSlideSample = sample; laidOutScrollOffset = rightScrollOffset
         if animate { CATransaction.commit() }
         updateScrollIndicators()
     }
@@ -541,9 +555,10 @@ final class HUDNavigation {
     private func interruptScrollAnimation() {
         scrollAnimationGeneration += 1
         let previousOffset = rightScrollOffset
-        if let first = rightEntries.first,
-           first.layer.animation(forKey: "navigation.position") != nil, let shown = first.layer.presentation() {
-            rightScrollOffset = Self.rightRect(index: 0, offset: 0).midY - shown.position.y
+        if let sample = scrollSlideSample, let index = rightEntries.firstIndex(where: { $0.target == sample }),
+           rightEntries[index].layer.animation(forKey: "navigation.position") != nil,
+           let shown = rightEntries[index].layer.presentation() {
+            rightScrollOffset = Self.rightRect(index: index, offset: 0).midY - shown.position.y
         }
         for entry in entries where entry.group == .right { entry.cancelAnimations() }
         if previousOffset != rightScrollOffset { layoutRight(animated: false) }
