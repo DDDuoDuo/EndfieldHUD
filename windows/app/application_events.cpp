@@ -283,6 +283,7 @@ std::optional<bool> Application::Impl::presentFrame(double time){
     const auto frameStart=Clock::now();bool active{};
     framePresenting=true;
     try{active=present(time,true);framePresenting=false;}catch(const std::exception&e){framePresenting=false;if(recoverDevice(e,time))return std::nullopt;throw;}
+    catch(...){framePresenting=false;throw;}
     if(startupTrace)startupTrace->frame(frameStart,Clock::now());
     return active;
 }
