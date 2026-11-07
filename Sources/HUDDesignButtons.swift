@@ -296,6 +296,17 @@ final class HUDDragGrip: HUDControl {
     /// How far the pointer travels before a press becomes a drag.
     static let liftDistance: CGFloat = 3
 
+    /// While a dragged row is `offset` points below the top of a list `length`
+    /// points tall (negative above it), the signed number of points the list
+    /// scrolls toward the pointer: up to 12 within 36 points of an edge or
+    /// past it, negative toward the top, 0 elsewhere.
+    static func edgeScrollStep(offset: CGFloat, length: CGFloat) -> CGFloat {
+        let band: CGFloat = 36, step: CGFloat = 12
+        if offset < band { return -min(step, band - offset) }
+        if offset > length - band { return min(step, offset - length + band) }
+        return 0
+    }
+
     init(id: String, label: String = "", size: CGSize, dotsAt origin: CGPoint, env: HUDDesignEnvironment) {
         super.init(id: id, label: label, env: env)
         let bounds = CGRect(origin: .zero, size: size)

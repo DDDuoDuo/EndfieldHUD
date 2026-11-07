@@ -447,9 +447,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         case .moved:
             guard var drag = moduleDrag, drag.module == module else { return }
             // Near an edge the list follows the pointer (on pointer events only).
-            let shown = y - scroll.offset, edge: CGFloat = 36
-            if shown < edge { scroll.scroll(by: -min(12, edge - shown)) }
-            else if shown > scroll.layer.bounds.height - edge { scroll.scroll(by: min(12, shown - scroll.layer.bounds.height + edge)) }
+            let step = HUDDragGrip.edgeScrollStep(offset: y - scroll.offset, length: scroll.layer.bounds.height)
+            if step != 0 { scroll.scroll(by: step) }
             let top = min(CGFloat(order.count - 1) * Self.modulePitch, max(0, y - drag.grab))
             HUDMotion.perform { plate.removeAnimation(forKey: "hud.position.y"); plate.position.y = top + plate.bounds.height / 2 }
             let slot = min(order.count - 1, max(0, Int((top / Self.modulePitch).rounded())))

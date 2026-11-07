@@ -3389,10 +3389,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // Near the list's edges it scrolls toward the pointer (on pointer events only).
         if usesSourceShell { sourceWatch?.scrollDesktopNavigationTowardEdge(at: sourceWatchPoint(designPoint(location))) }
         else if let local = navigationPoint(designPoint(location)) {
-            let viewport = navigation.rightViewport, band: CGFloat = 36
+            let viewport = navigation.rightViewport
             if local.x >= viewport.minX, local.x <= viewport.maxX {
-                if local.y < viewport.minY + band { navigation.scrollPixels(-min(12, viewport.minY + band - local.y), animated: false) }
-                else if local.y > viewport.maxY - band { navigation.scrollPixels(min(12, local.y - viewport.maxY + band), animated: false) }
+                let step = HUDDragGrip.edgeScrollStep(offset: local.y - viewport.minY, length: viewport.height)
+                if step != 0 { navigation.scrollPixels(step, animated: false) }
             }
         }
         if let next = drag.preview.arranging(drag.module, over: rightRowTarget(atView: location)) {

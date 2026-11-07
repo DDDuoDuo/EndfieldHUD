@@ -1385,17 +1385,19 @@ final class HUDSourceWatchView: NSView {
     /// The action is a tile of the right-hand list.
     func isRowAction(_ action: ButtonAction) -> Bool { desktopRightButtonIDs.contains(action.source.nodeID) }
     /// While a tile is dragged: near the top or bottom edge of the right-hand
-    /// list, or past it, the list scrolls a little toward the pointer.
+    /// list, or past it, the list scrolls a little toward the pointer, by the
+    /// same on-screen band and step as the other dragged lists.
     @discardableResult func scrollDesktopNavigationTowardEdge(at point: CGPoint) -> Bool {
         guard desktopMode, let frame = renderedFrame, let camera = renderedCamera, let scroll = frame.layoutReport.scroll,
               let node = frame.node(scroll.viewportID), let rect = node.rect,
               let local = camera.camera.pointOnPlane(point, world: camera.worldRoot * node.worldMatrix, viewport: bounds),
               local.x >= rect.origin.x, local.x <= rect.origin.x + rect.size.x else { return false }
         // Source UI space is y-up: the list's top edge is its rect's maxY.
-        let band = rect.size.y * 0.12, top = rect.origin.y + rect.size.y, bottom = rect.origin.y
-        if local.y > top - band { return scrollDesktopNavigation(-1, points: 8) }
-        if local.y < bottom + band { return scrollDesktopNavigation(1, points: 8) }
-        return false
+        let unitsPerPoint = max(.ulpOfOne, sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera))
+        let step = HUDDragGrip.edgeScrollStep(offset: CGFloat((rect.origin.y + rect.size.y - local.y) / unitsPerPoint),
+                                              length: CGFloat(rect.size.y / unitsPerPoint))
+        guard step != 0 else { return false }
+        return scrollDesktopNavigation(step < 0 ? -1 : 1, points: Double(abs(step)))
     }
     var desktopNavigationTargets: [HUDNavigationTarget] { desktopEntries.map(\.target) }
     private func refreshDesktopScrollIndicators() {
