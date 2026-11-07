@@ -1038,8 +1038,8 @@ final class HUDNavigationEntry {
                 move = bounce
             } else {
                 move = CABasicAnimation(keyPath: "position")
-                move.duration = 0.18
-                move.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.75, 0.30, 1)
+                move.duration = HUDDuration.listSlide
+                move.timingFunction = HUDEasing.listSlide
             }
             move.fromValue = NSValue(point: previousPosition); move.toValue = NSValue(point: layer.position)
             layer.add(move, forKey: "navigation.position")
