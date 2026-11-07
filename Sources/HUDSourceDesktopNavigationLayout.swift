@@ -513,6 +513,27 @@ struct HUDSourceDesktopNavigationLayout {
         return Sample(assignments: assignments, logicalRows: logicalRows, contentHeight: contentHeight)
     }
 
+    /// The scroll positions whose sample still binds `index` to a pooled
+    /// button (nil when it is past the list). The sampled rows run from one
+    /// above the viewport's top, so the slot keeps a button from just above
+    /// the viewport down to the last row of the pool.
+    func positions(binding index: Int) -> ClosedRange<Double>? {
+        guard index >= 0, index < entryCount else { return nil }
+        let count = entryCount / columns + (entryCount % columns == 0 ? 0 : 1)
+        let hidden = max(0, sample(normalizedPosition: 1).contentHeight - viewportHeight)
+        let unit = rowStep * rowScale
+        guard hidden > 0, unit > 0 else { return 0...1 }
+        let row = index / columns, poolRows = rows.count
+        // firstRow <= row while the offset is under (row + 2) rows; the last
+        // pool row reaches it from an offset of (row - poolRows + 2) rows. The
+        // margin keeps rounding on the way back to a position inside.
+        let margin = 1e-6
+        let highest = row >= count - poolRows ? hidden : (Double(row + 2) - margin) * unit
+        let lowest = row - poolRows + 1 <= 0 ? 0 : (Double(row - poolRows + 2) + margin) * unit
+        let top = 1 - max(0, min(hidden, lowest)) / hidden, bottom = 1 - max(0, min(hidden, highest)) / hidden
+        return min(top, bottom)...max(top, bottom)
+    }
+
     func apply(to pose: inout HUDSourceWatchPose, normalizedPosition: Double) {
         let sample = sample(normalizedPosition: normalizedPosition)
         var content = pose.transforms[contentID] ?? HUDSourceTransformOverride()

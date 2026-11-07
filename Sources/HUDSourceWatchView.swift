@@ -1025,7 +1025,10 @@ final class HUDSourceWatchView: NSView {
         }
         guard bounds.width > 0, bounds.height > 0, !isHidden, playback.phase != .concealed else { return }
         let time = pendingOpening?.heldTime ?? requestedTime
-        if desktopMode && playback.phase == .visible { verticalNormalizedPosition = desktopScrollMotion.advance(at: time) }
+        if desktopMode && playback.phase == .visible {
+            verticalNormalizedPosition = desktopScrollMotion.advance(at: time)
+            keepDesktopArrangeLiftedBound(at: time)
+        }
         do {
             let screen = SIMD2<Double>(Double(bounds.width), Double(bounds.height))
             let reduce = pendingOpening == nil && HUDRuntimeAppearance.reduceMotion
@@ -1892,6 +1895,20 @@ final class HUDSourceWatchView: NSView {
         if frameBuilder.desktopTilePlacements != placements { frameBuilder.desktopTilePlacements = placements }
         frameBuilder.desktopRaisedButton = raised
         if lifted != desktopArrangeLiftedButton { desktopArrangeLiftedButton = lifted; lastHitQuery = nil }
+    }
+
+    /// Arrange on HUD: while a tile is dragged, the list scrolls no further
+    /// than keeps its slot bound to a pooled row, so the tile stays drawn
+    /// under the pointer.
+    private func keepDesktopArrangeLiftedBound(at time: Double) {
+        guard let lifted = desktopArrangeMotion.lifted, let desktopNavigation,
+              let entry = desktopEntries.firstIndex(where: { $0.target == lifted }),
+              let index = desktopRightEntryIndices.firstIndex(of: entry),
+              let range = desktopNavigation.positions(binding: index) else { return }
+        let sampled = min(1, max(0, verticalNormalizedPosition))
+        guard !range.contains(sampled) else { return }
+        desktopScrollMotion.reset(to: min(range.upperBound, max(range.lowerBound, sampled)), at: time)
+        verticalNormalizedPosition = desktopScrollMotion.position
     }
 
     private func updateDesktopBindings(at time: Double) {
