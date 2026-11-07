@@ -743,10 +743,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// Static model pose, also used for detached previews. Ambient motion starts
     /// only once the controller has enabled interaction on an attached view.
+    /// `preservingModuleEntrance`: the module entrance the open played keeps
+    /// running (implied by `preservingNowPlayingPresentation`, the end of the open).
     func showStable(preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
-                    preparingSourceEntrance: Bool = false, preservingNowPlayingPresentation: Bool = false) {
+                    preparingSourceEntrance: Bool = false, preservingNowPlayingPresentation: Bool = false,
+                    preservingModuleEntrance: Bool = false) {
         cancelAnimations(preservingChargeAnimation: preservingChargeAnimation, preservingPointerMotion: preservingPointerMotion,
-                         preservingNowPlayingPresentation: preservingNowPlayingPresentation, preservingCursor: true)
+                         preservingNowPlayingPresentation: preservingNowPlayingPresentation,
+                         preservingModuleEntrance: preservingModuleEntrance, preservingCursor: true)
         if interactionEnabled { modulePresentationAllowed = true }
         sourceOverviewPresented = true
         headerClock.setActive(window != nil)
@@ -1018,7 +1022,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     func cancelAnimations(preserveClickFeedback: Bool = false, preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
-                          preservingNowPlayingPresentation: Bool = false, preservingCursor: Bool = false) {
+                          preservingNowPlayingPresentation: Bool = false, preservingModuleEntrance: Bool = false,
+                          preservingCursor: Bool = false) {
         sourceEntranceReady = nil
         headerClock.setActive(false)
         sourceWatch?.suspendForConcealment(preservingCursor: preservingCursor)
@@ -1037,9 +1042,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         } else { motion.stop(freezePresentation: true) }
         quitPromptOpen = false
-        // The end of the open (the only caller preserving Now Playing) keeps the
-        // opening module's entrance running under its canvas.
-        let openingCanvas = preservingNowPlayingPresentation ? designCanvases[selectedModule]?.root : nil
+        // The end of the open (the only caller preserving Now Playing), and of
+        // the return after a File Shelf drag, keep the module's entrance
+        // running under its canvas.
+        let openingCanvas = preservingNowPlayingPresentation || preservingModuleEntrance
+            ? designCanvases[selectedModule]?.root : nil
         func remove(_ item: CALayer, keepingEntrance: Bool = false) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }
