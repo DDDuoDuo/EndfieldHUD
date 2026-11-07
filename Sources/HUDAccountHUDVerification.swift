@@ -49,7 +49,7 @@ enum HUDAccountHUDVerification {
                 check(gauge.layer.position == HUDAccountGauge.headerPosition && 270 + gauge.layer.frame.maxX == 730,
                       "Source stamina gauge mirrors the ENDFIELDHUD heading across the central axis")
                 check(HUDAccountGauge.sourceArtworkAvailable, "The original source sanity icon and wallet textures load")
-                check(HUDAccountGauge.sourceNumberFont == "HarmonyOS Sans SC Medium", "Packaged source wallet font matches the original game")
+                check(HUDAccountGauge.sourceNumberFont == "HarmonyOS Sans Medium", "Wallet numbers and labels use the bundled HarmonyOS Sans Medium")
                 let now = Date()
                 let recovery = HypergryphSanityPresentation(game: .endfield, current: 42, maximum: 360,
                     observedAt: now, nextRecoveryAt: now.addingTimeInterval(49),

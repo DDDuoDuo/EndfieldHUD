@@ -4,8 +4,20 @@ import QuartzCore
 /// Perspective can magnify text beyond the canvas's nominal backing scale.
 /// Spend the extra resolution only on small glyph buffers, never whole planes.
 enum HUDRenderScale {
+    /// The highest pixels-per-point any HUD buffer is drawn at.
+    static let maximum: CGFloat = 4
+
     static func contentScale(for layer: CALayer, baseScale: CGFloat) -> CGFloat {
-        let base = baseScale.isFinite ? min(4, max(1, baseScale)) : 2
-        return layer is CATextLayer || layer is HUDTextLayer ? min(4, ceil(base * 1.35)) : base
+        layer is CATextLayer || layer is HUDTextLayer ? glyphScale(baseScale: baseScale) : clamped(baseScale)
+    }
+
+    /// Glyph buffers on the tilted plane: the base scale with a 1.35x
+    /// oversample, rounded up to whole pixels and capped at `maximum`.
+    static func glyphScale(baseScale: CGFloat) -> CGFloat {
+        min(maximum, ceil(clamped(baseScale) * 1.35))
+    }
+
+    private static func clamped(_ scale: CGFloat) -> CGFloat {
+        scale.isFinite ? min(maximum, max(1, scale)) : 2
     }
 }

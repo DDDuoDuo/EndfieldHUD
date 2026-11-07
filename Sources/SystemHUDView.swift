@@ -330,6 +330,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var tracking: NSTrackingArea?
     private var cursorTracking: NSTrackingArea?
     private var designScale: CGFloat = 1
+    /// Backing scale x design scale: the pixels per design point of the canvas.
+    private var hudRasterScale: CGFloat { (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale }
     private var designOrigin = CGPoint.zero
     private var notesLayoutSize = CGSize.zero
 
@@ -2105,7 +2107,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         artwork.update(dark: currentDark,
             chargeColor: selectedModule == .power ? currentBatteryTone : currentAccent,
             accentColor: currentAccent)
-        let scale = (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale
+        let scale = hudRasterScale
         func applyScale(_ layer: CALayer) {
             if !(layer is CATransformLayer) { layer.contentsScale = HUDRenderScale.contentScale(for: layer, baseScale: scale) }
             layer.sublayers?.forEach(applyScale)
@@ -2640,7 +2642,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.updateStatusPanel()
             self.currentBatteryTone = tone
             self.artwork?.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
-            let contentScale = (self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * self.designScale
+            let contentScale = self.hudRasterScale
             self.navigation.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.chargeBadge.update(snapshot: self.snapshot, configuration: self.configuration, dark: dark, contentsScale: contentScale)
             self.identityCard.update(dark: dark, accent: yellow, contentsScale: contentScale)
@@ -2761,7 +2763,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func updateContentsScale() {
-        let scale = (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale
+        let scale = hudRasterScale
         layoutDesignOverlay()
         layoutFacilityLayers()
         designContext.update(unit: designUnit, renderScale: scale)
@@ -2779,6 +2781,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         apply(canvas)
         chargeBadge.update(snapshot: snapshot, configuration: configuration, dark: currentDark, contentsScale: scale)
         identityCard.update(dark: currentDark, accent: currentAccent, contentsScale: scale)
+        // HUD Scale, layout and display changes redraw the gauge's text and icon now.
+        accountGauge.setScale(scale)
         notesCanvas.setWorkspaceBackingScale(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
     }
 
@@ -3134,7 +3138,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func updateAccountGauge() {
         let value = accountController.gaugeValue(work: workModeController.snapshot)
         accountGauge.update(value: value.0, accessibilityLabel: value.1, visible: value.2,
-            accent: currentAccent, scale: window?.backingScaleFactor ?? 2,
+            accent: currentAccent, scale: hudRasterScale,
             sanity: accountController.sanityPresentation())
         layoutAccountGaugeControls()
     }
