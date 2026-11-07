@@ -319,11 +319,12 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     /// Above the list, Arrange on HUD lets the HUD's own module buttons be dragged.
     private func buildModules(_ page: HUDDesignPage) {
         let layout = config.moduleLayout, width = rowWidth(page)
-        let arrange = HUDToggle(id: "modulesArrange", label: L10n.text("Arrange on HUD", "在界面上排列"), isOn: isArrangingModules, env: env)
+        let title = L10n.text("Arrange on HUD", "在界面上排列"), hint = L10n.text("Drag the module buttons on the right", "拖动右侧的模块按钮")
+        // VoiceOver hears the hint with the switch: the row itself is not spoken.
+        let arrange = HUDToggle(id: "modulesArrange", label: title + ", " + hint, isOn: isArrangingModules, env: env)
         arrange.onChange = { [weak self] on in self?.setArrangingModules(on) }
         arrangeToggle = arrange
-        stack([row("modulesArrange", L10n.text("Arrange on HUD", "在界面上排列"), [arrange.layer], page,
-                   sublabel: L10n.text("Drag the module buttons on the right", "拖动右侧的模块按钮"), controls: [arrange])],
+        stack([row("modulesArrange", title, [arrange.layer], page, sublabel: hint, controls: [arrange])],
               in: page.layer, page: page, top: HUDMetric.headerHeight, width: width)
         let scroll = page.scrollArea(id: "modules", frame: CGRect(x: 0, y: HUDMetric.headerHeight + Self.modulePitch,
                                                                   width: HUDMetric.box.width, height: HUDMetric.bodyHeight - Self.modulePitch))
