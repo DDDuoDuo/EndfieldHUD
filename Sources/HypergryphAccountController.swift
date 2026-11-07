@@ -129,10 +129,15 @@ final class HypergryphAccountController {
     /// Whether the saved cache hides the header gauge (1.3.0 and earlier), read
     /// without loading the rest of the account.
     static func storedHeaderIsHidden(at url: URL?) -> Bool {
-        struct Header: Decodable { let header: String? }
-        guard let url, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
-              let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(Header.self, from: data) else { return false }
+        struct Header: Decodable { let version: Int?; let header: String? }
+        guard let saved = readCache(Header.self, at: url), saved.version == 1 else { return false }
         return saved.header == hiddenHeader
+    }
+    /// The saved cache file decoded as `type`, read only while it is at most 1 MB.
+    private static func readCache<T: Decodable>(_ type: T.Type, at url: URL?) -> T? {
+        guard let url, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
     }
     var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
@@ -153,8 +158,7 @@ final class HypergryphAccountController {
          api: HypergryphAccountServing = HypergryphAccountAPI(),
          vault: HypergryphAccountCredentialVault = HypergryphMemoryCredentialVault(), now: @escaping () -> Date = Date.init) {
         self.profile = profile; self.fileURL = fileURL; self.api = api; self.vault = vault; self.now = now
-        if let fileURL, let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size <= 1_048_576, let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode(Cache.self, from: data), saved.version == 1 {
+        if let saved = Self.readCache(Cache.self, at: fileURL), saved.version == 1 {
             cache = saved; cacheWritesAllowed = true
         } else {
             cache = Cache()
