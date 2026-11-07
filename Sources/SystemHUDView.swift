@@ -1405,8 +1405,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             return coreDesignPoint(designPoint(location)).flatMap(overlayElement(at:)) != nil ? .openHand : nil
         }
         // Arrange on HUD: the open hand over a module button, the closed hand while one is dragged.
+        // A drag already running in the module (a Modules row) keeps its own cursor.
         if arrangingModules, arrangeDrag?.lifted == true { return .closedHand }
-        if arrangeableModule(atView: location) != nil { return .openHand }
+        if activeDesignCanvas?.isDragging != true, arrangeableModule(atView: location) != nil { return .openHand }
         guard let canvas = activeDesignCanvas, !canvas.capturesPointer, !designContext.overlay.capturesInput,
               let cursor = canvas.cursor(at: designBoxPoint(location)) else { return nil }
         // The shell's controls over a module (the bottom plates and the charge
