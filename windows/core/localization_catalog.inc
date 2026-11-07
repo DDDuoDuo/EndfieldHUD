@@ -1,8 +1,8 @@
 // Generated from the authoritative macOS LocalizationCatalog.swift + LocalizationCatalogRedesign.swift (merged as
 // the Mac merges them) and the Windows-kept v1.2.0 pairs of tools/localization_windows_kept.json; do not edit
 // translations here. Rows: 1284 Mac + 0 Windows-kept.
-// Commit: 3cc84d5424b847eb1bbb5a0fdd67d51a89f9595f (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
-// SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 986cb5bedeb73de83cf73fd7e4ef17155687f7555c27eb995bb2462a5d53b039
+// Commit: 3e66146c3ea348e1517a6ba804bbe8e8483f19b3 (Windows-kept rows: ca04f142185c7de40acd8523bdb563195d90a1d1)
+// SHA256: 7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3 52e7f0cd4e9c4070b4c33c516b449d8a741aedf5d7fdcf529a371f03c116f007
     {" (disconnected)","（未连接）","（未連接）","（未接続）"," (연결 해제됨)"},
     {" Return to 100% to retry cleanup."," 回到 100% 可重试清理。"," 回到 100% 可重試清理。"," 100%に戻すと後処理を再試行します。"," 100%로 되돌려 정리를 다시 시도하세요."},
     {" used"," 已用"," 已用"," 使用中"," 사용 중"},
@@ -33,7 +33,7 @@
     {"6 SP spent","消耗 6 SP","消耗 6 SP","SPを6消費","SP 6 소모"},
     {"A different application now occupies this location. Choose the application again.","此位置的应用已更改，请重新选择应用。","此位置的應用程式已更改，請重新選擇應用程式。","この場所のアプリが変更されました。アプリを選択し直してください。","이 위치의 앱이 변경되었습니다. 앱을 다시 선택하세요."},
     {"A document holds up to 16 items.","每个文档最多 16 项。","每個文件最多 16 項。","1つの文書に追加できるのは最大16項目です。","문서 하나에 최대 16개 항목을 넣을 수 있습니다."},
-    {"A rising wind fills the box for a few seconds and lifts the pieces.","上升气流充满容器数秒，托起山团团。","上升氣流充滿容器數秒，托起山團團。","数秒間、上昇気流が箱を満たしてオービポムを持ち上げます。","몇 초 동안 상승 기류가 상자를 채워 오르비폼을 띄워 올립니다."},
+    {"A rising wind fills the box for a few seconds and lifts the pieces.","上升气流充满容器数秒，托起山团团。","上升氣流充滿容器數秒，托起山團團。","数秒間、上昇気流が箱を満たしてバブルを持ち上げます。","몇 초 동안 상승 기류가 상자를 채워 버블을 띄워 올립니다."},
     {"A saved note could not be read. The original database has been preserved.","无法读取已保存的便笺，原始数据库已保留。","無法讀取已儲存的便箋，原始資料庫已保留。","保存済みのメモを読み込めませんでした。元のデータベースは保持されています。","저장된 메모를 읽을 수 없습니다. 원본 데이터베이스는 보존되었습니다."},
     {"APPLICATIONS","应用快捷方式","應用程式捷徑","アプリのショートカット","앱 바로가기"},
     {"About","关于","關於","このアプリについて","정보"},
@@ -165,7 +165,7 @@
     {"Battery unavailable","电池不可用","電池無法使用","バッテリー利用不可","배터리 사용 불가"},
     {"Battery unavailable","电量不可用","電量不可用","バッテリー残量を取得できません","배터리 잔량 확인 불가"},
     {"Behemoth Heart","巨兽心脏","巨獸心臟","巨獣の心臓","거수의 심장"},
-    {"Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score.","合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分。","合成的山團團越大，得分越高：1、3、6、10……最高 66 分。新的山團團來自最小的五種；NEXT 顯示目前之後的一個。BEST 記錄最高分。","大きく合体させるほど高得点です：1、3、6、10……最高66点。新しいオービポムは小さい5種類から出ます。NEXTは今のオービポムの次を示します。BESTは最高スコアです。","큰 오르비폼으로 합체할수록 점수가 높습니다: 1, 3, 6, 10 … 최대 66점. 새 오르비폼은 가장 작은 다섯 종류 중에서 나오며, NEXT는 현재 오르비폼 다음 것을 보여 줍니다. BEST는 최고 점수입니다."},
+    {"Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score.","合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分。","合成的山團團越大，得分越高：1、3、6、10……最高 66 分。新的山團團來自最小的五種；NEXT 顯示目前之後的一個。BEST 記錄最高分。","大きく合体させるほど高得点です：1、3、6、10……最高66点。新しいバブルは小さい5種類から出ます。NEXTは今のバブルの次を示します。BESTは最高スコアです。","큰 버블로 합체할수록 점수가 높습니다: 1, 3, 6, 10 … 최대 66점. 새 버블은 가장 작은 다섯 종류 중에서 나오며, NEXT는 현재 버블 다음 것을 보여 줍니다. BEST는 최고 점수입니다."},
     {"Birthday","生日","生日","誕生日","생일"},
     {"Black Gold","黑金","黑金","ブラックゴールド","블랙 골드"},
     {"Black point","黑场","黑場","ブラックポイント","블랙 포인트"},
@@ -433,10 +433,10 @@
     {"Dreamcatcher","捕梦","捕夢","夢捕り","드림캐처"},
     {"Drop","投放","投放","落とす","떨어뜨리기"},
     {"Drop files or folders here","将文件或文件夹拖放到此处","將檔案或資料夾拖放到此處","ファイルやフォルダをここにドロップ","여기에 파일이나 폴더를 놓으세요"},
-    {"Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish.","将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失。","將山團團投入容器。兩個相同的山團團接觸後，會合成更大一級的山團團。兩個最大的山團團（第 11 級）合成後會消失。","オービポムを箱に落とします。同じオービポム同士が触れると、ひとつ大きいオービポムに合体します。最大（レベル11）同士は合体すると消えます。","오르비폼을 상자에 떨어뜨리세요. 같은 오르비폼끼리 닿으면 한 단계 큰 오르비폼으로 합체합니다. 가장 큰 오르비폼(레벨 11)끼리는 합체하면 사라집니다."},
+    {"Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish.","将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失。","將山團團投入容器。兩個相同的山團團接觸後，會合成更大一級的山團團。兩個最大的山團團（第 11 級）合成後會消失。","バブルを箱に落とします。同じバブル同士が触れると、ひとつ大きいバブルに合体します。最大（レベル11）同士は合体すると消えます。","버블을 상자에 떨어뜨리세요. 같은 버블끼리 닿으면 한 단계 큰 버블로 합체합니다. 가장 큰 버블(레벨 11)끼리는 합체하면 사라집니다."},
     {"Duration","时长","時長","時間","시간"},
     {"E-Reader","阅读器","閱讀器","リーダー","리더"},
-    {"Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it.","每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动。","每次合成填充一格能量，12 格積滿獲得 1 點 SP，最多 3 點。選擇技能後，點擊山團團或容器即可發動。","合体するたびにSPのマスが1つたまり、12マスで1 SP（最大3）になります。スキルを選び、オービポムか箱をクリックして使います。","합체할 때마다 스킬 게이지가 한 칸 차고, 12칸이 차면 SP 1개를 얻습니다(최대 3개). 스킬을 고른 뒤 오르비폼이나 상자를 클릭해 사용하세요."},
+    {"Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it.","每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动。","每次合成填充一格能量，12 格積滿獲得 1 點 SP，最多 3 點。選擇技能後，點擊山團團或容器即可發動。","合体するたびにSPのマスが1つたまり、12マスで1 SP（最大3）になります。スキルを選び、バブルか箱をクリックして使います。","합체할 때마다 스킬 게이지가 한 칸 차고, 12칸이 차면 SP 1개를 얻습니다(최대 3개). 스킬을 고른 뒤 버블이나 상자를 클릭해 사용하세요."},
     {"Edit","编辑","編輯","編集","편집"},
     {"Edit ","编辑 ","編輯 ","編集：","편집: "},
     {"Edit #","修改 #","修改 #","#を編集","# 편집"},
@@ -742,7 +742,7 @@
     {"Opening link","正在打开链接","正在開啟連結","リンクを開いています","링크 여는 중"},
     {"Operators","干员","乾員","オペレーター","오퍼레이터"},
     {"Orange dot","橙色标记","橙色標記","オレンジの点","주황색 점"},
-    {"OrbiPom! MERGE! best","融合！山团团！最高分","融合！山團團！最高分","OrbiPom! MERGE! 最高スコア","OrbiPom! MERGE! 최고 점수"},
+    {"OrbiPom! MERGE! best","融合！山团团！最高分","融合！山團團！最高分","バブル、合体！最高スコア","융합! 버블! 최고 점수"},
     {"Original files stay where they are.","原文件保持不变。","原始檔案保持不變。","元のファイルはそのままです。","원본 파일은 그대로 유지됩니다."},
     {"Originium","源石","源石","源石","오리지늄"},
     {"Orundum","合成玉","合成玉","合成玉","합성옥"},
@@ -779,9 +779,9 @@
     {"Personal Profile","个人名片","個人名片","プロフィール","개인 프로필"},
     {"Personal profile","个人名片","個人名片","プロフィール","개인 프로필"},
     {"Perspective intensity","透视强度","透視強度","遠近感の強さ","원근 효과 강도"},
-    {"Pick two pieces to trade places. It charges with the SP you spend on the other skills.","选择两个山团团交换位置。在其他技能上消耗 SP 即可充能。","選擇兩個山團團交換位置。在其他技能上消耗 SP 即可充能。","2つのオービポムを選んで位置を入れ替えます。ほかのスキルでSPを使うとチャージされます。","오르비폼 두 개를 골라 자리를 바꿉니다. 다른 스킬에 SP를 사용하면 충전됩니다."},
+    {"Pick two pieces to trade places. It charges with the SP you spend on the other skills.","选择两个山团团交换位置。在其他技能上消耗 SP 即可充能。","選擇兩個山團團交換位置。在其他技能上消耗 SP 即可充能。","2つのバブルを選んで位置を入れ替えます。ほかのスキルでSPを使うとチャージされます。","버블 두 개를 골라 자리를 바꿉니다. 다른 스킬에 SP를 사용하면 충전됩니다."},
     {"Picture changed","已更换头像","已更換頭像","プロフィール画像を変更しました","프로필 사진 변경됨"},
-    {"Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends.","山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束。","山團團停在紅色虛線上方時，會開始 5 秒倒數。倒數結束前讓它們回到線下，否則遊戲結束。","赤い破線より上で止まったオービポムがあると5秒のカウントダウンが始まります。時間内に線の下へ戻さないとゲームオーバーです。","빨간 점선 위에 오르비폼이 머무르면 5초 카운트다운이 시작됩니다. 시간 안에 선 아래로 되돌리지 못하면 게임이 끝납니다."},
+    {"Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends.","山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束。","山團團停在紅色虛線上方時，會開始 5 秒倒數。倒數結束前讓它們回到線下，否則遊戲結束。","赤い破線より上で止まったバブルがあると5秒のカウントダウンが始まります。時間内に線の下へ戻さないとゲームオーバーです。","빨간 점선 위에 버블이 머무르면 5초 카운트다운이 시작됩니다. 시간 안에 선 아래로 되돌리지 못하면 게임이 끝납니다."},
     {"Pin","固定","固定","固定","고정"},
     {"Pin ","标记 ","標記 ","ピン ","핀 "},
     {"Pin note","固定便笺","固定便箋","メモを固定","메모 고정"},
@@ -906,7 +906,7 @@
     {"Removed from shelf","从暂存架上移除","從暫存架上移除","シェルフから削除しました","보관함에서 제거됨"},
     {"Removed from the shelf","已从暂存架移除","已從暫存架移除","シェルフから削除","보관함에서 제거됨"},
     {"Removed {0}","已移除 {0}","已移除 {0}","{0}を削除","{0} 제거됨"},
-    {"Removes the piece you pick.","移除选中的山团团。","移除選中的山團團。","選んだオービポムを取り除きます。","선택한 오르비폼을 제거합니다."},
+    {"Removes the piece you pick.","移除选中的山团团。","移除選中的山團團。","選んだバブルを取り除きます。","선택한 버블을 제거합니다."},
     {"Renaissance","文艺","文藝","文芸","문예"},
     {"Rename category","重命名分类","重新命名分類","カテゴリ名を変更","카테고리 이름 변경"},
     {"Rename: ","重命名：","重命名：","名前を変更：","이름 변경: "},

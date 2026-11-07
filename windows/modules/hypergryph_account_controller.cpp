@@ -420,7 +420,9 @@ std::optional<Time> HypergryphAccountController::nextWakeTime() const {
     // tick() can act only once refresh() accepts it: after nextRefresh and after
     // the 5 s attempt guard (the Mac re-ticks every header-clock second until
     // then; one wake at the guard's end is the event-driven equivalent).
-    if(i.visible&&i.record().linked&&!i.record().requiresReconnect&&!i.busy&&(i.moduleVisible||mode==HeaderMode::endfield||mode==HeaderMode::arknights))
+    // A request in flight (a sync, or this region's disconnect, which a
+    // hidden HUD's cleared busy flag does not show) ends with its own event.
+    if(i.visible&&i.record().linked&&!i.record().requiresReconnect&&!i.hasActiveRequest()&&(i.moduleVisible||mode==HeaderMode::endfield||mode==HeaderMode::arknights))
         wake=std::max({i.nextRefresh(),i.lastAttempt()+5,i.now()});
     if(i.visible) {
         if(const auto s=sanityPresentation()) {

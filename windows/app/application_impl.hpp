@@ -31,6 +31,7 @@
 #include "native/event_log_time.hpp"
 #include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
+#include "modules/charge_badge.hpp"
 #include "core/application_event_recorder.hpp"
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
@@ -203,7 +204,7 @@ private:
 // bounded stage rows and, in the hidden run, one row per module visit.
 class MemoryTrace final {
 public:
-    static constexpr std::size_t rowLimit = 40, visitLimit = 64;
+    static constexpr std::size_t rowLimit = 48, visitLimit = 64;
     explicit MemoryTrace(fs::path path) : path_(std::move(path)) {}
     bool accepts() const noexcept { return rows_.size() < rowLimit; }
     void add(Json row) { if (accepts()) rows_.push_back(std::move(row)); }
@@ -211,7 +212,10 @@ public:
     const fs::path& path() const noexcept { return path_; }
     const Json::Array& rows() const noexcept { return rows_; }
     const Json::Array& visits() const noexcept { return visits_; }
-    unsigned openings{}, closings{};
+    // Lifecycle rows (production; the idle trace checks them in memory):
+    // openings and closings finished, close requests as they reach the
+    // presentation, transition deadlines that expired, quits.
+    unsigned openings{}, closings{}, closes{}, deadlines{}, quits{};
 private:
     fs::path path_;
     Json::Array rows_, visits_;
@@ -350,6 +354,17 @@ struct Application::Impl {
     void prepareGraphics(bool anticipated);
     static constexpr double preparedGraphicsLifetime = 15;
     std::optional<double> preparedGraphicsUntil;
+    // OverlayController.transitionDeadline: an opening or a close the frames
+    // never finished is finished by the host's deadline wake. Armed only while
+    // a transition runs (no wake while idle or hidden): at an opening for
+    // HUDSourceWatchView.backdropPreparationTimeout (3 s) +
+    // SystemHUDView.entranceDuration + 0.2 s, and where a close starts its
+    // animation for SystemHUDView.exitDuration (HUDChargeBadge.exitDuration)
+    // + 0.2 s. Cleared when the transition finishes or is forced.
+    static constexpr double openingTransitionBound=3+core::SystemOverlayLifecycle::entranceDuration+.2;
+    static constexpr double closingTransitionBound=modules::ChargeBadgeState::exitDuration+.2;
+    std::optional<double> transitionDeadline;
+    void transitionDeadlineExpired(double time);
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
     // The hidden idle and animation traces run on the real clock through the production scheduling.
@@ -372,7 +387,15 @@ struct Application::Impl {
     std::wstring trayTooltip;
     void selectModule(core::Module, double time);
     void open(double time);
+    void showOpening(double time); // open, its first frame, then the window
     void close(double time);
+    // OverlayController.finishSystemOpening / finishSystemClosing: the end of
+    // an opening (the session visible) and of a close (the session concealed),
+    // reached by a frame, by a close that concealed the session at once
+    // (Reduce Motion) or by the transition deadline.
+    void finishOpening(double time);
+    // inRequest: Reduce Motion finished the close inside close() itself.
+    void finishConcealment(double time, bool inRequest = false);
     void finishQuit(double time);
     void forceConceal(double time);
     // The Shelf drag-out (application_events.cpp): the drag loop with the
@@ -401,6 +424,7 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
+    std::optional<bool> presentFrame(double time);
     double replayDesignDensity(double start, bool exit, double fraction = 1); // the design density stepped through (part of) the retract or deploy
     void retractDesignDensity(); // a retract settled hidden: where the next deploy starts
     void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
@@ -760,6 +784,7 @@ struct Application::Impl {
     struct ProjectionDropInbox {HWND hwnd{};bool enabled{};double scale{1};core::Point point;std::vector<std::string>paths;};
     std::shared_ptr<ProjectionDropInbox> projectionDrop{std::make_shared<ProjectionDropInbox>()};
     bool projectionActionsQueued{}, projectionPainting{}, projectionDisplayPending{};
+    bool framePresenting{}; // inside presentFrame: a summon a frame's nested dispatch runs draws no frame of its own
     std::optional<ClientMetrics> projectionResizePending;
     std::deque<tools::ProjectionPreviewAction> projectionActions;
     std::optional<gpu::TrayAction> projectionTrayAction;
@@ -804,6 +829,9 @@ struct Application::Impl {
     bool designDensityRetracted{}; // a shelf drag's settled retract already derived the next start
     std::optional<double> designDensityFrameTime; // the opening's last frame (close(): where a cut deploy got to)
     std::function<void()> placementForTest;
+    std::function<void()> openingFrameForTest; // the hidden idle trace: once an opening's first frame is drawn, before its window shows
+    // The hidden trace's stand-in for the displays Projection's hand-off finds (projectionDisplay).
+    std::function<std::optional<gpu::DisplayDescriptor>(std::uintptr_t)> projectionDisplayForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
@@ -904,6 +932,7 @@ struct Application::Impl {
     std::optional<std::string> pendingLink;
     std::uint64_t linkRequests{}; // hidden runs: links that would have opened (never opened)
     bool pendingStorageSettings{};
+    bool afterCloseQueued{}; // afterCloseMessage posted (finishConcealment inside a request)
     // Activity telemetry for the Power charge metric (OverlayController.reconcileChargeMetricTelemetry).
     std::unique_ptr<modules::ActivityTelemetryLink> activityTelemetry;
     // System animation preference (SPI_GETCLIENTAREAANIMATION), folded into
@@ -1039,6 +1068,11 @@ struct Application::Impl {
     void projectionFailed();
     LiveProbe probe;
     std::unique_ptr<MemoryTrace> memoryTrace;
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows (opened, close request,
+    // closed, transition deadline, quit): production, or the hidden idle
+    // trace, which keeps them in memory (never written) to check them.
+    bool memoryTraceRows{};
+    bool lifecycleTraced() const noexcept { return memoryTrace && (production() || memoryTraceRows); }
     std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
     void recordModuleFailure(const ModuleFailure&) noexcept;
     void startFailed(std::string_view name, const std::exception&) noexcept; // a production start site's catch
@@ -1050,7 +1084,7 @@ struct Application::Impl {
     static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,archiveMediaMessage=WM_APP+221,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
-        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
+        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,afterCloseMessage=WM_APP+241,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
     // ApplicationHost::registerMessage range for module areas.
     static constexpr UINT areaMessageFirst=WM_APP+0x1000,areaMessageLimit=0x3000;
     static constexpr UINT_PTR serviceGeneration=1;

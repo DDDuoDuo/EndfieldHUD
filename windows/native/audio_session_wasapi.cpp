@@ -101,7 +101,6 @@ std::string applicationIdentity(HANDLE process)noexcept{
 }
 struct Handle{HANDLE value{};~Handle(){if(value)CloseHandle(value);}Handle()=default;Handle(const Handle&)=delete;Handle&operator=(const Handle&)=delete;};
 struct TaskString{LPWSTR value{};~TaskString(){CoTaskMemFree(value);}};
-std::string utf8(std::wstring_view text){if(text.empty()||text.size()>4096||text.find(L'\0')!=text.npos)throw std::invalid_argument("Invalid audio session identity");const int length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);if(length<=0||length>4096)throw std::invalid_argument("Invalid audio session identity encoding");std::string out(static_cast<std::size_t>(length),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),out.data(),length,nullptr,nullptr)!=length)throw std::runtime_error("Audio identity conversion failed");return out;}
 std::optional<AudioApplicationExecutable>executable(std::wstring_view path)noexcept{
     try{if(path.empty()||path.size()>=32768||path.find(L'\0')!=path.npos)return {};const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(count<=0||count>32768)return {};
         std::string token(static_cast<std::size_t>(count),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),token.data(),count,nullptr,nullptr)!=count)return {};
@@ -185,7 +184,11 @@ class NativeBackend final:public AudioSessionBackend {
     std::map<std::string,Entry,std::less<>>entries;
     HRESULT add(IAudioSessionControl*base){
         ComPtr<IAudioSessionControl2>control;auto hr=base->QueryInterface(IID_PPV_ARGS(&control));if(FAILED(hr))return hr;TaskString nativeID;hr=control->GetSessionInstanceIdentifier(&nativeID.value);if(FAILED(hr)||!nativeID.value)return FAILED(hr)?hr:E_UNEXPECTED;
-        const auto id=utf8(nativeID.value);auto found=entries.find(id);if(found==entries.end()){
+        // An instance identifier that is not a valid UTF-8 token (it holds
+        // the executable path, which may carry an unpaired surrogate or pass
+        // 4096 units) skips only this session; the other apps stay listed.
+        const auto id=utf8Optional(nativeID.value);if(id.empty())return S_OK;
+        auto found=entries.find(id);if(found==entries.end()){
             if(entries.size()>=capacity)return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);Entry next;next.control=control;next.record.id=id;DWORD pid{};
             // S_NO_SINGLE_PROCESS is a success HRESULT but does NOT prove that
             // this session belongs to one application. Do not guess from PID.
@@ -201,26 +204,25 @@ class NativeBackend final:public AudioSessionBackend {
                     // process identity's sessions. No metadata I/O on read,
                     // volume events, hover, drag or native callback threads.
                     const auto prior=std::find_if(entries.begin(),entries.end(),[&](const auto&entry){return entry.second.record.processKey==next.record.processKey;});
-                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.record.name=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
-                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.record.name=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
+                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.processName=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
+                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.processName=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
                     else{
                         // Packaged apps: the package application's DisplayName;
                         // otherwise the executable's product label, then its stem.
-                        next.record.name=packagedName(next.process->value);
+                        // audioProcessLabel takes the first valid label (no
+                        // unpaired surrogate, within 4096 UTF-8 bytes), "PID n"
+                        // last, as the source falls back name, bundle, PID.
+                        const auto packaged=packagedName(next.process->value);std::wstring_view token;
                         std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
-                        if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
-                            const std::wstring_view token(path.data(),length);
-                            if(next.record.name.empty())next.record.name=fileDescription(token);
-                            if(next.record.name.empty())next.record.name=std::filesystem::path(token).stem().wstring();
-                            next.record.executable=executable(token);
-                        }
+                        if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){token=std::wstring_view(path.data(),length);next.record.executable=executable(token);}
                         next.record.appUserModelID=applicationIdentity(next.process->value);
+                        next.processName=audioProcessLabel(packaged,[&]{return token.empty()?std::wstring{}:fileDescription(token);},token.empty()?std::wstring{}:std::filesystem::path(token).stem().wstring(),pid);
                     }
-                    if(next.record.name.empty()||next.record.name.size()>4096)next.record.name=L"PID "+std::to_wstring(pid);
-                    next.processName=next.record.name;remember(next.record.processKey,next.record,next.processName);
-                    TaskString label;if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view display(label.value);
-                        const auto resolved=display.front()==L'@'?indirect(display):std::wstring(display);
-                        if(!resolved.empty()&&resolved.size()<=4096)next.record.name=resolved;}
+                    remember(next.record.processKey,next.record,next.processName);
+                    // The session's own display name comes first when valid.
+                    TaskString label;std::wstring display;
+                    if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view raw(label.value);display=raw.front()==L'@'?indirect(raw):std::wstring(raw);}
+                    next.record.name=audioSessionLabel(display,next.processName,pid);
                     TaskString persistent;if(SUCCEEDED(control->GetSessionIdentifier(&persistent.value))&&persistent.value)next.record.persistentID=utf8Optional(persistent.value);
                 }
             }

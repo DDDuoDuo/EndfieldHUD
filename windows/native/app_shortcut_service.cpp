@@ -109,6 +109,11 @@ using Microsoft::WRL::ComPtr;
 void hr(HRESULT code){if(FAILED(code))throw std::system_error(static_cast<int>(code),std::system_category(),"Windows application operation failed");}
 std::wstring wide(std::string_view value){need(text(value));if(value.empty())return {};const auto count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);need(count>0&&count<32767);std::wstring result(static_cast<std::size_t>(count),L'\0');need(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),result.data(),count)==count);return result;}
 std::string utf8(std::wstring_view value){if(value.empty())return {};need(value.size()<32767);const auto count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);need(count>0&&count<=32768);std::string result(static_cast<std::size_t>(count),'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),result.data(),count,nullptr,nullptr)==count);return result;}
+// The same conversion without its throw, for text read from the user's files:
+// a version resource or package DisplayName that is not valid UTF-16 (an
+// unpaired surrogate) yields to the next label, ending with the file name, and
+// a .lnk's recorded arguments, working directory or target path is dropped.
+std::optional<std::string>utf8Optional(std::wstring_view value){try{return utf8(value);}catch(const Error&){return std::nullopt;}}
 std::wstring extended(std::wstring path){if(path.starts_with(L"\\\\?\\"))return path;return path.starts_with(L"\\\\")?L"\\\\?\\UNC\\"+path.substr(2):L"\\\\?\\"+path;}
 std::wstring regular(std::wstring path){if(path.starts_with(L"\\\\?\\UNC\\"))return L"\\\\"+path.substr(8);if(path.starts_with(L"\\\\?\\"))return path.substr(4);return path;}
 std::string pathKey(std::string_view path){auto value=wide(path);std::replace(value.begin(),value.end(),L'/',L'\\');const auto count=LCMapStringEx(LOCALE_NAME_INVARIANT,LCMAP_LOWERCASE,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr,0);need(count>0&&count<32767);std::wstring folded(static_cast<std::size_t>(count),L'\0');need(LCMapStringEx(LOCALE_NAME_INVARIANT,LCMAP_LOWERCASE,value.data(),static_cast<int>(value.size()),folded.data(),count,nullptr,nullptr,0)==count);return "path:"+utf8(folded);}
@@ -129,12 +134,12 @@ std::string description(std::string_view path){
     struct Translation{WORD language,codepage;};Translation*translations{};UINT length{};
     if(VerQueryValueW(bytes.data(),L"\\VarFileInfo\\Translation",reinterpret_cast<void**>(&translations),&length)&&length>=sizeof(Translation)&&length<=16*sizeof(Translation)){
         for(std::size_t n=0;n<length/sizeof(Translation);++n){wchar_t query[80]{};swprintf_s(query,L"\\StringFileInfo\\%04x%04x\\FileDescription",translations[n].language,translations[n].codepage);wchar_t*value{};UINT chars{};
-            if(VerQueryValueW(bytes.data(),query,reinterpret_cast<void**>(&value),&chars)&&chars>1&&chars<=32768&&value[chars-1]==0){auto result=nativeShortcutTextRules().trimmed(utf8(std::wstring_view(value,chars-1)));if(!result.empty())return result;}}
+            if(VerQueryValueW(bytes.data(),query,reinterpret_cast<void**>(&value),&chars)&&chars>1&&chars<=32768&&value[chars-1]==0){const auto label=utf8Optional(std::wstring_view(value,chars-1));if(!label)continue;auto result=nativeShortcutTextRules().trimmed(*label);if(!result.empty())return result;}}
     }return fileName(path);
 }
 std::wstring expand(std::wstring_view value){if(value.empty())return {};const std::wstring input(value);const auto count=ExpandEnvironmentStringsW(input.c_str(),nullptr,0);need(count>0&&count<=32767);std::wstring result(count,L'\0');need(ExpandEnvironmentStringsW(input.c_str(),result.data(),count)==count);result.resize(count-1);return result;}
 AppShortcutResolved packaged(const AppShortcutSelection&s){need(aumid(s.value));const auto info=winrt::Windows::ApplicationModel::AppInfo::GetFromAppUserModelId(wide(s.value));need(bool(info));const auto id=utf8(info.AppUserModelId().c_str()),family=utf8(info.PackageFamilyName().c_str());need(id==s.value&&!family.empty());
-    AppShortcutResolved r;r.selection=s;r.name=nativeShortcutTextRules().trimmed(utf8(info.DisplayInfo().DisplayName().c_str()));if(r.name.empty())r.name=id;r.applicationKey="package:"+id;r.launchKind=AppShortcutLaunchKind::packagedApp;r.appUserModelID=id;return r;
+    AppShortcutResolved r;r.selection=s;r.name=nativeShortcutTextRules().trimmed(utf8Optional(info.DisplayInfo().DisplayName().c_str()).value_or(std::string{}));if(r.name.empty())r.name=id;r.applicationKey="package:"+id;r.launchKind=AppShortcutLaunchKind::packagedApp;r.appUserModelID=id;return r;
 }
 struct TaskString{PWSTR value{};~TaskString(){CoTaskMemFree(value);}};
 std::string modelID(IShellItem2*item){TaskString value;hr(item->GetString(PKEY_AppUserModel_ID,&value.value));need(value.value!=nullptr);return utf8(value.value);}
@@ -145,11 +150,17 @@ AppShortcutResolved inspectWindows(const AppShortcutSelection&s){selection(s);if
     // Inspection reads recorded fields only. Normal Shell execution of the
     // selected .lnk later handles installer-managed targets and arguments.
     // No Resolve/search, installer action or link rewrite occurs on inspect.
-    std::vector<wchar_t>buffer(32768,0);hr(link->GetArguments(buffer.data(),static_cast<int>(buffer.size())));need(buffer.back()==0);r.arguments=utf8(buffer.data());
+    // The Shell runs the selected .lnk itself (launchWindows passes neither
+    // field), so recorded arguments or a working directory that is not valid
+    // UTF-16 is dropped (empty: none) and the shortcut is kept, as the Mac
+    // (AppShortcutStore.applicationMetadata) keeps an app whose optional
+    // CFBundleIdentifier is not a readable string; a target path that cannot
+    // be converted only gives no resolvedApplicationKey.
+    std::vector<wchar_t>buffer(32768,0);hr(link->GetArguments(buffer.data(),static_cast<int>(buffer.size())));need(buffer.back()==0);r.arguments=utf8Optional(buffer.data()).value_or(std::string{});
     std::fill(buffer.begin(),buffer.end(),0);hr(link->GetPath(buffer.data(),static_cast<int>(buffer.size()),nullptr,SLGP_RAWPATH));need(buffer.back()==0);const auto path=expand(buffer.data());
     ComPtr<IShellLinkDataList>data;hr(link.As(&data));DWORD flags{};hr(data->GetFlags(&flags));r.runAsUser=(flags&SLDF_RUNAS_USER)!=0;r.launchKind=AppShortcutLaunchKind::shellLink;
-    std::fill(buffer.begin(),buffer.end(),0);hr(link->GetWorkingDirectory(buffer.data(),static_cast<int>(buffer.size())));need(buffer.back()==0);r.workingDirectory=utf8(expand(buffer.data()));
-    if(!path.empty()){const auto recorded=utf8(path);if(ehud::data::validWindowsFilePath(recorded))r.resolvedApplicationKey=pathKey(recorded);}
+    std::fill(buffer.begin(),buffer.end(),0);hr(link->GetWorkingDirectory(buffer.data(),static_cast<int>(buffer.size())));need(buffer.back()==0);r.workingDirectory=utf8Optional(expand(buffer.data())).value_or(std::string{});
+    if(!path.empty()){const auto recorded=utf8Optional(path);if(recorded&&ehud::data::validWindowsFilePath(*recorded))r.resolvedApplicationKey=pathKey(*recorded);}
     PIDLIST_ABSOLUTE id{};hr(link->GetIDList(&id));struct PIDL{PIDLIST_ABSOLUTE value;~PIDL(){CoTaskMemFree(value);}}pidl{id};
     need(!path.empty()||id!=nullptr||(flags&SLDF_HAS_DARWINID));
     if(path.empty()&&id){ComPtr<IShellItem2>item;if(SUCCEEDED(SHCreateItemFromIDList(id,IID_PPV_ARGS(&item)))){try{const auto app=modelID(item.Get());if(aumid(app))r.resolvedApplicationKey="package:"+app;}catch(const std::exception&){}}}

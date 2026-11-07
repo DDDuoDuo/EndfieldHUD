@@ -28,8 +28,10 @@
 // policy: a canvas not shown when the HUD closes (or once the close finished,
 // overlayConcealed) keeps no artwork (NativeDesignScene::park); the shown one
 // keeps it so reopening on it only re-uploads; a switch inside the open HUD
-// only parks textures (releaseResources). Once the close finished
-// (overlayConcealed) every canvas starts a new session (Canvas::resetSession:
+// only parks textures (releaseResources), and in a crowded shared raster
+// cache the pages switched away park, the one left longest ago first across
+// every owner (each page is a LayerRasterTenant; LayerRasterizer::relieve).
+// Once the close finished (overlayConcealed) every canvas starts a new session (Canvas::resetSession:
 // the Mac rebuilds SystemHUDView and its canvases at every opening). Prewarm emits and rasterizes the
 // first page off the opening frame. The context's one editor host follows
 // the owner whose canvas runs (Context::setEditorHost before every canvas

@@ -230,11 +230,17 @@ void failureRecords() {
     const TemporaryFolder folder;
     const auto& root = folder.root;
     // The host's budget lines: the raster cache's held bytes (its budget's
-    // measure, released pixels excluded) and released bytes, the renderer's
+    // measure, released pixels excluded) and released bytes, its retained
+    // editor text metadata and typography descriptors, the renderer's
     // resident and parked bytes, each "N of M" (a slash would be redacted).
-    const auto budgets = app::budgetLines({900, 4096, 200000000, 268435456, 68000000, 300000000, 536870912, 12000000, 268435456});
-    check(budgets == "raster: entries 900 of 4096, held bytes 200000000 of 268435456, released bytes 68000000\nrenderer: bytes 300000000 of 536870912, parked bytes 12000000 of 268435456\n",
-          "The budget lines name held, released and parked bytes against their bounds");
+    app::FailureBudgets limits{900, 4096, 200000000, 268435456, 68000000, 300000000, 536870912, 12000000, 268435456};
+    limits.textMetadataBytes = 1500000; limits.maximumTextMetadataBytes = 16777216;
+    limits.typographyBytes = 9000000; limits.maximumTypographyBytes = 33554432;
+    const auto budgets = app::budgetLines(limits);
+    check(budgets == "raster: entries 900 of 4096, held bytes 200000000 of 268435456, released bytes 68000000\n"
+                     "raster text: metadata bytes 1500000 of 16777216, typography bytes 9000000 of 33554432\n"
+                     "renderer: bytes 300000000 of 536870912, parked bytes 12000000 of 268435456\n",
+          "The budget lines name entries, held, released, text metadata, typography and parked bytes against their bounds");
     // The Diagnostics folder does not exist yet: it is created.
     const auto file = root / "v1" / "Diagnostics" / "module-failures.txt";
     app::ModuleFailureLog log(file);
@@ -244,6 +250,7 @@ void failureRecords() {
     check(first.starts_with(app::ModuleFailureLog::header) && first.find("utc: ") != std::string::npos && first.find("owner: settings\n") != std::string::npos &&
           first.find("message: Retained layer resource budget exceeded\n") != std::string::npos && first.find("operation: frame\n") != std::string::npos &&
           first.find("stage: frame [settings] > scene sync\n") != std::string::npos && first.find("raster: entries 900 of 4096, held bytes 200000000 of 268435456, released bytes 68000000\n") != std::string::npos &&
+          first.find("raster text: metadata bytes 1500000 of 16777216, typography bytes 9000000 of 33554432\n") != std::string::npos &&
           first.find("renderer: bytes 300000000 of 536870912, parked bytes 12000000 of 268435456\n") != std::string::npos &&
           first.find("about: main, update current\n") != std::string::npos, "The record names the owner, exception, message, operation, stage and the host's numbers");
     // Paths in a message or in the context lines are redacted in the file.

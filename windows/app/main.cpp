@@ -312,7 +312,9 @@ int run(const std::vector<std::string>& values) {
         // Opt-in memory and thread census (numbers, owner names and system
         // module file names only): ENDFIELDHUD_MEMORY_TRACE=1 rewrites
         // Diagnostics/memory-trace.json after construction, the launch
-        // prewarm and each of the first eight openings and closings.
+        // prewarm, each of the first eight openings, closings and close
+        // requests, an expired transition deadline and a quit; every row
+        // carries the frame scheduling state.
         if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_MEMORY_TRACE", flag, 8) == 1 && flag[0] == L'1')
             options.memoryTrace = root->data / "Diagnostics" / "memory-trace.json";
         // Always: a disabled module owner leaves one bounded record

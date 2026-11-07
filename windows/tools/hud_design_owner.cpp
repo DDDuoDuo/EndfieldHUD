@@ -46,7 +46,11 @@ double designDensity(const core::Matrix4& boxWorld, double dpiScale, double curr
 }
 
 struct DesignOwnerCore::Impl {
-    struct Slot {
+    // A module's page is a tenant of the shared cache: switched away, the
+    // crowd relief may park it (LayerRasterizer::relieve, the page left
+    // longest ago first, across every owner).
+    struct Slot final : gpu::LayerRasterTenant {
+        gpu::LayerRasterizer& raster;
         std::unique_ptr<d::Canvas> canvas;
         core::Module module;
         std::unique_ptr<gpu::NativeDesignScene> scene;
@@ -55,15 +59,26 @@ struct DesignOwnerCore::Impl {
         core::Projection projection;
         std::optional<gpu::ModuleSurfacePose> pose; // presented this frame (drawn and hit)
         bool shown{}, active{}, input{}, parkWanted{};
+        bool seen{};                                // posed (drawn) since it was last shown
         bool openedPose{};                          // posed since the HUD's opening (its first frame is past)
         std::optional<double> entrance;             // ModuleEntrance::start played
         std::uint64_t synced{};                     // canvas contentRevision the scene holds
         Slot(std::unique_ptr<d::Canvas> c, gpu::LayerRasterizer& r, const gpu::LayerRasterOptions& o, const DesignOwnerOptions& options)
-            : canvas(std::move(c)), module(canvas->module()), geometry(r), surface(prepare(o), module) {
+            : raster(r), canvas(std::move(c)), module(canvas->module()), geometry(r), surface(prepare(o), module) {
             scene = std::make_unique<gpu::NativeDesignScene>(r, o, options.name + "." + std::string(core::moduleIdentifier(module)), options.images);
             scene->keepDeparted(true); // released at the close (hostEvent overlayConcealed)
+            raster.enlist(*this);
         }
+        ~Slot() { raster.withdraw(*this); }
+        Slot(const Slot&) = delete;
+        Slot& operator=(const Slot&) = delete;
         gpu::LayerScene& prepare(const gpu::LayerRasterOptions& o) { geometry.load(blank(), o); return geometry; }
+        // Composed, shown or prewarmed: never parked by the crowd.
+        State tenancy() const noexcept override {
+            if (pose || shown || canvas->isShown()) return State::shown;
+            return scene->holdsArtwork() ? State::held : State::empty;
+        }
+        bool park(gpu::Renderer& r) noexcept override { return scene->park(r); }
     };
     gpu::LayerRasterizer& raster;
     d::Context& context;
@@ -87,6 +102,12 @@ struct DesignOwnerCore::Impl {
     void clock(double t) { need(std::isfinite(t), "Design owner needs finite time"); time = std::max(time, t); }
     // The context's one editor host follows the owner whose canvas runs.
     void bind() { context.setEditorHost(fields.get()); }
+    // A slot stops being shown. A page the user saw (posed since it was
+    // shown) becomes the page left most recently, the crowd relief's order;
+    // one shown but never drawn (an incoming screen a superseding switch
+    // skipped, a prewarm the opening did not present) keeps its older place,
+    // so the page the user was looking at is not parked before it.
+    void hide(Slot& s) noexcept { if (s.seen) raster.left(s); s.seen = false; s.shown = false; }
     Slot* input() const { for (const auto& s : slots) if (s->input && s->pose) return s.get(); return nullptr; }
     std::optional<core::Point> local(const Slot& s, core::Point logical) const { return s.projection.unproject({logical.x * metrics.scale, logical.y * metrics.scale}); }
     double density() const { return std::clamp(context.boxScale(), 1., 4.); }
@@ -176,7 +197,7 @@ void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     // A shown (or prewarmed) canvas that never became active leaves too, as
     // on the Mac; while closed none is shown again (update), so the next
     // presentation shows it.
-    for (auto& s : i.slots) if (s->active) i.leave(*s); else { if (s->canvas->isShown()) { i.bind(); s->canvas->prepareToLeave(i.time); } s->shown = false; }
+    for (auto& s : i.slots) if (s->active) i.leave(*s); else { if (s->canvas->isShown()) { i.bind(); s->canvas->prepareToLeave(i.time); } i.hide(*s); }
     i.parkHidden();
 }
 void DesignOwnerCore::overlayClosing(double t) {
@@ -202,6 +223,7 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         // Shown (or prewarmed) but never activated, and dropped (a superseding switch skipped
         // it): it leaves, as the Mac's next transition leaves its skipped screen.
         if (!shown && !s.active && s.canvas->isShown()) { i.bind(); s.canvas->prepareToLeave(i.time); }
+        if (s.shown && !present) i.hide(s);
         s.shown = present;
         if (active != s.active) {
             if (active) { i.bind(); s.canvas->setActive(true, i.time); s.active = true; }
@@ -226,6 +248,7 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         s.scene->updatePose({p.contentWorld, p.opacity, i.time, p.hostMasks(), p.shutter, s.openedPose && i.overlay && frame.opacity <= 0});
         s.openedPose = true;
         s.pose = p;
+        s.seen |= s.shown;
         s.parkWanted = false;
         if (s.active && i.fields) {
             i.fieldSlot = &s;
@@ -317,7 +340,9 @@ void DesignOwnerCore::collected(gpu::Renderer& r) {
         need(s->scene->collectRetired(r), "Design artwork still published");
         if (s->pose) continue;
         // Not composed: a module switched away keeps its scenes (textures
-        // parked); a module closed elsewhere keeps no artwork at all.
+        // parked); a module closed elsewhere keeps no artwork at all. In a
+        // crowded shared cache the pages switched away park later, once every
+        // owner collected (LayerRasterizer::relieve, from the Application).
         if (s->parkWanted) { if (s->scene->park(r)) s->parkWanted = false; }
         else need(s->scene->releaseResources(r), "Design inactive artwork still published");
     }

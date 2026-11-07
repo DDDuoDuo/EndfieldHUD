@@ -17,7 +17,16 @@
 # The trace itself checks that a reopening within the grace keeps the
 # device, that a media owner holding the device refuses the release until it
 # lets go, and that a device prepared for an anticipated opening (the tray
-# icon pointed at) is taken by the opening or discarded without one.
+# icon pointed at) is taken by the opening or discarded without one. After
+# its report it checks the ends of the transitions: a normal close ends on
+# its frames before its transition deadline; under Reduce Motion a close
+# (summon, Escape, the summon hotkey, a press outside the circle, an area's
+# close, Storage Settings, a link, Projection's hand-off, Quit) hides the HUD
+# and completes without a frame; an opening and a close that get no frame
+# end on the transition deadline; and a conceal inside an opening's first
+# frame keeps the window hidden. EXTRA=--idle-trace-quit-button ends the run
+# with the Quit button answered on the confirm bar instead of the tray's Quit,
+# EXTRA=--idle-trace-quit-locked with a lock during an accepted Quit's close.
 # NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)
@@ -165,4 +174,7 @@ foreach(index RANGE ${last})
   endif()
 endforeach()
 message(STATUS "Hidden idle trace at ${refresh} Hz, grace ${grace_seconds} s (production ${production_grace} s), closed ${closed_seconds} s, shared media ${shared_media}: first opening ${opening} s (device ${resume} s), reopening after ${reopen_closed} s closed ${reopen} s, anticipated opening ${anticipated} s, release ${refusal} s after a media owner let go, reopening within the grace ${quick} s:${summary}")
+# The trace's own wake-spin guard: the most host deadline wakes in one second.
+string(REGEX MATCH "Idle trace peak deadline wakes in a second: [0-9]+" peak "${output}")
+message(STATUS "${peak}")
 file(REMOVE_RECURSE "${WORK}")

@@ -1,14 +1,23 @@
 #include "native/audio_runtime.hpp"
 #include "native/volume_strings.hpp"
 #include "modules/volume_canvas.hpp"
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+#include "app/application_audio.hpp"
+#endif
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 // The production audio owner over injected endpoint/session backends: no COM,
@@ -58,6 +67,10 @@ struct Harness {
     std::shared_ptr<World>world=std::make_shared<World>();
     std::mutex nm;std::condition_variable ncv;unsigned notices{};
     std::unique_ptr<n::AudioRuntime>runtime;n::AudioRuntimeChanges seen;
+    // The owner message: adopt the publication, then republish the Volume
+    // binding (the application does this under Volume's isolation:
+    // app/application_audio.hpp drainAudio).
+    std::function<n::AudioRuntimeChanges()>message=[this]{auto changes=runtime->drain();if(changes.snapshot)changes.volume|=runtime->volume().receive();return changes;};
     explicit Harness(c::Language language=c::Language::english){
         n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<Endpoints>(w);};o.sessions=[w=world]{return std::make_unique<Sessions>(w);};o.topologySettleSeconds=.02;
         runtime=std::make_unique<n::AudioRuntime>(std::move(o),language,[this]{{std::lock_guard l(nm);++notices;}ncv.notify_all();});
@@ -67,9 +80,9 @@ struct Harness {
         const auto deadline=std::chrono::steady_clock::now()+10s;
         for(;;){
             unsigned count;{std::lock_guard l(nm);count=notices;}
-            const auto changes=runtime->drain();seen.snapshot|=changes.snapshot;seen.volume|=changes.volume;seen.applications|=changes.applications;seen.devices|=changes.devices;
+            const auto changes=message();seen.snapshot|=changes.snapshot;seen.volume|=changes.volume;seen.applications|=changes.applications;seen.devices|=changes.devices;
             if(predicate())return;
-            std::unique_lock l(nm);if(!ncv.wait_until(l,deadline,[&]{return notices!=count;})){l.unlock();runtime->drain();if(predicate())return;throw std::runtime_error(what);}
+            std::unique_lock l(nm);if(!ncv.wait_until(l,deadline,[&]{return notices!=count;})){l.unlock();(void)message();if(predicate())return;throw std::runtime_error(what);}
         }
     }
     void wake(n::AudioEndpointBackend::Wake World::*member){n::AudioEndpointBackend::Wake w;{std::lock_guard l(world->m);w=(*world).*member;}check(bool(w),"Native notification is registered");w();}
@@ -130,7 +143,7 @@ void volume(){
     h.runtime->volume().setReceiver([&](const n::VolumeSnapshot&s){++received;delivered=s;});
     h.runtime->volume().setVisible(true);callbacks.setActive(true);
     h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume content arrives through the binding");
-    check(h.seen.volume&&received>0,"drain() reports and delivers Volume content");
+    check(h.seen.volume&&received>0,"The owner message reports and delivers Volume content");
     check(delivered.outputs[1].headphones&&!delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
     check(callbacks.setVolume(delivered.outputID,.25),"Slider write accepted");
     h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
@@ -187,6 +200,261 @@ void volumeRevisit(){
     check(deliveries.size()==1&&deliveries[0].applicationActivitySupported&&deliveries[0].canSetVolume,"The read updates the values in place; the page structure stays");
     h.runtime->stop();
 }
+// An app session whose name is ill-formed UTF-16 (an app-set display name or
+// an executable label with an unpaired surrogate): the UI's audio message
+// (AudioRuntime::drain, outside module isolation) converted every per-app
+// name to UTF-8 for the Volume page and threw, which stopped the HUD's frames
+// and ended the run. The row keeps the backend's PID fallback label instead,
+// a well-formed surrogate pair keeps its own name. A name with an embedded
+// NUL (which made routes.update drop the whole app list) keeps the same
+// label, and the other apps stay listed. So does a name within the session
+// limit (4096 UTF-16 units) but past the Volume rows' 4096 UTF-8 bytes, which
+// failed the Volume canvas's snapshot check and disabled the module.
+void malformedAppName(){
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{high}","4242:100",std::wstring(L"Player")+wchar_t(0xD800),4242,true,true,.8f,0},
+            {"{low}","4343:100",std::wstring(1,wchar_t(0xDC00))+L"Tail",4343,true,true,.6f,0},
+            {"{pair}","4444:100",std::wstring(L"Music \U0001F3B5"),4444,true,true,.4f,0},
+            {"{nul}","4545:100",std::wstring(L"Nul\0Name",8),4545,true,true,.5f,0},
+            {"{long}","4646:100",std::wstring(2000,L'\u6587'),4646,true,true,.5f,0}};}
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
+    binding.setReceiver([&](const n::VolumeSnapshot&s){delivered=s;});
+    bool threw{};
+    try{binding.setVisible(true);callbacks.setActive(true);
+        h.until([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==5;},"Volume lists every audio app");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"An ill-formed UTF-16 app name never throws out of AudioRuntime::drain (the UI audio message)");
+    const auto named=[&](std::string_view id)->std::string{for(const auto&a:delivered.applications)if(a.id==id)return a.name;return "missing";};
+    check(named("4242:100")=="PID 4242"&&named("4343:100")=="PID 4343","An ill-formed name shows the existing PID fallback label");
+    check(named("4444:100")=="Music \xF0\x9F\x8E\xB5","A well-formed surrogate pair keeps its name");
+    check(named("4545:100")=="PID 4545","A name with an embedded NUL shows the PID label and the list stays");
+    check(named("4646:100")=="PID 4646","A name past 4096 UTF-8 bytes shows the PID label");
+    threw=false;try{n::validateVolumeSnapshot(delivered);}catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"The published snapshot passes the Volume canvas's check");
+    // Later publications with the relabelled rows listed: an endpoint volume
+    // change and one app's gain.
+    threw=false;
+    try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
+        h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.3)<1e-6;},"An endpoint volume change still drains");
+        check(callbacks.setAppGain("4242:100",.5),"The app's slider is accepted");
+        h.until([&]{for(const auto&a:delivered.applications)if(a.id=="4242:100")return a.state==n::VolumeAppState::active;return false;},"The app's gain reaches its row");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"Volume and per-app gain changes with the ill-formed app listed never throw");
+    h.runtime->stop();
+}
+// An endpoint whose name is within the worker's 32767 units but past a Volume
+// row's 4096 UTF-8 bytes (2000 CJK characters, 6000 bytes): it passed the
+// worker, then failed the Volume canvas's snapshot check, which disabled the
+// module. The Volume row shows the endpoint ID instead, as for an empty name,
+// and so does the Event Log (endpointLabelsInEventLog).
+void longEndpointName(){
+    Harness h;const std::wstring longName(2000,L'\u6587');
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,longName,L"HDAUDIO",1u},{usb,L"USB Headset",L"USB",5u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;}
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();n::VolumeSnapshot delivered=binding.snapshot();
+    // The canvas checks every snapshot it receives (VolumeCanvas::receive).
+    binding.setReceiver([&](const n::VolumeSnapshot&s){n::validateVolumeSnapshot(s);delivered=s;});
+    check(h.runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    bool threw{};
+    try{binding.setVisible(true);callbacks.setActive(true);
+        h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume lists both outputs");}
+    catch(const std::invalid_argument&){threw=true;}
+    check(!threw,"An endpoint name past 4096 UTF-8 bytes never fails the Volume canvas's snapshot check");
+    const auto named=[&](std::string_view id)->std::string{for(const auto&d:delivered.outputs)if(d.id==id)return d.name;return "missing";};
+    check(named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}","The Volume row shows the endpoint ID for the long name");
+    check(named("{0.0.0.00000000}.{usb}")=="USB Headset"&&delivered.outputID=="{0.0.0.00000000}.{speaker}","Other endpoints keep their names and the default stays selected");
+    h.until([&]{return h.runtime->deviceLabels().has_value();},"The Event Log device list arrives");
+    const auto labels=h.runtime->deviceLabels();
+    check(labels->size()==3&&labels->at("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}","The Event Log labels the long name with the endpoint ID, as Volume does");
+    // A name with an unpaired surrogate (valid at both wchar_t widths) made
+    // the whole endpoint list unavailable; the row shows the ID instead.
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800));}
+    threw=false;
+    try{h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";},"The ill-formed endpoint name reaches Volume");}
+    catch(const std::exception&){threw=true;}
+    check(!threw&&delivered.outputs.size()==2&&named("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetVolume,"An endpoint name that is not well-formed UTF-16 shows the endpoint ID, and the list stays available");
+    // A name past 4096 UTF-8 bytes only with its trailing spaces: Volume
+    // checks the raw name and shows the ID, and the Event Log, which lists
+    // trimmed names, chose from the trimmed one and kept the name. Both now
+    // choose on the raw name. The microphone leaves so the list changes. The
+    // row first gets a valid name back, so Volume must re-label it.
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=L"USB Headset";}
+    h.wake(&World::topologyWake);h.until([&]{return named("{0.0.0.00000000}.{usb}")=="USB Headset";},"The endpoint's valid name reaches Volume again");
+    {std::lock_guard l(h.world->m);h.world->outputs[1].name=std::wstring(4095,L'a')+L"  ";h.world->inputs.clear();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices&&h.runtime->deviceLabels()&&h.runtime->deviceLabels()->size()==2&&named("{0.0.0.00000000}.{usb}")!="USB Headset";},"The microphone's removal and the padded name reach the Event Log and Volume");
+    const auto padded=h.runtime->deviceLabels();
+    check(named("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}"&&padded->at("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}","A name past 4096 UTF-8 bytes with its trailing spaces is the endpoint ID in both Volume and the Event Log");
+    h.runtime->stop();
+}
+// The Event Log's device list labels each endpoint as its Volume row does
+// (audioEndpointLabel). An endpoint name that is not well-formed UTF-16 made
+// deviceLabels() withhold every list while it existed, so no device change was
+// recorded; a name past 4096 UTF-8 bytes was handed over raw, and the Event
+// Log drops a device name that long. Both now give the endpoint ID, and a
+// device arriving and leaving beside them is still reported.
+void endpointLabelsInEventLog(){
+    Harness h;const std::wstring longName(2000,L'\u6587'),illFormed=L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800));
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,longName,L"HDAUDIO",1u},{usb,illFormed,L"USB",5u}};}
+    check(h.runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    h.until([&]{return h.seen.devices;},"The first device list settles");
+    const auto labelled=[](const std::map<std::string,std::string>&labels){
+        return labels.at("{0.0.0.00000000}.{speaker}")=="{0.0.0.00000000}.{speaker}"&&labels.at("{0.0.0.00000000}.{usb}")=="{0.0.0.00000000}.{usb}";};
+    auto labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==2&&labelled(*labels),"The over-long and ill-formed names are listed with their endpoint IDs");
+    {std::lock_guard l(h.world->m);h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices;},"The microphone's arrival settles");
+    labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==3&&labels->at("{0.0.1.00000000}.{mic}")=="Microphone"&&labelled(*labels),"A device arriving beside them reaches the Event Log");
+    {std::lock_guard l(h.world->m);h.world->inputs.clear();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{return h.seen.devices;},"The microphone's removal settles");
+    labels=h.runtime->deviceLabels();
+    check(labels&&labels->size()==2&&!labels->contains("{0.0.1.00000000}.{mic}")&&labelled(*labels),"A device leaving beside them reaches the Event Log");
+    h.runtime->stop();
+}
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+// A Volume publish that throws (here the receiver; in 1.3.1 an ill-formed
+// per-app name reaching the throwing UTF-8 conversion) escaped the UI's audio
+// message, which drained outside module isolation: the overlay host stopped
+// its frames, then the run ended. The application's audio message
+// (drainAudio) and its other binding calls (volumeBindingCall) run Volume
+// under the Volume owner's isolation: only Volume is disabled, the message
+// keeps draining for Now Playing and the Event Log, and the binding closes,
+// so the dead Volume's vote no longer reads endpoints and sessions when the
+// HUD opens again.
+struct VolumeOwner final:endfield::app::ModuleOwner {std::string_view name()const noexcept override{return "volume";}};
+void volumeFailure(){
+    namespace app=endfield::app;
+    Harness h;
+    {std::lock_guard l(h.world->m);h.world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};h.world->inputs={{mic,L"Microphone",L"HDAUDIO",4u}};h.world->defaultOutput=speaker;h.world->defaultInput=mic;
+        h.world->sessions={{"{player}","4242:100",L"Player",4242,true,true,.8f,0}};}
+    VolumeOwner owner;app::ModuleRegistry registry(true);registry.add(owner); // the owner outlives its registration
+    h.message=[&]{return app::drainAudio(registry,&owner,*h.runtime);};
+    auto&binding=h.runtime->volume();const auto callbacks=binding.callbacks();
+    n::VolumeSnapshot delivered=binding.snapshot();bool failing{};
+    binding.setReceiver([&](const n::VolumeSnapshot&s){if(failing)throw std::invalid_argument("synthetic Volume publish failure");delivered=s;});
+    const auto visible=[&](bool value,const char*operation){(void)app::volumeBindingCall(registry,&owner,*h.runtime,operation,[&]{(void)binding.setVisible(value);});};
+    check(h.runtime->setDeviceEvents(true)==0&&h.runtime->setNowPlayingVisible(true)==0,"Event Log and Now Playing votes");
+    visible(true,"open");callbacks.setActive(true);
+    h.until([&]{return delivered.canSetVolume&&delivered.applications.size()==1&&h.runtime->deviceLabels()&&route(h.runtime->applications(),"4242:100");},"Volume, Now Playing and the Event Log are served");
+    failing=true;
+    bool escaped{};
+    try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
+        h.until([&]{return !registry.enabled(owner);},"The throwing Volume publish is reached");}
+    catch(const std::invalid_argument&){escaped=true;}
+    check(!escaped,"A throwing Volume publish never escapes the audio message to the host");
+    check(registry.failures().size()==1&&registry.failures()[0].owner=="volume"&&registry.failures()[0].operation=="audio","Only Volume is disabled, by the audio message");
+    check(!binding.active(),"The failed Volume's binding is closed and its vote withdrawn");
+    // The message keeps draining for every other audio user.
+    {std::lock_guard l(h.world->m);h.world->sessions.push_back({"{second}","5151:100",L"Second",5151,true,true,.7f,0});}
+    h.seen={};h.wake(&World::sessionWake);
+    h.until([&]{return h.seen.applications&&route(h.runtime->applications(),"5151:100");},"Now Playing's app list keeps updating");
+    check(h.runtime->setApplicationGain("4242:100",.5),"Now Playing's app volume is accepted");
+    h.until([&]{const auto*r=route(h.runtime->applications(),"4242:100");return r&&r->state==n::AudioApplicationRouteState::active&&r->gain&&*r->gain==.5f;},"Now Playing's app volume keeps updating");
+    {std::lock_guard l(h.world->m);h.world->outputs.push_back({usb,L"USB Headset",L"USB",5u});}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{const auto labels=h.runtime->deviceLabels();return h.seen.devices&&labels&&labels->count("{0.0.0.00000000}.{usb}");},"The Event Log device list keeps updating");
+    check(!h.seen.volume,"The closed binding publishes nothing");
+    // Close the HUD (Now Playing leaves too), then open it again: the dead
+    // Volume reads nothing. A device change the Event Log hears proves the
+    // worker is awake.
+    check(h.runtime->stopApplication("4242:100"),"Restore the route");
+    check(h.runtime->setNowPlayingVisible(false)==0,"Now Playing leaves");visible(false,"close");
+    h.until([&]{return h.runtime->snapshot().applicationsPaused&&h.runtime->snapshot().paused;},"Nothing but the device list is read while closed");
+    const auto before=h.runtime->stats();
+    visible(true,"open");callbacks.setActive(true);
+    {std::lock_guard l(h.world->m);h.world->outputs.pop_back();}
+    h.seen={};h.wake(&World::topologyWake);
+    h.until([&]{const auto labels=h.runtime->deviceLabels();return h.seen.devices&&labels&&!labels->count("{0.0.0.00000000}.{usb}");},"The Event Log hears the next device change");
+    const auto after=h.runtime->stats();
+    {std::lock_guard l(h.world->m);check(after.sessionReads==before.sessionReads&&after.volumeReads==before.volumeReads&&h.world->bound.empty(),"Opening again reads no endpoint volume and no session for the failed Volume");}
+    check(registry.failures().size()==1,"No further failure reaches the registry");
+    h.runtime->stop();
+}
+// The production notice (app::audioNotice) dropped PostMessageW's result: one
+// post that failed (here the window's posted-message quota is full) left the
+// coalescer's pending flag set, so no later publication posted the owner
+// message and audio went silent for the run. The failed post now throws, the
+// coalescer re-arms, and the next publication is delivered.
+void noticeRetry(){
+    namespace app=endfield::app;
+    constexpr UINT audioMessage=WM_APP+233,filler=WM_APP+1;constexpr WPARAM generation=7;
+    const HWND window=CreateWindowExW(0,L"STATIC",L"Audio notice fixture",0,0,0,0,0,HWND_MESSAGE,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(window&&!IsWindowVisible(window),"The notice posts to an owned message-only window");
+    const auto world=std::make_shared<World>();{std::lock_guard l(world->m);world->outputs={{speaker,L"Speakers",L"HDAUDIO",1u}};}
+    n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<Endpoints>(w);};o.sessions=[w=world]{return std::make_unique<Sessions>(w);};o.topologySettleSeconds=.02;
+    // Counts the worker's notice calls around the production notice itself.
+    std::atomic<unsigned>attempts{},failures{};
+    auto runtime=std::make_unique<n::AudioRuntime>(std::move(o),c::Language::english,[notice=app::audioNotice(window,audioMessage,generation),&attempts,&failures]{
+        ++attempts;try{notice();}catch(...){++failures;throw;}});
+    const auto posted=[&]{MSG m{};unsigned count{};while(PeekMessageW(&m,window,audioMessage,audioMessage,PM_REMOVE)){check(m.wParam==generation,"The owner message carries the window's generation");++count;}return count;};
+    const auto attempted=[&](unsigned after){const auto deadline=std::chrono::steady_clock::now()+10s;while(attempts.load()<=after&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);return attempts.load()>after;};
+    unsigned filled{};while(filled<1000000&&PostMessageW(window,filler,0,0))++filled;
+    check(filled>0&&filled<1000000,"The window's posted-message quota is full");
+    check(runtime->setDeviceEvents(true)==0,"Event Log device list vote");
+    check(attempted(0),"The first publication calls the notice");
+    // Wait for the worker to go quiet (the device list settles after .02 s):
+    // the counters read together only once no post is in flight, so a late
+    // publication cannot fall between them.
+    const auto quiet=[&]{
+        const auto deadline=std::chrono::steady_clock::now()+10s;auto since=std::chrono::steady_clock::now();
+        unsigned a=attempts.load(),f=failures.load();
+        while(std::chrono::steady_clock::now()<deadline){
+            std::this_thread::sleep_for(1ms);const unsigned na=attempts.load(),nf=failures.load();
+            if(na!=a||nf!=f){a=na;f=nf;since=std::chrono::steady_clock::now();}
+            else if(a==f&&std::chrono::steady_clock::now()-since>=100ms)return true;
+        }
+        return false;};
+    check(quiet(),"Every post into the full queue failed and threw, and the worker is quiet");
+    const unsigned failed=failures.load(),before=attempts.load();
+    {MSG m{};while(PeekMessageW(&m,window,filler,filler,PM_REMOVE)){}}
+    check(posted()==0,"Nothing was posted while the queue was full");
+    // No drain() ran: only the coalescer's re-arm lets the next publication post.
+    {std::lock_guard l(world->m);world->outputs.push_back({usb,L"USB Headset",L"USB",5u});}
+    {n::AudioEndpointBackend::Wake w;{std::lock_guard l(world->m);w=world->topologyWake;}check(bool(w),"Native notification is registered");w();}
+    check(attempted(before),"A later publication calls the notice again after a failed post");
+    const auto deadline=std::chrono::steady_clock::now()+10s;unsigned delivered{};
+    while(!(delivered=posted())&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    check(delivered==1,"The later publication's owner message is delivered");
+    check(failed>0&&failed==before,"Every post into the full queue failed and threw");
+    bool adopted{};
+    for(const auto until=std::chrono::steady_clock::now()+10s;!adopted&&std::chrono::steady_clock::now()<until;){
+        (void)posted();(void)runtime->drain();const auto labels=runtime->deviceLabels();adopted=labels&&labels->count("{0.0.0.00000000}.{usb}");
+        if(!adopted)std::this_thread::sleep_for(1ms);}
+    check(adopted,"The owner adopts the later publication");
+    runtime->stop();DestroyWindow(window);
+}
+// The application's own wiring (app/, read as text: the hidden owner
+// coverage never constructs AudioRuntime). drain() no longer republishes
+// Volume, so a caller that drains directly would silently freeze the Volume
+// page, and a binding call outside volumeBindingCall would publish outside
+// Volume's isolation. Every AudioRuntime drain goes through drainAudio and
+// every publishing binding call through volumeBindingCall. Reading the text is
+// the only way to pin this wiring, so a failure names itself as a text match:
+// reformatting these lines fails it too, and then the expected text is updated.
+void appWiring(const std::filesystem::path&app){
+    check(std::filesystem::is_directory(app),"The application sources are passed");
+    const auto wired=[](bool value,const std::string&what){++checks;if(!value)throw std::runtime_error("app/ wiring text check: "+what+" (reformatting these lines? update the expected text in appWiring)");};
+    const std::regex call(R"(audio(->|\.)(drain\(|volume\(\)\.(receive|setVisible|setErrorText)\(|setLanguage\())");
+    unsigned guarded{},drains{};
+    for(const auto&entry:std::filesystem::recursive_directory_iterator(app)){
+        const auto file=entry.path();if(!entry.is_regular_file()||(file.extension()!=".cpp"&&file.extension()!=".hpp")||file.filename()=="application_audio.hpp")continue;
+        std::ifstream in(file,std::ios::binary);check(bool(in),"Read an application source");std::string line;
+        while(std::getline(in,line)){
+            if(line.find("drainAudio(registry,volumeModuleOwner.get(),*audio)")!=line.npos)++drains;
+            for(auto it=std::sregex_iterator(line.begin(),line.end(),call);it!=std::sregex_iterator();++it){
+                wired((*it)[2].str()!="drain(","AudioRuntime::drain() is called outside drainAudio in "+file.filename().string());
+                wired(line.find("volumeBindingCall(registry,volumeModuleOwner.get(),")!=line.npos,"A Volume binding call publishes outside volumeBindingCall in "+file.filename().string()+": "+(*it)[0].str());
+                ++guarded;
+            }
+        }
+    }
+    wired(drains==1,"The audio message drains through drainAudio under the Volume owner");
+    wired(guarded>=4,"Open, close, force close and the language run the binding under the Volume owner");
+}
+#endif
 // The same through the Volume canvas, as DesignOwnerCore drives a module
 // switch (show, setActive, playEntrance; prepareToLeave, setActive(false)):
 // the page Volume shows when it enters keeps its staggered entrance through
@@ -265,7 +533,14 @@ void nowPlaying(){
     {std::lock_guard l(h.world->m);check(std::abs(*h.world->sessions[0].volume-.8f)<1e-6f&&!h.world->endpointOpen&&!h.world->sessionWake,"Destruction restores every owned session and unregisters everything");}
 }
 }
-int main(){
-    try{construction();coalescing();devices();volume();volumeRevisit();volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
+int main(int argc,char**argv){
+    try{construction();coalescing();devices();volume();volumeRevisit();malformedAppName();longEndpointName();endpointLabelsInEventLog();
+#ifdef EHUD_AUDIO_RUNTIME_REGISTRY
+        check(argc==2,"Pass the application source directory (app/)");
+        volumeFailure();noticeRetry();appWiring(argv[1]);
+#else
+        (void)argc;(void)argv;
+#endif
+        volumePage();nowPlaying();std::cout<<"PASS "<<checks<<" injected audio runtime checks (no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

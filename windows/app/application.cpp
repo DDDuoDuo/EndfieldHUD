@@ -6,6 +6,7 @@
 // persistent versioned data root, real providers, tray, first run, session-end
 // durability and per-module failure isolation.
 #include "app/application_impl.hpp"
+#include "app/application_audio.hpp"
 #include "app/application_persistence.hpp"
 #include "app/areas/projection_automation.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
@@ -755,7 +756,8 @@ void Application::Impl::recordModuleFailure(const ModuleFailure&f)noexcept{
         // the renderer's textures and parked copies.
         const auto raster=rasterizer.stats();const auto drawn=renderer.stats();
         context+=budgetLines({raster.entries,gpu::LayerRasterizer::maximumEntries,raster.resourceBytes-std::min(raster.releasedPixelBytes,raster.resourceBytes),gpu::LayerRasterizer::maximumResourceBytes,raster.releasedPixelBytes,
-            drawn.resourceBytes,gpu::Renderer::maximumResourceBytes,drawn.parkedBytes,gpu::Renderer::maximumParkedBytes});
+            drawn.resourceBytes,gpu::Renderer::maximumResourceBytes,drawn.parkedBytes,gpu::Renderer::maximumParkedBytes,
+            raster.textMetadataBytes,gpu::LayerRasterizer::maximumTextMetadataBytes,raster.typographyDescriptorBytes,gpu::LayerRasterizer::maximumTypographyDescriptorBytes});
         if(notes){const auto&p=notes->modulePresentation();context+="module: "+std::string(core::moduleIdentifier(p.requested))+(p.transitioning?" (switching)":"")+"\n";}
         if(f.owner=="settings"&&settingsUI){
             constexpr std::array phases{"idle","checking","current","available","downloading","ready","installing","failed"};
@@ -789,7 +791,7 @@ void Application::Impl::concealed(double time){
     designDensityRetracted=false;
     releaseConcealedGraphics();
     // ENDFIELDHUD_MEMORY_TRACE: the first closings (the hidden run records its own stages).
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-"+std::to_string(++memoryTrace->closings),true);
 }
 // Nothing is drawn until the next opening. One publication lets the owners
 // that released their artwork on the overlayConcealed broadcast retire its GPU
@@ -848,7 +850,7 @@ void Application::Impl::releaseIdleGraphics(double time){
         const auto line=std::string("EndfieldHUD could not release the closed HUD's graphics device (")+typeid(e).name()+")\n";
         std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     }
-    if(memoryTrace&&production()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
+    if(lifecycleTraced()&&memoryTrace->closings<8)recordMemory("closed-idle-"+std::to_string(memoryTrace->closings),true);
 }
 void Application::Impl::prepareGraphics(bool anticipated){
     if(!ready||stopping||!renderer.stats().initialized||!renderer.deviceSuspended())return;
@@ -981,7 +983,7 @@ void Application::Impl::constructAudio(){
     // interface until the first vote; hidden tests never construct it.
     const auto window=static_cast<HWND>(host.hwnd());
     audio=std::make_unique<gpu::AudioRuntime>(gpu::nativeAudioServiceOptions(args.dataRoot),settingsLanguage(configuration),
-        [window]{PostMessageW(window,audioMessage,serviceGeneration,0);});
+        audioNotice(window,audioMessage,serviceGeneration));
     (void)audio->recover(); // crash-recovery journal of owned per-app attenuation
     if(eventRecorder)(void)audio->setDeviceEvents(true); // Event Log device list, app lifetime
 }
@@ -1672,7 +1674,7 @@ void Application::Impl::constructGame(double time){
     callbacks.saveBest=[this](std::int64_t best){gameBest=std::max(gameBest,best);configuration.set("orbipom.bestScore.v1",gameBest);if(settingsSaves){auto committed=settingsUI?settingsUI->controller().committed():configuration;committed.set("orbipom.bestScore.v1",gameBest);settingsSaves->save(committed);}};
     callbacks.event=[this](modules::OrbiPomEvent event){if(eventOwner){const char*action=event==modules::OrbiPomEvent::started?"started":event==modules::OrbiPomEvent::restarted?"restarted":"finished";eventOwner->record({ehud::data::makeUUID(),modules::EventKind::minigameAction,ehud::data::foundationNow(),{{"action",action}}});}};
     gameSession=std::make_unique<modules::OrbiPomSession>(gameBest,std::move(callbacks));
-    // Merge! OrbiPom! on the design library (modules/orbipom_canvas.hpp): one
+    // OrbiPom! MERGE! on the design library (modules/orbipom_canvas.hpp): one
     // design owner over the canvas, the original artwork under the minigame
     // resource root. Mac OrbiPomCanvas observes NSApplication activation and
     // NSWorkspace sleep / wake (here WM_ACTIVATEAPP and the host's suspension
@@ -1822,13 +1824,16 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     using K=core::SystemOverlayEffect::Kind;
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
-        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();openPresentation(e.module,time);break;
-        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();close(time);break;
+        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
+        case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();
+            // At the request, before the close runs (a Reduce Motion close finishes inside it).
+            if(lifecycleTraced()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);
+            close(time);break;
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
-        case K::terminate:finishQuit(time);break;
+        case K::terminate:if(lifecycleTraced()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;
         case K::shelfRetract:case K::shelfHide:case K::shelfRestore:case K::shelfClose:shelfDragEffect(e,time);break;
         }
@@ -1874,7 +1879,7 @@ void Application::Impl::repositionHUD(double time){
     const auto preference=displayPreference();
     if(!preference.persistentID)for(std::size_t i=0;i<displays.size();++i)if(displays[i].bounds.valid()&&displayKey(displays[i])==hudDisplayID){index=i;break;}
     if(!index){POINT pointer{};(void)GetCursorPos(&pointer);index=gpu::resolveDisplay(preference,displays,{pointer.x,pointer.y});}
-    if(!index){(void)lifecycle.forceClose();forceConceal(time);return;}
+    if(!index){const auto closed=lifecycle.forceClose();forceConceal(time);perform(closed,time);return;} // an accepted Quit still quits (tearDownSystemPresentation)
     placeOnDisplay(displays[*index]);
 }
 void Application::Impl::openPresentation(core::Module initial,double time){
@@ -1891,7 +1896,33 @@ void Application::Impl::openPresentation(core::Module initial,double time){
         if(placing){placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;}
         holdOpeningDesignDensity();if(placing&&visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
-    open(time);if(visibleMode())host.show();refresh(time);
+    showOpening(time);
+}
+// OverlayController.performSystemAction(.open) orders the panel front in the
+// transaction that already holds the entrance's first pose (a new
+// SystemHUDView: the canvas at 0, the source at its initial pose). Here the
+// opening's first frame presents before the window shows, so the window
+// never composites what its swap chain held before: a close's last retract
+// frame within the graphics grace (its canvas still opaque, the fade waits
+// past the exit), the HUD a lock or sleep hid, a Projection page. The frame
+// refresh posts continues the opening at display pacing (one frame more per
+// opening: two instead of one under Reduce Motion). (A summon dispatched
+// inside a frame leaves the pose to that frame, once its nested dispatch
+// returns, and shows the window at once: frames run while it is shown.)
+void Application::Impl::showOpening(double time){
+    open(time);
+    if(liveScheduling()&&ready&&!stopping&&!framePresenting&&!projectionShown()){
+        if(!presentFrame(time)||stopping)return;
+        if(openingFrameForTest)openingFrameForTest();
+        // A conceal that frame's nested dispatch ran (present()'s backdrop
+        // calls: sleep, the display turned off, a session end) leaves the
+        // window hidden over the concealed session, as every show after an
+        // activation checks.
+        if(session->phase()==core::VisibilityPhase::concealed||closing)return;
+    }
+    // The hidden traces on the real clock show their offscreen window here
+    // too (scheduling only), so they see the frame come before the show.
+    if(liveScheduling())host.show(visibleMode());refresh(time);
 }
 void Application::Impl::selectModule(core::Module module,double time){
     if(notes){const auto current=notes->selected();
@@ -1927,7 +1958,7 @@ void Application::Impl::open(double time){
     if(notes&&!deferDeployEntrance)notes->beginEntrance(hostTime(time));
     quitPromptOpen=false;
     automationChanged();
-    if(audio)audio->volume().setVisible(true);
+    if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"open",[&]{audio->volume().setVisible(true);});
     if(visibleMode()&&headerClock.setActive(true,time))updateClock();
 }
 void Application::Impl::close(double time){
@@ -1939,7 +1970,7 @@ void Application::Impl::close(double time){
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
-    registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)audio->volume().setVisible(false);automationChanged();
+    registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"close",[&]{audio->volume().setVisible(false);});automationChanged();
     time=hostTime(time);
     // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).
     designDensityAtClose.reset();
@@ -1947,7 +1978,14 @@ void Application::Impl::close(double time){
         // RC 139 measured on the frames: up to the deploy's last frame, posed at its eased clip time.
         if(const double length=chromePlan->entranceSeconds();length>0&&designDensityFrameTime)
             designDensityAtClose=replayDesignDensity(designDensityStart.value_or(2.),false,core::VisibilityClock::clipTime(std::max(0.,*designDensityFrameTime-canvasOpenedAt),length)/length);
-    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
+    host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);
+    // The lifecycle's close plays now (an editor that declined above leaves no deadline).
+    if(lifecycleClosing)transitionDeadline=time+closingTransitionBound;
+    refresh(time);
+    // Reduce Motion conceals the source at once: as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), the close
+    // finishes here. No frame would: the concealed demand presents nothing.
+    if(session->phase()==core::VisibilityPhase::concealed&&!shelfDragFrame(time,true)&&!stopping)finishConcealment(time,true);
 }
 void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
@@ -1958,11 +1996,11 @@ void Application::Impl::forceConceal(double time){
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     if(session->phase()!=core::VisibilityPhase::concealed||closing){
-        registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"force close");if(audio)audio->volume().setVisible(false);
+        registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"force close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"force close",[&]{audio->volume().setVisible(false);});
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
         closing=false;session->conceal(time);if(notes)notes->setMediaActive(false,hostTime(time));
     }
-    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();
+    lifecycleOpening.reset();lifecycleClosing.reset();shelfRetracting.reset();shelfRestoring.reset();transitionDeadline.reset();
     host.hide();concealed(time);if(!stopping){host.setFrameDemand(demand(time));scheduleDeadline();}
 }
 bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
@@ -2117,7 +2155,9 @@ void Application::Impl::applyConfiguration(double time){
     session->setSettings(settings,time);
     // A HUD scale, offset or Reduce Motion change while closed: the next opening's density (cached per layout).
     if(session->phase()==core::VisibilityPhase::concealed)holdDesignDensity();
-    watchAppearance.language=settingsLanguage(configuration);if(audio)audio->setLanguage(watchAppearance.language);
+    watchAppearance.language=settingsLanguage(configuration);
+    // The Volume failure text republishes the binding (Volume's isolation).
+    if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"language",[&]{(void)audio->setLanguage(watchAppearance.language);});
     rasterizer.setDefaultFontLanguage(textFontLanguage(watchAppearance.language));
     watchAppearance.dark=configuration.string("theme")!="light";
     if(configuration.string("theme")=="system"){DWORD light=0,size=sizeof(light);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS)watchAppearance.dark=light==0;}
@@ -2165,7 +2205,7 @@ void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stoppin
     if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
        !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
         idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
-    include(calendarNextWake);include(graphicsIdleAt);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    include(calendarNextWake);include(graphicsIdleAt);if(lifecycleOpening||lifecycleClosing)include(transitionDeadline);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
@@ -2245,7 +2285,12 @@ void Application::Impl::publishNative(){
     // count alone cannot detect those resource-identity changes.
     if(!changed)changed=!composition.supplementalBindingsMatch(ordered);
     if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size(),e.cut});
-        registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(moduleContrast)(void)moduleContrast->scene.collectRetired(renderer);if(mediaBroker)mediaBroker->collectRetired();}
+        registry.forEach([&](ModuleOwner&o){o.collected(renderer);},"collect");if(moduleContrast)(void)moduleContrast->scene.collectRetired(renderer);if(mediaBroker)mediaBroker->collectRetired();
+        // Once every owner gave its replaced parts back, a crowded shared
+        // cache parks the pages of modules switched away, the page left
+        // longest ago first; the page left last only near the hard bounds
+        // (no walk while it has room).
+        rasterizer.relieve(renderer);}
     publishedNotesRevision=notesRevision;
 }
 // The source shell's pose for one frame (present() and the launch prewarm):
@@ -2836,13 +2881,14 @@ void Application::Impl::openPendingStorageSettings(){
 // ---------------------------------------------------------------------------
 // Projection (unchanged handoff)
 std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::uintptr_t preferred){
+    if(projectionDisplayForTest)return projectionDisplayForTest(preferred);
     const auto displays=gpu::readConnectedDisplays();for(const auto&display:displays)if(display.handle==preferred)return display;
     POINT pointer{};GetCursorPos(&pointer);if(const auto index=gpu::resolveDisplay({},displays,{pointer.x,pointer.y}))return displays[*index];return {};
 }
 void Application::Impl::moveProjection(const gpu::DisplayDescriptor&display){
     hudDisplay=display.handle;projectionWorkTopPixels=std::max(0,display.workArea.top-display.bounds.top);
-    // Geometry only: the HUD hidden for the hand-off stays out of the topmost
-    // band until Projection's show() enters it; a shown Projection keeps its place.
+    // Geometry only: the HUD hidden for the hand-off and a shown Projection
+    // both keep their place in the topmost band.
     const auto&bounds=display.bounds;need(host.place(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),"Position Projection on its retained display");
     (void)projectionCall("resize",[&]{projection->resize(host.metrics(),projectionWorkTopPixels/host.metrics().scale);});
 }

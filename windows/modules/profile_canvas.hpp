@@ -178,6 +178,9 @@ private:
         ProfileThemeButton* theme{};
         std::map<ProfileField, design::Layer*> values;
         std::map<ProfileField, ProfileEditable*> editables;
+        // The inline editors this page made ("edit:<field>", one per field:
+        // its arena makes an id once); a later open on the page takes it again.
+        std::map<ProfileField, design::TextField*> editors;
         std::optional<ProfilePortrait> shownPortrait;
         int silhouetteStep{};
     };

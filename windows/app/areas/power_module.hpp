@@ -58,6 +58,7 @@ public:
     virtual bool editingPosition() const = 0;
     // Mac isProjectionActive: no alert over Projection; readings stay silent.
     virtual void setProjectionActive(bool active, double time) = 0;
+    virtual bool projectionActive() const = 0;
     // Latest provider reading merged with the battery-class capacity pair
     // (Power page and tray text). Empty reading: no internal battery/unknown.
     virtual const modules::BatteryReading& reading() const = 0;

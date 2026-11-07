@@ -1,4 +1,4 @@
-# Merge! OrbiPom! on the design library (Mac 1.3.0 OrbiPomCanvas; inventory
+# OrbiPom! MERGE! on the design library (Mac 1.3.0 OrbiPomCanvas; inventory
 # MODS-200..230). The canvas is portable (modules/orbipom_canvas.*); the game
 # session (modules/orbipom_state.*) and the original runtime
 # (modules/orbipom_runtime.*: Matter 0.20.0 + orbipom.js on QuickJS) are

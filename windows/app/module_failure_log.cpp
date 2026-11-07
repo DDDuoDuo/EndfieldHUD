@@ -34,6 +34,7 @@ std::string budgetLines(const FailureBudgets& b) {
     const auto of = [](std::size_t value, std::size_t maximum) { return std::to_string(value) + " of " + std::to_string(maximum); };
     return "raster: entries " + of(b.rasterEntries, b.maximumRasterEntries) + ", held bytes " + of(b.heldBytes, b.maximumHeldBytes) +
         ", released bytes " + std::to_string(b.releasedBytes) + "\n" +
+        "raster text: metadata bytes " + of(b.textMetadataBytes, b.maximumTextMetadataBytes) + ", typography bytes " + of(b.typographyBytes, b.maximumTypographyBytes) + "\n" +
         "renderer: bytes " + of(b.rendererBytes, b.maximumRendererBytes) + ", parked bytes " + of(b.parkedBytes, b.maximumParkedBytes) + "\n";
 }
 

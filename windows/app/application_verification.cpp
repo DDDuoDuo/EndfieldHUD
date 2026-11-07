@@ -48,6 +48,34 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"worldOnlyFrames",std::int64_t(b.frame.worldOnlyFrames-a.frame.worldOnlyFrames)},
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
+// The traced host never spins on a past wake: an owner that keeps reporting
+// a wake already due (one that waits for a frame or an event that does not
+// come) has the host's deadline wake fire about 2,000 times a second, with
+// frames between them or without (alongside 165 Hz frames about 160 a
+// second). Between frames the deadline wakes stay within a small burst and
+// rate, and in each second, whatever its frames, within twice the fastest
+// owner cadence (Now Playing's 30 Hz display); the traces peak at a few a
+// second, and the closed HUD past its grace stays under 20 a second
+// (run_idle_trace.cmake). The most wakes in any one second is reported.
+class WakeSpinCheck {
+    static constexpr double burst=50,rate=100,perSecond=60;
+    std::uint64_t frames_{},wakes_{},secondFrames_{},secondWakes_{},peak_{};double since_{},second_{};bool started_{};
+public:
+    // After each traced pump; throws when a stretch's deadline wakes passed the bound.
+    void sample(const OverlayHostStats&s,double now){
+        if(!started_){started_=true;frames_=secondFrames_=s.frames;wakes_=secondWakes_=s.externalWakes;since_=second_=now;return;}
+        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_,inSecond=s.externalWakes-secondWakes_;
+        if(frameless&&double(wakes)>burst+rate*(now-since_)){
+            std::cout<<"Traced host deadline wakes: "<<wakes<<" in "<<now-since_<<" s without a frame\n";
+            need(false,"No owner's past wake spins the host while no frame runs");}
+        if(double(inSecond)>perSecond*std::max(1.,now-second_)){
+            std::cout<<"Traced host deadline wakes: "<<inSecond<<" in "<<now-second_<<" s with "<<s.frames-secondFrames_<<" frames\n";
+            need(false,"No owner's past wake spins the host in any second, with frames or without");}
+        if(!frameless||now-since_>=1){frames_=s.frames;wakes_=s.externalWakes;since_=now;}
+        if(now-second_>=1){peak_=std::max(peak_,inSecond);secondFrames_=s.frames;secondWakes_=s.externalWakes;second_=now;}
+    }
+    std::uint64_t peak()const{return peak_;}
+};
 }
 
 // watch_session_preview --startup-trace: the production owner with the module
@@ -246,11 +274,13 @@ int Application::Impl::runIdleTrace(){
         if(chrome&&chrome->styleTransitionActive())visit("clock style");
         if(session->demand(at).finiteAnimation)visit("source shell");
     };
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames!=frames&&session->phase()==core::VisibilityPhase::visible){const auto at=clock();
                 if(demand(at).finiteAnimation)requesters(at,[&](std::string_view name){++finiteRequests[std::string(name)];});}}
     };
@@ -331,13 +361,32 @@ int Application::Impl::runIdleTrace(){
     const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
     const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
     const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
-    const auto openHUD=[&]{perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
+    // A summon: the opening's first frame is drawn, then the window shows
+    // (showOpening shows the offscreen window in this trace too), so the
+    // window never composites what was presented before it (as
+    // OverlayController orders the panel front with the entrance's first
+    // pose committed): the last frame of the previous close, whose canvas is
+    // still opaque (its fade waits past the exit), or the HUD a lock or
+    // sleep hid. Its pose is the entrance's first: the session opening, the
+    // canvas at 0 (the frame time the design density recorded). Under Reduce
+    // Motion the first frame is the stable HUD.
+    const auto drawn=[&]{const auto s=renderer.stats();return s.nativePasses+s.nativePassesSkipped;};
+    const auto summon=[&]{const auto before=drawn();std::optional<std::uint64_t>atFrame;bool shownAtFrame{};
+        openingFrameForTest=[&]{atFrame=drawn();shownAtFrame=host.stats().visible;};
+        try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+        const bool first=atFrame&&*atFrame>before&&!shownAtFrame&&host.stats().visible&&session->phase()!=core::VisibilityPhase::concealed&&(settings.reduceMotion||
+            (session->phase()==core::VisibilityPhase::opening&&(!designOverlay||(designDensityFrameTime&&canvasOpacity(*designDensityFrameTime)<.01))));
+        if(!first)std::cout<<"Idle trace summon: frames drawn before the show +"<<(atFrame?*atFrame-before:0)<<", shown at that frame "<<shownAtFrame<<", shown "<<host.stats().visible
+                           <<", session "<<static_cast<unsigned>(session->phase())<<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
+        need(first,"A summon draws the opening's first pose, then shows the window");};
+    const auto openHUD=[&]{summon();host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
     const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
     // An opening as the summon hotkey asks for it (OverlayController toggle):
-    // the time to its first frame and to the open phase.
-    struct Opening {double firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
+    // the time to the window shown (its first pose drawn), to its first host
+    // frame and to the open phase.
+    struct Opening {double shown{},firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
     const auto timedOpening=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;const auto at=OverlayHost::clockNow();Opening o;
-        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
+        summon();o.shown=OverlayHost::clockNow()-at;host.setFrameDemand(demand(clock()));
         pump(10,[&]{if(o.firstFrame<0&&host.stats().frames!=frames)o.firstFrame=OverlayHost::clockNow()-at;return opened();});
         need(opened(),"The traced HUD opened");const auto after=renderer.stats();
         o.opened=OverlayHost::clockNow()-at;o.resume=after.deviceResumeSeconds-before.deviceResumeSeconds;o.resumes=after.deviceResumes-before.deviceResumes;return o;};
@@ -366,7 +415,7 @@ int Application::Impl::runIdleTrace(){
         prepareGraphics(true);need(renderer.devicePrepared()&&preparedGraphicsUntil.has_value(),"Pointing at the tray icon prepares the released device");
         pump(.35,{});const auto early=timedOpening();
         need(early.resumes==1&&!preparedGraphicsUntil,"The anticipated opening takes the prepared device");
-        anticipated=Json::Object{{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
+        anticipated=Json::Object{{"shownSeconds",early.shown},{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
         // A media owner still holding the device at the deadline (a movie
         // playing, an edit pass) refuses the release; it follows shortly
         // after the owner lets go. (Same-device media exists with the shared
@@ -398,14 +447,217 @@ int Application::Impl::runIdleTrace(){
         {"device",renderer.deviceInfo().name},{"warp",args.warp},{"refreshHz",stats.refreshRate},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},
         {"closedGraphicsGraceSeconds",grace},{"productionClosedGraphicsGraceSeconds",closedGraphicsGraceSeconds},{"closedSeconds",closedFor},{"releaseExpected",releaseExpected},
         {"sharedMedia",bool(mediaBroker)},
-        {"openingSeconds",first.opened},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
+        {"openingSeconds",first.opened},{"openingShownSeconds",first.shown},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
         {"deviceResume",Json::Object{{"resumes",std::int64_t(renderer.stats().deviceResumes)},{"deviceSeconds",renderer.stats().deviceCreateSeconds},{"programSeconds",renderer.stats().pipelineCreateSeconds},
             {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
-        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
+        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"shownSeconds",reopening.shown},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
         {"anticipatedOpening",std::move(anticipated)},{"mediaRefusal",std::move(refusal)},{"anticipationDiscard",std::move(discard)},
-        {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
+        {"quickReopeningShownSeconds",warm.shown},{"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
+    // After the report (its numbers stay those of the windows above), the
+    // close and opening ends on the same real scheduling (the HUD is closed).
+    using P=core::SystemOverlayPhase;
+    const auto reduceMotion=[&](bool on){configuration.set("reduceMotion",on);configurationPending=true;applyConfiguration(clock());};
+    // A normal close ends on its frames, before its transition deadline.
+    openHUD();
+    {const auto at=OverlayHost::clockNow();closeHUD();const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace normal close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(elapsed<closingTransitionBound,"A normal close ends on its frames before its transition deadline");}
+    // Reduce Motion (the preference, or Windows "Animation effects" off):
+    // the close conceals the source at once and, as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), finishes there
+    // without a frame - the window hides and the lifecycle closes, so the
+    // next summon opens the HUD again.
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows on the transitions below,
+    // kept in memory (never written): where each lands and what it records.
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});memoryTraceRows=true;
+    const auto row=[&](std::string_view stage)->std::optional<std::size_t>{const auto&rows=memoryTrace->rows();
+        for(std::size_t n=0;n<rows.size();++n)if(const auto&name=rows[n]["stage"];name.isString()&&name.string()==stage)return n;return std::nullopt;};
+    const auto traced=[&](std::string_view stage,std::string_view field)->const Json&{static const Json none;const auto n=row(stage);return n?memoryTrace->rows()[*n]["scheduling"][field]:none;};
+    const auto tracedIs=[&](std::string_view stage,std::string_view field,std::string_view value){const auto&v=traced(stage,field);return v.isString()&&v.string()==value;};
+    const auto tracedTrue=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isBool()&&v.boolean();};
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
+          "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
+     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");
+     need(row("close-1")&&row("closed-1")&&*row("close-1")<*row("closed-1")&&tracedIs("close-1","lifecycle","closing")&&tracedIs("close-1","session","visible")&&
+          tracedTrue("close-1","closePending")&&tracedTrue("close-1","reduceMotion")&&traced("close-1","host")["visible"].isBool()&&traced("close-1","host")["visible"].boolean(),
+          "The memory trace's close row records the request, before the Reduce Motion close finishes");}
+    openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
+    {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // The other closes a user reaches, each through Impl::close: inside the
+    // request the window hides, leaves the topmost band and the lifecycle
+    // closes, with no frame (the hidden run never launches an application,
+    // opens Windows Settings or registers a chord).
+    const auto closedWithoutFrame=[&](std::uint64_t frames){const auto s=host.stats();
+        return closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==frames;};
+    // A shortcut recording on the Hotkeys page (its record button; the
+    // recording holds the chord, so the hotkey cannot close the HUD), then a
+    // press outside the displayed circle: the close ends the recording
+    // (SettingsCanvas::didDeactivate) and hides the HUD without a frame.
+    if(settingsUI){openHUD();selectModule(core::Module::hotkeys,clock());auto&hotkeys=settingsUI->canvas(core::Module::hotkeys);
+     pump(3,[&]{return hotkeys.isActive()&&!hotkeys.transitioning();});
+     need(hotkeys.performAccessibilityAction("capture",clock())&&settingsUI->controller().capturingShortcut(),"The Hotkeys page's record button starts a shortcut recording");
+     const core::Point side{2,metrics.height*.5};const auto framesBefore=host.stats().frames;
+     need(backgroundPressCloses(side),"A press on the side of the screen during a recording is a background press");
+     (void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});(void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore)&&!settingsUI->controller().capturingShortcut(),
+          "A press outside the circle during a shortcut recording ends it and closes the Reduce Motion HUD without a frame");}
+    // The summon hotkey (WM_HOTKEY and the low-level hook's message reach
+    // trayAction) closes; the next press opens again.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;trayAction(gpu::TrayAction::openOverlay,true,clock());
+     need(closedWithoutFrame(framesBefore),"The summon hotkey closes the Reduce Motion HUD without a frame");
+     trayAction(gpu::TrayAction::openOverlay,true,clock());need(lifecycle.phase()==P::opening,"The next summon hotkey press opens the HUD again");
+     host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");}
+    // A press outside the displayed circle (SystemHUDView.mouseDown); its release changes nothing.
+    {const core::Point side{2,metrics.height*.5};need(backgroundPressCloses(side),"A press on the side of the screen is a background press");
+     const auto framesBefore=host.stats().frames;(void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore),"A press outside the displayed circle closes the Reduce Motion HUD without a frame");
+     (void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});need(closedWithoutFrame(framesBefore),"Its release changes nothing");}
+    // An area's close (App Shortcut's launch: its overlayConcealed starts the launch).
+    if(areaHost){openHUD();const auto framesBefore=host.stats().frames;areaHost->closeOverlay();
+     need(closedWithoutFrame(framesBefore),"An area's close (App Shortcut's launch) finishes under Reduce Motion without a frame");}
+    // The hand-offs that open once the HUD is hidden: Storage Settings and a
+    // link. The request (a canvas event) hides the HUD; the Shell opens from
+    // the posted notice after it, never inside the event.
+    if(storageFixture){openHUD();const auto framesBefore=host.stats().frames;const auto before=storageFixture->settingsRequests;openStorageSettingsAfterClose(clock());
+     need(closedWithoutFrame(framesBefore)&&pendingStorageSettings&&afterCloseQueued&&storageFixture->settingsRequests==before,"Storage Settings closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingStorageSettings;});
+     need(closedWithoutFrame(framesBefore)&&!pendingStorageSettings&&!afterCloseQueued&&storageFixture->settingsRequests==before+1,"Windows Settings opens once, after the request");}
+    {openHUD();const auto framesBefore=host.stats().frames;const auto links=linkRequests;openAfterClose("https://github.com/DDDuoDuo/EndfieldHUD",clock());
+     need(closedWithoutFrame(framesBefore)&&pendingLink&&afterCloseQueued&&linkRequests==links,"A Settings link closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingLink;});
+     need(closedWithoutFrame(framesBefore)&&!pendingLink&&!afterCloseQueued&&linkRequests==links+1,"The browser opens once, after the request");}
+    // Projection (openProjection, the page's button) under Reduce Motion
+    // with no display left: the hand-off ends inside the click, the HUD
+    // closes without a frame and no Projection stays active (charge alerts
+    // show again, OverlayController.cancelProjection).
+    openHUD();
+    {const auto framesBefore=host.stats().frames;
+     projectionDisplayForTest=[](std::uintptr_t){return std::optional<gpu::DisplayDescriptor>{};};
+     const bool projectionPage=std::exchange(args.projection,true);openProjection(clock());args.projection=projectionPage;projectionDisplayForTest={};
+     auto*power=powerArea();
+     need(power&&!power->projectionActive()&&!projectionHandoff.active()&&closedWithoutFrame(framesBefore),
+          "Projection with no display left ends its hand-off: the Reduce Motion HUD closes without a frame and no Projection stays active");}
+    // Projection's hand-off closes the HUD, then takes the window over in
+    // finishConcealment. The workspace needs the visible HUD (--projection),
+    // so this hand-off only carries a summon queued during the close
+    // (projectionActionMessage's external action), which reopens the HUD;
+    // without a display the hand-off ends with the HUD closed.
+    openHUD();
+    {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
+     const auto framesBefore=host.stats().frames;
+     const auto command=projectionHandoff.open({session->phase()==core::VisibilityPhase::visible,quitRequested,pendingClose,false},{hudDisplay,previousApplication});
+     need(command&&command->action==ProjectionHandoff::Action::closeHUD,"Projection's hand-off closes the HUD first");
+     (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
+     const bool reopened=lifecycle.phase()==P::opening;
+     need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),
+          "Projection's hand-off with a summon queued finishes the Reduce Motion close without a frame and goes on");
+     // The hand-off placed the window on its display: the trace's own place back.
+     need(host.place(placed.left,placed.top,placed.right-placed.left,placed.bottom-placed.top),"The traced window returns to its place");
+     if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");}
+     else openHUD();
+     closeHUD();}
+    // A fresh memory trace for the rows read below: the transition deadlines
+    // by index, and the close rows (at most eight closes).
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
+    reduceMotion(false);
+    // OverlayController.transitionDeadline: an opening and a close no frame
+    // finishes (the window kept hidden under them, so the host's frame gate
+    // stays shut) end on the host's deadline wake. Escape during that opening
+    // waits for it, then closes. (The summon still draws the opening's first
+    // pose before it shows the window; that is not a host frame.)
+    {const auto framesBefore=host.stats().frames;const auto wakesBefore=host.stats().externalWakes;const auto at=OverlayHost::clockNow();
+     perform(lifecycle.toggle(),clock());host.hide();(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
+     pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
+     need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes an opening no frame finished, and the close queued during it starts");
+     pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s (closed "<<closed()<<", concealed "<<concealedBroadcast
+              <<", closing "<<lifecycleClosing.has_value()<<", deadline "<<transitionDeadline.has_value()<<", visible "<<host.stats().visible<<", frames +"<<host.stats().frames-framesBefore<<")\n";
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&host.stats().frames==framesBefore,
+          "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
+     need(tracedIs("transition-deadline-1","lifecycle","opening")&&tracedTrue("transition-deadline-1","closeAfterOpening")&&tracedIs("transition-deadline-2","lifecycle","closing")&&
+          traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
+          "The memory trace records the expired opening and close deadlines");
+     // When each deadline expired, from the start of its own transition, on
+     // the host time of the wake (the rows' clock in this hidden trace). The pumps return later:
+     // after the expiry's work (the queued close runs inside the opening's;
+     // the snapshots of this memory trace).
+     const auto since=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isNumber()?v.number():-1.;};
+     const double openingExpired=since("transition-deadline-1","secondsSinceOpening"),closeExpired=since("transition-deadline-2","secondsSinceClose");
+     std::cout<<"Idle trace frameless transition deadlines: the opening expired "<<openingExpired<<" s after it started, the close "<<closeExpired<<" s after it started\n";
+     need(openingExpired>=openingTransitionBound-.001&&openingExpired<openingTransitionBound+.5&&closeExpired>=closingTransitionBound-.001&&closeExpired<closingTransitionBound+.5,
+          "The opening and the close no frame finished end on their own transition deadlines");
+     // No owner wake spins while no frame can present: an owner's wake that
+     // waits for a frame is handed to the host once.
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
+     need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
+    // A conceal dispatched inside an opening's first frame (present()'s
+    // backdrop COM calls run nested messages: the display turned off, sleep,
+    // a session end) hides the HUD before the summon would show the window:
+    // it stays hidden over the concealed session, and the next summon opens.
+    {openingFrameForTest=[&]{suspend(Suspension::display,clock());};
+     try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+     const auto after=host.stats();
+     std::cout<<"Idle trace conceal inside an opening's first frame: closed "<<closed()<<", visible "<<after.visible<<", frame pending "<<after.framePending<<"\n";
+     need(closed()&&!after.visible&&!after.topmost&&!after.framePending,"A conceal inside an opening's first frame leaves the window hidden");
+     resume(Suspension::display,clock());pump(.3,{});
+     need(!host.stats().visible&&host.stats().frames==after.frames,"The HUD concealed inside its opening presents nothing afterwards");
+     openHUD();closeHUD();}
+    // A Calendar owner a failure disabled (a synthetic one here) cannot
+    // re-arm its midnight wake: the host wakes for that midnight once. The
+    // registry never enables a failed owner again, so this stays the last
+    // scenario before the Quit (run_idle_trace.cmake passes --calendar).
+    need(calendarModuleOwner&&registry.contains(*calendarModuleOwner),"The idle trace runs the Calendar owner");
+    {const bool isolating=registry.isolating();registry.setIsolation(true);
+     (void)registry.guard(*calendarModuleOwner,[]{throw std::runtime_error("Synthetic Calendar failure");},"idle trace");registry.setIsolation(isolating);
+     need(!registry.guard(*calendarModuleOwner,[]{},"idle trace"),"The synthetic failure disables the Calendar owner");
+     const auto wakesBefore=host.stats().externalWakes;calendarNextWake=now();scheduleDeadline();pump(1,{});
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace disabled Calendar midnight: "<<wakes<<" deadline wakes\n";
+     need(!calendarNextWake&&wakes<=20,"A disabled Calendar owner's midnight does not spin the host");}
+    // The bottom-left Quit button answered on the confirm bar under Reduce
+    // Motion (--idle-trace-quit-button): the bar accepts at once and the run
+    // ends inside the key press, without a frame.
+    if(args.idleTraceQuit==1){
+        reduceMotion(true);openHUD();pump(.5,{});
+        need(designOverlay&&!quitButtons.empty(),"The traced HUD has its Quit button and the confirm bar");
+        const auto framesBefore=host.stats().frames;
+        const auto activation=session->activate(*quitButtons.begin(),clock());need(activation&&activation->action==quitAction,"The Quit button is a source button");
+        activate(*activation);need(quitPromptOpen&&designOverlay->context().overlay().capturesInput()&&lifecycle.phase()==P::open&&!quitRequested,"The Quit button asks on the confirm bar");
+        need(onKey({KeyKind::down,VK_RETURN}),"The confirm bar takes Return");
+        const auto after=host.stats();
+        need(stopping&&quitRequested&&lifecycle.phase()==P::closed&&!after.visible&&!after.topmost&&after.frames==framesBefore,
+             "Quit on the confirm bar under Reduce Motion closes the HUD and stops without a frame");
+        shutdownVisible();
+        return 0;
+    }
+    // A lock during an accepted Quit's close (--idle-trace-quit-locked):
+    // suspend's forced close hides the HUD and the quit still runs, as on
+    // the Mac (forceCloseSystemOverlay, then onQuitAfterSystemClose).
+    if(args.idleTraceQuit==2){
+        reduceMotion(false);openHUD();
+        perform(lifecycle.requestQuit(),clock());need(quitRequested&&lifecycle.phase()==P::closing&&closing&&!stopping,"The accepted Quit's close plays");
+        suspend(Suspension::session,clock());
+        need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&!host.stats().topmost,"A lock during an accepted Quit's close hides the HUD and quits");
+        shutdownVisible();
+        return 0;
+    }
+    // The tray's Quit under Reduce Motion ends the run without a frame.
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
+     const auto request="close-"+std::to_string(memoryTrace->closes);
+     need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
+          "The memory trace records Quit's close request, then the quit");}
+    std::cout<<"Idle trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }
@@ -435,11 +687,13 @@ int Application::Impl::runAnimationTrace(){
     // hysteresis path RC 139 took). The settled HUD must hold exactly it.
     std::optional<double> rc139Density;
     const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames==frames)continue;
             if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
                 rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
@@ -631,7 +885,7 @@ int Application::Impl::runAnimationTrace(){
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
         {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
-    std::cout<<"Wrote hidden animation trace\n";
+    std::cout<<"Wrote hidden animation trace\n"<<"Animation trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }

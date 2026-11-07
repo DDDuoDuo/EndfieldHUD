@@ -418,7 +418,10 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     check(playing>0&&owner.stats().playbackResidentBytes==0,"A released player's frame processor keeps no textures");
     // Source bookmark: a renamed or moved original keeps playing where it now is.
     {const auto folder=temp.path/L"moved";fs::create_directory(folder);const auto moved=folder/L"renamed movie.mp4";
-        const auto rename=[&](const fs::path&from,const fs::path&to){std::error_code e;for(int k=0;k<100;++k){fs::rename(from,to,e);if(!e)return true;f.drain();frame();}return false;};
+        // Pause queues the paused poster's decode on the utility worker: it
+        // settles before the file moves, or a move between its locate and its
+        // open fails that decode and leaves the session's error set.
+        const auto rename=[&](const fs::path&from,const fs::path&to){std::error_code e;f.drain();for(int k=0;k<100;++k){fs::rename(from,to,e);if(!e)return true;f.drain();frame();}return false;};
         check(rename(movie,moved),"The owned movie is renamed into another folder");
         // The re-check, the broker's open and the engine's ready notice run on
         // worker threads: wait for the player itself (each round drains the
@@ -427,7 +430,7 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
         const auto opened=engines.size();check(f.perform("play"),"Play the moved original");
         const auto started=[&]{return engines.size()==opened+1&&probe->playing;};
         for(int k=0;k<200&&!started();++k){f.drain();frame();if(!started())MsgWaitForMultipleObjects(0,nullptr,FALSE,50,QS_POSTMESSAGE);}
-        check(engines.size()==opened+1&&probe->playing&&!session.error()&&n::mediaAssemblySamePath(probe->path,n::mediaAssemblyUTF8(moved)),"The player opens the moved original where it now is");
+        check(engines.size()==opened+1&&probe->playing&&!session.error()&&n::mediaAssemblySamePath(probe->path,n::mediaAssemblyUTF8(moved)),"The player opens the moved original where it now is (engines "+std::to_string(engines.size()-opened)+", playing "+std::to_string(probe->playing)+", error "+std::to_string(session.error().has_value())+", path "+probe->path+")");
         check(f.perform("pause"),"Pause");for(int k=0;k<4;++k)frame();check(!probe->playing,"Paused again");
         check(rename(moved,movie),"The owned movie is moved back");fs::remove(folder);}
     // Source makePlaybackItem: a changed or removed original never reaches a player.

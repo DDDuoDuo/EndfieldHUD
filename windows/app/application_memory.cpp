@@ -4,10 +4,12 @@
 // the module owner whose call created them (ModuleRegistry holds a
 // native::LayerRasterAttribution around every owner call; "host" is the
 // shell and the host's own calls), and what owners report through
-// ModuleOwner::residency(). Numbers, owner names and system module file
-// names only. Never on the frame path: production records at construction,
-// launch idle and the first openings and closings, and rewrites its bounded
-// report each time.
+// ModuleOwner::residency(), and the frame scheduling state (host frame
+// requests and timer, its gate's demand, presents, Reduce Motion and its
+// inputs, the lifecycle). Numbers, owner names and system module file names
+// only. Never on the frame path: production records at construction, launch
+// idle, the first openings and closings, close requests, expired transition
+// deadlines and quits, and rewrites its bounded report each time.
 #include "app/application_impl.hpp"
 #include "app/process_diagnostics.hpp"
 #include <algorithm>
@@ -76,8 +78,44 @@ Json Application::Impl::memorySnapshot(std::string_view stage, bool threads) {
     const auto executor = [](const UtilityExecutor& e) { const auto s = e.stats(); return Json::Object{{"started", s.started}, {"workerAlive", s.workerAlive}, {"workersStarted", bytes(s.workersStarted)}, {"accepted", bytes(s.accepted)}}; };
     if (utility) executors["utility"] = executor(*utility);
     if (longWork) executors["longWork"] = executor(*longWork);
+    // Frame scheduling and presentation at this row (copied counters and
+    // flags, nothing measured per frame): the host's frame requests, posts,
+    // timer and presentation gate, the demand its gate holds, the renderer's
+    // presents, the effective Reduce Motion and its inputs, and where the
+    // lifecycle, the source session and the transition deadline stand.
+    const auto hostStats = host.stats();
+    const char* visibilityNames[]{"concealed", "opening", "visible", "closing"};
+    const auto visibility = [&](core::VisibilityPhase value) { return std::string(visibilityNames[static_cast<unsigned>(value)]); };
+    const double at = now();
+    Json::Object scheduling{
+        {"host", Json::Object{{"frameRequests", bytes(hostStats.frameRequests)}, {"framePosts", bytes(hostStats.framePosts)}, {"frames", bytes(hostStats.frames)},
+            {"pacedFrames", bytes(hostStats.pacedFrames)}, {"framePending", hostStats.framePending}, {"timerArmed", hostStats.timerArmed}, {"timerArms", bytes(hostStats.timerArms)},
+            {"timerWakes", bytes(hostStats.timerWakes)}, {"deadlineWakes", bytes(hostStats.externalWakes)},
+            {"presentationWaits", bytes(hostStats.presentationWaits)}, {"presentationAdmissions", bytes(hostStats.presentationAdmissions)},
+            {"presentationFallbacks", bytes(hostStats.presentationFallbacks)}, {"presentationGated", hostStats.presentationGated},
+            {"canPresent", hostStats.canPresent}, {"visible", hostStats.visible}, {"minimized", hostStats.minimized}, {"stopped", hostStats.stopped},
+            {"focused", hostStats.focused}, {"topmost", hostStats.topmost}, {"bandPending", hostStats.bandPending}, {"activationPending", hostStats.activationPending},
+            {"refreshRate", hostStats.refreshRate},
+            {"demand", Json::Object{{"phase", visibility(hostStats.demand.phase)}, {"presented", hostStats.demand.presented}, {"onScreen", hostStats.demand.onScreen},
+                {"canAdvanceTransition", hostStats.demand.canAdvanceTransition}, {"pendingOpening", hostStats.demand.pendingOpening},
+                {"finiteAnimation", hostStats.demand.finiteAnimation}, {"ambientEnabled", hostStats.demand.ambientEnabled},
+                {"reduceMotion", hostStats.demand.reduceMotion}, {"lowPower", hostStats.demand.lowPower}}}}},
+        {"renderer", Json::Object{{"presents", bytes(rendered.presents)}, {"lastPresentCount", bytes(rendered.lastPresentCount)},
+            {"secondsSinceLastPresent", rendered.lastPresentReturned > 0 ? Json(OverlayHost::clockNow() - rendered.lastPresentReturned) : Json()},
+            {"frameLatencyWaitable", rendered.frameLatencyWaitable}, {"presentationWaits", bytes(rendered.presentationWaits)},
+            {"presentationWaitTimeouts", bytes(rendered.presentationWaitTimeouts)}, {"compositionSuspended", rendered.compositionSuspended},
+            {"deviceSuspended", renderer.deviceSuspended()}}},
+        {"reduceMotion", settings.reduceMotion}, {"reduceMotionPreference", configuration.boolean("reduceMotion")},
+        {"systemAnimationsOff", systemAnimationsOff}, {"closeOnFocusLost", configuration.boolean("closeOnFocusLost")},
+        {"lifecycle", std::string(core::systemOverlayPhaseName(lifecycle.phase()))}, {"closeAfterOpening", lifecycle.state().closeAfterOpening()},
+        {"terminating", lifecycle.terminating()}, {"openingPending", lifecycleOpening.has_value()}, {"closePending", lifecycleClosing.has_value()},
+        {"session", session ? visibility(session->phase()) : std::string()}, {"closing", closing}, {"pendingClose", pendingClose},
+        {"inputEnabled", session && session->inputEnabled()}, {"focused", focused},
+        {"secondsSinceOpening", at - canvasOpenedAt}, {"secondsSinceClose", closing ? Json(at - canvasClosedAt) : Json()},
+        {"transitionDeadlineSeconds", transitionDeadline ? Json(*transitionDeadline - at) : Json()}};
     return Json::Object{{"stage", std::string(stage)}, {"seconds", milliseconds(preparation) / 1000.},
         {"overlayVisible", session && session->phase() != core::VisibilityPhase::concealed},
+        {"scheduling", std::move(scheduling)},
         {"selectedModule", notes ? std::string(core::moduleIdentifier(notes->selected())) : std::string()},
         {"census", processDiagnosticsJSON(process)},
         {"rasterCache", Json::Object{{"entries", bytes(raster.entries)}, {"resourceBytes", bytes(raster.resourceBytes)}, {"retainedPixelBytes", bytes(rasterPixelBytes)},

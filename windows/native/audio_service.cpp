@@ -1,4 +1,5 @@
 #include "native/audio_service.hpp"
+#include "native/audio_application_name.hpp"
 #include "native/audio_route_journal.hpp"
 #include "native/system_services.hpp"
 #include <algorithm>
@@ -229,15 +230,20 @@ public:
             if(inputStatus>=0&&inputs.size()>maximumAudioEndpoints)inputStatus=overflow;
             if(outputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::output,defaultOutput);})<0)defaultOutput.clear();
             if(inputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::input,defaultInput);})<0)defaultInput.clear();
-            // Raw labels for the Event Log: a missing label is an incomplete
-            // read (source watcher), while the UI shows the opaque identity.
+            // Raw names for the Event Log's device list: a blank name is an
+            // incomplete read (source watcher). Both the Volume rows here and
+            // the Event Log's labels (audioTopology, from these same raw
+            // names) show audioEndpointLabel: the endpoint ID for an empty
+            // name, one past a Volume row's 4096 UTF-8 bytes or one that is
+            // not well-formed UTF-16, so such a name never makes either list
+            // unavailable.
             std::vector<AudioEndpoint>rawOutputs,rawInputs;
             const auto convert=[&](const std::vector<AudioEndpointRecord>&records,std::vector<AudioEndpoint>&raw,std::int32_t&status){
                 std::vector<AudioEndpoint>ui;ui.reserve(records.size());std::set<std::wstring>ids;
                 for(const auto&r:records){
-                    if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!audioUtf8(r.name)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
+                    if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
                     AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor),audioEndpointBluetooth(r.enumerator)};
-                    raw.push_back(e);if(e.name.empty())e.name=e.id;ui.push_back(std::move(e));
+                    raw.push_back(e);e.name=audioEndpointLabel(e.name,e.id);ui.push_back(std::move(e));
                 }
                 sortAudioEndpoints(ui,impl.options.order);return ui;
             };
@@ -289,6 +295,11 @@ public:
                 ++impl.sessionReads;
                 const auto hr=call([&]{return sessions->read(records);});
                 if(hr<0){state.applicationError=hr;break;}
+                // Labels only, as for endpoints: a name the backend's own
+                // label rule would refuse (an unpaired surrogate, a NUL, past
+                // the Volume rows' 4096 UTF-8 bytes) gets the same PID label
+                // instead of reaching the UTF-8 rows.
+                for(auto&r:records)if(!audioLabelValid(r.name))r.name=audioApplicationLabel({},r.pid);
                 try{routes.update(records,*sessions);}catch(...){state.applicationError=unexpected;break;}
                 if(std::none_of(records.begin(),records.end(),[](const auto&r){return r.exited;}))break;
             }
