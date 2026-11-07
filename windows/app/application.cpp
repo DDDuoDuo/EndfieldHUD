@@ -1913,6 +1913,11 @@ void Application::Impl::showOpening(double time){
     if(liveScheduling()&&ready&&!stopping&&!framePresenting&&!projectionShown()){
         if(!presentFrame(time)||stopping)return;
         if(openingFrameForTest)openingFrameForTest();
+        // A conceal that frame's nested dispatch ran (present()'s backdrop
+        // calls: sleep, the display turned off, a session end) leaves the
+        // window hidden over the concealed session, as every show after an
+        // activation checks.
+        if(session->phase()==core::VisibilityPhase::concealed||closing)return;
     }
     // The hidden traces on the real clock show their offscreen window here
     // too (scheduling only), so they see the frame come before the show.

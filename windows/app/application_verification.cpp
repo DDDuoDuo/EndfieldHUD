@@ -492,6 +492,18 @@ int Application::Impl::runIdleTrace(){
      const auto wakes=host.stats().externalWakes-wakesBefore;
      std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
      need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
+    // A conceal dispatched inside an opening's first frame (present()'s
+    // backdrop COM calls run nested messages: the display turned off, sleep,
+    // a session end) hides the HUD before the summon would show the window:
+    // it stays hidden over the concealed session, and the next summon opens.
+    {openingFrameForTest=[&]{suspend(Suspension::display,clock());};
+     try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+     const auto after=host.stats();
+     std::cout<<"Idle trace conceal inside an opening's first frame: closed "<<closed()<<", visible "<<after.visible<<", frame pending "<<after.framePending<<"\n";
+     need(closed()&&!after.visible&&!after.topmost&&!after.framePending,"A conceal inside an opening's first frame leaves the window hidden");
+     resume(Suspension::display,clock());pump(.3,{});
+     need(!host.stats().visible&&host.stats().frames==after.frames,"The HUD concealed inside its opening presents nothing afterwards");
+     openHUD();closeHUD();}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
