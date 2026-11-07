@@ -484,6 +484,7 @@ enum LocalizationCatalog {
         "Cambrian\u{1F}寒武纪": "캄브리안",
         "Marthe\u{1F}玛尔特": "마르트",
         "Icefield Messenger\u{1F}冰原信使": "아이스필드 메신저",
+        "Watch\u{1F}腕表": "손목시계",
         "Power / Device Battery\u{1F}电量 / 设备电池": "전원 / 기기 배터리",
         ". Arrow keys select; Return copies; Delete removes the cached item.\u{1F}。方向键选择，回车复制，Delete 删除缓存项目。": ". 방향키로 선택, Return으로 복사, Delete로 캐시 항목을 삭제합니다.",
         "Pointer display\u{1F}鼠标所在显示器": "포인터가 있는 디스플레이",
@@ -1338,6 +1339,7 @@ enum LocalizationCatalog {
         Entry("Cambrian", "寒武纪", "寒武紀", "カンブリアン"),
         Entry("Marthe", "玛尔特", "瑪爾特", "マルト"),
         Entry("Icefield Messenger", "冰原信使", "冰原信使", "アイスフィールドメッセンジャー"),
+        Entry("Watch", "腕表", "腕錶", "腕時計"),
         // HUDChargeBadge.swift
         Entry("Power / Device Battery", "电量 / 设备电池", "電量 / 裝置電池", "電源 / デバイスのバッテリー"),
         // ClipboardCanvas.swift
