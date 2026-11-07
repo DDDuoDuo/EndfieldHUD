@@ -3120,7 +3120,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         overlayEditor = editor; overlayDragged = nil
         withoutActions {
             previous?.layer.removeFromSuperlayer()
-            overlayFrames.fillColor = HUDColor.yellow
+            overlayFrames.fillColor = HUDColor.accentInk
             overlayEditorHost.addSublayer(editor.layer)
         }
         return editor
