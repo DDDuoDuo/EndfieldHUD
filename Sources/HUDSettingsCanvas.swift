@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 
 /// The four left-navigation screens of the redesign (spec §3.1–§3.5):
-/// System (with its Modules page), Display (with its Battery alert and App icon pages),
+/// System (with its Modules page), Display (with its HUD elements, Battery alert and App icon pages),
 /// Hotkeys and About. Preferences and platform side effects belong to
 /// HUDSettingsController; this canvas only presents and edits them.
 final class HUDSettingsCanvas: HUDDesignCanvas {
@@ -10,12 +10,15 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     var onChooseLogo: (() -> Void)?
     var onLogoSelection: (() -> Void)?
     var onCaptureChanged: ((Bool) -> Void)?
+    /// Display > HUD elements > Edit position and size: the HUD places its title,
+    /// Sanity gauge and alert tags by drag, with a Cancel / Confirm strip.
+    var onEditOverlay: (() -> Void)?
     private let controller: HUDSettingsController
     private let displayProvider: () -> [HUDDisplayDescriptor]
     private var displays: [HUDDisplayDescriptor] = []
     private var observer: UUID?
     private var screenObserver: NSObjectProtocol?
-    private enum Section: Equatable { case main, battery, icons, credits, modules }
+    private enum Section: Equatable { case main, overlay, battery, icons, credits, modules }
     private var section: Section = .main
     /// What the current page's layout depends on; anything else updates the
     /// existing controls in place (toggles keep their knob animation).
@@ -149,6 +152,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         switch (module, section) {
         case (.system, .modules): buildModules(page)
         case (.system, _): buildSystem(page)
+        case (.display, .overlay): buildOverlay(page)
         case (.display, .battery): buildBattery(page)
         case (.display, .icons): buildIcons(page)
         case (.display, _): buildDisplay(page)
@@ -454,6 +458,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         binders.append { [weak self, weak style] in guard let self else { return }; style?.setValue(self.clockStyleTitle(self.config.clockStyle)) }
         rows.append(row("clockStyle", L10n.text("Clock style", "时钟样式"), [style], page))
         rows.append(logoRow(page))
+        rows.append(navRow("overlay", L10n.text("HUD elements", "界面元素"), page) { [weak self] in self?.go(.overlay, forward: true) })
         rows.append(navRow("appIcon", L10n.text("App / menu bar icon", "应用 / 菜单栏图标"), page) { [weak self] in self?.go(.icons, forward: true) })
         rows.append(paletteRow(page))
         let reading = HUDChip(c.alertMetric.title.uppercased(), variant: .dark, env: env)
@@ -475,13 +480,109 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             else { self?.toast(icon: .eye, "Recording mode off", "私密内容已恢复") }
         }))
         rows.append(toggleRow("bootLog", L10n.text("Daily boot log", "每日启动日志"), \.dailyBootLog, page))
-        rows.append(toggleRow("facility", L10n.text("Facility alerts", "设施警报"), \.facilityAlerts, page,
-                              confirmOff: { [weak self] commit in self?.confirmFacilityOff(commit) }))
         let height = stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10)
         scroll.setContentHeight(height)
         page.restoreOffset(of: scroll)
         header.configure(crumbs: ["DISPLAY"], code: "SYS-02", title: HUDModuleTitle("Display", "显示"),
                          counter: HUDFormat.pad2(rows.count), showsBack: false)
+    }
+
+    // MARK: HUD elements (Display > HUD elements)
+
+    /// The HUD's title, Sanity gauge and facility alert tags: whether each
+    /// shows, the title's text, their places and sizes (set on the HUD itself),
+    /// the module the HUD opens on, and a Restore for this page only.
+    private func buildOverlay(_ page: HUDDesignPage) {
+        let c = config
+        let scroll = page.scrollArea(id: "overlay", frame: CGRect(x: 0, y: HUDMetric.headerHeight, width: HUDMetric.box.width, height: HUDMetric.bodyHeight))
+        var rows: [HUDRowPlate] = []
+        rows.append(toggleRow("overlayTitle", L10n.text("Show title", "显示标题"), \.overlayLayout.showsTitle, page))
+        rows.append(overlayTextRow("overlayTitleText", L10n.text("Title text", "标题文字"), HUDOverlayLayout.defaultTitle,
+                                   \.overlayLayout.titleText, page))
+        rows.append(overlayTextRow("overlaySubtitleText", L10n.text("Subtitle text", "副标题文字"), HUDOverlayLayout.defaultSubtitle,
+                                   \.overlayLayout.subtitleText, page))
+        rows.append(toggleRow("overlaySanity", L10n.text("Show Sanity", "显示理智"), \.overlayLayout.showsSanity, page))
+        // The former Display > Facility alerts switch: off also stops the monitor.
+        rows.append(toggleRow("facility", L10n.text("Show facility alerts", "显示设施警报"), \.facilityAlerts, page,
+                              confirmOff: { [weak self] commit in self?.confirmFacilityOff(commit) }))
+        rows.append(navRow("overlayEdit", L10n.text("Edit position and size", "编辑位置和大小"), page, chevron: "↗") { [weak self] in
+            self?.onEditOverlay?()
+        })
+        let opening = dropdown("openModule", L10n.text("Open on", "打开时显示"), openModuleTitle(c.overlayLayout.openModule)) { [weak self] anchor in
+            self?.openModuleMenu(anchor)
+        }
+        binders.append { [weak self, weak opening] in
+            guard let self else { return }; opening?.setValue(self.openModuleTitle(self.config.overlayLayout.openModule))
+        }
+        rows.append(row("openModule", L10n.text("Open on", "打开时显示"), [opening], page))
+        let restore = HUDButton(id: "overlayRestore", title: L10n.text("Restore", "恢复"), icon: .reset, kind: .secondary, size: .small, env: env)
+        restore.place(at: .zero)
+        restore.onActivate = { [weak self] in self?.confirmOverlayRestore() }
+        restore.isEnabled = !Self.overlayIsDefault(c)
+        binders.append { [weak self, weak restore] in guard let self else { return }; restore?.isEnabled = !Self.overlayIsDefault(self.config) }
+        rows.append(row("overlayRestore", L10n.text("Restore defaults", "恢复默认"), [restore.layer], page, controls: [restore]))
+        scroll.setContentHeight(stack(rows, in: scroll.content, page: page, top: 0, width: HUDMetric.box.width - 10))
+        page.restoreOffset(of: scroll)
+        header.configure(crumbs: ["DISPLAY", "HUD ELEMENTS"], code: "SYS-02", title: HUDModuleTitle("HUD elements", "界面元素"),
+                         counter: HUDFormat.pad2(rows.count), showsBack: true)
+        wireBack(page) { [weak self] in self?.go(.main, forward: false) }
+    }
+
+    /// One line of custom text, for every language: Return or a click
+    /// elsewhere saves it, and an empty field brings back `placeholder`.
+    private func overlayTextRow(_ id: String, _ title: String, _ placeholder: String,
+                                _ key: WritableKeyPath<AppConfiguration, String>, _ page: HUDDesignPage) -> HUDRowPlate {
+        var options = HUDDesignTextField.Options()
+        options.maximumLength = HUDOverlayLayout.textLimit
+        let field = HUDDesignTextField(id: id, label: title, text: config[keyPath: key], placeholder: placeholder,
+                                       size: CGSize(width: 220, height: 30), options: options, env: env)
+        field.onCommit = { [weak self, weak field] text in
+            guard let self else { return }
+            let value = HUDOverlayLayout.cleanText(text)
+            if value != text { field?.setText(value) }
+            self.controller.update { $0[keyPath: key] = value }
+        }
+        register(field)
+        binders.append { [weak self, weak field] in
+            guard let self, let field, !field.isEditing, field.text != self.config[keyPath: key] else { return }
+            field.setText(self.config[keyPath: key])
+        }
+        return row(id, title, [field.layer], page, controls: [field])
+    }
+
+    private func openModuleTitle(_ module: HUDModule?) -> String {
+        module?.title ?? L10n.text("Last opened", "上次打开的模块")
+    }
+
+    /// Last opened, then every module the navigation can open (not Add App).
+    private func openModuleMenu(_ anchor: HUDControl) {
+        let chosen = config.overlayLayout.openModule
+        var items = [HUDMenu.Item(id: "last", title: openModuleTitle(nil), selected: chosen == nil)]
+        for (index, module) in HUDOverlayLayout.openableModules.enumerated() {
+            items.append(HUDMenu.Item(id: module.rawValue, title: module.title, selected: chosen == module, separatorBefore: index == 0))
+        }
+        openMenu(id: "openModule", items: items, anchor: anchor) { [weak self] item in
+            let module = HUDModule(rawValue: item.id)
+            guard let self, module != self.config.overlayLayout.openModule else { return }
+            self.controller.update { $0.overlayLayout.openModule = module }
+        }
+    }
+
+    /// This page's settings, and nothing else, are at their defaults.
+    private static func overlayIsDefault(_ c: AppConfiguration) -> Bool {
+        c.overlayLayout.isDefault && c.facilityAlerts == AppConfiguration.defaults.facilityAlerts
+    }
+
+    private func confirmOverlayRestore() {
+        confirm(HUDConfirmRequest(id: "overlayRestore", title: L10n.text("Restore HUD elements?", "恢复界面元素默认设置？"),
+                                  message: L10n.text("Only this page's settings change.", "仅恢复本页设置。"),
+                                  confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
+            self?.controller.update {
+                $0.overlayLayout = HUDOverlayLayout()
+                $0.facilityAlerts = AppConfiguration.defaults.facilityAlerts
+            }
+            self?.toast(icon: .reset, "HUD elements restored", "已恢复界面元素")
+        }
     }
 
     /// Switching the facility alerts off asks first, in red: both answers
@@ -970,7 +1071,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     }
 
     private func rowWidth(_ page: HUDDesignPage) -> CGFloat {
-        (module == .display && section == .main) || section == .modules ? HUDMetric.box.width - 10 : HUDMetric.box.width
+        (module == .display && [.main, .overlay].contains(section)) || section == .modules ? HUDMetric.box.width - 10 : HUDMetric.box.width
     }
 
     private func navRow(_ id: String, _ title: String, _ page: HUDDesignPage, chevron: String = "›", cluster: [CALayer] = [],

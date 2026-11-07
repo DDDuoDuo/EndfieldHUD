@@ -403,7 +403,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func refreshRouter() {
         var controls = page.controls
         if showsHeader { controls.insert(contentsOf: header.controls, at: 0) }
-        controls += textFields
+        // A field placed in its row keeps that place; others follow the page.
+        controls += textFields.filter { field in !controls.contains { $0 === field } }
         if let state = popoverState { controls += state.controls + (state.popover.close.map { [$0] } ?? []) }
         if let state = menuState { controls += state.menu.controls }
         router.set(controls)
