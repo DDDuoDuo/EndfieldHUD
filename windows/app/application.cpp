@@ -1896,7 +1896,33 @@ void Application::Impl::openPresentation(core::Module initial,double time){
         if(placing){placingForOpen=true;try{if(placementForTest)placementForTest();else targetDisplay();}catch(...){placingForOpen=false;throw;}placingForOpen=false;}
         holdOpeningDesignDensity();if(placing&&visibleMode())time=hostTime(now());}
     if(notes&&notes->selected()!=initial)selectModule(initial,time);
-    open(time);if(visibleMode())host.show();refresh(time);
+    showOpening(time);
+}
+// OverlayController.performSystemAction(.open) orders the panel front in the
+// transaction that already holds the entrance's first pose (a new
+// SystemHUDView: the canvas at 0, the source at its initial pose). Here the
+// opening's first frame presents before the window shows, so the window
+// never composites what its swap chain held before: a close's last retract
+// frame within the graphics grace (its canvas still opaque, the fade waits
+// past the exit), the HUD a lock or sleep hid, a Projection page. The frame
+// refresh posts continues the opening at display pacing (one frame more per
+// opening: two instead of one under Reduce Motion). (A summon dispatched
+// inside a frame leaves the pose to that frame, once its nested dispatch
+// returns, and shows the window at once: frames run while it is shown.)
+void Application::Impl::showOpening(double time){
+    open(time);
+    if(liveScheduling()&&ready&&!stopping&&!framePresenting&&!projectionShown()){
+        if(!presentFrame(time)||stopping)return;
+        if(openingFrameForTest)openingFrameForTest();
+        // A conceal that frame's nested dispatch ran (present()'s backdrop
+        // calls: sleep, the display turned off, a session end) leaves the
+        // window hidden over the concealed session, as every show after an
+        // activation checks.
+        if(session->phase()==core::VisibilityPhase::concealed||closing)return;
+    }
+    // The hidden traces on the real clock show their offscreen window here
+    // too (scheduling only), so they see the frame come before the show.
+    if(liveScheduling())host.show(visibleMode());refresh(time);
 }
 void Application::Impl::selectModule(core::Module module,double time){
     if(notes){const auto current=notes->selected();

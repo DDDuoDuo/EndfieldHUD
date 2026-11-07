@@ -263,12 +263,9 @@ void Application::Impl::onFrame(double time){
         if(phase==3&&diagnosticEditing){auto measured=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
         if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);if(stopping)return;}
     }
-    bool active{};
-    // A lost GPU device ends this run; main.cpp starts a fresh owner.
-    const auto frameStart=Clock::now();
-    try{active=present(time,true);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
-    if(startupTrace)startupTrace->frame(frameStart,Clock::now());
-    if(stopping)return;
+    const auto presented=presentFrame(time);
+    if(!presented||stopping)return;
+    const bool active=*presented;
     time=hostTime(time);
     if(projectionShown()){
         if(projection->dismissalComplete(time))if(auto command=projectionHandoff.projectionClosed(projectionHandoff.generation()))projectionCommand(*command,time);
@@ -281,6 +278,17 @@ void Application::Impl::onFrame(double time){
     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(time);if(stopping||concealedBroadcast)return;}
     if(shelfDragFrame(time,!active)||stopping)return;
     if(!active&&session->phase()==core::VisibilityPhase::concealed)finishConcealment(time);
+}
+// One frame's present() as the host's frame runs it, and as an opening draws
+// its first pose before the window shows (showOpening). A lost GPU device
+// ends this run (main.cpp starts a fresh owner): nothing is returned then.
+std::optional<bool> Application::Impl::presentFrame(double time){
+    const auto frameStart=Clock::now();bool active{};
+    framePresenting=true;
+    try{active=present(time,true);framePresenting=false;}catch(const std::exception&e){framePresenting=false;if(recoverDevice(e,time))return std::nullopt;throw;}
+    catch(...){framePresenting=false;throw;}
+    if(startupTrace)startupTrace->frame(frameStart,Clock::now());
+    return active;
 }
 // OverlayController.finishSystemOpening: the source entrance is complete
 // once the session is visible; a focus loss queued during opening closes now.
@@ -345,7 +353,7 @@ void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double
     switch(e.kind){
     case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
     case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
-    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);open(time);if(visibleMode())host.show();refresh(time);break;
+    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
     default:break;
     }

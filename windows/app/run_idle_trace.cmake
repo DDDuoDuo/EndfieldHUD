@@ -21,7 +21,8 @@
 # its report it checks the ends of the transitions: a normal close ends on
 # its frames before its transition deadline; under Reduce Motion a close
 # (summon, Escape, Quit) hides the HUD and completes without a frame; and an
-# opening and a close that get no frame end on the transition deadline.
+# opening and a close that get no frame end on the transition deadline; a
+# conceal inside an opening's first frame keeps the window hidden.
 # NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)
