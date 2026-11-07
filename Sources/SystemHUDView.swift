@@ -3444,6 +3444,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         appShortcutCanvas.onLaunch = { [weak self] id in self?.onLaunchAppShortcut?(id) }
         appShortcutCanvas.onSaved = { [weak self] _ in self?.refreshAppNavigation(animated: true) }
         appShortcutCanvas.onRemoved = { [weak self] _ in self?.refreshAppNavigation(animated: true) }
+        appShortcutCanvas.onReordered = { [weak self] in self?.refreshAppNavigation(animated: true) }
         profileCanvas.onGeometryPreview = { [weak self] profile in self?.applyIdentityProfile(profile) }
         nowPlayingCanvas.onEvent = { [weak self] event in
             let action: String, source: NowPlayingSource

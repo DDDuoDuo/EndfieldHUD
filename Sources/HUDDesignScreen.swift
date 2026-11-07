@@ -434,7 +434,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         }
         menu.onClose = { [weak self] in self?.closeMenu() }
         HUDMotion.perform { top.addSublayer(menu.layer) }
-        (anchor as? HUDDropdown)?.isOpen = true
+        (anchor as? HUDMenuAnchor)?.isOpen = true
         menuState = (menu, anchor)
         menu.playEntrance()
         refreshRouter()
@@ -445,7 +445,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func closeMenu() {
         guard let state = menuState else { return }
         menuState = nil
-        (state.anchor as? HUDDropdown)?.isOpen = false
+        (state.anchor as? HUDMenuAnchor)?.isOpen = false
         state.menu.controls.forEach { $0.clearInteractionState() }
         HUDMotion.perform { state.menu.layer.removeFromSuperlayer() }
         refreshRouter()

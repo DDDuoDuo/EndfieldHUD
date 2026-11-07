@@ -22,26 +22,33 @@ enum HUDPanelChrome {
     }
 }
 
+/// A control that shows while the menu it opened is open (the dropdown's
+/// caret, the App Shortcut icon tile's chooser badge); `openMenu` sets it.
+protocol HUDMenuAnchor: AnyObject {
+    var isOpen: Bool { get set }
+}
+
 /// Dropdown field (spec §2.6): dark field, ellipsised value, yellow caret, and
 /// a yellow left bar that scales in on hover or while its menu is open.
-final class HUDDropdown: HUDControl {
+final class HUDDropdown: HUDControl, HUDMenuAnchor {
     enum Size { case regular, small }
     private let size: Size
     private let value = HUDTextLayer(style: HUDType.dropdownValue)
     private let accentBar = HUDLayer.plain("dropdown.bar")
-    private let caret = HUDLayer.shape("dropdown.caret")
+    private let caret: CAShapeLayer
     private(set) var valueText: String
     var isOpen = false { didSet { if isOpen != oldValue { renderState() } } }
 
     init(id: String, label: String, value text: String, valueLanguage: String? = nil, size: Size = .regular,
          width: CGFloat? = nil, env: HUDDesignEnvironment) {
         self.size = size; valueText = text
-        super.init(id: id, label: label, env: env)
         let style = size == .small ? HUDType.dropdownValue.sized(12) : HUDType.dropdownValue
         let height: CGFloat = size == .small ? 26 : 30
         let natural = 12 + HUDText.width(text, style, language: valueLanguage ?? HUDTextLanguage.tag()) + 14 + 9 + 10
         let fieldWidth = width ?? (size == .small ? max(96, natural) : 178)
         let bounds = CGRect(x: 0, y: 0, width: fieldWidth, height: height)
+        caret = Self.caretLayer("dropdown.caret", size: CGSize(width: 9, height: 6), position: CGPoint(x: fieldWidth - 10 - 4.5, y: height / 2))
+        super.init(id: id, label: label, env: env)
         HUDMotion.perform {
             layer.bounds = bounds
             layer.backgroundColor = HUDColor.control
@@ -50,9 +57,6 @@ final class HUDDropdown: HUDControl {
             value.language = valueLanguage
             accentBar.frame = CGRect(x: 0, y: 0, width: 2, height: height); accentBar.backgroundColor = HUDColor.accentInk
             accentBar.setValue(0, forKeyPath: "transform.scale.y")
-            caret.bounds = CGRect(x: 0, y: 0, width: 9, height: 6)
-            caret.position = CGPoint(x: fieldWidth - 10 - 4.5, y: height / 2)
-            caret.path = HUDShape.triangleDown(width: 9, height: 6); caret.fillColor = HUDColor.accentInk
             [accentBar, value, caret].forEach(layer.addSublayer)
         }
         setValue(text, language: valueLanguage)
@@ -88,9 +92,25 @@ final class HUDDropdown: HUDControl {
     private func renderState() {
         let engaged = isOpen || (isHovered && isEnabled)
         HUDMotion.animate(accentBar, "transform.scale.y", to: engaged ? 1 : 0, duration: HUDDuration.accentBar, env: env)
+        Self.renderCaret(caret, open: isOpen, hovered: isHovered && isEnabled, env: env)
+    }
+
+    /// The yellow chooser caret, `size` wide and tall, centred on `position`.
+    static func caretLayer(_ name: String, size: CGSize, position: CGPoint) -> CAShapeLayer {
+        let caret = HUDLayer.shape(name)
+        HUDMotion.perform {
+            caret.bounds = CGRect(origin: .zero, size: size)
+            caret.position = position
+            caret.path = HUDShape.triangleDown(width: size.width, height: size.height); caret.fillColor = HUDColor.accentInk
+        }
+        return caret
+    }
+
+    /// The caret turns over while the menu is open and nudges 2 px on hover.
+    static func renderCaret(_ caret: CALayer, open: Bool, hovered: Bool, env: HUDDesignEnvironment) {
         var transform = CATransform3DIdentity
-        if isOpen { transform = CATransform3DMakeRotation(.pi, 0, 0, 1) }
-        if isHovered && isEnabled { transform = CATransform3DTranslate(transform, 0, isOpen ? -2 : 2, 0) }
+        if open { transform = CATransform3DMakeRotation(.pi, 0, 0, 1) }
+        if hovered { transform = CATransform3DTranslate(transform, 0, open ? -2 : 2, 0) }
         HUDMotion.animate(caret, "transform", to: NSValue(caTransform3D: transform), duration: HUDDuration.caret, env: env)
     }
 
