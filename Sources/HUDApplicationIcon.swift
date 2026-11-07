@@ -353,6 +353,39 @@ enum HUDApplicationIcon: String, CaseIterable {
         }
     }
 
+    /// Original vector interpretation of the Sanity item for the HUD's Sanity
+    /// gauge: a lightning bolt in a faceted head outline with a pointed tail.
+    /// It keeps the 80-unit frame of the 84 px game sprite it replaces, so the
+    /// gauge's layout is unchanged, and it is drawn at `scale` pixels per point.
+    static func sanityImage(size: CGFloat, scale: CGFloat) -> CGImage? {
+        let pixels = Int(ceil(max(1, size) * max(1, scale)))
+        guard pixels <= 1024, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // Points are traced top-down in the sprite's 80-unit frame.
+        let unit = CGFloat(pixels) / 80
+        context.translateBy(x: 0, y: CGFloat(pixels)); context.scaleBy(x: unit, y: -unit)
+        func polygon(_ points: [(CGFloat, CGFloat)], white: CGFloat) {
+            guard let first = points.first else { return }
+            context.move(to: CGPoint(x: first.0, y: first.1))
+            points.dropFirst().forEach { context.addLine(to: CGPoint(x: $0.0, y: $0.1)) }
+            context.closePath()
+            context.setFillColor(CGColor(srgbRed: white, green: white, blue: white, alpha: 1)); context.fillPath()
+        }
+        // The white outline, its tail running down to the lower left.
+        polygon([(27, 12.8), (33, 12.9), (46, 14.9), (57, 18.9), (64, 21.9), (66, 23.4), (71, 35), (71, 37.6),
+                 (67, 43.2), (63, 45), (47.4, 45), (39.4, 57.4), (28.9, 71.8), (27.8, 71.8), (27.8, 56.6),
+                 (23, 55.8), (17, 54.6), (14.6, 53.4), (14, 47), (9, 38.6), (9, 35), (15, 21.9), (20, 18)], white: 1)
+        // The grey head inside it, open along the tail's right edge.
+        polygon([(29, 18), (38, 19), (47, 21), (53, 23), (57, 25), (61, 27), (63, 30), (65, 34), (65, 37),
+                 (63, 39.6), (54, 40), (54, 41.8), (52, 43), (52, 45), (47.4, 45), (39.4, 57.4), (28.9, 71.6),
+                 (33, 57.4), (33, 53), (31, 52), (28, 51), (23, 50.2), (19.6, 49.6), (19, 46), (17, 41),
+                 (15, 37.5), (15, 35), (19, 27.5), (19, 26), (23, 23), (27, 20)], white: 101.0 / 255)
+        // The bolt: an upright bar, a short arm, then a spike into the tail.
+        polygon([(33, 23.5), (46, 23.5), (40, 42), (49.2, 42), (47.4, 44), (36.4, 58.4), (39.6, 44), (31, 44)], white: 1)
+        return context.makeImage()
+    }
+
     private static func batteryImage(size: CGFloat, menuBar: Bool) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
             NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }

@@ -2,7 +2,8 @@ import AppKit
 import ImageIO
 import QuartzCore
 
-/// Original MoneyCell artwork and a retained recovery tooltip. Its numbers and labels are real text (HarmonyOS Sans
+/// Original MoneyCell wallet artwork, a vector Sanity icon, and a retained
+/// recovery tooltip. Its numbers and labels are real text (HarmonyOS Sans
 /// Medium through HUDText), drawn at the HUD's render scale. The HUD's
 /// existing visible clock supplies updates; this object owns no timer.
 final class HUDAccountGauge {
@@ -29,12 +30,13 @@ final class HUDAccountGauge {
     private(set) var value = ""
     private(set) var accessibilityLabel = ""
     private(set) var updateCount = 0
-    /// Pixels per point of the drawn number and tooltip text.
+    /// Pixels per point of the drawn number, icon and tooltip text.
     private(set) var renderScale: CGFloat = 0
+    private var iconScale: CGFloat = 0
     /// The HUD's backing x design scale, from the last `update` or `setScale`.
     private var baseScale: CGFloat = 2
     /// The gauge's drawn size relative to its 168 x 42 design. A placement
-    /// that scales the gauge sets this, so the text is redrawn at
+    /// that scales the gauge sets this, so the text and icon are redrawn at
     /// the new size instead of being stretched.
     var sizeFactor: CGFloat = 1 {
         didSet {
@@ -86,7 +88,8 @@ final class HUDAccountGauge {
             layer.addSublayer(bar)
         }
         icon.name = "hud.account.stamina.item_ap"
-        icon.frame = CGRect(x: 3, y: -6, width: 54, height: 54); icon.contents = Artwork.icon; icon.contentsGravity = .resizeAspect; layer.addSublayer(icon)
+        icon.frame = CGRect(x: 3, y: -6, width: 54, height: 54); icon.contentsGravity = .resizeAspect
+        icon.actions = ["contents": NSNull()]; layer.addSublayer(icon)
         number.name = "hud.account.stamina.value"; number.frame = CGRect(x: 39, y: 6, width: 121, height: 30)
         number.contentsGravity = .resize; number.actions = ["contents": NSNull()]; layer.addSublayer(number)
         feedback = HUDControlHighlightLayer.add(to: layer, rect: barRect, shape: .rounded)
@@ -122,6 +125,7 @@ final class HUDAccountGauge {
         popover.addSublayer(refresh)
         refreshFeedback = HUDControlHighlightLayer.add(to: popover, rect: refreshFrame, shape: .rounded)
         refreshFeedback.accentOverride = NSColor(white: 0.75, alpha: 1)
+        drawIcon(scale: targetScale)
     }
 
     func update(value next: String, accessibilityLabel label: String, visible: Bool, accent: NSColor, scale: CGFloat,
@@ -133,6 +137,7 @@ final class HUDAccountGauge {
         if value != next || accessibilityLabel != label || layer.isHidden == visible || renderScale != scale {
             CATransaction.begin(); CATransaction.setDisableActions(true)
             if value != next || renderScale != scale { drawNumber(next, scale: scale) }
+            drawIcon(scale: scale)
             value = next; accessibilityLabel = label; renderScale = scale; updateCount += 1
             layer.isHidden = !visible
             CATransaction.commit()
@@ -150,7 +155,7 @@ final class HUDAccountGauge {
         let scale = targetScale
         guard renderScale != 0, renderScale != scale else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        drawNumber(value, scale: scale); renderScale = scale
+        drawNumber(value, scale: scale); drawIcon(scale: scale); renderScale = scale
         CATransaction.commit()
         if isPopoverOpen { renderTooltip() }
     }
@@ -162,6 +167,11 @@ final class HUDAccountGauge {
         number.contents = Self.renderText(text, style: Self.numberStyle, in: number.bounds.size, scale: scale,
                                           rightAligned: true, minimumFit: 4.0 / 18)
         number.contentsScale = scale; numberRenderCount += 1
+    }
+    private func drawIcon(scale: CGFloat) {
+        guard iconScale != scale else { return }
+        icon.contents = HUDApplicationIcon.sanityImage(size: icon.bounds.width, scale: scale)
+        icon.contentsScale = scale; iconScale = scale
     }
 
     func perform(_ id: String) {
@@ -295,7 +305,7 @@ final class HUDAccountGauge {
         static func labelWidth(_ text: String) -> CGFloat { HUDText.width(text, style) }
     }
 
-    static var sourceArtworkAvailable: Bool { Artwork.icon != nil && Artwork.background != nil && Artwork.decoration != nil }
+    static var sourceArtworkAvailable: Bool { Artwork.background != nil && Artwork.decoration != nil }
 
     /// One line of text in the standard faces (HarmonyOS Sans, the region's
     /// Noto for CJK), shrunk to fit and centred on its ink. One small raster
@@ -319,7 +329,6 @@ final class HUDAccountGauge {
     }
 
     private enum Artwork {
-        static let icon = load("item_ap--2524b69d--8210737671276829403.png", crop: CGRect(x: 1, y: 3, width: 80, height: 80))
         static let backgroundMask = load("bg_walletbar_1--cfe92272--8572312840272182184.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50))
         static let background = tinted(backgroundMask, white: 0.2666666806, alpha: 0.6980392337)
         static let decoration = tinted(load("bg_walletbar_2--cfe92272--7683125525266349835.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50)), white: 0.2117647082, alpha: 0.1019607857)
