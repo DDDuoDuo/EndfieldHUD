@@ -106,18 +106,10 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private var noteEdited = false
     /// The task whose title is being edited in place, and its field.
     private var editingTask: (id: UUID, field: HUDDesignTextField)?
-    private var reorder: Reorder?
+    private var reorder: HUDListReorder<UUID>?
     private var expandedBodyHeight: CGFloat = 0
     private var reportedStatus: String?
     private var reportedLoadProblem = false
-
-    /// A card lifted by its grip: it follows the pointer and the others close up.
-    private struct Reorder {
-        let id: UUID
-        let grab: CGFloat
-        var index: Int
-        var order: [UUID]
-    }
 
     init(context: HUDDesignContext, store: NotesStore?, error: String? = nil, notesSelected: Bool = true,
          textLayoutRangeBudget: Int = NotesWorkspace.textLayoutRangeBudget,
@@ -438,36 +430,20 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
         let local = list.content.convert(point, from: root)
         switch phase {
         case .began:
-            guard let card = cards[id], let index = document.tasks.firstIndex(where: { $0.id == id }) else { return }
+            guard let card = cards[id], document.tasks.contains(where: { $0.id == id }) else { return }
             closePopups(); editingTask?.field.endEditing(commit: true)
-            reorder = Reorder(id: id, grab: local.y - slotY(index), index: index, order: document.tasks.map(\.id))
-            HUDMotion.perform { card.layer.zPosition = 10 }
-            HUDMotion.animate(card.layer, "transform.scale", to: 1.015, duration: HUDDuration.hover, env: env)
+            guard let lifted = HUDListReorder(lifting: id, order: document.tasks.map(\.id), layer: card.layer, grabY: local.y,
+                                              top: slotY(0), pitch: HUDTaskCard.height + HUDMetric.rowGap, env: env) else { return }
+            reorder = lifted
             context.onLockParallax?()
         case .moved:
-            guard var state = reorder, state.id == id, let card = cards[id] else { return }
-            // Past the list's edges the list scrolls under the card.
-            let visible = list.layer.bounds.height, edge = list.layer.convert(point, from: root).y
-            if edge < 0 { list.setOffset(max(0, list.offset + edge * 0.5)); list.noteScroll() }
-            else if edge > visible { list.setOffset(min(list.maximumOffset, list.offset + (edge - visible) * 0.5)); list.noteScroll() }
-            let y = min(max(slotY(0), local.y - state.grab), slotY(state.order.count - 1))
-            HUDMotion.perform { card.layer.position.y = y + card.layer.bounds.height / 2 }
-            let target = min(max(0, Int(((y - 4) / (HUDTaskCard.height + HUDMetric.rowGap)).rounded())), state.order.count - 1)
-            guard target != state.index else { return }
-            state.order.remove(at: state.index); state.order.insert(id, at: target); state.index = target
+            guard var state = reorder, state.id == id else { return }
+            state.move(to: point, list: list, root: root, layers: { [cards] in cards[$0]?.layer }, env: env)
             reorder = state
-            for (slot, other) in state.order.enumerated() where other != id {
-                guard let layer = cards[other]?.layer else { continue }
-                HUDMotion.animate(layer, "position.y", to: slotY(slot) + layer.bounds.height / 2, duration: 0.18, env: env)
-            }
         case .ended:
             guard let state = reorder, state.id == id else { return }
             reorder = nil
-            if let card = cards[id] {
-                HUDMotion.animate(card.layer, "position.y", to: slotY(state.index) + card.layer.bounds.height / 2, duration: 0.18, env: env)
-                HUDMotion.animate(card.layer, "transform.scale", to: 1, duration: 0.18, env: env)
-                HUDMotion.perform { card.layer.zPosition = 0 }
-            }
+            state.drop(cards[id]?.layer, env: env)
             guard state.order != document.tasks.map(\.id) else { return }
             save { doc in
                 let byID = Dictionary(uniqueKeysWithValues: doc.tasks.map { ($0.id, $0) })
@@ -475,7 +451,7 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
                 if moved.count == doc.tasks.count { doc.tasks = moved }
             }
             // The page order (VoiceOver) follows once the card has landed.
-            DispatchQueue.main.asyncAfter(deadline: .now() + (env.reducesMotion ? 0 : 0.2)) { [weak self] in
+            HUDListReorder<UUID>.afterLanding(env: env) { [weak self] in
                 guard let self, self.isActive, self.reorder == nil, self.document.tab == .todo else { return }
                 self.rerender()
             }
@@ -484,16 +460,9 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     /// A lifted card returns to its slot (the module was left mid-drag).
     private func cancelReorder() {
-        guard reorder != nil else { return }
+        guard let state = reorder else { return }
         reorder = nil
-        let order = document.tasks.map(\.id)
-        for (slot, id) in order.enumerated() {
-            guard let layer = cards[id]?.layer else { continue }
-            HUDMotion.perform {
-                layer.position.y = slotY(slot) + layer.bounds.height / 2
-                layer.zPosition = 0; layer.transform = CATransform3DIdentity
-            }
-        }
+        state.cancel(restoring: document.tasks.map(\.id), layers: { [cards] in cards[$0]?.layer })
     }
 
     // MARK: TEXT
@@ -811,10 +780,8 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     func dragTaskForTesting(_ id: UUID, toSlot slot: Int) {
         guard let card = cards[id] else { return }
         let start = root.convert(CGPoint(x: 7, y: 30), from: card.layer)
-        dragTask(id, phase: .began, at: start)
-        let distance = CGFloat(slot - (document.tasks.firstIndex { $0.id == id } ?? 0)) * (HUDTaskCard.height + HUDMetric.rowGap)
-        dragTask(id, phase: .moved, at: CGPoint(x: start.x, y: start.y + distance))
-        dragTask(id, phase: .ended, at: CGPoint(x: start.x, y: start.y + distance))
+        HUDListReorder<UUID>.simulate(from: start, slots: slot - (document.tasks.firstIndex { $0.id == id } ?? 0),
+                                      pitch: HUDTaskCard.height + HUDMetric.rowGap) { dragTask(id, phase: $0, at: $1) }
     }
 }
 

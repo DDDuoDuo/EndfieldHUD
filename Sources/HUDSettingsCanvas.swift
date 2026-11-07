@@ -437,10 +437,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
     override func cursor(at point: CGPoint?) -> NSCursor? {
         if moduleDrag != nil { return .closedHand }
         guard isActive, section == .modules, let point else { return nil }
-        return moduleRows.values.contains { row in
-            row.grip.layer.isVisible(in: root) && row.grip.layer.isUnclipped(point, in: root)
-                && row.grip.contains(row.grip.layer.convert(point, from: root))
-        } ? .openHand : nil
+        return moduleRows.values.contains { $0.grip.isUnderPointer(point, in: root) } ? .openHand : nil
     }
 
     private func buildDisplay(_ page: HUDDesignPage) {

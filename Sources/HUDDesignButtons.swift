@@ -339,6 +339,12 @@ final class HUDDragGrip: HUDControl {
         if isDragging { onDrag?(.ended, point) } else if contains(point) { activate() }
     }
 
+    /// The grip is shown and unclipped under `point` (in `root`): its owner's
+    /// cursor is the open hand there.
+    func isUnderPointer(_ point: CGPoint, in root: CALayer) -> Bool {
+        layer.isVisible(in: root) && layer.isUnclipped(point, in: root) && contains(layer.convert(point, from: root))
+    }
+
     override func clearInteractionState() {
         if isDragging, let start { onDrag?(.ended, start) }
         start = nil; isDragging = false
@@ -346,4 +352,83 @@ final class HUDDragGrip: HUDControl {
     }
 
     override var accessibilityRole: HUDAccessibilityItem.Role? { label.isEmpty ? nil : .button }
+}
+
+/// A row lifted by its HUDDragGrip in a scrolling list (the Notes TODO cards,
+/// the App Shortcut rows). Lift: the row rises over the others. Drag: it
+/// follows the pointer, the list scrolls under it past its edges and the
+/// others glide to their new slots. Drop: it settles into its slot and the
+/// owner saves `order`. Row `slot` sits at `top + slot * pitch` in the list
+/// content; points are in `root`, where the owner converts the grip's points.
+/// Everything happens on pointer events; nothing runs between them.
+struct HUDListReorder<ID: Hashable> {
+    let id: ID
+    let top: CGFloat
+    let pitch: CGFloat
+    private let grab: CGFloat
+    private(set) var index: Int
+    private(set) var order: [ID]
+
+    func slotY(_ slot: Int) -> CGFloat { top + CGFloat(slot) * pitch }
+
+    /// Lifts `id` (nil when it is not in `order`), grabbed at `grabY` in the
+    /// list content (converted when the press began).
+    init?(lifting id: ID, order: [ID], layer: CALayer, grabY: CGFloat, top: CGFloat, pitch: CGFloat, env: HUDDesignEnvironment) {
+        guard let index = order.firstIndex(of: id) else { return nil }
+        self.id = id; self.top = top; self.pitch = pitch; self.index = index; self.order = order
+        grab = grabY - (top + CGFloat(index) * pitch)
+        HUDMotion.perform { layer.zPosition = 10 }
+        HUDMotion.animate(layer, "transform.scale", to: 1.015, duration: HUDDuration.hover, env: env)
+    }
+
+    /// The lifted row follows `point`; the others reflow when its slot changes.
+    mutating func move(to point: CGPoint, list: HUDScrollArea, root: CALayer, layers: (ID) -> CALayer?, env: HUDDesignEnvironment) {
+        let local = list.content.convert(point, from: root)
+        guard let lifted = layers(id) else { return }
+        // Past the list's edges the list scrolls under the row.
+        let visible = list.layer.bounds.height, edge = list.layer.convert(point, from: root).y
+        if edge < 0 { list.setOffset(max(0, list.offset + edge * 0.5)); list.noteScroll() }
+        else if edge > visible { list.setOffset(min(list.maximumOffset, list.offset + (edge - visible) * 0.5)); list.noteScroll() }
+        let y = min(max(slotY(0), local.y - grab), slotY(order.count - 1))
+        HUDMotion.perform { lifted.position.y = y + lifted.bounds.height / 2 }
+        let target = min(max(0, Int(((y - top) / pitch).rounded())), order.count - 1)
+        guard target != index else { return }
+        order.remove(at: index); order.insert(id, at: target); index = target
+        for (slot, other) in order.enumerated() where other != id {
+            guard let layer = layers(other) else { continue }
+            HUDMotion.animate(layer, "position.y", to: slotY(slot) + layer.bounds.height / 2, duration: 0.18, env: env)
+        }
+    }
+
+    /// The lifted row settles into its slot; the owner then saves `order`.
+    func drop(_ layer: CALayer?, env: HUDDesignEnvironment) {
+        guard let layer else { return }
+        HUDMotion.animate(layer, "position.y", to: slotY(index) + layer.bounds.height / 2, duration: 0.18, env: env)
+        HUDMotion.animate(layer, "transform.scale", to: 1, duration: 0.18, env: env)
+        HUDMotion.perform { layer.zPosition = 0 }
+    }
+
+    /// Every row returns at once to its slot in `saved` (the module was left
+    /// mid-drag, or the order could not be saved).
+    func cancel(restoring saved: [ID], layers: (ID) -> CALayer?) {
+        for (slot, id) in saved.enumerated() {
+            guard let layer = layers(id) else { continue }
+            HUDMotion.perform {
+                layer.position.y = slotY(slot) + layer.bounds.height / 2
+                layer.zPosition = 0; layer.transform = CATransform3DIdentity
+            }
+        }
+    }
+
+    /// Runs `body` once the dropped row has landed (the owner re-renders so
+    /// the page order, which VoiceOver reads, follows the new order).
+    static func afterLanding(env: HUDDesignEnvironment, _ body: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (env.reducesMotion ? 0 : 0.2), execute: body)
+    }
+
+    /// A whole grip drag from `start` by `slots` rows (verification).
+    static func simulate(from start: CGPoint, slots: Int, pitch: CGFloat, _ drag: (HUDDragGrip.Phase, CGPoint) -> Void) {
+        let end = CGPoint(x: start.x, y: start.y + CGFloat(slots) * pitch)
+        drag(.began, start); drag(.moved, end); drag(.ended, end)
+    }
 }
