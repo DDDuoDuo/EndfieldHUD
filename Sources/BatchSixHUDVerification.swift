@@ -106,7 +106,7 @@ enum BatchSixHUDVerification {
             let book = reader.controller.book!, tile = "book:" + book.id.uuidString
             run(.reader, [
                 ("readerTabs:1", { [self] in check(reader.tab == .library && ids(.reader).contains(tile), "Library lists the imported book as a tile") }),
-                (tile + ":more", { [self] in
+                (tile + HUDTileMoreButton.suffix, { [self] in
                     check(reader.isMenuOpen && ["open", "relink", "remove"].allSatisfy { ids(.reader).contains("bookMenu:" + $0) }, "Book menu offers Open, Relink and Remove")
                 }),
                 ("bookMenu:remove", { [self] in

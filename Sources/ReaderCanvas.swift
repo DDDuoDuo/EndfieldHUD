@@ -1039,7 +1039,7 @@ final class ReaderBookTile: HUDControl {
 
     init(id: String, number: Int, book: ReaderBook, cover color: CGColor, missing: Bool, width: CGFloat, env: HUDDesignEnvironment) {
         labelText = HUDTextLayer(book.title, style: HUDTextStyle(size: 11.5, weight: .medium, color: HUDColor.nearBlack), alignment: .center)
-        more = HUDTileMoreButton(id: id + ":more", label: L10n.text("More", "更多") + ", " + book.title, env: env)
+        more = HUDTileMoreButton(id: id + HUDTileMoreButton.suffix, label: L10n.text("More", "更多") + ", " + book.title, env: env)
         super.init(id: id, label: book.title, env: env)
         let wellHeight = Self.wellHeight
         let bounds = CGRect(x: 0, y: 0, width: width, height: wellHeight + 24)
