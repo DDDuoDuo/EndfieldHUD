@@ -1312,10 +1312,22 @@ void pipelineCost(StandIn& standIn, bool reference = false) {
               << ", UI loop wakes " << per(open.loops) << "\n";
     check(reference || reader1.readings > reader0.readings, "The bar is read while Now Playing is presented");
     owner.setActive(false, seconds());
-    // A bar reading the presented page started just before it closed may
-    // still finish on the OS pool: let it land before counting.
-    unsigned settling{};
-    loop(.3, settling);
+    // A bar reading the presented page started just before it closed (and
+    // one queued behind it) may still finish on the OS pool: let them land
+    // before counting, but closing must start no new reading.
+    const auto atClose = desktop->reader().stats();
+    {
+        unsigned settling{}, steady{};
+        auto landed = atClose.readings;
+        for (const double end = seconds() + 2; steady < 3 && seconds() < end;) {
+            loop(.05, settling);
+            const auto now = desktop->reader().stats().readings;
+            steady = now == landed ? steady + 1 : 0;
+            landed = now;
+        }
+    }
+    check(desktop->reader().stats().submitted == atClose.submitted && desktop->reader().stats().readings - atClose.readings <= 2,
+          "Closing starts no bar reading; only those already in flight land");
     const auto e1 = desktop->enumerations.load();
     const auto r1 = desktop->reader().stats();
     const auto s1 = state->reads.load();

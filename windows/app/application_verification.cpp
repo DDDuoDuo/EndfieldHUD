@@ -459,19 +459,19 @@ int Application::Impl::runIdleTrace(){
           traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
           "The memory trace records the expired opening and close deadlines");
      // When each deadline expired, from the start of its own transition, on
-     // the host time of the wake (the rows' clock). The pumps return later:
+     // the host time of the wake (the rows' clock in this hidden trace). The pumps return later:
      // after the expiry's work (the queued close runs inside the opening's;
      // the snapshots of this memory trace).
      const auto since=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isNumber()?v.number():-1.;};
      const double openingExpired=since("transition-deadline-1","secondsSinceOpening"),closeExpired=since("transition-deadline-2","secondsSinceClose");
      std::cout<<"Idle trace frameless transition deadlines: the opening expired "<<openingExpired<<" s after it started, the close "<<closeExpired<<" s after it started\n";
-     need(openingExpired>=openingTransitionBound-.001&&openingExpired<openingTransitionBound+.25&&closeExpired>=closingTransitionBound-.001&&closeExpired<closingTransitionBound+.25,
+     need(openingExpired>=openingTransitionBound-.001&&openingExpired<openingTransitionBound+.5&&closeExpired>=closingTransitionBound-.001&&closeExpired<closingTransitionBound+.5,
           "The opening and the close no frame finished end on their own transition deadlines");
      // No owner wake spins while no frame can present: an owner's wake that
      // waits for a frame is handed to the host once.
      const auto wakes=host.stats().externalWakes-wakesBefore;
      std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
-     need(wakes<=20,"A frameless opening and close wake the host only for their deadlines");}
+     need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());

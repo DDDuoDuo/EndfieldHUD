@@ -196,6 +196,7 @@ public:
         // the session's hovered button without allocating.
         (void)badge_->setNavigationHovered(host_.hoveredModule() == core::Module::power, time_);
         (void)badge_->update(frame.center, frame.opacity, time_);
+        badgeWakeHanded_.reset(); // the frame advanced the badge past the wake it was handed
     }
     // Launch prewarm (AppDelegate prewarmDesktop; the HUD is still closed):
     // the badge's first placement and its artwork upload move off the
