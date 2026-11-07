@@ -657,7 +657,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         designContext.refreshPalette()
         sourceWatch?.refreshMotionPreferences()
         sourceWatch?.setDesktopCenterLogo(configuration.centerLogo, revision: configuration.centerLogoRevision)
-        // System > Modules: the right-hand list rebinds its recycled rows in place.
+        // Display > Modules: the right-hand list rebinds its recycled rows in place.
         if old.moduleLayout != configuration.moduleLayout { refreshAppNavigation(animated: true) }
         // Display > HUD elements: relaid only when the layout changes.
         if old.overlayLayout != configuration.overlayLayout { applyOverlayLayout() }

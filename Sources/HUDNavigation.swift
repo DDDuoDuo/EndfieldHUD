@@ -193,7 +193,7 @@ final class HUDNavigation {
         if let target { entries.first { $0.target == target }?.setHovered(true) }
     }
 
-    /// Right-hand modules hidden in System > Modules keep their entry here,
+    /// Right-hand modules hidden in Display > Modules keep their entry here,
     /// off screen, so showing them again reuses the same layers.
     private var parkedEntries: [HUDModule: HUDNavigationEntry] = [:]
 
@@ -1182,7 +1182,7 @@ final class HUDNavigationEntry {
     }
 
     /// The right-hand list's glyph for `module` as one `side`-px layer, the
-    /// game artwork where the list uses it, else the vector (System > Modules).
+    /// game artwork where the list uses it, else the vector (Display > Modules).
     static func glyphLayer(for module: HUDModule, side: CGFloat, ink: NSColor, scale: CGFloat) -> CALayer {
         let frame = CGRect(x: 0, y: 0, width: side, height: side)
         if let image = gameIcon(for: module)?.cgImage(size: 96, tint: ink) {

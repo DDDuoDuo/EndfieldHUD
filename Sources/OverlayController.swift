@@ -169,7 +169,7 @@ final class OverlayController: NSObject {
     private var forceCloseAfterShelfDrag = false
     private var shelfDragPresentation = ShelfDragPresentationState()
     private var shelfDragDeadline: DispatchWorkItem?
-    /// "Last opened" (Display > HUD elements > Open on): kept across relaunches,
+    /// "Last opened" (Display > Open on): kept across relaunches,
     /// except in diagnostic runs, which never touch the user's preferences.
     private var lastSystemModule: HUDModule = HUDOverlayLayout.lastModule(in: OverlayController.lastModuleDefaults) {
         didSet { HUDOverlayLayout.saveLastModule(lastSystemModule, to: Self.lastModuleDefaults) }

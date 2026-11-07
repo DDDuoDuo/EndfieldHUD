@@ -58,7 +58,7 @@ enum HUDDesktopWatchNavigation {
     ]
     static let fixedModules: [HUDModule] = [.system, .display, .hotkeys, .about, .storage, .activityMonitor]
 
-    /// The right-hand modules follow the user's layout (System > Modules);
+    /// The right-hand modules follow the user's layout (Display > Modules);
     /// hidden ones get no entry, so pointer, accessibility and recycled rows
     /// all skip them. The layout defaults to the one currently applied.
     static func entries(shortcuts: [HUDAppShortcutPresentation],
@@ -81,7 +81,7 @@ enum HUDDesktopWatchNavigation {
 }
 
 /// The user's order and visibility of the modules in the right-hand list
-/// (System > Modules). Saved apps and Add App keep following the visible
+/// (Display > Modules). Saved apps and Add App keep following the visible
 /// modules; modules outside that list are not configurable. Every value is
 /// normalized: each configurable module appears once, unknown or duplicate
 /// entries are dropped, and at least one module stays visible.
