@@ -894,7 +894,9 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             HUDMenu.Item(id: "tag", title: L10n.text("Edit #", "修改 #"), enabled: canEdit(.tag)),
             HUDMenu.Item(id: "picture", title: L10n.text("Change profile picture", "更换头像"), enabled: store != nil),
             HUDMenu.Item(id: "portrait", title: L10n.text("Adjust portrait", "调整头像")),
-            HUDMenu.Item(id: "restore", title: L10n.text("Restore default picture", "恢复默认头像"), enabled: store != nil)
+            HUDMenu.Item(id: "restore", title: L10n.text("Restore default picture", "恢复默认头像"), enabled: store != nil),
+            HUDMenu.Item(id: "system", title: L10n.text("Use Mac account info", "使用 Mac 账户信息"), separatorBefore: true,
+                         enabled: canUseSystemAccount)
         ]
         openMenu(id: "profile.more", items: items, anchor: anchor) { [weak self, weak anchor] item in
             guard let self else { return }
@@ -903,9 +905,27 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             case "tag": self.beginEdit(.tag)
             case "picture": self.chooseImage(.avatar)
             case "portrait": if let anchor { self.openPortraitPopover(anchor) }
+            case "system": self.useSystemAccount()
             default: self.restoreAvatar()
             }
         }
+    }
+
+    /// Something the macOS account can fill is showing a chosen value instead.
+    /// Off while Recording mode hides the account.
+    private var canUseSystemAccount: Bool {
+        guard store != nil, profile.systemAccount != nil else { return false }
+        return (canEdit(.name) && !(profile.autoName && profile.name == UserProfile.defaultName))
+            || (canEdit(.playerID) && profile.playerIDOverride != nil)
+            || profile.avatarFilename != nil || !profile.autoAvatar
+    }
+
+    private func useSystemAccount() {
+        guard let store else { return }
+        do {
+            try store.useSystemAccount(name: canEdit(.name), playerID: canEdit(.playerID))
+            toast(icon: .reset, "Mac account info", "已使用 Mac 账户信息")
+        } catch { showError(error.localizedDescription) }
     }
 
     private func restoreAvatar() {

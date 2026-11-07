@@ -498,6 +498,8 @@ extension LocalizationCatalog {
         R("Show background", "显示背景", "顯示背景", "背景を表示", "배경 표시"),
         R("Picture changed", "已更换头像", "已更換頭像", "プロフィール画像を変更しました", "프로필 사진 변경됨"),
         R("Default picture", "已恢复默认头像", "已恢復預設頭像", "既定の画像に戻しました", "기본 사진 복원됨"),
+        R("Use Mac account info", "使用 Mac 账户信息", "使用 Mac 帳號資訊", "Mac のアカウント情報を使用", "Mac 계정 정보 사용"),
+        R("Mac account info", "已使用 Mac 账户信息", "已使用 Mac 帳號資訊", "Mac のアカウント情報を使用しました", "Mac 계정 정보 사용됨"),
         R("Follow HUD", "跟随浮层", "跟隨浮層", "HUDに合わせる", "HUD에 맞춤"),
         R("Default", "默认", "預設", "既定", "기본값"),
         // Projection
