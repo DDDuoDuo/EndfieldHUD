@@ -633,7 +633,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         super.viewDidChangeEffectiveAppearance()
         notesInteraction?.finishEditing()
         // Theme = System: the redesigned pages follow macOS appearance too.
-        if HUDRuntimeAppearance.applyPalette() { designContext.refreshPalette() }
+        if HUDRuntimeAppearance.applyPalette() {
+            designContext.refreshPalette()
+            if overlayEditor != nil, let draft = overlayDraft {
+                installOverlayEditor(for: draft); layoutOverlayEditor(); layoutDesignAccessibility()
+            }
+        }
         updateContent()
     }
 
@@ -3084,20 +3089,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         clearControlHighlights()
         let layout = configuration.overlayLayout
         overlayDraft = layout; overlayFocus = nil; overlayDragged = nil
-        let range = HUDSlider.Range(minimum: HUDOverlayLayout.sizeRange.lowerBound * 100,
-                                    maximum: HUDOverlayLayout.sizeRange.upperBound * 100, step: 1)
-        let editor = HUDPlacementEditor(id: "hudElements", sliders: HUDOverlayLayout.Element.allCases.map {
-            HUDPlacementEditor.Slider(id: $0.rawValue, title: $0.sizeTitle, value: layout[$0].size * 100, range: range, format: .percent)
-        }, env: designContext.env)
-        editor.onChange = { [weak self] id, value, _ in self?.overlaySizeChanged(id, value: value) }
-        editor.onDecision = { [weak self] decision in self?.finishOverlayPlacement(confirm: decision == .confirm) }
-        overlayEditor = editor
         withoutActions {
-            overlayFrames.name = "hud.elements.frames"; overlayFrames.fillColor = HUDColor.yellow; overlayFrames.zPosition = 39
+            overlayFrames.name = "hud.elements.frames"; overlayFrames.zPosition = 39
             overlayEditorHost.name = "hud.elements.editor"; overlayEditorHost.zPosition = 40
             corePlane.content.addSublayer(overlayFrames); corePlane.content.addSublayer(overlayEditorHost)
-            overlayEditorHost.addSublayer(editor.layer)
         }
+        let editor = installOverlayEditor(for: layout)
         layoutDesignOverlay()
         applyOverlayLayout()
         editor.show()
@@ -3105,6 +3102,28 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         lockParallaxForActiveInput()
         designInputStateChanged()
         updateNavigationButtonStates()
+    }
+
+    /// Builds the strip for `layout` in place of the current one. Its pills,
+    /// band and sliders bake their palette, so a System theme change while
+    /// placing rebuilds it from the draft, as the battery bar editor does.
+    @discardableResult private func installOverlayEditor(for layout: HUDOverlayLayout) -> HUDPlacementEditor {
+        let range = HUDSlider.Range(minimum: HUDOverlayLayout.sizeRange.lowerBound * 100,
+                                    maximum: HUDOverlayLayout.sizeRange.upperBound * 100, step: 1)
+        let editor = HUDPlacementEditor(id: "hudElements", sliders: HUDOverlayLayout.Element.allCases.map {
+            HUDPlacementEditor.Slider(id: $0.rawValue, title: $0.sizeTitle, value: layout[$0].size * 100, range: range, format: .percent)
+        }, env: designContext.env)
+        editor.onChange = { [weak self] id, value, _ in self?.overlaySizeChanged(id, value: value) }
+        editor.onDecision = { [weak self] decision in self?.finishOverlayPlacement(confirm: decision == .confirm) }
+        let previous = overlayEditor
+        previous?.cancelPointer()
+        overlayEditor = editor; overlayDragged = nil
+        withoutActions {
+            previous?.layer.removeFromSuperlayer()
+            overlayFrames.fillColor = HUDColor.yellow
+            overlayEditorHost.addSublayer(editor.layer)
+        }
+        return editor
     }
 
     private func overlaySizeChanged(_ id: String, value: Double) {
