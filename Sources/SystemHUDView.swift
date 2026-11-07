@@ -1839,6 +1839,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             view.onBackgroundMouseDown = { [weak self] event in self?.mouseDown(with: event) }
             view.onBackgroundMouseUp = { [weak self] event in self?.mouseUp(with: event) }
             view.onPointerMove = { [weak self] in self?.followCurrentPointer() }
+            view.onDesktopArrangeScroll = { [weak self] in self?.followArrangeScroll() }
             view.designCursor = { [weak self] in self?.designCursor(at: $0) }
             view.onDesktopCenterPlane = { [weak self] projection in self?.applySourceCenterProjection(projection) }
             view.onDesktopStatusPlane = { [weak self] projection in self?.applySourceStatusProjection(projection) }
@@ -3478,6 +3479,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if !usesSourceShell { refreshArrangeCursor() }
     }
 
+    /// The source shell drew its list scrolled under the lifted tile: the
+    /// slot under the still pointer previews.
+    private func followArrangeScroll() {
+        guard arrangeDrag?.lifted == true, let window else { return }
+        dragArrangedModule(to: convert(window.mouseLocationOutsideOfEventStream, from: nil), edgeScroll: false)
+    }
+
     /// Ends a press on a module button. A lifted drag saves its order (`save`)
     /// or the list returns to the saved one; a press without a lift does nothing.
     /// The dropped tile settles into its slot, and on a cancel every tile slides
@@ -3951,6 +3959,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if swallowsArrangePress { swallowsArrangePress = false; refreshArrangeCursor(); return }
         if overlayEditor != nil { overlayPointerUp(releaseLocation); return }
         if arrangeDrag != nil {
+            // The order saved is the slot under the tile where it is let go.
+            if arrangeDrag?.lifted == true { dragArrangedModule(to: releaseLocation, edgeScroll: false) }
             endModuleArrangeDrag(save: true)
             refreshArrangeCursor()
             return
@@ -3999,8 +4009,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let location = convert(event.locationInWindow, from: nil)
         let design = designPoint(location)
         // A wheel turned while a module button is dragged scrolls the list under
-        // it; the slot it previews follows at once.
-        defer { if arrangeDrag?.lifted == true { dragArrangedModule(to: location, edgeScroll: false) } }
+        // it; the slot it previews follows at once (the source shell's list
+        // moves on later frames, which call followArrangeScroll).
+        defer { if !usesSourceShell, arrangeDrag?.lifted == true { dragArrangedModule(to: location, edgeScroll: false) } }
         if designContext.overlay.capturesInput { return }
         if let canvas = activeDesignCanvas, canvas.capturesPointer {
             if let point = designBoxPoint(location) { _ = canvas.scroll(at: point, delta: designScrollDelta(event), event: event) }

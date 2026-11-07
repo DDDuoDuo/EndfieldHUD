@@ -119,6 +119,11 @@ final class HUDSourceWatchView: NSView {
     private var desktopArrangeMotion = HUDSourceDesktopArrangeMotion()
     /// The button the dragged tile is bound to (held hovered, its lift).
     private var desktopArrangeLiftedButton: HUDSourceID?
+    /// The list position the last frame drew while a tile is dragged.
+    private var desktopArrangeDrawnPosition: Double?
+    /// A frame drew the list scrolled under the dragged tile (a wheel's
+    /// spring or an edge scroll), so the slot under the still pointer changed.
+    var onDesktopArrangeScroll: (() -> Void)?
     private var desktopViewportClip: DesktopLabelClip?
     private var lastDesktopProjection: (root: simd_double4x4, bounds: CGRect, scroll: Double)?
     private var desktopProjectionWasAnimating = true
@@ -1168,6 +1173,11 @@ final class HUDSourceWatchView: NSView {
             // Ordinary pointer frames do not need to project and polygon-clip
             // every accessibility element when no client is reading it.
             if !desktopMode { updateAccessibility(frame: frame, camera: camera.camera) }
+            // Last, once this frame is the one hits test against. Only while a
+            // tile is dragged; recorded first, so the answer cannot repeat it.
+            let drawn = desktopArrangeDrawnPosition
+            desktopArrangeDrawnPosition = desktopMode && desktopArrangeMotion.lifted != nil ? verticalNormalizedPosition : nil
+            if let drawn, drawn != desktopArrangeDrawnPosition { onDesktopArrangeScroll?() }
         } catch {
             diagnostics = [String(describing: error)]
             stopTimer(); playback.conceal(); inputEnabled = false
