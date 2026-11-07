@@ -6,6 +6,8 @@ import QuartzCore
 /// recovery tooltip. Its numbers and labels are real text (HarmonyOS Sans
 /// Medium through HUDText), drawn at the HUD's render scale. The HUD's
 /// existing visible clock supplies updates; this object owns no timer.
+/// The recovery menu draws in `layer`, or in `popoverHost` when the host
+/// gives it one above the rest of the HUD.
 final class HUDAccountGauge {
     struct Action {
         let id: String, label: String, rect: CGRect, enabled: Bool
@@ -14,6 +16,19 @@ final class HUDAccountGauge {
     private let icon = CALayer(), number = CALayer()
     private let feedback: HUDControlHighlightLayer
     private let popover = CALayer()
+    /// The recovery menu's layer, wherever it is hosted.
+    var popoverLayer: CALayer { popover }
+    /// A layer that draws the recovery menu instead of `layer` (nil: `layer`).
+    /// The host keeps it on the gauge's position and transform, so the menu's
+    /// frame (`popoverRect`) and every point stay in the gauge's coordinates.
+    var popoverHost: CALayer? {
+        didSet {
+            guard popoverHost !== oldValue else { return }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            (popoverHost ?? layer).addSublayer(popover)
+            CATransaction.commit()
+        }
+    }
     private let nextLabel = CALayer(), fullLabel = CALayer()
     private let nextValue = CALayer(), fullValue = CALayer()
     private let refresh = CAShapeLayer()
@@ -234,6 +249,10 @@ final class HUDAccountGauge {
     }
     func hover(at point: CGPoint?) {
         HUDControlHighlightLayer.update(in: layer, point: isInteractive ? point : nil)
+        // A hosted menu's refresh feedback (the host shares the gauge's coordinates).
+        if let host = popover.superlayer, host !== layer {
+            HUDControlHighlightLayer.update(in: host, point: isInteractive ? point : nil)
+        }
     }
     func dismiss(animated: Bool = true) { setOpen(false, animated: animated) }
     private func setOpen(_ value: Bool, animated: Bool = true) {

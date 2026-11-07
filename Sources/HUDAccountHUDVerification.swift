@@ -65,6 +65,8 @@ enum HUDAccountHUDVerification {
                       "Projected wallet click opens source-style recovery countdowns")
                 check(view.subviews.compactMap { $0 as? NSButton }.contains { !$0.isHidden && $0.accessibilityLabel() == "Refresh" },
                       "Recovery refresh has an enabled native accessibility peer")
+                check(view.accountPopoverDrawsOnTopForVerification,
+                      "The recovery menu draws on the top plane, above the clock and the rest of the HUD")
                 snapshot("account-sanity-recovery")
                 escape()
                 check(!gauge.isPopoverOpen && overlay.systemPhase == .open, "ESC dismisses only the recovery menu")
@@ -78,7 +80,7 @@ enum HUDAccountHUDVerification {
                 check(!gauge.isPopoverOpen && overlay.systemPhase == .open,
                       "Outside recovery click is consumed without closing the HUD")
                 gauge.perform("toggle"); gauge.dismiss(animated: false)
-                check(gauge.layer.sublayers?.first { $0.name == "hud.account.stamina.recovery" }?.animationKeys() == nil,
+                check(gauge.popoverLayer.name == "hud.account.stamina.recovery" && gauge.popoverLayer.animationKeys() == nil,
                       "Tooltip teardown leaves no retained animation tracks")
                 view.accountControllerForVerification.perform(.selectHeaderMode(.workMode), window: nil)
                 snapshot("account-unlinked")

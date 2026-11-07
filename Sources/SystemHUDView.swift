@@ -186,6 +186,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     // The badge shares the dial pose and follows its deployment transform.
     private lazy var chargePlane = HUDDepthPlane(name: "charge", depth: corePlane.depth,
                                                   travel: corePlane.travel, lag: corePlane.lag)
+    // Above everything else on the HUD (the clock, the footer, the alert
+    // banner and pinned notes): the HUD elements editor strip and the Sanity
+    // recovery menu. Same pose as core, so both stay on the elements they edit.
+    private lazy var topPlane = HUDDepthPlane(name: "top", depth: corePlane.depth,
+                                              travel: corePlane.travel, lag: corePlane.lag)
     private var depthPlanes: [HUDDepthPlane] {
         [distantPlane, rearPlane, secondaryPlane, framePlane, innerPlane,
          panelsPlane, corePlane, markersPlane, glassPlane, rimPlane, chargePlane]
@@ -194,7 +199,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     // and response as the side buttons, outside the center's circular mask.
     private lazy var notesPlane = HUDDepthPlane(name: "notes", depth: panelsPlane.depth,
                                                 travel: panelsPlane.travel, lag: panelsPlane.lag)
-    private lazy var motion = HUDMotionController(planes: depthPlanes + [notesPlane])
+    /// Every plane the pointer and the source camera drive. The top plane
+    /// stays out of `depthPlanes`, so it is never added to `canvas`.
+    private var drivenPlanes: [HUDDepthPlane] { depthPlanes + [notesPlane, topPlane] }
+    private lazy var motion = HUDMotionController(planes: drivenPlanes)
     private var ring: CALayer { framePlane.deployment }
     private let progress = CAShapeLayer()
     private let actionFeedback = CAShapeLayer()
@@ -223,6 +231,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private let notesCanvas: NotesCanvas
     private let notesWorkspace = CALayer()
     private let notesLayout = CALayer()
+    /// The top plane's screen placement and scale, as `notesLayout` keeps the notes'.
+    private let topLayout = CALayer()
     private let notesCoordinates = CALayer()
     private let settingsController: HUDSettingsController?
     private var settingsCanvases: [HUDModule: HUDSettingsCanvas] = [:]
@@ -250,6 +260,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private let accountController: HypergryphAccountController
     private let accountCanvas: HUDAccountCanvas
     private let accountGauge = HUDAccountGauge()
+    /// The Sanity recovery menu's place on the top plane, kept on the gauge's
+    /// position and transform (`applyOverlayLayout`).
+    private let accountPopoverHost = CALayer()
     private var accountGaugeControls: [HUDNavigationScrollButton] = []
     private var accountObserver: UUID?
     private let minigameCanvas: OrbiPomCanvas
@@ -465,10 +478,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         notesLayout.addSublayer(notesPlane.deployment)
         notesWorkspace.addSublayer(notesLayout)
         layer?.addSublayer(notesWorkspace)
+        topLayout.name = "hud.top.layout"
+        topLayout.bounds = canvas.bounds
+        topLayout.addSublayer(topPlane.deployment)
+        topLayout.zPosition = 3_500_000
+        layer?.addSublayer(topLayout)
+        // Root order: canvas and pinned notes (0) < the top plane (3,500,000)
+        // < pointer feedback (4,000,000) < the rendered cursor (5,000,000).
         // Pointer feedback is screen-aligned and above all projected content,
-        // including native inline text editors and freely positioned notes.
-        // Layout and quit confirmations sit at 3,000,000 / 3,100,000.
-        // Feedback must also appear above those native confirmation surfaces.
+        // including native inline text editors, freely positioned notes, the
+        // HUD elements strip and the recovery menu.
         actionFeedback.zPosition = 4_000_000
         layer?.addSublayer(actionFeedback)
         HUDStartupTrace.end("native.shell", since: &startupPhase)
@@ -578,8 +597,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.canvas.position = CGPoint(x: self.bounds.midX + offset.x,
                                            y: self.bounds.midY - Self.verticalLift * self.designScale + offset.y)
             self.canvas.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
-            self.notesLayout.position = self.canvas.position
-            self.notesLayout.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
+            for layout in [self.notesLayout, self.topLayout] {
+                layout.position = self.canvas.position
+                layout.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
+            }
             // Convert saved screen points into the shared design space before
             // applying perspective; note sizes stay independent of HUD scale.
             self.notesCoordinates.bounds = self.bounds
@@ -737,7 +758,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.notesWorkspace.transform = CATransform3DIdentity
             self.notesPlane.deployment.opacity = 1
             self.notesPlane.deployment.transform = CATransform3DIdentity
-            for plane in self.depthPlanes {
+            for plane in self.depthPlanes + [self.topPlane] {
                 plane.deployment.opacity = 1
                 plane.deployment.transform = CATransform3DIdentity
                 if !preservingPointerMotion {
@@ -1188,10 +1209,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var currentPointerTargetForVerification: CGPoint { currentPointerTarget() }
     func spatialPoseMatchesPointerForVerification(_ point: CGPoint) -> Bool {
         if usesSourceShell, let projection = motion.externalProjection {
-            return (depthPlanes + [notesPlane]).allSatisfy { CATransform3DEqualToTransform($0.spatial.transform, projection) }
+            return drivenPlanes.allSatisfy { CATransform3DEqualToTransform($0.spatial.transform, projection) }
                 && reportGeometryMatchesSelectionForVerification
         }
-        return (depthPlanes + [notesPlane]).allSatisfy { plane in
+        return drivenPlanes.allSatisfy { plane in
             CATransform3DEqualToTransform(plane.spatial.transform,
                 HUDMotionMath.transform(normalizedPoint: point, depth: plane.depth, travel: plane.travel,
                                         reducedMotion: HUDRuntimeAppearance.reduceMotion,
@@ -1688,7 +1709,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             // native surfaces and reuse the source-label export homography.
             // Model transforms are restored before this transaction commits;
             // neither the live render tree nor its animation clocks changes.
-            let planes = depthPlanes + [notesPlane]
+            let planes = drivenPlanes
             let transforms = planes.map { $0.spatial.transform }
             CATransaction.begin(); CATransaction.setDisableActions(true)
             planes.forEach { $0.spatial.transform = CATransform3DIdentity }
@@ -1713,8 +1734,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             notesProjection = CATransform3DConcat(notesProjection, projection)
             HUDSourceWatchView.renderProjectedContent(notesWorkspace, opacity: notesWorkspace.opacity, clip: nil,
                 flippedRaster: true, projection: notesProjection, subdivisions: 16, in: context)
-            for (plane, transform) in zip(planes, transforms) { plane.spatial.transform = transform }
-            CATransaction.commit()
             // The facility banner hangs flat in shell space, above the projected planes.
             if facilityBanner.isShowing, !bannerHidden {
                 let banner = presentation ? facilityBanner.layer.presentation() ?? facilityBanner.layer : facilityBanner.layer
@@ -1726,6 +1745,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 banner.render(in: context)
                 context.restoreGState()
             }
+            // The top plane (the HUD elements strip, the recovery menu) over all of it.
+            HUDSourceWatchView.renderProjectedContent(topLayout, opacity: topLayout.opacity, clip: nil,
+                flippedRaster: true, projection: projection, rasterBounds: canvas.bounds.insetBy(dx: -2, dy: -2),
+                subdivisions: 16, in: context)
+            for (plane, transform) in zip(planes, transforms) { plane.spatial.transform = transform }
+            CATransaction.commit()
         } else {
             context.saveGState()
             context.translateBy(x: designOrigin.x, y: designOrigin.y)
@@ -1733,6 +1758,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             (presentation ? canvas.presentation() ?? canvas : canvas).render(in: context)
             context.restoreGState()
             (presentation ? notesWorkspace.presentation() ?? notesWorkspace : notesWorkspace).render(in: context)
+            context.saveGState()
+            context.translateBy(x: designOrigin.x, y: designOrigin.y)
+            context.scaleBy(x: designScale, y: designScale)
+            (presentation ? topLayout.presentation() ?? topLayout : topLayout).render(in: context)
+            context.restoreGState()
         }
         guard let cgImage = context.makeImage(),
               let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
@@ -1797,7 +1827,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         sourceCenterProjection = projection
         let local = HUDMotionMath.sourcePlaneTransform(projection, origin: designOrigin, scale: designScale)
         if let previous = motion.externalProjection, CATransform3DEqualToTransform(previous, local),
-           (depthPlanes + [notesPlane]).allSatisfy({ CATransform3DEqualToTransform($0.spatial.transform, local) }) { return }
+           drivenPlanes.allSatisfy({ CATransform3DEqualToTransform($0.spatial.transform, local) }) { return }
         motion.setExternalProjection(local)
         scheduleProjectedControlLayout()
         // Inline fields are real AppKit views; keep them on the final displayed
@@ -2269,7 +2299,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         actionFeedback.path = brackets
         // Leave the enlarged marker orbit clear of the English heading.
         header.frame = HUDOverlayGeometry.header
-        header.zPosition = 20 // Recovery tooltip stays above central module artwork.
+        header.zPosition = 20 // Above central module artwork.
         corePlane.content.addSublayer(header)
         titleLabel = text("ENDFIELDHUD", rect: CGRect(x: 0, y: 0, width: 300, height: 27), size: 20,
                           parent: header, role: .primary, weight: .semibold)
@@ -2282,6 +2312,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         clockTime.name = "hud.clock.time"; clockDate.name = "hud.clock.date"
         accountGauge.layer.position = HUDAccountGauge.headerPosition
         header.addSublayer(accountGauge.layer)
+        // The recovery menu draws on the top plane, above the clock and the rest of the HUD.
+        accountPopoverHost.name = "hud.account.recovery.host"
+        accountPopoverHost.anchorPoint = .zero
+        accountPopoverHost.bounds = CGRect(origin: .zero, size: HUDAccountGauge.size) // Placed by applyOverlayLayout.
+        topPlane.content.addSublayer(accountPopoverHost)
+        accountGauge.popoverHost = accountPopoverHost
         accountGauge.onRefresh = { [weak self] in self?.accountController.refresh(manual: true) }
         accountGauge.onChange = { [weak self] in self?.layoutAccountGaugeControls() }
         accountGauge.onOpenWorkMode = { [weak self] in self?.activateNavigationTarget(.module(.workMode)) }
@@ -2856,6 +2892,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             if let mask = item.mask { apply(mask, magnification: magnification) }
         }
         apply(canvas, magnification: 1)
+        apply(topLayout, magnification: 1)
         chargeBadge.update(snapshot: snapshot, configuration: configuration, dark: currentDark, contentsScale: scale)
         identityCard.update(dark: currentDark, accent: currentAccent, contentsScale: scale)
         // HUD Scale, layout and display changes redraw the gauge's text and icon now.
@@ -3041,6 +3078,26 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return standIns
     }()
     var isPlacingOverlayForVerification: Bool { overlayEditor != nil }
+    /// The top plane sits above the canvas (the clock), pinned notes and
+    /// below pointer feedback, in the core plane's pose and placement.
+    private var topPlaneMatchesCoreForVerification: Bool {
+        topLayout.superlayer === layer && topPlane.deployment.superlayer === topLayout
+            && topLayout.zPosition > max(canvas.zPosition, notesWorkspace.zPosition) && topLayout.zPosition < actionFeedback.zPosition
+            && CATransform3DEqualToTransform(topPlane.spatial.transform, corePlane.spatial.transform)
+            && CATransform3DEqualToTransform(topLayout.transform, canvas.transform) && topLayout.position == canvas.position
+    }
+    /// The HUD elements strip and its marks draw on the top plane.
+    var overlayEditorDrawsOnTopForVerification: Bool {
+        overlayEditor != nil && overlayEditorHost.superlayer === topPlane.content
+            && overlayFrames.superlayer === topPlane.content && topPlaneMatchesCoreForVerification
+    }
+    /// The Sanity recovery menu draws on the top plane, over the gauge.
+    var accountPopoverDrawsOnTopForVerification: Bool {
+        accountGauge.popoverLayer.superlayer === accountPopoverHost && accountPopoverHost.superlayer === topPlane.content
+            && accountPopoverHost.position == overlayFrame(.sanity, shownOverlayLayout).origin
+            && CATransform3DEqualToTransform(accountPopoverHost.transform, accountGauge.layer.transform)
+            && topPlaneMatchesCoreForVerification
+    }
 
     /// The layout on screen: the editor's draft while placing, else the saved one.
     private var shownOverlayLayout: HUDOverlayLayout { overlayDraft ?? configuration.overlayLayout }
@@ -3063,6 +3120,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let gauge = overlayFrame(.sanity, layout), scale = CGFloat(layout.sanity.size)
             accountGauge.layer.position = CGPoint(x: gauge.minX - origin.x, y: gauge.minY - origin.y)
             accountGauge.layer.transform = scale == 1 ? CATransform3DIdentity : CATransform3DMakeScale(scale, scale, 1)
+            accountPopoverHost.position = gauge.origin
+            accountPopoverHost.transform = accountGauge.layer.transform
         }
         accountGauge.sizeFactor = CGFloat(layout.sanity.size)
         accountGauge.popoverDirection = HUDAccountGauge.popoverDirection(gauge: overlayFrame(.sanity, layout), within: HUDOverlayGeometry.plane)
@@ -3074,7 +3133,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// How much a Display > HUD elements size enlarges `layer` by its
     /// transform (1 for every other layer), so its buffers grow with it.
     private func overlayMagnification(of layer: CALayer) -> CGFloat {
-        layer === accountGauge.layer ? accountGauge.sizeFactor : layer === facilityTags.layer ? facilityTags.magnification : 1
+        layer === accountGauge.layer || layer === accountPopoverHost ? accountGauge.sizeFactor
+            : layer === facilityTags.layer ? facilityTags.magnification : 1
     }
 
     /// An element's size at 100 %, in core-plane points.
@@ -3109,7 +3169,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// Starts placing the title, the Sanity gauge and the alert tags: drag one
     /// on the HUD, set sizes on the strip; Cancel or Esc drops the draft,
-    /// Confirm or Return saves it. The rest of the HUD waits meanwhile.
+    /// Confirm or Return saves it. The rest of the HUD waits meanwhile. The
+    /// strip and the marks draw above every other HUD layer, the clock included.
     func beginOverlayPlacement() {
         guard allowsModuleInput, overlayEditor == nil, !designContext.overlay.capturesInput else { return }
         activeDesignCanvas?.endEditing(commit: true)
@@ -3121,7 +3182,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         withoutActions {
             overlayFrames.name = "hud.elements.frames"; overlayFrames.zPosition = 39
             overlayEditorHost.name = "hud.elements.editor"; overlayEditorHost.zPosition = 40
-            corePlane.content.addSublayer(overlayFrames); corePlane.content.addSublayer(overlayEditorHost)
+            // On the top plane, so the clock, the footer, the alert banner and
+            // pinned notes never cover the strip. Marks first: a snapshot
+            // draws siblings in array order.
+            topPlane.content.addSublayer(overlayFrames); topPlane.content.addSublayer(overlayEditorHost)
         }
         let editor = installOverlayEditor(for: layout)
         layoutDesignOverlay()
