@@ -1055,8 +1055,7 @@ final class HUDNavigationEntry {
             mark.name = "navigation.arrangeMarks"
             mark.frame = faceLayer.bounds
             mark.zPosition = 20
-            mark.path = HUDArchiveTile.bracketPath(faceLayer.bounds, inset: lifted ? -4 : 0)
-            mark.fillColor = HUDColor.plateInk
+            HUDArchiveTile.applyArrangeMark(mark, in: faceLayer.bounds, lifted: lifted)
             mark.contentsScale = layer.contentsScale
             if mark.superlayer !== faceLayer { faceLayer.addSublayer(mark) }
         }

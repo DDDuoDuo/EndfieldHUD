@@ -492,6 +492,14 @@ final class HUDArchiveTile: HUDControl {
         return path
     }
 
+    /// Display > Modules > Arrange on HUD: the corner marks on a right-hand
+    /// tile that can be dragged, in the plate ink, set 4 px wider while it is
+    /// being dragged (`lifted`). Both HUD shells draw their marks with this.
+    static func applyArrangeMark(_ mark: CAShapeLayer, in bounds: CGRect, lifted: Bool) {
+        mark.path = bracketPath(bounds, inset: lifted ? -4 : 0)
+        mark.fillColor = HUDColor.plateInk
+    }
+
     /// The red stamp of a classified tile: padding 3 × 7, 2 px ring, 900 10 px, rotated −10°.
     private static func classifiedStamp(center: CGPoint, env: HUDDesignEnvironment) -> CALayer {
         let stamp = HUDLayer.plain("tile.stamp")

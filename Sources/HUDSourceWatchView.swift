@@ -106,7 +106,7 @@ final class HUDSourceWatchView: NSView {
     }
     private var desktopButtonClips: [HUDSourceID: DesktopLabelClip] = [:]
     /// Display > Modules > Arrange on HUD: the right-hand tiles that can be
-    /// dragged carry corner marks in the accent ink, a little wider on the one
+    /// dragged carry corner marks in the plate ink, a little wider on the one
     /// being dragged. They are projected with the labels, only when the pose changes.
     var desktopArrangeTargets: Set<HUDNavigationTarget> = [] {
         didSet { if desktopArrangeTargets != oldValue { refreshDesktopArrangeMarks() } }
@@ -2493,8 +2493,7 @@ final class HUDSourceWatchView: NSView {
                               height: max(1, hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y)))
             let box = CGRect(origin: .zero, size: size)
             if layers.marks.bounds != box { layers.marks.bounds = box }
-            layers.marks.path = HUDArchiveTile.bracketPath(box, inset: target == desktopArrangeLifted ? -4 : 0)
-            layers.marks.fillColor = HUDColor.plateInk
+            HUDArchiveTile.applyArrangeMark(layers.marks, in: box, lifted: target == desktopArrangeLifted)
             layers.marks.contentsScale = textScale
             layers.marks.transform = Self.projectiveTextTransform(corners, size: size)
         }
