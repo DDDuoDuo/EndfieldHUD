@@ -88,10 +88,12 @@ struct NowPlayingTrack: Equatable {
 
 enum NowPlayingFailure: Error, Equatable {
     case permissionRequired, permissionDenied, accessibilityRequired, unavailable, unsupported, timedOut, cancelled
+    /// The player's Automation grant is missing or declined.
+    var isAutomationGrant: Bool { self == .permissionRequired || self == .permissionDenied }
     var message: String {
         switch self {
         case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。")
-        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then refresh.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。")
+        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。")
         case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls.", "请允许辅助功能访问以读取此播放器的控制。")
         case .unsupported: return L10n.text("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。")
         case .timedOut: return L10n.text("The player did not respond. Try refreshing.", "播放器未响应，请尝试刷新。")
@@ -433,7 +435,9 @@ final class NowPlayingController {
         completion: { [weak self] result in
             guard let self else { return }
             self.isRequestingPermission = false
-            if case .failure(let failure) = result { self.playerVolumeFailure = failure }
+            // Only the grant's own answer replaces the reason; any other
+            // failure keeps it, so the next press asks again.
+            if case .failure(let failure) = result { if failure.isAutomationGrant { self.playerVolumeFailure = failure } }
             else { self.pendingRefresh = true }
         }
     }
@@ -454,7 +458,7 @@ final class NowPlayingController {
         switch read {
         case .success(let value):
             playerVolume = value.flatMap { $0.isFinite ? min(1, max(0, $0)) : nil }; playerVolumeFailure = nil
-        case .failure(let failure) where failure == .permissionRequired || failure == .permissionDenied:
+        case .failure(let failure) where failure.isAutomationGrant:
             playerVolume = nil; playerVolumeFailure = failure
         case .failure(.timedOut) where app == previous:
             break

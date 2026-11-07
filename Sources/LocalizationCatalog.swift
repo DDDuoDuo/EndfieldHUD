@@ -267,7 +267,7 @@ enum LocalizationCatalog {
         "Playback position\u{1F}播放进度": "재생 위치",
         "Playing app volume\u{1F}当前播放应用音量": "재생 중인 앱 음량",
         "Allow EndfieldHUD to control this player when macOS asks.\u{1F}请在 macOS 询问时允许 EndfieldHUD 控制此播放器。": "macOS에서 묻는 경우 EndfieldHUD가 이 플레이어를 제어하도록 허용하세요.",
-        "Allow this player in System Settings > Privacy & Security > Automation, then refresh.\u{1F}请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。": "시스템 설정 > 개인정보 보호 및 보안 > 자동화에서 이 플레이어를 허용한 다음 새로 고침하세요.",
+        "Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.\u{1F}请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。": "시스템 설정 > 개인정보 보호 및 보안 > 자동화에서 이 플레이어를 허용한 다음 HUD를 다시 여세요.",
         "This version of the player does not expose the required playback controls.\u{1F}此版本的播放器未提供所需的播放控制。": "이 버전의 플레이어는 필요한 재생 제어 기능을 제공하지 않습니다.",
         "The player did not respond. Try refreshing.\u{1F}播放器未响应，请尝试刷新。": "플레이어가 응답하지 않습니다. 새로 고침해 보세요.",
 
@@ -1107,7 +1107,7 @@ enum LocalizationCatalog {
         Entry("Playback position", "播放进度", "播放進度", "再生位置"),
         Entry("Playing app volume", "当前播放应用音量", "目前播放應用程式的音量", "再生中のアプリの音量"),
         Entry("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。", "請在 macOS 詢問時允許 EndfieldHUD 控制此播放器。", "macOS で確認されたら、EndfieldHUD によるこのプレーヤーの操作を許可してください。"),
-        Entry("Allow this player in System Settings > Privacy & Security > Automation, then refresh.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后刷新。", "請在「系統設定」>「隱私權與安全性」>「自動化」中允許此播放器，然後重新整理。", "「システム設定」>「プライバシーとセキュリティ」>「オートメーション」でこのプレーヤーを許可してから更新してください。"),
+        Entry("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。", "請在「系統設定」>「隱私權與安全性」>「自動化」中允許此播放器，然後重新開啟介面。", "「システム設定」>「プライバシーとセキュリティ」>「オートメーション」でこのプレーヤーを許可してから、HUDを開き直してください。"),
         Entry("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。", "此版本的播放器未提供所需的播放控制。", "このバージョンのプレーヤーは必要な再生操作を提供していません。"),
         Entry("The player did not respond. Try refreshing.", "播放器未响应，请尝试刷新。", "播放器未回應，請嘗試重新整理。", "プレーヤーから応答がありません。更新してみてください。"),
 
