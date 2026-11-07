@@ -444,19 +444,34 @@ int Application::Impl::runIdleTrace(){
     // finishes (the window stays hidden under them, so the host's frame gate
     // stays shut) end on the host's deadline wake. Escape during that opening
     // waits for it, then closes.
-    {const auto framesBefore=host.stats().frames;const auto at=OverlayHost::clockNow();
+    {const auto framesBefore=host.stats().frames;const auto wakesBefore=host.stats().externalWakes;const auto at=OverlayHost::clockNow();
      perform(lifecycle.toggle(),clock());(void)onKey({KeyKind::down,VK_ESCAPE});
      need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
      pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
      need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
           "The transition deadline finishes an opening no frame finished, and the close queued during it starts");
      pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
-     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&ended>=openedAfter+closingTransitionBound-.05&&host.stats().frames==framesBefore,
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s (closed "<<closed()<<", concealed "<<concealedBroadcast
+              <<", closing "<<lifecycleClosing.has_value()<<", deadline "<<transitionDeadline.has_value()<<", visible "<<host.stats().visible<<", frames +"<<host.stats().frames-framesBefore<<")\n";
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&host.stats().frames==framesBefore,
           "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
-     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s\n";
      need(tracedIs("transition-deadline-1","lifecycle","opening")&&tracedTrue("transition-deadline-1","closeAfterOpening")&&tracedIs("transition-deadline-2","lifecycle","closing")&&
           traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
-          "The memory trace records the expired opening and close deadlines");}
+          "The memory trace records the expired opening and close deadlines");
+     // When each deadline expired, from the start of its own transition, on
+     // the host time of the wake (the rows' clock). The pumps return later:
+     // after the expiry's work (the queued close runs inside the opening's;
+     // the snapshots of this memory trace).
+     const auto since=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isNumber()?v.number():-1.;};
+     const double openingExpired=since("transition-deadline-1","secondsSinceOpening"),closeExpired=since("transition-deadline-2","secondsSinceClose");
+     std::cout<<"Idle trace frameless transition deadlines: the opening expired "<<openingExpired<<" s after it started, the close "<<closeExpired<<" s after it started\n";
+     need(openingExpired>=openingTransitionBound-.001&&openingExpired<openingTransitionBound+.25&&closeExpired>=closingTransitionBound-.001&&closeExpired<closingTransitionBound+.25,
+          "The opening and the close no frame finished end on their own transition deadlines");
+     // No owner wake spins while no frame can present: an owner's wake that
+     // waits for a frame is handed to the host once.
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
+     need(wakes<=20,"A frameless opening and close wake the host only for their deadlines");}
     // The tray's Quit under Reduce Motion ends the run without a frame.
     reduceMotion(true);openHUD();
     {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());

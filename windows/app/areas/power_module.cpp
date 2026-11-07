@@ -211,7 +211,10 @@ public:
     std::optional<double> nextWakeTime(double now) const override {
         std::optional<double> next;
         const auto include = [&](std::optional<double> value) { if (value && (!next || *value < *next)) next = value; };
-        if (hudVisible_) include(badge_->nextWakeTime());
+        // A badge wake already handed to the host waits for the HUD frame
+        // that advances the badge: no further wake for it (a frameless
+        // opening would otherwise wake the host continuously).
+        if (hudVisible_) if (const auto badge = badge_->nextWakeTime(); badge != badgeWakeHanded_) include(badge);
         if (alertCadence_) include(std::max(now, time_) + alertFrameInterval);
         include(power_->nextWakeTime());
         include(releaseAt_);
@@ -222,7 +225,9 @@ public:
         alertChanged();
         std::optional<double> due;
         if (hudVisible_) due = badge_->nextWakeTime();
-        return due && *due <= time_ + 1e-6; // the badge advances on the next HUD frame
+        if (!due || *due > time_ + 1e-6) return false;
+        badgeWakeHanded_ = due; // the badge advances on the next HUD frame
+        return true;
     }
     void upload(gpu::Renderer& renderer) override {
         ++uploads_;
@@ -428,6 +433,7 @@ private:
     std::optional<m::ChargeTelemetry> telemetry_;
     std::optional<core::Matrix4> lastCenter_;
     std::optional<double> releaseAt_; // the alert's window/device release (syncAlertRelease)
+    std::optional<double> badgeWakeHanded_; // the badge wake deadline() last handed to the host
     std::function<void(bool)> editingObserver_;
     // Created on the first UI Automation refresh (a client asked the HUD).
     std::unique_ptr<gpu::NativePowerAutomation> automation_;
