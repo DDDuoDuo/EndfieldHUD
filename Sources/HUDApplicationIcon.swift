@@ -5,7 +5,7 @@ import ImageIO
 /// source rectangles, prepared into small images at build time so opening the
 /// picker never decodes the 59-megapixel sheet. Final variants use a bounded cache.
 enum HUDApplicationIcon: String, CaseIterable {
-    case endfield, battery, originium, orundum, perlica, rhodesIsland, babel, rhineLab, blacksteel, penguinLogistics, ddd
+    case endfield, watch, originium, orundum, perlica, rhodesIsland, babel, rhineLab, blacksteel, penguinLogistics, ddd
     case eliteOps, alphaFour, alphaSix, humanResources, sweep, projectRed, rimBilliton
     case kjerag, ursusStudents, obsidianFestival, dossoles, contingencyContract, ambienceSynesthesia, coralCoast, vitafield
     case ccBarrenland, ccPyrite, ccCinder, ccLeadSeal, ccSpectrum, ccPineSoot
@@ -19,8 +19,13 @@ enum HUDApplicationIcon: String, CaseIterable {
     case gameWeapon, gameWorldMap, gameDijiang, gameValleyIV, gameWuling, gameMedal
     case gamePower, gameSanity, gameOrigeometry, gameOroberyl, gameCredits
     case gameBaker, gameExclamationMark, gameStrength
-    // Appended so every earlier saved raw value keeps its meaning.
-    case watch
+
+    /// A saved raw value, with a retired preset read as its replacement:
+    /// 1.3.0's battery icon became the watch. Nothing is rewritten on load;
+    /// the next ordinary save stores the replacement's own raw value.
+    init?(savedValue: String) {
+        self.init(rawValue: savedValue == "battery" ? HUDApplicationIcon.watch.rawValue : savedValue)
+    }
 
     static var pickerCases: [HUDApplicationIcon] {
         // Keep the retired hand-drawn currency artwork available for saved
@@ -97,7 +102,6 @@ enum HUDApplicationIcon: String, CaseIterable {
         case .gameExclamationMark: return "Exclamation Mark"
         case .gameStrength: return "Strength"
         case .endfield: return "Endfield"
-        case .battery: return L10n.text("Battery", "电池")
         case .originium: return L10n.text("Originium", "源石")
         case .orundum: return L10n.text("Orundum", "合成玉")
         case .perlica: return L10n.text("Perlica", "佩丽卡")
@@ -190,12 +194,8 @@ enum HUDApplicationIcon: String, CaseIterable {
         let cacheKey = "\(rawValue):\(dimension):\(menuBar)"
         if let cached = Self.renderCache.object(forKey: cacheKey as NSString) { return cached }
         let image: NSImage
-        if self == .battery {
-            image = Self.batteryImage(size: CGFloat(dimension), menuBar: menuBar)
-        } else if self == .originium || self == .orundum {
+        if self == .originium || self == .orundum {
             image = Self.resourceImage(size: CGFloat(dimension), menuBar: menuBar, crystal: self == .originium)
-        } else if self == .watch {
-            image = rendered(size: dimension, menuBar: menuBar) { Self.drawWatch(in: $0, rect: $1) }
         } else if let source = sourceImage() {
             image = rendered(size: dimension, menuBar: menuBar) { context, target in
                 let ratio = min(target.width / CGFloat(source.width), target.height / CGFloat(source.height))
@@ -205,7 +205,8 @@ enum HUDApplicationIcon: String, CaseIterable {
                 context.draw(source, in: destination)
             }
         } else {
-            image = Self.batteryImage(size: CGFloat(dimension), menuBar: menuBar)
+            // The watch, and the vector stand-in for a preset whose bundled source is missing.
+            image = rendered(size: dimension, menuBar: menuBar) { Self.drawWatch(in: $0, rect: $1) }
         }
         image.isTemplate = menuBar && self != .perlica
         let pixels = dimension * (menuBar ? 2 : 1)
@@ -285,19 +286,14 @@ enum HUDApplicationIcon: String, CaseIterable {
     /// fills the artwork into the margin-inset target rectangle.
     private func rendered(size: Int, menuBar: Bool, draw: (CGContext, CGRect) -> Void) -> NSImage {
         let pixels = size * (menuBar ? 2 : 1)
+        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : (menuBar ? 0.025 : 0.07)
         let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8,
             bytesPerRow: pixels * 4, space: space,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return Self.batteryImage(size: CGFloat(size), menuBar: menuBar) }
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return Self.watchFallback(size: size, menuBar: menuBar, margin: margin) }
         context.interpolationQuality = .high
         let bounds = CGRect(x: 0, y: 0, width: pixels, height: pixels)
-        if !menuBar {
-            context.addPath(CGPath(roundedRect: bounds.insetBy(dx: CGFloat(pixels) * 0.035, dy: CGFloat(pixels) * 0.035),
-                cornerWidth: CGFloat(pixels) * 0.19, cornerHeight: CGFloat(pixels) * 0.19, transform: nil))
-            context.clip()
-            context.setFillColor(NSColor(white: 0.055, alpha: 1).cgColor); context.fill(bounds)
-        }
-        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : (menuBar ? 0.025 : 0.07)
+        if !menuBar { Self.fillPlate(context, bounds: bounds) }
         draw(context, bounds.insetBy(dx: CGFloat(pixels) * margin, dy: CGFloat(pixels) * margin))
         if menuBar && self != .perlica, let bytes = context.data?.assumingMemoryBound(to: UInt8.self) {
             // Template images use alpha alone. Convert white artwork on the
@@ -307,8 +303,31 @@ enum HUDApplicationIcon: String, CaseIterable {
                 bytes[i] = 0; bytes[i + 1] = 0; bytes[i + 2] = 0
             }
         }
-        guard let cg = context.makeImage() else { return Self.batteryImage(size: CGFloat(size), menuBar: menuBar) }
+        guard let cg = context.makeImage() else { return Self.watchFallback(size: size, menuBar: menuBar, margin: margin) }
         return NSImage(cgImage: cg, size: NSSize(width: size, height: size))
+    }
+
+    /// The dark rounded plate behind application-icon artwork. The clip stays
+    /// active, so the artwork drawn next keeps the plate's rounded corners.
+    private static func fillPlate(_ context: CGContext, bounds: CGRect) {
+        let side = min(bounds.width, bounds.height)
+        context.addPath(CGPath(roundedRect: bounds.insetBy(dx: side * 0.035, dy: side * 0.035),
+            cornerWidth: side * 0.19, cornerHeight: side * 0.19, transform: nil))
+        context.clip()
+        context.setFillColor(NSColor(white: 0.055, alpha: 1).cgColor); context.fill(bounds)
+    }
+
+    /// The drawing that never fails: when no bitmap context can be made, the
+    /// watch is drawn lazily into whatever context AppKit supplies. Its opaque
+    /// white ink already reads as a template silhouette in the menu bar.
+    private static func watchFallback(size: Int, menuBar: Bool, margin: CGFloat) -> NSImage {
+        NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.saveGState(); defer { context.restoreGState() }
+            if !menuBar { fillPlate(context, bounds: rect) }
+            drawWatch(in: context, rect: rect.insetBy(dx: rect.width * margin, dy: rect.height * margin))
+            return true
+        }
     }
 
     /// Original vector interpretations of the two resource items; the supplied
@@ -420,35 +439,6 @@ enum HUDApplicationIcon: String, CaseIterable {
                 context.fill(CGRect(x: lug, y: end > 0 ? 30 : -41, width: 8, height: 11))
             }
             context.fill(CGRect(x: -16, y: end > 0 ? 44.5 : -54.5, width: 32, height: 10))
-        }
-    }
-
-    private static func batteryImage(size: CGFloat, menuBar: Bool) -> NSImage {
-        NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
-            NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
-            let transform = NSAffineTransform(); transform.scale(by: size / 18); transform.concat()
-            if !menuBar {
-                let original = NSAffineTransform(); original.scale(by: 18 / 512); original.concat()
-                NSColor(srgbRed: 0.075, green: 0.09, blue: 0.085, alpha: 1).setFill()
-                NSBezierPath(roundedRect: CGRect(x: 24, y: 24, width: 464, height: 464), xRadius: 106, yRadius: 106).fill()
-                let accent = NSColor(srgbRed: 217/255, green: 243/255, blue: 107/255, alpha: 1)
-                let ring = NSBezierPath(ovalIn: CGRect(x: 104, y: 104, width: 304, height: 304)); ring.lineWidth = 20
-                accent.withAlphaComponent(0.16).setStroke(); ring.stroke()
-                let progress = NSBezierPath(); progress.appendArc(withCenter: CGPoint(x: 256, y: 256), radius: 152,
-                    startAngle: 90, endAngle: -185, clockwise: true)
-                progress.lineWidth = 20; progress.lineCapStyle = .round; accent.setStroke(); progress.stroke()
-                let bolt = NSBezierPath(); bolt.move(to: CGPoint(x: 280, y: 368))
-                for p in [CGPoint(x: 187, y: 240), CGPoint(x: 245, y: 240), CGPoint(x: 226, y: 148), CGPoint(x: 327, y: 283), CGPoint(x: 267, y: 283)] { bolt.line(to: p) }
-                bolt.close(); accent.setFill(); bolt.fill(); return true
-            }
-            let color = NSColor.black
-            color.setStroke(); color.setFill()
-            let outline = NSBezierPath(roundedRect: CGRect(x: 1.5, y: 4, width: 14, height: 10), xRadius: 2, yRadius: 2)
-            outline.lineWidth = 1.3; outline.stroke()
-            NSBezierPath(roundedRect: CGRect(x: 16, y: 7, width: 1.5, height: 4), xRadius: 0.5, yRadius: 0.5).fill()
-            let bolt = NSBezierPath(); bolt.move(to: CGPoint(x: 9.8, y: 13))
-            for p in [CGPoint(x: 5.8, y: 8.5), CGPoint(x: 8.3, y: 8.5), CGPoint(x: 7.4, y: 5), CGPoint(x: 11.4, y: 9.5), CGPoint(x: 8.9, y: 9.5)] { bolt.line(to: p) }
-            bolt.close(); bolt.fill(); return true
         }
     }
 }

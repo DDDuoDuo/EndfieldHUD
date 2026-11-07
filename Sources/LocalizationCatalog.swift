@@ -1306,8 +1306,9 @@ enum LocalizationCatalog {
         Entry("Choose an application", "选择应用", "選擇應用程式", "アプリを選択"),
         Entry("Choose", "选择", "選擇", "選択"),
         Entry("Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。", "按 Return 套用名稱，按一下「儲存捷徑」以儲存變更。", "Returnで名前を適用します。「ショートカットを保存」で変更を保存します。"),
-        // HUDApplicationIcon.swift
+        // HUDChargeMetric.swift and BatteryCanvas.swift
         Entry("Battery", "电池", "電池", "バッテリー"),
+        // HUDApplicationIcon.swift
         Entry("Originium", "源石", "源石", "源石"),
         Entry("Orundum", "合成玉", "合成玉", "合成玉"),
         Entry("Perlica", "佩丽卡", "佩麗卡", "ペリカ"),

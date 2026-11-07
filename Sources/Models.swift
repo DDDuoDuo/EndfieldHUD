@@ -300,7 +300,7 @@ final class ConfigurationStore {
             batteryAlertsEnabled: Self.bool(defaults, "batteryAlertsEnabled", fallback: true),
             devicePopupEnabled: Self.bool(defaults, "devicePopupEnabled", fallback: true),
             lowPowerVisualMode: Self.bool(defaults, "lowPowerVisualMode", fallback: false),
-            applicationIcon: defaults.string(forKey: "applicationIcon").flatMap(HUDApplicationIcon.init(rawValue:)) ?? .endfield,
+            applicationIcon: defaults.string(forKey: "applicationIcon").flatMap(HUDApplicationIcon.init(savedValue:)) ?? .endfield,
             clockFormat: defaults.string(forKey: "clockFormat").flatMap(HUDClockFormat.init(rawValue:)) ?? .twentyFourHour,
             clockStyle: defaults.string(forKey: "clockStyle").flatMap(HUDClockStyle.init(rawValue:)) ?? .digital,
             centerLogo: defaults.string(forKey: "centerLogo").flatMap(HUDCenterLogo.init(rawValue:)) ?? .endfield,
