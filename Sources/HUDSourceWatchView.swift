@@ -98,8 +98,11 @@ final class HUDSourceWatchView: NSView {
     private lazy var desktopLeftLabelIDs: [HUDSourceID: HUDSourceID] = Dictionary(uniqueKeysWithValues:
         document.buttons.prefix(4).compactMap { button in button.label.map { (button.nodeID, $0.nodeID) } })
     /// Left icons share one box; each glyph's visible bottom sits this far
-    /// above the top of its caption (captions are top-aligned in their box).
-    static let desktopLeftIconSide = 80.0, desktopLeftIconGap = 5.0
+    /// above the top of its caption's first line (`HUDStandardTextLayer.textTop`).
+    static let desktopLeftIconSide = 80.0, desktopLeftIconGap = 9.0
+    /// Noto's CJK sets 0.02–0.03 em tighter than the game's HarmonyOS Sans SC
+    /// (ink gaps between characters); Latin captions keep the face's own spacing.
+    static let desktopCJKCaptionTracking: CGFloat = 0.02
     private struct DesktopLabelClip {
         let points: [CGPoint]
         let path: CGPath?
@@ -1871,6 +1874,8 @@ final class HUDSourceWatchView: NSView {
                 text.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
                 text.alignmentMode = .center; text.truncationMode = .end
                 text.foregroundColor = NSColor(white: 0.12, alpha: 1).cgColor
+                // The authored TMP alignment: Middle (512) centres, Top (256) hangs.
+                text.centersVertically = document.component("UIText", on: label.nodeID)?["m_VerticalAlignment"].float(256) == 512
                 layer?.addSublayer(container)
                 layers = (container, text, clip); desktopLabels[label.nodeID] = layers
             }
@@ -1887,6 +1892,7 @@ final class HUDSourceWatchView: NSView {
                 caption = "一時ファイル\nシェルフ"
             }
             layers.text.string = caption
+            layers.text.tracking = L10n.isCJK ? Self.desktopCJKCaptionTracking : 0
             layers.text.isWrapped = entry.target.module != nil && !(L10n.isChinese && entry.target.module == .fileShelf)
             layers.text.truncationMode = entry.target.module == nil ? .end : .none
             desktopLabelButtons[label.nodeID] = button.nodeID
@@ -2097,15 +2103,19 @@ final class HUDSourceWatchView: NSView {
                 let width = max(1, area.width - 2), height = max(1, area.height - 2)
                 while size > 10 {
                     let font = HUDFontResolver.nsFont(size: size, weight: weight)
+                    let attributes: [NSAttributedString.Key: Any] = [.font: font, .kern: layers.text.tracking * size]
                     let measured: CGSize
                     if layers.text.isWrapped {
                         measured = (caption as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
-                            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).size
-                    } else { measured = (caption as NSString).size(withAttributes: [.font: font]) }
+                            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes).size
+                    } else { measured = (caption as NSString).size(withAttributes: attributes) }
                     if measured.height <= height && measured.width <= width + 0.5 { break }
                     size -= 0.5
                 }
             }
+            // A left icon follows its caption's first line (updateDesktopLabels).
+            if layers.text.fontSize != size || layers.text.weight != weight,
+               desktopLeftLabelIDs.values.contains(labelID) { lastDesktopProjection = nil }
             layers.text.weight = weight
             layers.text.fontSize = size
             layers.text.foregroundColor = (bottom ? (desktopDark ? NSColor.white : NSColor(white: 0.12, alpha: 1)) : selected
@@ -2384,12 +2394,13 @@ final class HUDSourceWatchView: NSView {
             if let labelID = desktopLeftLabelIDs[buttonID], let label = frame.node(labelID), let labelRect = label.rect,
                let glyph = desktopIconGlyphs[iconID] {
                 // In the caption's plane: one box size, centred over the
-                // caption, the glyph's visible bottom a fixed gap above it (y up).
-                // The authored caption keeps its place in its button.
+                // caption, the glyph's visible bottom a fixed gap above the
+                // caption's first line (y up). The authored caption keeps its place in its button.
                 world = simd_mul(camera.worldRoot, label.worldMatrix)
                 w = Self.desktopLeftIconSide; h = w
                 x = labelRect.origin.x + labelRect.size.x / 2 - w / 2
-                y = labelRect.origin.y + labelRect.size.y + Self.desktopLeftIconGap - Double(glyph.minY) * w / Double(HUDSourceDesktopIconLayout.box)
+                let textTop = Double(desktopLabels[labelID]?.text.textTop ?? 0)
+                y = labelRect.origin.y + labelRect.size.y - textTop + Self.desktopLeftIconGap - Double(glyph.minY) * w / Double(HUDSourceDesktopIconLayout.box)
             }
             let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point

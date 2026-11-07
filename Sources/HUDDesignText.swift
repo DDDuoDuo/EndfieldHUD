@@ -221,6 +221,13 @@ final class HUDStandardTextLayer: CATextLayer {
     /// A face the user chose (an editor's own font) in place of the standard ones.
     var face: NSFont? { didSet { if face != oldValue { resolveFont() } } }
     override var fontSize: CGFloat { didSet { if fontSize != oldValue { resolveFont() } } }
+    /// Space after every character in em (HUDTextStyle's tracking): runs
+    /// without their own kern get tracking × their font size, and a line
+    /// centres without its last character's.
+    var tracking: CGFloat = 0 { didSet { if tracking != oldValue { setNeedsDisplay() } } }
+    /// Lines centre in the bounds as a block (TMP's Middle) instead of
+    /// hanging from the top.
+    var centersVertically = false { didSet { if centersVertically != oldValue { setNeedsDisplay() } } }
 
     override init() { super.init(); resolveFont() }
     override init(layer: Any) { super.init(layer: layer) }
@@ -253,10 +260,53 @@ final class HUDStandardTextLayer: CATextLayer {
     /// face (1.44 em), which sinks text a quarter em below where the system
     /// face sat and drops the second line of two-line captions. Lines here
     /// use the faces' own ascent and descent, as AppKit measures them, top
-    /// aligned like CATextLayer.
+    /// aligned like CATextLayer unless `centersVertically`.
     override func draw(in ctx: CGContext) {
         let text = drawnText()
         guard text.length > 0, bounds.width > 0 else { return }
+        let lines = layoutLines(text)
+        ctx.saveGState()
+        // Draw y-up whichever way Core Animation flipped this context: a
+        // flipped text matrix would drop a slanted face's own matrix.
+        if ctx.ctm.d < 0 { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) }
+        ctx.textMatrix = .identity
+        ctx.setShouldSmoothFonts(false)
+        ctx.setAllowsAntialiasing(true)
+        var top = blockTop(lines)
+        for item in lines {
+            let range = CTLineGetStringRange(item.line)
+            var width = CGFloat(CTLineGetTypographicBounds(item.line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(item.line))
+            // Tracking follows the last visible character too; it is not part of the line's width.
+            let visible = (text.string as NSString).substring(with: NSRange(location: range.location, length: range.length))
+                .trimmingCharacters(in: .whitespacesAndNewlines).utf16.count
+            if visible > 0, let kern = text.attribute(.kern, at: range.location + visible - 1, effectiveRange: nil) as? CGFloat {
+                width -= kern
+            }
+            let x: CGFloat
+            switch alignmentMode {
+            case .center: x = (bounds.width - width) / 2
+            case .right: x = bounds.width - width
+            default: x = 0
+            }
+            ctx.textPosition = CGPoint(x: x, y: bounds.height - top - item.ascent)
+            CTLineDraw(item.line, ctx)
+            top += item.height
+        }
+        ctx.restoreGState()
+    }
+
+    /// The distance from the top of the bounds to the first line's top.
+    var textTop: CGFloat {
+        guard centersVertically else { return 0 }
+        let text = drawnText()
+        return text.length > 0 && bounds.width > 0 ? blockTop(layoutLines(text)) : 0
+    }
+
+    private func blockTop(_ lines: [(line: CTLine, start: Int, ascent: CGFloat, height: CGFloat)]) -> CGFloat {
+        centersVertically ? max(0, (bounds.height - lines.reduce(0) { $0 + $1.height }) / 2) : 0
+    }
+
+    private func layoutLines(_ text: NSAttributedString) -> [(line: CTLine, start: Int, ascent: CGFloat, height: CGFloat)] {
         let typesetter = CTTypesetterCreateWithAttributedString(text)
         // Unwrapped text still breaks at its own line separators.
         let breakWidth = isWrapped ? Double(bounds.width) : 1e7
@@ -277,27 +327,7 @@ final class HUDStandardTextLayer: CATextLayer {
             lines.append((line, start, strut.ascent, strut.height))
             top += strut.height; start += count
         }
-        ctx.saveGState()
-        // Draw y-up whichever way Core Animation flipped this context: a
-        // flipped text matrix would drop a slanted face's own matrix.
-        if ctx.ctm.d < 0 { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) }
-        ctx.textMatrix = .identity
-        ctx.setShouldSmoothFonts(false)
-        ctx.setAllowsAntialiasing(true)
-        top = 0
-        for item in lines {
-            let width = CGFloat(CTLineGetTypographicBounds(item.line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(item.line))
-            let x: CGFloat
-            switch alignmentMode {
-            case .center: x = (bounds.width - width) / 2
-            case .right: x = bounds.width - width
-            default: x = 0
-            }
-            ctx.textPosition = CGPoint(x: x, y: bounds.height - top - item.ascent)
-            CTLineDraw(item.line, ctx)
-            top += item.height
-        }
-        ctx.restoreGState()
+        return lines
     }
 
     /// The string with CATextLayer's defaults where runs leave them out. No
@@ -315,6 +345,10 @@ final class HUDStandardTextLayer: CATextLayer {
             if attributes[.font] == nil, let font { result.addAttribute(.font, value: font, range: range) }
             if attributes[.foregroundColor] == nil, attributes[color] == nil {
                 result.addAttribute(color, value: foregroundColor ?? CGColor(gray: 1, alpha: 1), range: range)
+            }
+            if tracking != 0, attributes[.kern] == nil,
+               let runFont = attributes[.font] as? NSFont ?? font as? NSFont {
+                result.addAttribute(.kern, value: tracking * runFont.pointSize, range: range)
             }
         }
         return result
