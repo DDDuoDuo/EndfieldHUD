@@ -3317,6 +3317,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         facilityTagRouter.set(facilityTags.controls)
         // A taller column is kept on the plane where the column was moved.
         if shownOverlayLayout.alerts != HUDOverlayLayout.Placement() { layoutFacilityLayers() }
+        // The alerts' corner marks, and a strip beside them, follow the column.
+        layoutOverlayEditor()
         layoutDesignAccessibility()
     }
 
