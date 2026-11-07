@@ -265,8 +265,9 @@ struct OverlayHost::Impl {
     // Out of the band, the window waits for its next activation (counted as
     // a refusal); back in it, the wait ends. Also judged after every show,
     // whose raise Windows may decline: a window it leaves in the band (at the
-    // top or where it was) is no refusal, and one the raise or a refused
-    // activation took out of the band waits like a refused raise.
+    // top or where it was) is no refusal, and one the raise took out of the
+    // band waits like a refused raise. Judged before the show's activation,
+    // so a granted one enters the band at once, and after a refused one.
     void judgeBand() {
         if (topmost()) { if (std::exchange(bandPending, false)) ++counts.deferredBands; }
         else { bandPending = true; ++counts.bandRefusals; }
@@ -901,10 +902,16 @@ void OverlayHost::show(bool activate) {
         if(!p.testVisibility)p.visible=IsWindowVisible(window)!=FALSE;
         p.minimized=IsIconic(window)!=FALSE;
         p.refreshSchedule();
-        if(activate&&p.visible&&p.window==window)p.requestForeground(window);
-        // The raise and the show judged once (only the style is read): out
-        // of the band, the window waits for its next activation.
+        // The raise and the show judged before the activation (only the style
+        // is read): out of the band, the window waits for its next activation,
+        // so a granted request below enters the band through its WM_ACTIVATE.
         if(p.window==window)p.judgeBand();
+        if(activate&&p.visible&&p.window==window){
+            p.requestForeground(window);
+            // An activation that took the window out of the band waits the
+            // same way; one already waiting is not counted twice.
+            if(p.window==window&&!p.bandPending)p.judgeBand();
+        }
     }
     p.rethrow();
 }

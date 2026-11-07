@@ -353,17 +353,25 @@ void zbandDiagnostics(){
     // A raw window with the host's styles, never shown.
     WNDCLASSEXW type{};type.cbSize=sizeof type;type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"EndfieldZBandDiagnostics";
     RegisterClassExW(&type);
+    const auto isAbove=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
+    const auto pinnedLater=[&]{return CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,type.lpszClassName,L"",WS_POPUP,0,0,8,8,nullptr,nullptr,type.hInstance,nullptr);};
     const auto probe=[&](DWORD extended,const char* label){
         HWND w=CreateWindowExW(extended,type.lpszClassName,L"",WS_POPUP,0,0,32,32,nullptr,nullptr,type.hInstance,nullptr);
         // The band the window was created in, before any raise.
         std::cout<<label<<": created topmost="<<((GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<'\n';
+        // A topmost window created after it (an Always On Top window pinned
+        // later): whether the raise puts the probe above it is whether this
+        // session lets this process reorder the band.
+        const HWND later=pinnedLater();const bool aboveBefore=isAbove(w,later);
         // The foreground right, probed without side effects: granting it to
         // this process itself succeeds only while this process holds it.
         const BOOL right=AllowSetForegroundWindow(GetCurrentProcessId());const DWORD rightError=right?0:GetLastError();
         SetLastError(0);const BOOL raised=SetWindowPos(w,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);const DWORD error=GetLastError();
         const HWND previous=GetWindow(w,GW_HWNDPREV);
         std::cout<<label<<": foregroundRight="<<right<<" ("<<rightError<<") SetWindowPos(HWND_TOPMOST)="<<raised<<" error="<<error
-                 <<" justBehindForeground="<<(previous&&previous==GetForegroundWindow()?1:0)<<" after: "<<windowFacts(w)<<'\n';
+                 <<" justBehindForeground="<<(previous&&previous==GetForegroundWindow()?1:0)<<" aboveLaterTopmost="<<aboveBefore<<"->"<<isAbove(w,later)
+                 <<" after: "<<windowFacts(w)<<'\n';
+        DestroyWindow(later);
         SetLastError(0);const BOOL lowered=SetWindowPos(w,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);const DWORD lowerError=GetLastError();
         std::cout<<label<<": SetWindowPos(HWND_NOTOPMOST)="<<lowered<<" error="<<lowerError<<" topmost="<<((GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<'\n';
         DestroyWindow(w);
@@ -378,9 +386,13 @@ void zbandDiagnostics(){
     OverlayHost host;host.create(options);
     const auto window=static_cast<HWND>(host.hwnd());
     std::cout<<"host after create: statsTopmost="<<host.stats().topmost<<" "<<windowFacts(window)<<'\n';
+    // As firstOpeningBand: a topmost window pinned after the HUD was created.
+    const HWND later=pinnedLater();const bool aboveBefore=isAbove(window,later);
     host.show(true);
     std::cout<<"host after show(true): statsTopmost="<<host.stats().topmost<<" bandRefusals="<<host.stats().bandRefusals<<" bandPending="<<host.stats().bandPending
-             <<" visible="<<host.stats().visible<<" justBehindForeground="<<(GetWindow(window,GW_HWNDPREV)==GetForegroundWindow()?1:0)<<" "<<windowFacts(window)<<'\n';
+             <<" visible="<<host.stats().visible<<" justBehindForeground="<<(GetWindow(window,GW_HWNDPREV)==GetForegroundWindow()?1:0)
+             <<" aboveLaterTopmost="<<aboveBefore<<"->"<<isAbove(window,later)<<" "<<windowFacts(window)<<'\n';
+    DestroyWindow(later);
     // The windows above the HUD fixture in the z-order (front to back).
     unsigned above{},topmostAbove{},visibleAbove{};std::vector<std::string> listed;
     for(HWND w=GetTopWindow(nullptr);w&&w!=window;w=GetWindow(w,GW_HWNDNEXT)){
@@ -411,8 +423,11 @@ void firstOpeningBand() {
     const auto above=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
     const auto nativeTopmost=[](HWND w){return (GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
     {
-        // The raise itself is native: a topmost window may be reordered
-        // within the band.
+        // The raise itself is native. Whether Windows lets this process
+        // reorder one topmost window above another depends on the session
+        // (unmeasured without the foreground right), so the session is asked
+        // first with two hidden topmost windows of its own; where it declines,
+        // the opening must keep the band with no refusal instead.
         OverlayOptions options{L"Hidden pinned-window z fixture",0,0,32,32,nullptr};
         options.testVisibility=[](bool shown,bool){return shown;};
         options.testForeground=[]{return false;};
@@ -423,17 +438,30 @@ void firstOpeningBand() {
         // topmost after the HUD, so at the top of the band, above it.
         const HWND pinned=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden pinned window fixture",WS_POPUP,0,0,8,8,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
         check(pinned&&!IsWindowVisible(pinned)&&nativeTopmost(pinned)&&above(pinned,hud),"A topmost window pinned after launch, never shown, sits above the hidden HUD");
+        // The session probe: a later topmost window above the pinned one,
+        // then the pinned one raised; it ends on top again where the session
+        // reorders the band.
+        const HWND later=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden later topmost fixture",WS_POPUP,0,0,8,8,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        check(later&&!IsWindowVisible(later)&&nativeTopmost(later)&&above(later,pinned),"A later topmost probe window sits above the pinned one");
+        check(SetWindowPos(pinned,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE,"Raise the pinned fixture within the band");
+        const bool reorders=above(pinned,later);
+        check(DestroyWindow(later)!=FALSE&&nativeTopmost(pinned)&&above(pinned,hud),"The pinned fixture stays in the band above the hidden HUD");
         host.show(true);
         check(!IsWindowVisible(hud)&&host.stats().visible&&host.stats().foregroundRefusals==1&&host.stats().activationPending,"The opening is shown without the foreground");
-        check(nativeTopmost(hud)&&above(hud,pinned),"An opening refused the foreground is above a topmost window pinned after launch");
-        check(host.stats().topmost&&!host.stats().bandPending&&host.stats().bandRequests==1&&host.stats().bandRefusals==0,"The raise within the band is no refusal");
-        host.hide();
-        check(nativeTopmost(hud)&&above(hud,pinned),"The hidden HUD keeps its place in the band");
-        // The other program pins its window again, above the hidden HUD.
-        check(SetWindowPos(pinned,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE&&above(pinned,hud),"Raise the hidden pinned fixture to the top of the band");
-        host.show(true);
-        check(nativeTopmost(hud)&&above(hud,pinned)&&host.stats().bandRequests==2&&host.stats().bandRefusals==0&&!host.stats().bandPending,
-            "Every later refused opening is raised above the pinned window again");
+        if(reorders)check(above(hud,pinned),"An opening refused the foreground is above a topmost window pinned after launch");
+        check(host.stats().topmost&&nativeTopmost(hud)&&!host.stats().bandPending&&host.stats().bandRequests==1&&host.stats().bandRefusals==0,
+            "An opening refused the foreground keeps the band; its raise within the band is no refusal");
+        if(reorders){
+            host.hide();
+            check(nativeTopmost(hud)&&above(hud,pinned),"The hidden HUD keeps its place in the band");
+            // The other program pins its window again, above the hidden HUD.
+            check(SetWindowPos(pinned,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE&&above(pinned,hud),"Raise the hidden pinned fixture to the top of the band");
+            host.show(true);
+            check(nativeTopmost(hud)&&above(hud,pinned)&&host.stats().bandRequests==2&&host.stats().bandRefusals==0&&!host.stats().bandPending,
+                "Every later refused opening is raised above the pinned window again");
+        }else{
+            std::cout<<"First opening band: this session declines reordering the topmost band; the opening kept the band with no refusal\n";
+        }
         host.hide();check(DestroyWindow(pinned)!=FALSE,"Destroy the pinned fixture");host.destroy();
     }
     bool summoned{};unsigned raises{};
@@ -587,6 +615,23 @@ void zBandAndActivation() {
         refused.hide();refused.destroy();
     }
     bandAllowed=true;grant=false;
+
+    // A raise Windows declines while it grants the same opening's activation
+    // (rare: both follow the foreground right). SetForegroundWindow sends
+    // this thread's window WM_ACTIVATE before it returns; that activation
+    // enters the band at once, as the opening's own judgement already asks.
+    {
+        HWND target{};bool allowed{};
+        OverlayOptions grantedOptions=options;
+        grantedOptions.testBand=[&](bool topmost){return topmost&&allowed;};
+        grantedOptions.testForeground=[&]{allowed=true;SendMessageW(target,WM_ACTIVATE,MAKEWPARAM(WA_ACTIVE,0),0);return true;};
+        OverlayHost granted;granted.create(grantedOptions);target=static_cast<HWND>(granted.hwnd());
+        check(!granted.stats().topmost&&!granted.stats().bandPending,"Windows kept this created HUD out of the band");
+        granted.show(true);
+        check(granted.stats().topmost&&!granted.stats().bandPending&&!granted.stats().activationPending&&granted.stats().bandRequests==2&&
+            granted.stats().bandRefusals==1&&granted.stats().deferredBands==1,"A granted activation enters the band its opening's raise was refused");
+        granted.hide();granted.destroy();
+    }
 
     // A hidden benchmark's offscreen window is never shown: no band, no foreground.
     OverlayOptions offscreen{L"Hidden offscreen z-band fixture",0,0,16,16,nullptr};offscreen.offscreenScheduling=true;
