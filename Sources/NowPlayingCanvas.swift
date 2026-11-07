@@ -142,6 +142,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private func refresh() {
         guard isPresented else { return }
+        retireRouteForPlayerVolume()
         let snapshot = controller.snapshot
         if let gesture = seekGesture, gesture.application != snapshot.application
             || snapshot.track.map({ !$0.hasSameIdentity(as: gesture.track) }) ?? true { seek?.cancelDrag() }
@@ -471,8 +472,11 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     }
 
     /// The player's own volume when it exposes one, else a per-app route.
+    /// While its Automation grant is missing, requested or declined there is
+    /// neither: the route would only stand in for a volume the player has.
     private var volumeAvailable: Bool {
         if controller.playerVolume != nil { return true }
+        if controller.playerVolumeFailure != nil || controller.isAwaitingPermission { return false }
         guard let app = audioApplication else { return false }
         if let session = currentSession { return session.state == .active || session.state == .preparing || session.state == .failed }
         guard let output = currentOutput else { return false }
@@ -481,6 +485,24 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private var volumeValue: Double? {
         controller.playerVolume ?? currentSession?.gain ?? (volumeAvailable ? 1 : nil)
+    }
+
+    /// Why the volume does not follow the slider: the player's Automation
+    /// state, else a failed per-app route's own error.
+    private var volumeNotice: String? {
+        guard controller.playerVolume == nil else { return nil }
+        if let failure = controller.playerVolumeFailure { return failure.message }
+        if controller.isAwaitingPermission { return NowPlayingFailure.permissionRequired.message }
+        guard let session = currentSession, session.state == .failed else { return nil }
+        return session.error
+    }
+
+    /// Once the player's own volume is available, a per-app route started
+    /// for it before would attenuate it a second time: retire that route.
+    private func retireRouteForPlayerVolume() {
+        guard controller.playerVolume != nil, let app = audioApplication, let session = currentSession,
+              session.state == .preparing || session.state == .active else { return }
+        perAppAudio.stop(processID: app.id)
     }
 
     @discardableResult private func setAppVolume(_ value: Double) -> Bool {
@@ -507,16 +529,19 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         let panel = NowPlayingVolumePopup(env: env)
         panel.onChange = { [weak self] value, final in self?.adjustVolume(value, final: final) }
         HUDMotion.perform {
-            panel.layer.frame = Layout.popup; panel.layer.zPosition = 5
-            page.layer.addSublayer(panel.layer)
+            panel.layer.frame = Layout.popup; panel.layer.zPosition = 5; panel.noticeLayer.zPosition = 5
+            page.layer.addSublayer(panel.layer); page.layer.addSublayer(panel.noticeLayer)
         }
-        env.applyScale(to: panel.layer)
+        env.applyScale(to: panel.layer); env.applyScale(to: panel.noticeLayer)
         page.add(panel)
         popup = panel; isVolumeOpen = true
         renderPopup()
         volumeButton?.isOn = true
         HUDMotion.wipe(panel.layer, from: .top, duration: HUDDuration.menuWipe, fadeFrom: 0.4, env: env)
+        HUDMotion.wipe(panel.noticeLayer, from: .top, duration: HUDDuration.menuWipe, fadeFrom: 0.4, env: env)
         refreshRouter(); context.onInputStateChange?()
+        // The explicit press is the only place that asks macOS for Automation.
+        if controller.playerVolumeFailure == .permissionRequired, !controller.isAwaitingPermission { controller.connect() }
     }
 
     private func closeVolume() {
@@ -525,7 +550,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         if let popup {
             popup.clearInteractionState()
             page.remove(popup)
-            HUDMotion.perform { popup.layer.removeFromSuperlayer() }
+            HUDMotion.perform { popup.layer.removeFromSuperlayer(); popup.noticeLayer.removeFromSuperlayer() }
         }
         popup = nil
         volumeButton?.isOn = false
@@ -544,6 +569,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         guard let popup, !popup.isDragging else { return }
         popup.isEnabled = volumeAvailable
         popup.show(volumeValue)
+        popup.showNotice(volumeNotice)
     }
 
     // MARK: Input
@@ -799,6 +825,13 @@ private final class NowPlayingVolumePopup: HUDControl {
     private let text = HUDTextLayer(style: HUDTextStyle(size: 10, weight: .bold, color: HUDColor.textOnDark, tabular: true), alignment: .center)
     private let fill = HUDLayer.plain("volume.fill")
     private let knob = HUDLayer.plain("volume.knob")
+    /// The reason the volume is unavailable, in a panel left of the pop-up:
+    /// a sibling of its layer, so the pop-up's bounds never clip it.
+    let noticeLayer = HUDLayer.plain("volume.notice")
+    private let noticeText = HUDTextLayer(style: NowPlayingVolumePopup.noticeStyle)
+    private static var noticeStyle: HUDTextStyle { HUDTextStyle(size: 11, weight: .regular, color: HUDColor.textOnDark, lineHeight: 1.4) }
+    static let noticeWidth: CGFloat = 196, noticeLines = 6
+    private(set) var notice: String?
     private(set) var value: Double?
     private(set) var isDragging = false
     /// (value 0…1, final): final on release.
@@ -817,6 +850,11 @@ private final class NowPlayingVolumePopup: HUDControl {
             rail.frame = Self.track; rail.backgroundColor = HUDColor.separator
             fill.backgroundColor = HUDColor.accentInk
             knob.bounds = CGRect(x: 0, y: 0, width: 16, height: 6); knob.backgroundColor = HUDColor.textOnDark
+            noticeLayer.backgroundColor = HUDColor.panel; noticeLayer.borderWidth = 1; noticeLayer.borderColor = HUDColor.ringMenu
+            noticeLayer.shadowColor = HUDColor.black(1); noticeLayer.shadowOpacity = 0.6; noticeLayer.shadowRadius = 20
+            noticeLayer.shadowOffset = CGSize(width: 0, height: 18); noticeLayer.isHidden = true
+            noticeText.maximumLines = Self.noticeLines
+            noticeLayer.addSublayer(noticeText)
             [text, rail, fill, knob].forEach(layer.addSublayer)
         }
         setTarget(bounds)
@@ -830,6 +868,26 @@ private final class NowPlayingVolumePopup: HUDControl {
             fill.frame = CGRect(x: Self.track.minX, y: Self.track.maxY - height, width: Self.track.width, height: height)
             knob.position = CGPoint(x: Self.track.midX, y: Self.track.maxY - height)
             knob.isHidden = next == nil
+        }
+    }
+
+    /// Wraps the message to its lines; the panel grows to fit, top-aligned
+    /// with the pop-up (already placed) 8 px to its left.
+    func showNotice(_ message: String?) {
+        guard message != notice else { return }
+        notice = message
+        HUDMotion.perform {
+            noticeLayer.isHidden = message == nil
+            guard let message else { return }
+            noticeText.text = message
+            let width = Self.noticeWidth - 24, language = HUDTextLanguage.tag()
+            let lines = HUDText.lines(HUDText.attributed(noticeText.runs, language: language), width: width,
+                                      maximumLines: Self.noticeLines, truncate: true).count
+            let height = HUDText.metrics(Self.noticeStyle, language: language).height * CGFloat(max(1, lines))
+            let frame = CGRect(x: layer.frame.minX - 8 - Self.noticeWidth, y: layer.frame.minY, width: Self.noticeWidth, height: height + 24)
+            noticeLayer.frame = frame
+            noticeLayer.shadowPath = CGPath(rect: CGRect(origin: .zero, size: frame.size), transform: nil)
+            noticeText.lineFrame = CGRect(x: 12, y: 12, width: width, height: height)
         }
     }
 
@@ -854,7 +912,7 @@ private final class NowPlayingVolumePopup: HUDControl {
     }
 
     override var accessibilityRole: HUDAccessibilityItem.Role? {
-        .slider(value: (value ?? 0) * 100, minimum: 0, maximum: 100, step: 2, description: text.text)
+        .slider(value: (value ?? 0) * 100, minimum: 0, maximum: 100, step: 2, description: notice.map { text.text + " " + $0 } ?? text.text)
     }
 }
 
