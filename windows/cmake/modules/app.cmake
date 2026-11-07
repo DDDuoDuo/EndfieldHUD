@@ -368,6 +368,10 @@ if(WIN32)
     if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json" AND EXISTS "${ehud_watch_blur}")
       # The production package staged from the configured inputs verifies.
       add_test(NAME endfieldhud_package_contracts COMMAND EndfieldHUD --verify-package)
+      # A --login launch without an input desktop gets past choosing its display.
+      add_test(NAME endfieldhud_login_launch_contracts COMMAND "${CMAKE_COMMAND}" "-DAPP=$<TARGET_FILE:EndfieldHUD>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/login-launch-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_login_launch_check.cmake")
+      set_tests_properties(endfieldhud_login_launch_contracts PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "login launch check skipped")
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"

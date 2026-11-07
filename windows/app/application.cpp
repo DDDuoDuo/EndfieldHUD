@@ -476,8 +476,12 @@ void Application::Impl::construct(){
     configuration.set("launchAtLogin",false);session->setSettings(settings,0);session->setEnvironment(environment,0);
     OverlayOptions windowOptions{!args.windowTitle.empty()?args.windowTitle:!args.dataRoot.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(visibleMode()){
-        const auto displays=gpu::readConnectedDisplays();POINT pointer{};
-        need(GetCursorPos(&pointer)!=FALSE,"Cannot locate the current display");
+        // A launch at sign-in can start before the user's desktop takes input
+        // (or behind the lock screen after an update restart): GetCursorPos
+        // then fails, and the hidden window starts on the primary display
+        // (the origin, as repositionHUD and projectionDisplay read it). Every
+        // opening chooses its display again (targetDisplay).
+        const auto displays=gpu::readConnectedDisplays();POINT pointer{};(void)GetCursorPos(&pointer);
         const auto selected=gpu::resolveDisplay({},displays,{pointer.x,pointer.y});
         need(selected.has_value(),"No usable display for the source shell preview");
         hudDisplay=displays[*selected].handle;hudDisplayID=displayKey(displays[*selected]);previousApplication=reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
