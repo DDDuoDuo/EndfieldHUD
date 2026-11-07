@@ -8,7 +8,9 @@ struct OverlayScreen {
 /// What the battery bar editor commits: where the bar sits, its Size and its
 /// Length (nil keeps the classic bar; see `AppConfiguration.chargeBarLength`).
 struct ChargeBarLayout: Equatable {
-    var position: OverlayPosition
+    /// nil when the bar was not dragged, so the placement (Top centre or the
+    /// saved custom point) stays as it was.
+    var position: OverlayPosition?
     var scale: Double
     var length: Double?
 }
@@ -24,9 +26,12 @@ enum OverlayGeometry {
     static let minimumBarWidth: CGFloat = 200
     static let barMargin: CGFloat = 18
 
+    /// The bar's Size range (65 % to 160 %).
+    static let scaleRange: ClosedRange<Double> = 0.65...1.6
+
     /// The scale every geometry helper uses (AppConfiguration's clamp).
     static func factor(_ scale: Double) -> CGFloat {
-        CGFloat(scale.isFinite ? min(1.6, max(0.65, scale)) : 1)
+        CGFloat(AppConfiguration.clamp(scale, to: scaleRange, fallback: 1))
     }
 
     /// The compact bar's width in its own points: `length` of the usable width
@@ -72,6 +77,17 @@ enum OverlayGeometry {
         let y = point.y.isFinite ? point.y : screen.midY
         return NSPoint(x: min(screen.maxX - halfWidth, max(screen.minX + halfWidth, x)),
                        y: min(screen.maxY - topMargin, max(screen.minY + bottomMargin, y)))
+    }
+
+    /// The heights the visible bar (38 pt tall before Size) can cover while
+    /// the editor's Size slider moves from `anchor`, up to the largest Size,
+    /// including the shift when that Size's margins clamp the anchor by an
+    /// edge. The editor strip keeps clear of it.
+    static func editorReach(anchor: NSPoint, screen: NSRect) -> ClosedRange<CGFloat> {
+        let largest = scaleRange.upperBound
+        let reach = 19 * factor(largest)
+        let clamped = clampedAnchor(anchor, screen: screen, scale: largest, editing: false).y
+        return (min(anchor.y, clamped) - reach)...(max(anchor.y, clamped) + reach)
     }
 
     static func anchor(configuration: AppConfiguration, screen: NSRect, editing: Bool) -> NSPoint {

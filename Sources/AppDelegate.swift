@@ -160,10 +160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             if let layout = layout {
                 var configuration = self.store.configuration
-                configuration.customPosition = layout.position
+                if let position = layout.position {
+                    configuration.customPosition = position
+                    configuration.placement = .custom
+                }
                 configuration.scale = layout.scale
                 configuration.chargeBarLength = layout.length
-                configuration.placement = .custom
                 self.store.update(configuration)
             }
             guard !self.suspended, !self.terminating else { return }

@@ -15,6 +15,8 @@ final class OverlayController: NSObject {
     private var draftScreenID: UInt32?
     private var draftScale: Double = 1
     private var draftLength: Double?
+    /// Whether the bar was dragged; Size or Length alone keeps the placement.
+    private var draftMoved = false
     /// The strip's screen frame, held still while one of its sliders has the pointer.
     private var editorStripFrame: NSRect?
     private static let editorSizeID = "chargeBar.size", editorLengthID = "chargeBar.length"
@@ -580,6 +582,7 @@ final class OverlayController: NSObject {
         draftAnchor = OverlayGeometry.anchor(configuration: self.configuration, screen: screen.visibleFrame, editing: false)
         draftScale = self.configuration.scale
         draftLength = self.configuration.chargeBarLength
+        draftMoved = false
         isEditingPosition = true
         isVisible = true
         isPersistent = true
@@ -1243,8 +1246,8 @@ final class OverlayController: NSObject {
     private func confirmPosition() {
         guard isEditingPosition, let anchor = draftAnchor, let screen = selectedScreen() else { return }
         let bar = barConfiguration
-        finishPositionEditing(layout: ChargeBarLayout(position: OverlayGeometry.normalizedPosition(anchor: anchor, screen: screen),
-                                                      scale: bar.scale, length: bar.chargeBarLength))
+        let position = draftMoved ? OverlayGeometry.normalizedPosition(anchor: anchor, screen: screen) : nil
+        finishPositionEditing(layout: ChargeBarLayout(position: position, scale: bar.scale, length: bar.chargeBarLength))
     }
 
     private func finishPositionEditing(layout: ChargeBarLayout?) {
@@ -1271,7 +1274,9 @@ final class OverlayController: NSObject {
     /// Length (a share of this display's usable width), then Cancel and Confirm.
     private func installPositionEditor() {
         let size = HUDPlacementEditor.Slider(id: Self.editorSizeID, title: L10n.text("Size", "大小"), value: draftScale * 100,
-                                             range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent)
+                                             range: HUDSlider.Range(minimum: OverlayGeometry.scaleRange.lowerBound * 100,
+                                                                    maximum: OverlayGeometry.scaleRange.upperBound * 100, step: 1),
+                                             format: .percent)
         let length = HUDPlacementEditor.Slider(id: Self.editorLengthID, title: L10n.text("Length", "长度"), value: 100,
                                                range: HUDSlider.Range(minimum: 0, maximum: 100, step: 1), format: .percent)
         root.env.renderScale = panel.backingScaleFactor
@@ -1323,6 +1328,7 @@ final class OverlayController: NSObject {
         draftScreenID = screen.id
         let anchor = clampedDraftAnchor(proposed, on: screen)
         draftAnchor = anchor
+        draftMoved = true
         if changedScreen { syncLengthSlider(screen: screen.visibleFrame) }
         layout(anchor: anchor, screen: screen.visibleFrame)
     }
@@ -1365,9 +1371,11 @@ final class OverlayController: NSObject {
         if isEditingPosition, let editor = root.editor {
             if let held = editorStripFrame, editor.isAdjusting { strip = held } else {
                 // Spaced for the largest Size, so a Size change never moves
-                // the strip vertically; y-down for the shared placement rule.
-                let reach = 19 * CGFloat(1.6)
-                let body = NSRect(x: anchor.x - width * scale / 2, y: anchor.y - reach, width: width * scale, height: 2 * reach)
+                // the strip vertically or slides the bar under it; y-down for
+                // the shared placement rule.
+                let reach = OverlayGeometry.editorReach(anchor: anchor, screen: screen)
+                let body = NSRect(x: anchor.x - width * scale / 2, y: reach.lowerBound,
+                                  width: width * scale, height: reach.upperBound - reach.lowerBound)
                 func flipped(_ rect: NSRect) -> NSRect { NSRect(x: rect.minX, y: -rect.maxY, width: rect.width, height: rect.height) }
                 let size = NSSize(width: editor.size.width, height: editor.size.height + HUDPlacementEditor.bubbleClearance)
                 strip = flipped(HUDPlacementEditor.frame(size: size, beside: flipped(body), within: flipped(screen), gap: 10))

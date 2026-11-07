@@ -112,7 +112,7 @@ struct AppConfiguration: Equatable {
         var result = self
         result.displayDuration = displayDuration.isFinite ? min(60, max(1, displayDuration)) : Self.defaults.displayDuration
         result.accentHex = validColor ? raw : Self.defaults.accentHex
-        result.scale = scale.isFinite ? min(1.6, max(0.65, scale)) : 1
+        result.scale = Self.clamp(scale, to: OverlayGeometry.scaleRange, fallback: 1)
         result.customPosition = customPosition.normalized
         result.chargeBarLength = chargeBarLength.flatMap { $0.isFinite && $0 > 0 ? min(1, $0) : nil }
         result.hudScale = Self.clamp(hudScale, to: 0.2...2, fallback: 1)
@@ -133,7 +133,8 @@ struct AppConfiguration: Equatable {
         return result
     }
 
-    private static func clamp(_ value: Double, to range: ClosedRange<Double>, fallback: Double) -> Double {
+    /// The settings' clamp: `value` inside `range`, or `fallback` when it is not finite.
+    static func clamp<Value: BinaryFloatingPoint>(_ value: Value, to range: ClosedRange<Value>, fallback: Value) -> Value {
         value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
     }
 
