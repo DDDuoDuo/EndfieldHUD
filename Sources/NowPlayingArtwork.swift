@@ -132,8 +132,9 @@ final class NowPlayingArtworkLoader {
             request(application: application, track: track)
         }
     }
-    /// Only an explicit user refresh may retire a missing-art result. Normal
-    /// metadata notifications and reopenings retain the negative cache.
+    /// Only an explicit user refresh or a new Automation grant may retire a
+    /// missing-art result. Normal metadata notifications and reopenings
+    /// retain the negative cache.
     func invalidateMissing(application: NowPlayingApplication, track: NowPlayingTrack) {
         precondition(Thread.isMainThread)
         let key = NowPlayingArtworkKey(application: application, track: track)

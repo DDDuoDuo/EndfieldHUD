@@ -436,9 +436,11 @@ final class NowPlayingController {
             guard let self else { return }
             self.isRequestingPermission = false
             // Only the grant's own answer replaces the reason; any other
-            // failure keeps it, so the next press asks again.
+            // failure keeps it, so the next press asks again. A grant also
+            // retires the shown track's cached misses, which Apple Events
+            // can now answer, through the manual refresh's retry.
             if case .failure(let failure) = result { if failure.isAutomationGrant { self.playerVolumeFailure = failure } }
-            else { self.pendingRefresh = true }
+            else { self.pendingRefresh = true; self.retryArtworkAfterRefresh = true }
         }
     }
 
@@ -452,11 +454,14 @@ final class NowPlayingController {
     /// A queued drag wins. A missing or declined grant is kept as the reason
     /// the volume is unavailable; a slow reply of the same player keeps the
     /// last value; anything else (the player quit, no volume) clears both.
+    /// A read that succeeds after a grant failure (allowed in System
+    /// Settings) retries the shown track's cached misses in this refresh.
     private func applyVolumeRead(_ read: Result<Double?, NowPlayingFailure>, application app: NowPlayingApplication,
                                  previous: NowPlayingApplication?) {
         if let pending = pendingVolume, pending.1 == app { playerVolume = pending.0; playerVolumeFailure = nil; return }
         switch read {
         case .success(let value):
+            if playerVolumeFailure?.isAutomationGrant == true { retryArtworkAfterRefresh = true }
             playerVolume = value.flatMap { $0.isFinite ? min(1, max(0, $0)) : nil }; playerVolumeFailure = nil
         case .failure(let failure) where failure.isAutomationGrant:
             playerVolume = nil; playerVolumeFailure = failure
