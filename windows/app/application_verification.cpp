@@ -1159,7 +1159,40 @@ int Application::Impl::runHiddenVerification(){
                         need(activity->state().sortKey()==endfield::modules::ActivitySort::memory&&canvas.sortKey()==endfield::modules::ActivitySort::memory,"The RAM sort reaches the shared readings");
                         const auto retained=rasterizer.stats();for(unsigned frame=0;frame<12;++frame)present(time+1.35+double(frame)/60,true);
                         need(rasterizer.stats().rasterizations==retained.rasterizations,"Settled Activity frames (the rows' re-stagger included) rasterize nothing");
-                        need(canvas.perform("activity:overview",time+1.55),"The Overview tab is routed");present(time+1.9,true);
+                        double overviewAt=time+1.55;
+                        // 1.3.1 (20) item 11: the RAM list scrolled hard downward past its end
+                        // (wheel detents, a trackpad's small fractions, page scrolling) while
+                        // apps exit and appear keeps the module and stops at the list's end.
+                        if(cycle==0){
+                            auto&provider=activity->providerState();const auto fixture=provider.appSnapshot();
+                            const auto apps=[&](std::size_t count,double stamp){auto value=fixture;value.timestamp=stamp;value.items.clear();
+                                for(std::size_t n=0;n<count;++n){auto item=fixture.items[n%fixture.items.size()];item.identity.id="coverage.drag."+std::to_string(n);item.identity.name="Drag "+std::to_string(n);item.identity.processIDs={std::uint32_t(40000+n)};item.memoryBytes=std::uint64_t(4096+n)*1048576;value.items.push_back(std::move(item));}
+                                return value;};
+                            const auto target=static_cast<tools::DesignModuleOwner&>(*activityModuleOwner).core().clientRect({292,320,0,0});need(target.has_value(),"Activity's app list projects");
+                            const auto area=[&]{return canvas.appList();};
+                            const auto atEnd=[&]{const auto*a=area();return a&&a->maximumOffset()>0&&a->offset()==a->maximumOffset();};
+                            double drag=time+1.56;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);
+                            need(canvas.page().scrollAreas().size()==1&&canvas.appList()==canvas.page().scrollAreas().front().get(),("The Apps page is the shown page before the drag (page areas "+std::to_string(canvas.page().scrollAreas().size())+", swapping "+std::to_string(canvas.transitioning())+", list "+std::to_string(canvas.appList()!=nullptr)+", active "+std::to_string(canvas.isActive())+")").c_str());
+                            const auto turn=[&](double steps,std::uint32_t lines){drag+=.001;need(activityModuleOwner->wheel({target->x,target->y,steps,false,0,lines},drag),"Activity takes the wheel over its app list");(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
+                            const auto publish=[&](std::size_t count,double stamp){provider.receiveApps(apps(count,stamp));drag+=.001;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
+                            publish(200,fixture.timestamp+1);
+                            for(unsigned n=0;n<40;++n)turn(-1,3);
+                            for(unsigned n=0;n<30;++n)turn(-.12,3);
+                            for(unsigned n=0;n<40;++n)turn(-1,UINT32_MAX);
+                            const auto where=[&]{const auto*a=area();return std::string(" (offset ")+std::to_string(a?a->offset():-1)+" of "+std::to_string(a?a->maximumOffset():-1)+", content "+std::to_string(a?a->contentHeight():-1)+", apps "+std::to_string(activity->state().appSnapshot().items.size())+", page areas "+std::to_string(canvas.page().scrollAreas().size())+", apps page "+std::to_string(canvas.isShowingApps())+")";};
+                            need(atEnd(),("A long RAM list scrolled past its end stops at its last row"+where()).c_str());
+                            publish(5,fixture.timestamp+2);
+                            for(unsigned n=0;n<10;++n)turn(-1,3);
+                            need(area()&&area()->offset()==0,"Apps that exit while the list is at its end bring the offset back within the shorter list");
+                            publish(endfield::modules::ActivityState::maximumApps,fixture.timestamp+3);
+                            for(unsigned n=0;n<80;++n)turn(n%2?-1.:-3.,n%2?UINT32_MAX:3);
+                            need(atEnd(),("More apps appearing mid-scroll still scroll to the end"+where()).c_str());
+                            for(unsigned n=0;n<12;++n)turn(40,3);need(area()&&area()->offset()==0,"Scrolling back up returns to the top");
+                            provider.receiveApps(fixture);drag+=.001;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);
+                            need(area()&&area()->offset()==0&&canvas.isShowingApps()&&activity->canvas()==&canvas,"The Activity module survives the drag and returns to the top of its own readings");
+                            overviewAt=std::max(overviewAt,drag+.01);
+                        }
+                        need(canvas.perform("activity:overview",overviewAt),"The Overview tab is routed");present(std::max(time+1.9,overviewAt+.02),true);
                     }
                     if(module==core::Module::storage&&storage&&storage->canvas()){auto&canvas=*storage->canvas();
                         need(storageFixture!=nullptr,"Hidden Storage must never retain OS capacity/scanner callbacks");

@@ -97,6 +97,8 @@ public:
     bool isShowingApps() const noexcept { return showingApps_; }
     ActivitySort sortKey() const noexcept { return sortKey_; }
     bool sortDescending() const noexcept { return sortDescending_; }
+    // The Apps list's scroll area while the Apps page is built (hidden coverage).
+    const design::ScrollArea* appList() const noexcept;
     ActivityAppIcons& icons() noexcept { return icons_; }
     // The redesigned canvas has no telemetry-owned loops (host diagnostics).
     static constexpr int animationCount = 0;

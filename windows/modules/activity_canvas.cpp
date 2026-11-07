@@ -526,6 +526,7 @@ void ActivityCanvas::sort(ActivitySort key) {
     for (auto* row : table_->visibleRows()) layers.push_back(&row->plate->layer());
     d::motion::stagger(layers, {0, 12}, clock());
 }
+const d::ScrollArea* ActivityCanvas::appList() const noexcept { return table_ ? &table_->area() : nullptr; }
 bool ActivityCanvas::handleScroll(d::Point point, d::Point delta) {
     if (!showingApps_ || !table_ || !table_->area().layer().frame().contains(point)) return false;
     if (table_->area().scroll(delta.y)) table_->bind(sortKey_);
