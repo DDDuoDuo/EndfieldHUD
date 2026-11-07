@@ -915,7 +915,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
     /// Off while Recording mode hides the account.
     private var canUseSystemAccount: Bool {
         guard store != nil, profile.systemAccount != nil else { return false }
-        return (canEdit(.name) && !(profile.autoName && profile.name == UserProfile.defaultName))
+        return (canEdit(.name) && !profile.followsSystemName)
             || (canEdit(.playerID) && profile.playerIDOverride != nil)
             || profile.avatarFilename != nil || !profile.autoAvatar
     }

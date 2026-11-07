@@ -73,7 +73,9 @@ struct UserProfile: Codable, Equatable {
     var autoAvatar = true
     /// Runtime only (never encoded); nil keeps the stored defaults.
     var systemAccount: SystemAccountIdentity?
-    var displayedName: String { autoName && name == Self.defaultName ? systemAccount?.name ?? name : name }
+    /// The card shows the macOS account's name rather than the stored one.
+    var followsSystemName: Bool { autoName && name == Self.defaultName }
+    var displayedName: String { followsSystemName ? systemAccount?.name ?? name : name }
     /// A chosen or synced picture, then the macOS login picture; nil is the drawn portrait.
     var avatarKey: String? { avatarFilename ?? (autoAvatar ? systemAccount?.avatarKey : nil) }
     var showsBirthday = false
