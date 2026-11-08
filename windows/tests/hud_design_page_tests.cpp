@@ -464,6 +464,131 @@ void confirmBars(RecordedMeasurer& measurer, const J& overlay) {
 }
 
 // ---------------------------------------------------------------------------
+// The place-and-confirm strip (overlay.placement: HUDPlacementEditor)
+// ---------------------------------------------------------------------------
+bool sameColors(const d::Layer& layer, const J& mac) {
+    if (!layer.content() || !mac.isArray()) return false;
+    const auto& mine = (*layer.content())["gradient"]["colors"].array();
+    if (mine.size() != mac.array().size()) return false;
+    for (std::size_t i = 0; i < mine.size(); ++i)
+        for (std::size_t c = 0; c < 4; ++c)
+            if (!near(mine[i]["sRGB"].array()[c].number(), mac.array()[i].array()[c].number(), 1e-4)) return false;
+    return true;
+}
+void placementStrip(RecordedMeasurer& measurer, const J& overlay) {
+    const auto& placement = overlay["placement"];
+    check(d::PlacementEditor::bubbleClearance == placement["bubbleClearance"].number() && d::PlacementEditor::rowPitch == placement["rowPitch"].number() &&
+          d::PlacementEditor::sliderWidth == placement["sliderWidth"].number(), "Strip constants: bubble clearance 8, row pitch 49, slider width 236");
+    unsigned strips{};
+    for (const auto& row : placement["strips"].array()) {
+        const auto language = languageNamed(row["language"].string());
+        World w(measurer);
+        w.appearance(language, "FAD41F", row["light"].boolean());
+        std::vector<d::PlacementEditor::SliderSpec> specs{
+            {"chargeBar.size", endfield::core::localized("Size", "大小", language), 100, {65, 160, 1, {}}, d::ValueFormat::percent},
+            {"chargeBar.length", endfield::core::localized("Length", "长度", language), 37, {14, 100, 1, {}}, d::ValueFormat::percent},
+            {"extra", "A considerably longer title", 1, {.5, 2, .01, {}}, d::ValueFormat::scale}};
+        specs.resize(std::size_t(row["rows"].number()));
+        d::PlacementEditor editor(w.context.env(), "chargeBar", specs);
+        const std::string where = "Strip " + row["language"].string() + (row["light"].boolean() ? " light " : " dark ") + std::to_string(specs.size()) + " rows";
+        const Rect size{0, 0, row["size"].array()[0].number(), row["size"].array()[1].number()};
+        check(near(Rect{0, 0, editor.size().width, editor.size().height}, size), where + ": size " + str({0, 0, editor.size().width, editor.size().height}));
+        const auto* band = findLayer(editor.layer(), "placement.band");
+        const auto* marker = findLayer(editor.layer(), "placement.marker");
+        check(band && marker && near(band->frame(), rect(row["band"])) && near(marker->frame(), rect(row["marker"])), where + ": band and marker frames");
+        check(sameColors(*band, row["bandColors"]) && sameColors(*marker, row["markerColors"]), where + ": band and marker colours");
+        for (std::size_t i = 0; i < 2; ++i) {
+            const auto* hairline = findLayer(editor.layer(), "placement.hairline." + std::to_string(i));
+            check(hairline && near(hairline->frame(), rect(row["hairlines"].array()[i])) && sameColors(*hairline, row["hairlineColors"].array()[i]),
+                  where + ": hairline " + std::to_string(i));
+        }
+        const auto& titles = row["titles"].array();
+        check(titles.size() == specs.size(), where + ": one title per row");
+        for (std::size_t i = 0; i < titles.size(); ++i) {
+            const auto* title = findLayer(editor.layer(), "placement.title." + std::to_string(i));
+            check(title && d::textOf(*title).text() == titles[i]["text"].string() && near(d::textOf(*title).lineFrame, rect(titles[i]["lineFrame"])),
+                  where + ": title " + titles[i]["text"].string() + " line box " + (title ? str(d::textOf(*title).lineFrame) : std::string()));
+        }
+        const auto& sliders = row["sliders"].array();
+        check(sliders.size() == editor.sliders().size(), where + ": one slider per row");
+        for (std::size_t i = 0; i < sliders.size(); ++i) {
+            const auto* slider = editor.sliders()[i];
+            check(slider->id() == "placement." + sliders[i]["id"].string() || slider->id() == sliders[i]["id"].string(), where + ": slider id");
+            check(slider->label == sliders[i]["label"].string() && near(slider->value(), sliders[i]["value"].number()) &&
+                  near(slider->layer().frame(), rect(sliders[i]["frame"])), where + ": slider " + sliders[i]["id"].string() + " " + str(slider->layer().frame()));
+        }
+        const auto& pills = row["pills"].array();
+        for (std::size_t i = 0; i < 2; ++i) {
+            const d::Pill& pill = i == 0 ? editor.cancel() : editor.confirm();
+            check(pill.id() == pills[i]["id"].string() && pill.label == pills[i]["label"].string() && near(pill.layer().frame(), rect(pills[i]["frame"])),
+                  where + ": pill " + pills[i]["id"].string() + " " + str(pill.layer().frame()) + " vs " + str(rect(pills[i]["frame"])));
+        }
+        std::vector<std::string> controls, expectedControls;
+        for (const auto* c : editor.controls()) controls.push_back(c->id());
+        for (const auto& id : row["controls"].array()) expectedControls.push_back(id.string());
+        check(controls == expectedControls, where + ": routed controls (sliders, Cancel, Confirm)");
+        std::vector<d::AccessibilityItem> items;
+        editor.accessibilityItems(editor.layer(), items);
+        const auto& mac = row["accessibility"].array();
+        check(items.size() == mac.size(), where + ": accessibility items");
+        for (std::size_t i = 0; i < items.size(); ++i)
+            check(items[i].id == mac[i]["id"].string() && items[i].label == mac[i]["label"].string() && near(items[i].rect, rect(mac[i]["rect"])) &&
+                  (items[i].role == d::AccessibilityRole::slider) == (mac[i]["role"].string() == "slider"), where + ": accessibility item " + items[i].id);
+        ++strips;
+    }
+    check(strips == 8, "Every Mac strip compared (five languages, light, no rows and three rows)");
+    // Keys: Esc and Return / keypad Enter are taken (only the first decides), other keys are left to the host.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "keys", {});
+        std::vector<std::string> decisions;
+        editor.onDecision = [&](d::ConfirmState::Decision decision) { decisions.push_back(decision == d::ConfirmState::Decision::confirm ? "confirm" : "cancel"); };
+        const auto& keys = overlay["placementKeys"];
+        for (std::size_t i = 0; i < keys["keys"].array().size(); ++i)
+            check(editor.key(macKey(int(keys["keys"].array()[i].number()))) == keys["handled"].array()[i].boolean(), "Strip key " + std::to_string(i));
+        std::vector<std::string> expected;
+        for (const auto& d : keys["decisions"].array()) expected.push_back(d.string());
+        check(decisions == expected && !editor.isOpen(), "Esc decides once; Return afterwards decides nothing");
+    }
+    // Where the strip goes beside its target (y down).
+    for (const auto& row : placement["frames"].array()) {
+        const auto frame = d::PlacementEditor::frame({row["size"].array()[0].number(), row["size"].array()[1].number()}, rect(row["target"]),
+                                                     rect(row["bounds"]), row["gap"].number());
+        check(near(frame, rect(row["frame"])), "Strip frame beside " + row["target"].encode() + " in " + row["bounds"].encode() + ": " + str(frame));
+    }
+    // Pointer: a press on the strip goes to its controls, any other press drags from the anchor.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "chargeBar", {{"chargeBar.size", "Size", 100, {65, 160, 1, {}}, d::ValueFormat::percent}});
+        std::vector<std::pair<std::string, bool>> changes;
+        editor.onChange = [&](const std::string& id, double, bool final) { changes.emplace_back(id, final); };
+        const Rect track = d::convert(Rect{0, 0, 10, 30}, editor.sliders()[0]->layer(), editor.layer());
+        editor.pointerDown({track.x + 60, track.y + 15}, editor.layer(), {500, 500}, {300, 40});
+        check(editor.adjusting() && !editor.dragging() && changes.size() == 1 && !changes[0].second, "A press on a slider adjusts it (not final)");
+        check(!editor.pointerDragged({track.x + 80, track.y + 15}, editor.layer(), {520, 500}), "Dragging a slider moves no anchor");
+        editor.pointerUp({track.x + 80, track.y + 15}, editor.layer());
+        check(!editor.adjusting() && !changes.empty() && changes.back().second, "Release commits the slider");
+        editor.pointerDown({-50, -50}, editor.layer(), {500, 500}, {300, 40});
+        const auto anchor = editor.pointerDragged({-40, -30}, editor.layer(), {510, 520});
+        check(editor.dragging() && anchor && near(anchor->x, 310) && near(anchor->y, 60), "A press outside the strip drags the anchor with the pointer");
+        editor.pointerUp({-40, -30}, editor.layer());
+        check(!editor.dragging() && !editor.pointerDragged({0, 0}, editor.layer(), {0, 0}), "Release ends the drag");
+        editor.adjust("placement.chargeBar.size", 120);
+        editor.adjust("chargeBar.size", 120);
+        check(near(*editor.value("chargeBar.size"), 120) && changes.back() == std::pair<std::string, bool>{"chargeBar.size", true},
+              "An accessibility adjustment sets the slider and reports it as final");
+        editor.setRange({100, 160, 1, {}}, 90, "chargeBar.size");
+        check(near(*editor.value("chargeBar.size"), 100) && editor.sliders()[0]->range().minimum == 100, "setRange clamps the value into the new range");
+        bool decided{};
+        editor.onDecision = [&](d::ConfirmState::Decision decision) { decided = decision == d::ConfirmState::Decision::confirm; };
+        editor.perform("chargeBar:confirm");
+        check(decided && !editor.isOpen(), "An accessibility press on Confirm confirms");
+        editor.pointerDown({-50, -50}, editor.layer(), {0, 0}, {0, 0});
+        check(!editor.dragging(), "A decided strip starts no drag");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The fake module canvas (the oracle's FakeCanvas, line for line)
 // ---------------------------------------------------------------------------
 class FakeCanvas final : public d::Canvas {
@@ -1095,6 +1220,7 @@ int main(int argc, char** argv) {
         const J canvas = J::parse(parts.at("canvas"), 64 * 1024 * 1024);
         overlayTraces(measurer, overlay);
         confirmBars(measurer, overlay);
+        placementStrip(measurer, overlay);
         canvasScript(measurer, canvas);
         lifetimes(measurer);
         recordingModeWork(measurer);

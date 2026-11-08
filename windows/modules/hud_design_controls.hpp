@@ -239,6 +239,9 @@ public:
     const Range& range() const noexcept { return range_; }
     bool dragging() const noexcept { return dragging_; }
     void setValue(double);                      // no callback
+    // A range that depends on other values (the battery bar's Length minimum
+    // follows its Size and display); the value is clamped into it. No callback.
+    void setRange(Range, double value);
     void nudge(double direction);               // one step, commits
     void cancelDrag();
     std::function<void(double value, bool final)> onChange;

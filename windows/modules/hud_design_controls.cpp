@@ -716,6 +716,14 @@ Slider::Slider(Builder& b, std::string id, std::string text, double value, Range
 Slider::~Slider() = default;
 bool Slider::contains(Point p) const { return inRect({-4.5, 0, trackWidth_ + 9, height}, p); }
 void Slider::setValue(double v) { const double next = range_.clamp(v); if (next != value_) { value_ = next; render(); } }
+// setRange (HUDDesignSlider.swift): the zero mark follows the new range.
+void Slider::setRange(Range next, double v) {
+    const double clamped = next.clamp(v);
+    if (next == range_ && clamped == value_) return;
+    range_ = next; value_ = clamped;
+    zero_->setHidden(!range_.zero);
+    render();
+}
 void Slider::nudge(double direction) {
     const double next = range_.clamp(value_ + direction * range_.step);
     if (next == value_) return;

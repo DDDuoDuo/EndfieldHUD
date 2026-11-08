@@ -715,6 +715,68 @@ private final class FakeCanvas: HUDDesignCanvas {
         setLanguage(.english)
         overlayRows["bars"] = bars
 
+        // The place-and-confirm strip (HUDPlacementEditor) with the battery bar editor's Size and Length rows (every
+        // language), plus English strips with no rows and with a third, longer row; then its key rule and frame rule.
+        var strips: [[String: Any]] = []
+        for language in languages {
+            setLanguage(language)
+            for light in [false, true] where language == .english || !light {
+                try themed("FAD41F", light: light) {
+                    for rows in [2, 0, 3] where (language == .english && !light) || rows == 2 {
+                        let specs = [
+                            HUDPlacementEditor.Slider(id: "chargeBar.size", title: L10n.text("Size", "大小"), value: 100,
+                                                      range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent),
+                            HUDPlacementEditor.Slider(id: "chargeBar.length", title: L10n.text("Length", "长度"), value: 37,
+                                                      range: HUDSlider.Range(minimum: 14, maximum: 100, step: 1), format: .percent),
+                            HUDPlacementEditor.Slider(id: "extra", title: "A considerably longer title", value: 1,
+                                                      range: HUDSlider.Range(minimum: 0.5, maximum: 2, step: 0.01), format: .scale)]
+                        let editor = HUDPlacementEditor(id: "chargeBar", sliders: Array(specs.prefix(rows)), env: env)
+                        _ = host(editor.layer, paused: true)
+                        let band = editor.layer.sublayers!.first { $0.name == "confirm.band" } as! CAGradientLayer
+                        let marker = editor.layer.sublayers!.first { $0.name == "confirm.marker" } as! CAGradientLayer
+                        let titles = editor.layer.sublayers!.compactMap { $0 as? HUDTextLayer }
+                        strips.append(["language": languageName(language), "light": light, "rows": rows,
+                                       "size": [Double(editor.size.width), Double(editor.size.height)],
+                                       "band": rect(band.frame), "bandColors": (try recorder.tree(band, id: "band")["gradient"] as? [String: Any])?["colors"] ?? NSNull(),
+                                       "hairlines": band.sublayers!.map { rect($0.frame) },
+                                       "hairlineColors": try band.sublayers!.map { (try recorder.tree($0, id: "hairline")["gradient"] as? [String: Any])?["colors"] ?? NSNull() },
+                                       "marker": rect(marker.frame), "markerColors": (try recorder.tree(marker, id: "marker")["gradient"] as? [String: Any])?["colors"] ?? NSNull(),
+                                       "titles": titles.map { ["text": $0.text, "lineFrame": rect($0.lineFrame)] },
+                                       "sliders": editor.sliders.map { ["id": $0.id, "label": $0.label, "frame": rect($0.layer.frame), "value": $0.value] },
+                                       "pills": [editor.cancel, editor.confirm].map { ["id": $0.id, "label": $0.label, "frame": rect($0.layer.frame), "kind": "\($0.kind)"] },
+                                       "controls": editor.controls.map(\.id),
+                                       "accessibility": accessibility(editor.accessibilityItems(in: editor.layer)),
+                                       "tree": try recorder.tree(editor.layer, id: "placement")])
+                    }
+                }
+            }
+        }
+        setLanguage(.english)
+        do {
+            let editor = HUDPlacementEditor(id: "keys", sliders: [], env: env)
+            var decisions: [String] = []
+            editor.onDecision = { decisions.append("\($0)") }
+            let keys: [UInt16] = [0, 53, 36, 76]
+            let handled = keys.map { editor.key($0) }
+            overlayRows["placementKeys"] = ["keys": keys.map(Int.init), "handled": handled, "decisions": decisions]
+        }
+        var stripFrames: [[String: Any]] = []
+        let stripSize = CGSize(width: 520, height: 112)
+        for (target, bounds) in [(CGRect(x: 600, y: 20, width: 264, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 600, y: 840, width: 264, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 0, y: 400, width: 300, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 1300, y: 400, width: 300, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 100, y: 40, width: 200, height: 38), CGRect(x: 50, y: 0, width: 400, height: 200)),
+                                 (CGRect(x: -1500, y: 300, width: 1400, height: 60), CGRect(x: -1920, y: -200, width: 1920, height: 1055))] {
+            for gap in [CGFloat(10), 0] {
+                let frame = HUDPlacementEditor.frame(size: stripSize, beside: target, within: bounds, gap: gap)
+                stripFrames.append(["size": [Double(stripSize.width), Double(stripSize.height)], "target": rect(target), "bounds": rect(bounds),
+                                    "gap": Double(gap), "frame": rect(frame)])
+            }
+        }
+        overlayRows["placement"] = ["strips": strips, "frames": stripFrames, "bubbleClearance": Double(HUDPlacementEditor.bubbleClearance),
+                                    "rowPitch": Double(HUDPlacementEditor.rowPitch), "sliderWidth": Double(HUDPlacementEditor.sliderWidth)]
+
         // Decision traces (LIB-59..67). Each step records the overlay state after it.
         func trace(_ name: String, reduced: Bool = false, _ script: (HUDCenterOverlay, (String) -> Void, Log) throws -> Void) throws {
             reduce = reduced
