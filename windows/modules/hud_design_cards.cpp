@@ -1,5 +1,5 @@
 // The list cards: ports of Sources/HUDDesignCards.swift (HUDTaskCard :8-174,
-// HUDListCard :180-315, HUDArchiveTile :320-503).
+// HUDListCard :180-315, HUDArchiveTile :320-503; 1.3.1 HUDTileMoreButton :317-357).
 //
 // Recorded adaptation: HUDArchiveTile's selection brackets animate their path
 // from inset -5 to -4 (.16 s E) under an opacity fade (.1 s ease); a path is
@@ -323,6 +323,36 @@ void ListCard::flashCopied() {
 }
 
 // ---------------------------------------------------------------------------
+// HUDTileMoreButton (:317-357)
+// ---------------------------------------------------------------------------
+std::string TileMoreButton::label(const Environment& env, std::string_view name) { return tr(env, "More", "更多") + ", " + std::string(name); }
+TileMoreButton::TileMoreButton(Builder& b, std::string id, std::string label, std::string layerID)
+    : Control(b.env, id, std::move(label), b.layer(layerID.empty() ? id : layerID)) {
+    const std::string base = layerID.empty() ? this->id() : layerID;
+    layer().setAnimatable();                             // hover scale 1.08
+    layer().setBounds({size, size});
+    layer().setZPosition(2);
+    plate_ = &b.layer(sub(base, "plate"));
+    plate_->setFrame({0, 0, size, size});
+    // backgroundColor #141414 .8 -> .95 on hover: a tinted white circle.
+    setTintedBackground(*plate_, rgb(0x141414, .8), size / 2);
+    layer().add(*plate_);
+    layer().add(makeText(b, sub(base, "dots"), "⋯", TextStyle{12, FontWeight::black, white(1)}, {0, 5, size, 12}, TextAlignment::center));
+    setTarget({0, 0, size, size}, PathBuilder().ellipse({0, 0, size, size}));
+}
+void TileMoreButton::attach(Layer& parent, double width, const Layer* sibling) {
+    layer().setOrigin({width - 4 - size, 8});
+    if (sibling && sibling->parent() == &parent) parent.insertBelow(layer(), *sibling); else parent.add(layer());
+}
+void TileMoreButton::hoverChanged() {
+    const bool on = hovered() && enabled();
+    const auto c = clock();
+    motion::animateTint(*plate_, rgb(0x141414, on ? .95 : .8), duration::hover, c, easing::ease);
+    motion::animate(layer(), Channel::scaleX, on ? 1.08 : 1, duration::hover, c);
+    motion::animate(layer(), Channel::scaleY, on ? 1.08 : 1, duration::hover, c);
+}
+
+// ---------------------------------------------------------------------------
 // HUDArchiveTile (:320-503)
 // ---------------------------------------------------------------------------
 namespace {
@@ -470,6 +500,12 @@ Layer& ArchiveTile::classifiedStamp(Builder& b, std::string_view id, Point cente
     return stamp;
 }
 // setPoster (:458-469): a thumbnail filling the well in place of the doc glyph (nullopt restores it).
+TileMoreButton& ArchiveTile::attachMore(std::string id, std::string label) {
+    if (more_) return *more_;
+    more_ = &builder_->make<TileMoreButton>(std::move(id), std::move(label), sub(this->id(), "more"));
+    more_->attach(layer(), layer().bounds().width, brackets_);
+    return *more_;
+}
 void ArchiveTile::setPoster(std::optional<ImageSource> source) {
     if (style_ != Style::standard || (!source && !poster_)) return;
     if (!poster_ && source) {

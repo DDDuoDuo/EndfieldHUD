@@ -420,6 +420,10 @@ public:
     bool magnify(Point, double magnification, double now);
     bool keyDown(const KeyInput&, double now);
     bool containsControl(Point) const;          // a press here goes to the module before the shell
+    // HUDDesignCanvas.control(atBox:): the enabled control a left press at
+    // this point would pick, so a right-click resolves its target exactly as
+    // a left-click does (null while inactive or swapping).
+    Control* control(Point) const;
     // Virtual like HUDDesignCanvas.capturesPointer (Now Playing's open volume
     // pop-up captures too, NowPlayingCanvas.swift:29).
     virtual bool capturesPointer() const { return menuOpen() || popoverOpen(); }

@@ -28,7 +28,7 @@ constexpr std::array<std::pair<m::ReaderErrorCode, const char*>, 7> errors{{{m::
     {m::ReaderErrorCode::unavailable, "unavailable"}, {m::ReaderErrorCode::encrypted, "encrypted"}, {m::ReaderErrorCode::changedOnDisk, "changedOnDisk"}}};
 
 void source(const J& root) {
-    check(root["source"]["authority"].string() == "4fda15a03ba50675e0b12d69a83efdb6526c19f6", "Fixture comes from the pinned Mac 1.3.0 authority");
+    check(root["source"]["authority"].string() == "2c047e0024aa337b11ab7d1e2577f7a918bace78", "Fixture comes from the pinned Mac 1.3.1 authority");
     for (const auto& [code, key] : errors) {
         const auto& row = root["errors"][key];
         const auto pair = m::readerErrorText(code);
@@ -43,14 +43,14 @@ void source(const J& root) {
     // Every pair the redesigned canvas shows renders the Mac catalog row
     // (modules/reader_canvas.cpp passes these pairs to core::localized).
     const auto& captions = root["captions"].array();
-    check(captions.size() == 36, "Every ReaderCanvas pair is exported");
+    check(captions.size() == 35, "Every ReaderCanvas pair is exported");
     const std::string argument = root["source"]["argument"].string();
     const std::string_view arguments[]{argument};
     for (const auto& row : captions)
         for (const auto& [language, name] : languages)
             check(core::localized(row["template"].string(), row["templateSimplifiedChinese"].string(), language,
                       row["template"].string().find("{0}") == std::string::npos ? std::span<const std::string_view>{} : std::span<const std::string_view>(arguments)) == row[name].string(),
-                  "Reader captions render the Mac 1.3.0 catalog row in all five languages");
+                  "Reader captions render the Mac 1.3.1 catalog row in all five languages");
     check(m::readerTranslation(core::selectedFilesUnopened, L::system) == "Unable to open selected files" &&
           m::readerImportFailure(std::make_exception_ptr(std::runtime_error("C:\\private\\path.pdf")), L::korean) == "선택한 파일을 열 수 없습니다" &&
           m::readerImportFailure({}, L::traditionalChinese) == "無法開啟所選檔案", "Untyped import failures show the Windows notice, never their own text");

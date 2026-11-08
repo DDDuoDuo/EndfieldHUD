@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Export the Mac 1.3.0 Reader errors and captions in five languages.
+"""Export the Mac 1.3.1 Reader errors and captions in five languages.
 
-Reads the unchanged Mac sources at the pinned authority (Mac 1.3.0):
+Reads the unchanged Mac sources at the pinned authority (Mac 1.3.1):
   * Sources/ReaderZIP.swift                  ReaderError.errorDescription pairs
   * Sources/ReaderCanvas.swift               every pair the redesigned E-Reader
                                              shows: L10n.text (tabs, buttons, menus,
@@ -32,7 +32,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTHORITY = "4fda15a03ba50675e0b12d69a83efdb6526c19f6"
+AUTHORITY = "2c047e0024aa337b11ab7d1e2577f7a918bace78"
 ZIP, CANVAS = "Sources/ReaderZIP.swift", "Sources/ReaderCanvas.swift"
 CATALOG, REDESIGN = "Sources/LocalizationCatalog.swift", "Sources/LocalizationCatalogRedesign.swift"
 PINS = [ZIP, CANVAS, CATALOG, REDESIGN]
@@ -40,7 +40,8 @@ CASES = ["unsupported", "invalidArchive", "tooLarge", "invalidBook", "unavailabl
 LITERAL = r'"((?:[^"\\]|\\.)*)"'
 PAIR = r'L10n\.text\(' + LITERAL + r', ' + LITERAL + r'\)'
 ARGUMENT = "Q"
-EXPECTED = 36  # distinct pairs: L10n.text, the result toasts and the module title
+EXPECTED = 35  # distinct pairs: L10n.text, the result toasts and the module title
+# (1.3.1: the book tile's "More" label is built by HUDTileMoreButton.label in HUDDesignCards)
 
 
 def decode(literal):

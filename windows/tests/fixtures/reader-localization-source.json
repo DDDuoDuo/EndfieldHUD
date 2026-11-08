@@ -244,15 +244,6 @@
    "traditionalChinese": "字體"
   },
   {
-   "english": "More",
-   "japanese": "その他",
-   "korean": "더 보기",
-   "simplifiedChinese": "更多",
-   "template": "More",
-   "templateSimplifiedChinese": "更多",
-   "traditionalChinese": "更多"
-  },
-  {
    "english": "Notice",
    "japanese": "お知らせ",
    "korean": "알림",
@@ -378,7 +369,7 @@
  },
  "source": {
   "argument": "Q",
-  "authority": "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
+  "authority": "2c047e0024aa337b11ab7d1e2577f7a918bace78",
   "files": [
    "Sources/ReaderZIP.swift",
    "Sources/ReaderCanvas.swift",

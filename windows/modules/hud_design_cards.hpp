@@ -1,6 +1,6 @@
 #pragma once
 // The list cards of the redesign: the port of Sources/HUDDesignCards.swift
-// (HUDTaskCard, HUDListCard, HUDArchiveTile). LIB-45..47. Each card is a hover
+// (HUDTaskCard, HUDListCard, HUDTileMoreButton, HUDArchiveTile). LIB-45..47. Each card is a hover
 // container that never takes the press itself (except the list card's copy
 // press) and publishes its sub-controls through controls().
 #include "modules/hud_design_controls.hpp"
@@ -72,6 +72,30 @@ private:
     void renderHighlight();
 };
 
+// HUDTileMoreButton (spec 3.15): the round 22 x 22 ⋯ button at a tile's top
+// right (4 px in, 8 px down), a #141414 .8 plate (.95 on hover) and a 1.08
+// hover scale (both over duration::hover). Reader books, Archive documents
+// and File Shelf tiles open their item menu from it, the same menu a
+// right-click on the tile opens. Its control id is the tile's id + suffix.
+class TileMoreButton final : public Control {
+public:
+    static constexpr double size = 22;
+    static constexpr std::string_view suffix = ":more";
+    // The tile id a control id names: a tile's own id, or its ⋯ button's.
+    static std::string_view tileID(std::string_view id) noexcept { return id.ends_with(suffix) ? id.substr(0, id.size() - suffix.size()) : id; }
+    // The button's spoken label for the tile named `name`: "More, <name>".
+    static std::string label(const Environment&, std::string_view name);
+    // `layerID` names its layers when that differs from the control id (a
+    // tile's button: under the tile's layer id); empty: the control id.
+    TileMoreButton(Builder&, std::string id, std::string label, std::string layerID = {});
+    // Places the button at the top right of a tile `width` wide inside
+    // `parent`, below `sibling` (the selection brackets) when it is a child of `parent`.
+    void attach(Layer& parent, double width, const Layer* sibling = nullptr);
+    void hoverChanged() override;
+private:
+    Layer* plate_;
+};
+
 // HUDArchiveTile (LIB-47): height wellHeight (100) + 24; well gradient 8A8885
 // -> BDBDBB -> D9D9D8 (classified 2A2A2A -> 151515); code bar and #nn; the doc
 // glyph (40 x 50 folded page, shadow .25 r 6 y 6, ruled lines, extension label
@@ -94,6 +118,14 @@ public:
     bool selected() const noexcept { return selected_; }
     void playRemoval(std::function<void()> completion);
     void hoverChanged() override;
+    // The tile's ⋯ button (Archive and File Shelf), made once below the
+    // brackets; the id and label come from the caller, whose registered
+    // control may wrap this tile. The caller registers it after the tile.
+    // Its layers are named after the tile's (<tile id>.more), so a tile
+    // built ahead under the same layer id (File Shelf's other layout)
+    // draws the same artwork.
+    TileMoreButton& attachMore(std::string id, std::string label);
+    TileMoreButton* more() const noexcept { return more_; }
     // HUDArchiveTile.bracketPath: the selection brackets (also Settings' icon tiles at inset 0).
     static PathBuilder bracketPath(Rect bounds, double inset);
     // The six filled rectangles bracketPath is made of (left then right: top,
@@ -108,7 +140,7 @@ public:
     // its position), also the File Shelf properties card's preview.
     static Layer& docGlyph(Builder&, std::string_view id, Extension, const std::optional<std::string>& label);
 private:
-    bool selected_{}; Style style_; Builder* builder_;
+    bool selected_{}; Style style_; Builder* builder_; TileMoreButton* more_{};
     Layer *well_, *doc_, *poster_{}, *strip_, *label_, *brackets_, *bracketsRest_, *bracketsSelected_, *brighten_;
     void renderSelection(bool animated);
     static Layer& classifiedStamp(Builder&, std::string_view id, Point center);

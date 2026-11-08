@@ -62,15 +62,14 @@ class ReaderCanvas;
 // brackets (inset -5 -> -4 cross-faded like the archive tile's, G2).
 class ReaderBookTile final : public design::Control {
 public:
-    class More;
     static constexpr double wellHeight = 120;
     ReaderBookTile(design::Builder&, std::string id, int number, const ReaderBook&, design::Color cover, bool missing, double width);
-    design::Control& more() const noexcept;
+    design::TileMoreButton& more() const noexcept { return *more_; }
     bool selected() const noexcept { return selected_; }
     void setSelected(bool, bool animated = true);
     void hoverChanged() override;
 private:
-    design::Control* more_;
+    design::TileMoreButton* more_;
     design::Layer *well_, *brighten_, *strip_, *label_, *brackets_, *bracketsRest_, *bracketsSelected_;
     bool selected_{};
     void renderSelection(bool animated);
@@ -157,6 +156,7 @@ public:
     bool handlePointerDown(design::Point, const design::PointerInput&) override;
     void handlePointerDragged(design::Point) override;
     void handlePointerUp(design::Point) override;
+    bool handleRightPointerDown(design::Point) override;
     bool handleScroll(design::Point, design::Point delta) override;
     bool handleMagnify(design::Point, double) override;
     void accessibilityItems(std::vector<design::AccessibilityItem>&) const override;
@@ -241,7 +241,8 @@ private:
     void publishViews();
     // Actions (:632-886).
     void openBook(const ReaderBook&);
-    void openBookMenu(const ReaderBook&, const design::Control& anchor);
+    // A Library book's menu, from its ⋯ (`anchor`) or a right-click at a point (:658-673).
+    void openBookMenu(const ReaderBook&, design::Rect anchorRect, const design::Control* anchor);
     void confirmRemove(const ReaderBook&);
     void relink(const ReaderBook&);
     std::vector<ReaderShelfChoice> availableShelfChoices() const;

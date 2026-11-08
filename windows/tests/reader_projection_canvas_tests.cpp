@@ -519,6 +519,9 @@ void readerOracle(Oracle& o) {
         for (const auto k : {d::key::down, d::key::down, d::key::down, d::key::enter}) r.canvas->keyDown(keyOf(k), w.now);
         o.reader("books", "removeConfirm", r);
         w.context.overlay().dismissConfirm(); w.context.overlay().reset();
+        check(r.canvas->rightPointerDown(centre(tile(2), r.canvas->root()), w.now), "A right-click on a book opens its menu");
+        o.reader("books", "bookRightClick", r);
+        r.canvas->closeMenu();
         tile(1).activate(); r.sync();
         o.reader("books", "reading", r);
         need(*r.canvas, "bookmark").activate(); r.sync();
