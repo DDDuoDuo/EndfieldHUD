@@ -100,7 +100,21 @@ void behaviour() {
     canvas.setPresented(true, w.now);
     canvas.show(w.now); canvas.setActive(true, w.now);
     check(ctl.presented == std::vector<bool>{true} && !canvas.showsHeader(), "Presentation starts the controller; no module header (:116-121, :98)");
-    check(!ctl.pixels.empty() && ctl.pixels.back() == m::nowPlayingCoverPixelSize(480, w.context.boxScale()), "The page names its 480 px slot at the render scale (:173)");
+    // :173 with headroom: Windows' boxScale is the quantised density (.5 steps,
+    // .35 hysteresis), so the slot is named half a step up and never under the
+    // highest density that boxScale can stand for.
+    const auto coversDrawnSize = [&] {
+        const double s = w.context.boxScale();
+        return !ctl.pixels.empty() && ctl.pixels.back() == m::nowPlayingCoverPixelSize(480, std::min(4., s + .5))
+            && ctl.pixels.back() >= unsigned(std::ceil(480 * (s + .35)));
+    };
+    check(coversDrawnSize(), "The page names its 480 px slot at the render scale plus half a density step (:173)");
+    w.context.update(d::geometry::baseUnit, 1.5 / d::geometry::baseUnit, w.now);
+    check(std::abs(w.context.boxScale() - 1.5) < 1e-9 && coversDrawnSize() && ctl.pixels.back() == 960, "Density 1.5 asks for 960 px, not 720 (drawn up to 480 x 1.85)");
+    w.context.update(d::geometry::baseUnit, 4 / d::geometry::baseUnit, w.now);
+    check(ctl.pixels.back() == 1920, "Density 4 (the largest) asks for 1920 px");
+    w.context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, w.now);
+    check(ctl.pixels.back() == 1200, "Back at density 2: 1200 px");
     check(textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire" && textOf(canvas.root(), "nowPlaying.elapsed") == "00:42" && textOf(canvas.root(), "nowPlaying.duration") == "03:34",
         "Title and times (:240-272)");
     const auto track = item(canvas, "track");

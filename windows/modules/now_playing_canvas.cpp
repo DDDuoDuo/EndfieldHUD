@@ -402,7 +402,14 @@ double NowPlayingCanvas::takeDirection() {
 // --- Page (:169-288) -------------------------------------------------------------------------
 void NowPlayingCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
-    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverPixelSize(Layout::cover.width, env().text.boxScale));
+    // The Mac decodes at its unquantised render scale. Windows' boxScale is
+    // the design density rounded to .5 steps with .35 hysteresis (at most 4),
+    // so it can sit up to .35 under the drawn density: ask for half a step
+    // more (up to density 4, never under boxScale) so a large cover is not
+    // decoded small and enlarged. Covers smaller than the slot keep their own
+    // size (the decoder never enlarges).
+    const double quantised = env().text.boxScale;
+    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverPixelSize(Layout::cover.width, std::max(quantised, std::min(4., quantised + .5))));
     volumeOpen_ = false; volumeGesture_.reset(); displayed_.reset(); covers_ = {}; lyricsVisible_ = false; art_ = {};
     parts_.clear();
     const auto& track = input().track;
