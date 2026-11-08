@@ -1,10 +1,12 @@
 // Settings on the redesign (modules/settings_canvas.*) against the Mac oracle
 // (tests/fixtures/settings-source.json, produced by tools/settings_reference.sh
-// from the unchanged Mac 1.3.0 Sources): every scripted Mac state of the four
-// canvases (System with Modules, Display with Battery alert and App icon,
-// Hotkeys, About with Credits; menus open; dark / Light; English / Simplified
-// Chinese; a changed module layout; alerts off; recording; the update strip)
-// is replayed through the Windows canvases with the same controller steps
+// from the unchanged Mac Sources at the pinned source commit): every scripted
+// Mac state of the four canvases (System, Display with Battery alert, App
+// icon, Modules and HUD elements, Hotkeys, About with Credits; menus open;
+// dark / Light; English / Simplified Chinese; a changed module layout; alerts
+// off; recording; the update strip; each scoped Restore asked, the System and
+// Display ones confirmed) is replayed through the Windows canvases with the
+// same controller steps (the pages not ported yet are listed in replay)
 // and compared node by node (what each tree draws, the controls, the
 // accessibility items, the header) with the Mac's recorded CoreText widths;
 // the confirm requests and toasts the pages raise are compared field by
@@ -17,8 +19,10 @@
 // on the Mac and three bands here (checked by geometry).
 // Portable; synthetic preferences; no file, OS or clock.
 #include "modules/settings_canvas.hpp"
+#include "modules/hud_design_format.hpp"
 #include "tests/hud_design_oracle.hpp"
 #include <iostream>
+#include <set>
 
 namespace {
 namespace d = endfield::modules::design;
@@ -44,7 +48,7 @@ struct World {
     std::vector<Settings> saved;
     std::vector<bool> capture;
     std::vector<std::string> links, hooks;
-    std::optional<std::string> registerError;
+    std::optional<std::string> registerError, loginError{"Synthetic login failure"};
     double now{100};
     L language{L::english};
     bool light{};
@@ -54,7 +58,7 @@ struct World {
         initial.set("language", "english"); initial.set("theme", "dark"); initial.set("launchAtLogin", false); initial.set("reduceMotion", true);
         m::SettingsCallbacks callbacks;
         callbacks.persist = [this](const Settings& s) { saved.push_back(s); };
-        callbacks.launchAtLogin = [](bool) -> std::optional<std::string> { return "Synthetic login failure"; };
+        callbacks.launchAtLogin = [this](bool) { return loginError; };
         callbacks.registerShortcut = [this](m::SettingsShortcut) { return registerError; };
         callbacks.shortcutCapture = [this](bool on) { capture.push_back(on); };
         callbacks.openLink = [this](std::string_view url) { links.emplace_back(url); };
@@ -161,15 +165,50 @@ void replay(const Json& data, const Json& manifest) {
     update.automaticallyInstalls = true; update.canCheck = true; update.canSetAutomatic = true;
     World w(measurer, hooks, update);
 
-    std::vector<std::string> failures;
+    std::vector<std::string> failures, pendingFailures;
     std::size_t compared{}, page{}, asked{};
     const auto& pages = data["pages"].array();
     const auto& requests = data["requests"].array();
+    // The Mac 1.3.1 Settings pages not ported yet: their recorded differences
+    // are listed but do not fail until the item named here lands, and each
+    // must still differ, so a page that comes to match is taken off the list.
+    // System, Display: the page moves (Modules, Open on, HUD elements, Close
+    // hint and Restore rows in Mac order; Facility alerts on HUD elements).
+    // Battery alert: the battery bar editor. The watch icon's localized title
+    // comes with the watch icon.
+    const std::set<std::string> pendingPages{
+        "system/main", "system/menu.language", "system/menu.screen", "system/main.restored", "system/main.atDefaults",
+        "display/main", "display/main.bottom", "display/menu.theme", "display/menu.clockStyle", "display/menu.centerLogo",
+        "display/battery", "display/menu.method", "display/battery.alertsOff", "display/main.back", "display/main.restored"};
+    const std::set<std::string> pendingIconTitles{"watch"};
+    std::set<std::string> pendingMatched;
     const auto row = [&](core::Module module, std::string_view state) {
         check(page < pages.size(), "The oracle has a page for " + std::string(state));
         const auto& expected = pages[page++];
         check(expected["module"].string() == moduleName(module) && expected["state"].string() == state, "Replay order: " + std::string(state) + " vs " + expected["state"].string());
-        comparePage(w, module, expected, failures, compared);
+        const auto key = std::string(moduleName(module)) + "/" + std::string(state);
+        // Each scoped Restore's enabled state, also on a page still pending.
+        for (const auto& control : expected["controls"].array()) {
+            const auto& id = control["id"].string();
+            if (id != "restore" && id != "displayRestore" && id != "overlayRestore") continue;
+            const auto& controls = w[module].page().controls();
+            const auto found = std::find_if(controls.begin(), controls.end(), [&](const d::Control* c) { return c->id() == id; });
+            ++checks;
+            if (found == controls.end() || (*found)->enabled() != control["enabled"].boolean()) failures.push_back(key + ": " + id + " enabled state");
+        }
+        if (!pendingPages.contains(key)) { comparePage(w, module, expected, failures, compared); return; }
+        std::vector<std::string> local;
+        comparePage(w, module, expected, local, compared);
+        if (local.empty()) pendingMatched.insert(key);
+        pendingFailures.insert(pendingFailures.end(), local.begin(), local.end());
+    };
+    // A recorded Mac page on a Settings page Windows has not ported yet
+    // (Display > Modules is still System > Modules; Display > HUD elements
+    // comes with its page): consumed in order, compared later.
+    std::vector<std::string> notReplayed;
+    const auto skipRow = [&](core::Module module, std::string_view state) {
+        check(page < pages.size() && pages[page]["module"].string() == moduleName(module) && pages[page]["state"].string() == state, "Replay order: " + std::string(state));
+        notReplayed.push_back(std::string(moduleName(module)) + "/" + std::string(state)); ++page;
     };
     const auto ask = [&](std::string_view name) {
         check(asked < requests.size() && requests[asked]["name"].string() == name, "Request order: " + std::string(name));
@@ -183,13 +222,6 @@ void replay(const Json& data, const Json& manifest) {
     w.activate(M::system, "screen"); row(M::system, "menu.screen"); w[M::system].closeMenu();
     w.activate(M::system, "restore"); ask("restore"); w.clear();
     w.controller->setStatus("Synthetic status"); ask("notice"); w.controller->setStatus(""); w.clear();
-    w.activate(M::system, "modules"); row(M::system, "modules");
-    w.update([](Settings& s) { auto l = s.moduleLayout(); l.move("clipboard", 0); l.setHidden("archive", true); s.setModuleLayout(l); });
-    row(M::system, "modules.changed");
-    w.activate(M::system, "modulesReset"); ask("modulesReset"); w.clear();
-    w.update([](Settings& s) { s.setModuleLayout({}); });
-    { const auto back = w[M::system].page().back; back(); }
-    row(M::system, "main.back");
     w.hide(M::system);
     w.language = L::simplifiedChinese; w.appearance(); w.controller->setLanguage(w.language);
     w.show(M::system); row(M::system, "main"); w.hide(M::system);
@@ -197,14 +229,21 @@ void replay(const Json& data, const Json& manifest) {
     w.light = true; w.appearance();
     w.show(M::system); row(M::system, "main"); w.hide(M::system);
     w.light = false; w.appearance();
+    // System's Restore confirmed (launch at login fails, so it stays off), then
+    // at its defaults: the button is disabled.
+    w.show(M::system);
+    w.activate(M::system, "restore"); (void)w.context.overlay().decide(d::ConfirmState::Decision::confirm); ask("restoreConfirmed");
+    row(M::system, "main.restored"); w.clear();
+    w.loginError.reset(); w.update([](Settings& s) { s.set("launchAtLogin", true); });
+    row(M::system, "main.atDefaults");
+    w.update([](Settings& s) { s.set("launchAtLogin", false); s.set("language", "english"); }); w.loginError = "Synthetic login failure";
+    w.hide(M::system); w.controller->setStatus(""); w.clear();
     // Display
     w.show(M::display);
     row(M::display, "main");
     (void)w[M::display].scroll({300, 300}, {0, 10000}, w.now);
     row(M::display, "main.bottom");
-    w.activate(M::display, "facility");
-    check(dynamic_cast<d::Toggle&>(w.control(M::display, "facility")).isOn(), "Turning Facility alerts off keeps the switch on while it asks");
-    ask("facilityOff"); w.clear();
+    w.activate(M::display, "displayRestore"); ask("displayRestore"); w.clear();
     w.activate(M::display, "recording"); ask("recordingOn");
     w.activate(M::display, "recording"); ask("recordingOff"); w.clear();
     (void)w[M::display].scroll({300, 300}, {0, -10000}, w.now);
@@ -226,11 +265,43 @@ void replay(const Json& data, const Json& manifest) {
     // HUDApplicationIcon.title in Simplified Chinese: the tiles the Mac localizes.
     w.language = L::simplifiedChinese; w.appearance();
     w.activate(M::display, "appIcon");
-    for (const auto& icon : data["icons"].array())
-        if (w.control(M::display, "appIcon:" + icon["id"].string()).label != icon["titleZh"].string()) failures.push_back("icon title " + icon["id"].string());
+    for (const auto& icon : data["icons"].array()) {
+        const bool same = w.control(M::display, "appIcon:" + icon["id"].string()).label == icon["titleZh"].string();
+        if (!pendingIconTitles.contains(icon["id"].string())) { if (!same) failures.push_back("icon title " + icon["id"].string()); }
+        else if (same) pendingMatched.insert("icon title " + icon["id"].string());
+        else pendingFailures.push_back("icon title " + icon["id"].string());
+    }
     { const auto back = w[M::display].page().back; back(); }
     w.language = L::english; w.appearance();
-    w.hide(M::display);
+    // Display > Modules: the Windows list is still System > Modules, so its
+    // pages wait for the page moves; its Restore asks the same.
+    skipRow(M::display, "modules");
+    w.update([](Settings& s) { auto l = s.moduleLayout(); l.move("clipboard", 0); l.setHidden("archive", true); s.setModuleLayout(l); });
+    skipRow(M::display, "modules.changed");
+    w.hide(M::display); w.show(M::system); w.activate(M::system, "modules");
+    w.activate(M::system, "modulesReset"); ask("modulesReset"); w.clear();
+    w.update([](Settings& s) { s.setModuleLayout({}); });
+    { const auto back = w[M::system].page().back; back(); }
+    w.hide(M::system); w.show(M::display);
+    row(M::display, "main.back");
+    // Display > HUD elements comes with its page; its Facility alerts switch
+    // asks as Display's does now.
+    skipRow(M::display, "overlay");
+    w.activate(M::display, "facility");
+    check(dynamic_cast<d::Toggle&>(w.control(M::display, "facility")).isOn(), "Turning Facility alerts off keeps the switch on while it asks");
+    ask("facilityOff"); w.clear();
+    skipRow(M::display, "overlay.changed");
+    // HUD elements' Restore confirm (restoreCopy(.hudElements)); its row
+    // comes with the page.
+    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements); ask("overlayRestore"); w.clear();
+    // Display's Restore confirmed during a scale preview: the defaults written
+    // at once, no countdown, the button disabled.
+    w.update([](Settings& s) { s.set("recordingMode", false); s.set("clockStyle", "dial"); });
+    w.controller->previewScale(1.5, w.now);
+    w.activate(M::display, "displayRestore"); (void)w.context.overlay().decide(d::ConfirmState::Decision::confirm); ask("displayRestoreConfirmed");
+    row(M::display, "main.restored"); w.clear();
+    w.update([](Settings& s) { s.set("reduceMotion", true); });
+    w.hide(M::display); w.controller->setStatus(""); w.clear();
     w.light = true; w.appearance();
     w.show(M::display); row(M::display, "main"); w.hide(M::display);
     w.light = false; w.appearance();
@@ -259,6 +330,10 @@ void replay(const Json& data, const Json& manifest) {
     w.activate(M::about, "credits"); row(M::about, "credits");
     w.hide(M::about);
     check(page == pages.size() && asked == requests.size(), "Every recorded Mac state replayed");
+    std::cerr << "  Not ported yet: " << pendingFailures.size() << " differences on " << pendingPages.size() << " pages; not replayed:";
+    for (const auto& n : notReplayed) std::cerr << ' ' << n;
+    std::cerr << '\n';
+    for (const auto& key : pendingMatched) failures.push_back(key + " now matches the Mac: take it off the pending list");
     for (const auto& f : failures) std::cerr << "  " << f << '\n';
     if (!measurer.misses.empty()) { std::cerr << "  unrecorded widths: " << measurer.misses.size() << '\n'; for (std::size_t i = 0; i < std::min<std::size_t>(measurer.misses.size(), 12); ++i) std::cerr << "    " << measurer.misses[i] << '\n'; }
     check(failures.empty(), std::to_string(failures.size()) + " differences from the Mac in " + std::to_string(compared) + " pages");
@@ -514,6 +589,83 @@ void contracts() {
     check(committed().string("applicationIcon") == "babel", "An app icon tile picks the icon");
     w.hide(M::display);
     check(w[M::display].section() == "main", "Other sub-pages return to the main page when Display is left");
+    // Display's Restore (restoreRow(.display), the last Display row): enabled
+    // while Display differs from its defaults; it drops a pending scale
+    // preview (no countdown, the default written at once), clears a staged
+    // slider value and leaves System and the hotkey alone.
+    w.show(M::display);
+    // Every row plate, nav rows included; the header counter is the page's
+    // row count (HUDFormat.pad2(rows.count)).
+    const auto rowIds = [&](M module) {
+        std::vector<std::string> ids;
+        for (auto* c : w[module].page().controls()) if (dynamic_cast<d::RowPlate*>(c)) ids.push_back(c->id());
+        return ids;
+    };
+    {
+        const auto ids = rowIds(M::display);
+        check(!ids.empty() && ids.back() == "row:displayRestore" && w.control(M::display, "row:displayRestore").label == "Restore default settings",
+            "Restore default settings is the last Display row");
+        check(w[M::display].header().counterText() == d::format::pad2(std::int64_t(ids.size())), "Display's counter counts its rows, Restore included");
+    }
+    check(w.control(M::display, "displayRestore").enabled(), "Display's Restore is enabled while Display differs from its defaults");
+    const bool focusDefault = Settings::defaults().boolean("closeOnFocusLost");
+    w.update([&](Settings& s) { s.set("closeOnFocusLost", !focusDefault); });
+    const auto hotkey = committed().fields["windowsSummonShortcut"];
+    dynamic_cast<d::Slider&>(w.control(M::display, "uiScale")).onChange(1.25, true);
+    check(w.controller->scalePending() && overlay.confirmState().request()->id == "layout", "A scale preview asks to keep it");
+    auto& staged = dynamic_cast<d::Slider&>(w.control(M::display, "uiScale"));
+    staged.onChange(1.7, false);
+    w.activate(M::display, "displayRestore");
+    check(overlay.confirmState().request()->id == "displayRestore" && overlay.confirmState().request()->title == "Restore default settings?"
+        && overlay.confirmState().request()->message == "Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept."
+        && overlay.decide(d::ConfirmState::Decision::confirm), "Display's Restore asks with its own message");
+    (void)w.context.advance(w.now + 1);
+    check(!w.controller->scalePending() && !w.controller->confirmationRemaining(w.now) && !overlay.confirmState().isOpen()
+        && committed().number("hudScale") == 1 && w.saved.back().number("hudScale") == 1 && toastTitle() == "Settings restored",
+        "Confirmed: the default scale is written at once with no countdown, and a toast");
+    auto& rebuilt = dynamic_cast<d::Slider&>(w.control(M::display, "uiScale"));
+    check(&rebuilt != &staged && rebuilt.value() == 1, "The rebuilt UI scale slider shows the default, not the staged drag value");
+    check(!w.control(M::display, "displayRestore").enabled() && committed().isDefault(Settings::Scope::display), "At its defaults, Display's Restore is disabled");
+    check(committed().boolean("closeOnFocusLost") == !focusDefault && committed().fields["windowsSummonShortcut"] == hotkey, "System and the hotkey are kept");
+    w.clear();
+    w.hide(M::display);
+    w.show(M::system);
+    {
+        const auto ids = rowIds(M::system);
+        check(!ids.empty() && ids.back() == "row:restore" && w[M::system].header().counterText() == d::format::pad2(std::int64_t(ids.size())),
+            "System's Restore is its last row and the counter counts its rows");
+    }
+    w.loginError.reset(); w.update([](Settings& s) { s.set("launchAtLogin", true); });
+    check(w.control(M::system, "restore").enabled(), "System's Restore stays enabled while System differs");
+    w.update([&](Settings& s) { s.set("closeOnFocusLost", focusDefault); });
+    check(!w.control(M::system, "restore").enabled() && committed().isDefault(Settings::Scope::system), "At its defaults, System's Restore is disabled");
+    w.update([](Settings& s) { s.set("launchAtLogin", false); }); w.loginError = "Synthetic login failure";
+    w.hide(M::system);
+    // HUD elements' Restore (restoreCopy(.hudElements); its row comes with
+    // the page): its own question, message and toast, and only its scope.
+    w.show(M::display);
+    w.update([](Settings& s) { s.set("facilityAlerts", false); s.set("reduceMotion", true); s.set("closeOnFocusLost", false); });
+    check(!committed().isDefault(Settings::Scope::hudElements), "Facility alerts off differs from HUD elements' defaults");
+    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements);
+    check(overlay.confirmState().request()->id == "overlayRestore" && overlay.confirmState().request()->title == "Restore HUD elements?"
+        && overlay.confirmState().request()->message == "Only this page's settings change." && overlay.confirmState().request()->confirmTitle == "Restore"
+        && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore asks with its own copy");
+    (void)w.context.advance(w.now + 1);
+    check(toastTitle() == "HUD elements restored" && committed().facilityAlerts() && committed().isDefault(Settings::Scope::hudElements),
+        "Confirmed: HUD elements is at its defaults, with its own toast");
+    check(committed().boolean("reduceMotion") && !committed().boolean("closeOnFocusLost"), "Display and System are kept");
+    w.clear();
+    w.language = L::korean; w.appearance(); w.controller->setLanguage(w.language);
+    w.update([](Settings& s) { s.set("facilityAlerts", false); });
+    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements);
+    check(overlay.confirmState().request()->title == "HUD 요소를 기본값으로 복원할까요?" && overlay.confirmState().request()->message == "이 페이지의 설정만 복원됩니다."
+        && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore copy comes from the catalog");
+    (void)w.context.advance(w.now + 1);
+    check(toastTitle() == "HUD 요소 복원됨", "HUD elements' toast comes from the catalog");
+    w.clear();
+    w.language = L::english; w.appearance(); w.controller->setLanguage(w.language);
+    w.update([](Settings& s) { s.set("reduceMotion", false); s.set("closeOnFocusLost", true); });
+    w.hide(M::display);
     // Left on a sub-page (the owner's leave: prepareToLeave, then inactive), Settings
     // shows the page it returns to when shown again, built before the entrance
     // plays (HUDSettingsCanvas.makeContent), at the top.

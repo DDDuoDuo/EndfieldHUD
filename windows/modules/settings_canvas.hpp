@@ -91,6 +91,9 @@ public:
     bool capturingShortcut()const noexcept;
     void cancelCapture();
     std::string_view section()const noexcept;  // "main", "battery", "icons", "credits", "modules" (tests)
+    // Test hook: a scoped Restore's confirm, also for HUD elements before its
+    // page (and so its Restore row) is ported.
+    void confirmRestoreForTesting(ehud::data::SettingsScope scope){confirmRestore(scope);}
     // Keycap labels: CTRL, ALT, SHIFT, WIN, then the key (HUDSettingsCanvas.keycaps).
     static std::vector<std::string> keycaps(SettingsShortcut);
 
@@ -143,7 +146,14 @@ private:
     std::optional<std::string> currentStatus()const;
     void updateLayoutPrompt();
     void go(Section,bool forward);
-    void buildSystem(design::Page&);void openDisplayMenu(const design::Control&);void confirmRestore();
+    void buildSystem(design::Page&);void openDisplayMenu(const design::Control&);
+    // restoreCopy / restoreRow / confirmRestore (:243-291): what a scoped
+    // Restore row is called, what its confirm says it resets and keeps, and
+    // the toast after it (the English / Simplified pair the toast localizes).
+    struct RestoreCopy {std::string id,title,question,message;std::string_view toastEnglish,toastChinese;};
+    RestoreCopy restoreCopy(ehud::data::SettingsScope)const;
+    design::RowPlate& restoreRow(ehud::data::SettingsScope,design::Page&);
+    void confirmRestore(ehud::data::SettingsScope);
     std::string modulesCount()const;
     void buildModules(design::Page&);void renderModuleStates();void layoutModuleRows(const std::vector<std::string>&order,bool animated);
     void moveModule(const std::string&,int offset);void dragModule(const std::string&,design::DragGrip::Phase,design::Point);void confirmModulesReset();

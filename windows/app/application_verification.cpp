@@ -1130,9 +1130,15 @@ int Application::Impl::runHiddenVerification(){
                             const auto stopped=gameSession->snapshot().simulationTime;
                             tick(time+1.5);tick(time+1.7);
                             need(gameSession->manuallyPaused()&&!game->hasFrameTimer()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
-                            settingsUI->controller().restoreDefaults();need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
+                            // Display's Restore (the broadest scope) after a Display change: it saves at once and keeps the unscoped keys.
+                            auto&settingsController=settingsUI->controller();auto changed=settingsController.configuration();changed.set("dailyBootLog",!changed.dailyBootLog());
+                            settingsController.update(changed,time+1.7);need(!settingsController.isDefault(ehud::data::SettingsScope::display),"A Display change enables Display's Restore");
+                            const auto hotkey=settingsController.committed().fields["windowsSummonShortcut"];
+                            settingsController.restoreDefaults(ehud::data::SettingsScope::display);need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
                             const ehud::data::SettingsStore verified(args.dataRoot);
+                            need(settingsController.isDefault(ehud::data::SettingsScope::display)&&verified.value().isDefault(ehud::data::SettingsScope::display),"Display's Restore saves the Display defaults");
                             need(verified.value().fields["orbipom.bestScore.v1"].integer()==71&&gameSession->bestScore()==71,"Settings reset preserves saved game progress and the live session");
+                            need(verified.value().fields["windowsSummonShortcut"]==hotkey,"Settings reset leaves the hotkey alone");
                         }else need(gameSession->manuallyPaused()&&!game->hasFrameTimer(),"Returning to Minigame preserves manual pause");
                     }
                     if(module==core::Module::map&&map){

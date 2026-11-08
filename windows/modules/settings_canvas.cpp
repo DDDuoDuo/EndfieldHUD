@@ -346,10 +346,7 @@ void SettingsCanvas::buildSystem(d::Page& page) {
     modules.label = modulesTitle + ", " + modulesCount();
     binders_.push_back([this, &shown, &modules, modulesTitle] { shown.setTitle(modulesCount()); modules.label = modulesTitle + ", " + modulesCount(); });
     rows.push_back(&modules);
-    auto& restore = page.make<d::Button>("restore", text("Restore", "恢复"), d::Icon::reset, d::Button::Kind::secondary, d::Button::Height::compact);
-    restore.place({0, 0});
-    restore.onActivate = [this] { confirmRestore(); };
-    rows.push_back(&row("restore", text("Restore default settings", "恢复默认设置"), {&restore.layer()}, page, {}, {&restore}));
+    rows.push_back(&restoreRow(Settings::Scope::system, page));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"SYSTEM"}, "SYS-01", title("System", "系统设置"), d::format::pad2(std::int64_t(rows.size())), false);
 }
@@ -396,15 +393,44 @@ std::string SettingsCanvas::displaySelectionTitle() const {
     const auto name = stringOr(c, "windowsDisplayName");
     return (name.empty() ? text("Saved display", "已选显示器") : name) + text(" (disconnected)", "（未连接）");
 }
-// confirmRestore (:238-245).
-void SettingsCanvas::confirmRestore() {
+// MARK: Restore defaults (System, Display, Display > HUD elements, :243-291)
+SettingsCanvas::RestoreCopy SettingsCanvas::restoreCopy(Settings::Scope scope) const {
+    switch (scope) {
+    case Settings::Scope::system:
+        return {"restore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
+            text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept.", "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式。"),
+            "Settings restored", "已恢复默认设置"};
+    case Settings::Scope::display:
+        return {"displayRestore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
+            text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.", "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。"),
+            "Settings restored", "已恢复默认设置"};
+    case Settings::Scope::hudElements:
+        return {"overlayRestore", text("Restore defaults", "恢复默认"), text("Restore HUD elements?", "恢复界面元素默认设置？"),
+            text("Only this page's settings change.", "仅恢复本页设置。"), "HUD elements restored", "已恢复界面元素"};
+    }
+    return restoreCopy(Settings::Scope::system);
+}
+// The Restore row for `scope`: enabled while something it resets differs
+// from its default, and it asks before resetting.
+d::RowPlate& SettingsCanvas::restoreRow(Settings::Scope scope, d::Page& page) {
+    const auto copy = restoreCopy(scope);
+    auto& restore = page.make<d::Button>(copy.id, text("Restore", "恢复"), d::Icon::reset, d::Button::Kind::secondary, d::Button::Height::compact);
+    restore.place({0, 0});
+    restore.onActivate = [this, scope] { confirmRestore(scope); };
+    restore.setEnabled(!controller_->isDefault(scope));
+    binders_.push_back([this, &restore, scope] { restore.setEnabled(!controller_->isDefault(scope)); });
+    return row(copy.id, copy.title, {&restore.layer()}, page, {}, {&restore});
+}
+void SettingsCanvas::confirmRestore(Settings::Scope scope) {
+    const auto copy = restoreCopy(scope);
     d::ConfirmRequest request;
-    request.id = "restore"; request.title = text("Restore default settings?", "恢复默认设置？");
-    request.message = text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。");
+    request.id = copy.id; request.title = copy.question; request.message = copy.message;
     request.confirmTitle = text("Restore", "恢复"); request.icon = d::Icon::reset;
-    confirm(std::move(request), [this] {
-        controller_->restoreDefaults();
-        toast(d::Icon::reset, "Settings restored", "已恢复默认设置");
+    confirm(std::move(request), [this, scope, toastEnglish = copy.toastEnglish, toastChinese = copy.toastChinese] {
+        // A slider mid-drag must not show its old value.
+        if (scope == Settings::Scope::display) { stagedScale_.reset(); stagedX_.reset(); stagedY_.reset(); }
+        controller_->restoreDefaults(scope);
+        toast(d::Icon::reset, toastEnglish, toastChinese);
     });
 }
 
@@ -656,6 +682,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     }));
     rows.push_back(&toggleRow("bootLog", text("Daily boot log", "每日启动日志"), "dailyBootLog", page));
     rows.push_back(&toggleRow("facility", text("Facility alerts", "设施警报"), "facilityAlerts", page, [this](std::function<void()> commit) { confirmFacilityOff(std::move(commit)); }));
+    rows.push_back(&restoreRow(Settings::Scope::display, page));
     scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
     page.restoreOffset(scroll);
     header().configure({"DISPLAY"}, "SYS-02", title("Display", "显示"), d::format::pad2(std::int64_t(rows.size())), false);

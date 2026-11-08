@@ -68,13 +68,18 @@ bool SettingsController::positionPending()const noexcept{return preview_&&(previ
 bool SettingsController::confirmLayout(double time){finite(time);if(!preview_||!deadline_||time>=*deadline_){wake(time);return false;}auto candidate=committed_;applyLayout(candidate,*preview_);if(callbacks_.persist)callbacks_.persist(candidate);committed_=std::move(candidate);clearPreview();status_.clear();publish();return true;}
 void SettingsController::revertLayout(){if(!preview_)return;clearPreview();publish();}
 void SettingsController::wake(double time){finite(time);if(!deadline_)return;if(time>=*deadline_){const bool position=positionPending();clearPreview();status_=position?tr(language_,"UI layout restored","已恢复界面布局"):tr(language_,"UI scale restored","已恢复界面缩放");publish();}else if(confirmationRemaining(time)!=lastRemaining_){lastRemaining_=confirmationRemaining(time);publish();}}
-void SettingsController::applyPersistent(Settings candidate,bool shortcutApplied,bool forceShortcut){
+void SettingsController::applyPersistent(Settings candidate,bool shortcutApplied){
     status_.clear();const auto previous=committed_;const auto nextShortcut=settingsShortcut(candidate),oldShortcut=settingsShortcut(previous);
-    if(!shortcutApplied&&(forceShortcut||nextShortcut!=oldShortcut)){auto error=validateSettingsShortcut(nextShortcut,language_);if(!error)error=callbacks_.registerShortcut?callbacks_.registerShortcut(nextShortcut):std::optional(tr(language_,"Unavailable","不可用"));shortcutError_=error.value_or("");if(error){const auto&old=previous.fields["windowsSummonShortcut"];if(old.isNull())candidate.fields.erase("windowsSummonShortcut");else candidate.set("windowsSummonShortcut",old);status_=*error;}}else shortcutError_.clear();
+    if(!shortcutApplied&&nextShortcut!=oldShortcut){auto error=validateSettingsShortcut(nextShortcut,language_);if(!error)error=callbacks_.registerShortcut?callbacks_.registerShortcut(nextShortcut):std::optional(tr(language_,"Unavailable","不可用"));shortcutError_=error.value_or("");if(error){const auto&old=previous.fields["windowsSummonShortcut"];if(old.isNull())candidate.fields.erase("windowsSummonShortcut");else candidate.set("windowsSummonShortcut",old);status_=*error;}}else shortcutError_.clear();
     if(candidate.boolean("launchAtLogin")!=previous.boolean("launchAtLogin")){const auto error=callbacks_.launchAtLogin?callbacks_.launchAtLogin(candidate.boolean("launchAtLogin")):std::optional(tr(language_,"Unavailable","不可用"));if(error){candidate.set("launchAtLogin",previous.boolean("launchAtLogin"));status_=*error;}}
     candidate=normalize(std::move(candidate));if(candidate!=committed_&&callbacks_.persist)callbacks_.persist(candidate);committed_=std::move(candidate);publish();
 }
-void SettingsController::restoreDefaults(){clearPreview();endShortcutCapture();auto defaults=committed_.restoring(Settings::Scope::system).restoring(Settings::Scope::display);putShortcut(defaults,{});applyPersistent(std::move(defaults),false,true);}
+void SettingsController::restoreDefaults(Settings::Scope scope){
+    auto restored=committed_.restoring(scope);
+    if(layout(restored)!=layout(committed_)||layout(effective_.restoring(scope))!=layout(effective_))clearPreview();
+    applyPersistent(std::move(restored));
+}
+bool SettingsController::isDefault(Settings::Scope scope)const{return effective_.isDefault(scope);}
 void SettingsController::close(){revertLayout();endShortcutCapture();}
 std::optional<std::string>SettingsController::setShortcut(SettingsShortcut key){auto error=validateSettingsShortcut(key,language_);if(!error)error=callbacks_.registerShortcut?callbacks_.registerShortcut(key):std::optional(tr(language_,"Unavailable","不可用"));if(error){bounded(*error);shortcutError_=status_=*error;publish();return error;}auto candidate=effective_;putShortcut(candidate,key);applyLayout(candidate,layout(committed_));applyPersistent(std::move(candidate),true);return shortcutStatus().empty()?std::nullopt:std::optional(shortcutStatus());}
 void SettingsController::beginShortcutCapture(){if(capturing_)return;capturing_=true;shortcutError_.clear();if(callbacks_.shortcutCapture)callbacks_.shortcutCapture(true);publish();}
