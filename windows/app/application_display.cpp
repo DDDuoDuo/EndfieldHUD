@@ -216,7 +216,9 @@ bool Application::Impl::moduleInputAllowed() const {
         session->phase() == core::VisibilityPhase::visible &&
         !notes->modulePresentation().transitioning && !(designOverlay && designOverlay->capturesPointer());
 }
-bool Application::Impl::clockAcceptsInput() const { return moduleInputAllowed(); }
+// Mac fe3f046: the clock's controls (hover, press, wheel and its UI
+// Automation peers) take allowsInputBesidePlacement.
+bool Application::Impl::clockAcceptsInput() const { return allowsInputBesidePlacement(); }
 
 // --- Display > HUD elements ------------------------------------------------------
 const ehud::data::OverlayLayout& Application::Impl::shownOverlayLayout() const noexcept {

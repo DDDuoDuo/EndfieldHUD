@@ -2670,9 +2670,14 @@ int Application::Impl::runHiddenVerification(){
                     using G=core::OverlayGeometry;
                     selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     const auto saved=appliedOverlayLayout;
+                    const auto world=chrome->statusWorld();
+                    const auto viewProjection=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    std::optional<core::Point> clockBody;
+                    if(world)if(const auto p=core::Projection::viewport(viewProjection**world,metrics.pixelWidth,metrics.pixelHeight).project({170,50}))clockBody=core::Point{p->x/metrics.scale,p->y/metrics.scale};
+                    hostCheck(clockBody&&clockAcceptsInput(),"Before placing the clock takes input");
                     beginOverlayPlacement(time);for(unsigned frame=0;frame<30;++frame)present(time+double(frame)/60,true);time+=.6;
-                    hostCheck(placingOverlay()&&hudElements->strip()&&!allowsInputBesidePlacement()&&moduleInputAllowed(),
-                        "Edit position and size starts placing; the navigation waits, the HUD keeps its module input");
+                    hostCheck(placingOverlay()&&hudElements->strip()&&!allowsInputBesidePlacement()&&!clockAcceptsInput()&&moduleInputAllowed(),
+                        "Edit position and size starts placing; the clock and the navigation wait, the HUD keeps its module input");
                     hostCheck(registry.first(ModuleRegistry::Chain::pointerCapture,[](ModuleOwner&o,const ModuleRouting&){return o.capturesPointer();},"verify")==hudElements.get(),
                         "The placement captures the pointer ahead of every module");
                     // The top layer: after the pinned notes, before the areas' modal cards.
@@ -2680,10 +2685,11 @@ int Application::Impl::runHiddenVerification(){
                         for(std::size_t n=0;n<ordered.size();++n)for(const auto&e:top)if(ordered[n].scene==e.scene){first=std::min(first,n);last=std::max(last,n);}
                         std::size_t notesLast=0;if(notesModuleOwner)for(const auto&e:notesModuleOwner->floatingEntries())for(std::size_t n=0;n<ordered.size();++n)if(ordered[n].scene==e.scene)notesLast=std::max(notesLast,n);
                         hostCheck(!top.empty()&&first<ordered.size()&&first>=notesLast&&last+1>=first,"The strip and its marks draw on the top layer, above the pinned notes");}
+                    if(clockBody)hostCheck(!clockPress({PointerKind::down,PointerButton::left,clockBody->x,clockBody->y},time),"The clock refuses its press while placing");
                     {std::vector<HudButtonPeer> peers;navigationPeers(peers);
                         hostCheck(!peers.empty()&&std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return navigationPress(peer);}),"The module, Quit and scroll buttons are refused while placing");}
-                    {HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
-                        hostCheck(hudElements->automationCount()==5,"The strip lists three sliders and two pills");
+                    if(clockAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                        hostCheck(clockAutomation->automationCount()==0&&hudElements->automationCount()==5,"The clock's peers are withdrawn; the strip lists three sliders and two pills");
                         uia.disconnectOwners();uia.shutdown();}
                     // A drag of the gauge from where it is drawn.
                     const auto frames=hudElements->frames();const auto gauge=frames[G::index(G::Element::sanity)];
@@ -2703,7 +2709,7 @@ int Application::Impl::runHiddenVerification(){
                         hostCheck(over&&cursorAt(*over)==ModuleCursor::source,"The normal cursor shows over the strip");}
                     hostCheck(onKey({KeyKind::down,VK_ESCAPE})&&!placingOverlay()&&appliedOverlayLayout==saved&&shownOverlayLayout()==saved,"Esc drops the draft");
                     for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=.3;
-                    hostCheck(allowsInputBesidePlacement(),"After Cancel the navigation takes input again");
+                    hostCheck(clockAcceptsInput()&&allowsInputBesidePlacement(),"After Cancel the clock and the navigation take input again");
                     // Return saves every placement as drawn, in one settings write.
                     beginOverlayPlacement(time);present(time,true);time+=.1;
                     const auto title=hudElements->frames()[G::index(G::Element::title)];

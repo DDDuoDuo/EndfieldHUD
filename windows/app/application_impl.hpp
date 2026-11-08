@@ -520,7 +520,8 @@ struct Application::Impl {
     void deactivateDisplayPanels();
     std::optional<core::Point> clockPoint(core::Point client) const;
     // SystemHUDView.allowsModuleInput for the chrome controls and the HUD
-    // elements editor.
+    // elements editor; clockAcceptsInput is allowsInputBesidePlacement (Mac
+    // fe3f046: the clock's controls and input wait while placing).
     bool moduleInputAllowed() const;
     bool clockAcceptsInput() const;
     void setClockHovered(bool);
