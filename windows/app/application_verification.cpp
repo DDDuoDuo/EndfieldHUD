@@ -2799,6 +2799,80 @@ int Application::Impl::runHiddenVerification(){
                     hostCheck(chromeContent.title.origin.x>270&&std::abs(chromeContent.title.origin.x-(270+moved.value_or(saved).title.x))<1e-6,"The title is drawn at its saved place");
                     auto restore=settingsUI->controller().committed();restore.setOverlayLayout(saved,graphemes);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                 }
+                // Display > Modules > Arrange on HUD (SystemHUDView module
+                // arrangement, S2): the open hand over a module tile and the
+                // closed hand from the press, before the lift; the lift past 3
+                // points, held under the pointer and drawn above the others; Esc
+                // dropping it back with no write and swallowing the release; a
+                // drag onto another tile saving once in the order of the release
+                // slot; the wheel during a drag keeping the preview on the slot
+                // under the pointer; Add App doing nothing; closing mid-drag
+                // snapping with no write.
+                if(chrome&&settingsUI&&session){
+                    selectModule(core::Module::display,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    // Display > Modules (the page swap runs on the design deadlines), then
+                    // the Arrange on HUD switch (the canvas tells the HUD).
+                    const auto settle=[&](double seconds){for(unsigned frame=0;frame<unsigned(seconds*60);++frame){const double t=time+double(frame)/60;
+                        if(const auto wake=designOverlay?designOverlay->nextWakeTime(t):std::nullopt;wake&&*wake<=t)onDeadline(t);present(t,true);}time+=seconds+.05;};
+                    auto&arrangePage=settingsUI->canvas(core::Module::display);
+                    const bool opened=arrangePage.performAccessibilityAction("modules",time);settle(1);
+                    const bool switched=arrangePage.performAccessibilityAction("modulesArrange",time);settle(.2);
+                    struct Tile{std::string module;std::uint64_t action{};core::Point centre;};
+                    const auto tilesNow=[&]{std::vector<Tile> tiles;std::optional<core::Point> addApp;
+                        for(const auto&[id,action]:session->actions()){if(!session->rowAction(id))continue;const auto*entry=navigationEntry(action);if(!entry)continue;
+                            const std::array<std::string,1> ids{id};const auto frame=session->buttonFrame(ids);if(!frame)continue;const core::Point centre{frame->x+frame->width/2,frame->y+frame->height/2};
+                            if(entry->module&&entry->target=="addApp")addApp=centre;
+                            else if(entry->module&&ehud::data::ModuleLayout::listsTarget(entry->target))tiles.push_back({entry->target,action,centre});}
+                        std::sort(tiles.begin(),tiles.end(),[](const Tile&a,const Tile&b){return a.centre.y<b.centre.y||(a.centre.y==b.centre.y&&a.centre.x<b.centre.x);});
+                        return std::pair{tiles,addApp};};
+                    const auto [tiles,addApp]=tilesNow();
+                    hostCheck(opened&&switched&&arrangingModules&&arrangePage.arrangingModules()&&tiles.size()>=3,"Display > Modules > Arrange on HUD turns arranging on; the module tiles are listed on the right");
+                    if(tiles.size()>=3){
+                        // The host reads its own clock; `at` names the moment for the reader.
+                        const auto pointer=[&](PointerKind kind,core::Point p,double at){(void)at;return onPointer({kind,kind==PointerKind::move?PointerButton::none:PointerButton::left,p.x,p.y,kind==PointerKind::move?std::uint32_t(MK_LBUTTON):0u});};
+                        const auto&a=tiles[0];const auto&b=tiles[2];const auto saved=configuration.moduleLayout();
+                        hostCheck(arrangeableModule(a.centre)==std::optional<std::string_view>(a.module)&&cursorAt(a.centre)==ModuleCursor::openHand,"The open hand shows over a module tile");
+                        {std::vector<HudButtonPeer> peers;navigationPeers(peers);const auto drag=core::localized("Drag to reorder","拖动以调整顺序",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language);
+                            hostCheck(std::any_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag;})&&
+                                std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag&&navigationPress(peer);}),"The module tiles say they are dragged, and a press through UI Automation opens nothing");}
+                        // Press, then Esc: dropped back, no write, the release swallowed.
+                        const auto revision=settingsUI->controller().revision();
+                        hostCheck(pointer(PointerKind::down,a.centre,time)&&arrangeDrag&&!arrangeDrag->lifted&&cursorAt({5,5})==ModuleCursor::closedHand&&!session->navigationPointerActive(),
+                            "The closed hand shows from the press, before the lift, wherever the pointer is; the press starts no list drag");
+                        (void)pointer(PointerKind::move,{a.centre.x,a.centre.y+2},time);hostCheck(arrangeDrag&&!arrangeDrag->lifted&&!session->arrangeLifted(),"Within 3 points nothing lifts");
+                        (void)pointer(PointerKind::move,{a.centre.x,a.centre.y+12},time);present(time+.02,true);
+                        hostCheck(arrangeDrag&&arrangeDrag->lifted&&session->arrangeLifted()==a.action&&pointerLocked()&&session->raisedButton().has_value(),"Past 3 points the tile lifts under the pointer, above the others, the parallax held");
+                        hostCheck(onKey({KeyKind::down,VK_ESCAPE})&&!arrangeDrag&&swallowsArrangePress&&configuration.moduleLayout()==saved&&settingsUI->controller().revision()==revision,"Esc drops the tile back in its saved place and writes nothing");
+                        hostCheck(pointer(PointerKind::move,b.centre,time)&&!arrangeDrag&&pointer(PointerKind::up,b.centre,time)&&!swallowsArrangePress&&settingsUI->controller().revision()==revision,"The rest of that press does nothing");
+                        for(unsigned frame=0;frame<20;++frame)present(time+.1+double(frame)/60,true);time+=.5;
+                        // A drag onto the third tile: the preview follows, the release saves once.
+                        (void)pointer(PointerKind::down,a.centre,time);
+                        for(unsigned n=1;n<=10;++n){const double f=n/10.;(void)pointer(PointerKind::move,{a.centre.x+(b.centre.x-a.centre.x)*f,a.centre.y+(b.centre.y-a.centre.y)*f},time+n*.02);present(time+n*.02,true);}
+                        const auto preview=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
+                        hostCheck(preview&&preview->order!=saved.order&&std::find(preview->order.begin(),preview->order.end(),a.module)-preview->order.begin()==std::find(saved.order.begin(),saved.order.end(),b.module)-saved.order.begin(),
+                            "Over another module the dragged module takes its place in the preview");
+                        {const auto wheelRevision=settingsUI->controller().revision();(void)onWheel({b.centre.x,b.centre.y,-1,false,0,3});for(unsigned frame=0;frame<30;++frame)present(time+.3+double(frame)/60,true);
+                            hostCheck(arrangeDrag&&arrangeDrag->lifted&&!arrangeDrag->preview.arranging(arrangeDrag->module,rightRowTarget(b.centre))&&settingsUI->controller().revision()==wheelRevision,
+                                "A wheel turned during the drag leaves the preview on the slot under the pointer, unsaved");}
+                        time+=1;const auto shown=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
+                        hostCheck(pointer(PointerKind::up,b.centre,time)&&!arrangeDrag&&shown&&configuration.moduleLayout().order==shown->order&&settingsUI->controller().revision()==revision+1,"The release saves the order of the release slot once");
+                        for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.5;
+                        hostCheck(!session->arrangeActive()&&moduleLayout==configuration.moduleLayout(),"The tile settles into its slot and the saved order applies");
+                        // Add App does nothing; closing mid-drag snaps.
+                        if(addApp)hostCheck(pointer(PointerKind::down,*addApp,time)&&!arrangeDrag&&pointer(PointerKind::up,*addApp,time)&&notes&&notes->selected()==core::Module::display,"A press on Add App opens nothing while arranging");
+                        const auto [again,unused]=tilesNow();(void)unused;
+                        if(!again.empty()){const auto&c=again.front();const auto before=settingsUI->controller().revision();
+                            (void)pointer(PointerKind::down,c.centre,time);(void)pointer(PointerKind::move,{c.centre.x,c.centre.y+20},time);present(time+.02,true);
+                            close(time+.05);
+                            hostCheck(!arrangeDrag&&!session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,"Closing mid-drag snaps every tile, writes nothing and ends arranging");
+                            for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+.1+double(f)/60,true);
+                            time+=1.6;concealed(time);time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
+                        // The order changed above goes back.
+                        auto restore=settingsUI->controller().committed();restore.setModuleLayout(saved);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
+                    }
+                    if(arrangingModules)(void)arrangePage.performAccessibilityAction("modulesArrange",time);
+                    hostCheck(!arrangingModules,"Arrange on HUD is off at the end");
+                }
                 // The clock section scrolls with a Windows mouse wheel too (the Mac
                 // reads the horizontal swipe), and a style change pushes the inner
                 // clipped page (HUDClockPageViewport.transition: 0.26 s,
