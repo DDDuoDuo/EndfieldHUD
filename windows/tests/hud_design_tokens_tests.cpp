@@ -609,6 +609,15 @@ void oracle(const char* path) {
         for (const auto& [name, value] : durations)
             check(tokens["durations"][name].isNumber() && near(tokens["durations"][name].number(), value, 1e-9), std::string("Oracle duration ") + name);
     }
+    // HUDRenderScale.contentScale for HUDLayer, HUDTextLayer and CATextLayer
+    // as the Mac exports them: magnification 1 is the Mac table, both overloads.
+    check(tokens["renderScale"].isArray() && !tokens["renderScale"].array().empty(), "Oracle render scale rows");
+    for (const auto& v : tokens["renderScale"].array()) {
+        const double base = v["base"].isString() && v["base"].string() == "inf" ? std::numeric_limits<double>::infinity() : v["base"].number();
+        const auto name = "Oracle render scale at " + (v["base"].isString() ? v["base"].string() : std::to_string(base));
+        check(d::layerContentsScale(base, 1) == v["layer"].number() && d::layerContentsScale(base) == v["layer"].number(), name + ": layer");
+        check(d::textContentsScale(base, 1) == v["designText"].number() && d::textContentsScale(base) == v["designText"].number() && v["caText"].number() == v["designText"].number(), name + ": text");
+    }
     if (tokens["styles"].isObject()) {
         d::Palette p;
         const std::pair<const char*, d::TextStyle> styles[]{{"moduleTitle", d::type::moduleTitle(p)}, {"rowLabel", d::type::rowLabel()}, {"numeral", d::type::numeral(p)}, {"microTag", d::type::microTag()},
