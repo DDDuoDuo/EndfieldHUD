@@ -1786,7 +1786,7 @@ void Application::Impl::constructTray(){
 // Rebuilt only on the preference, a theme setting change or the first start.
 bool Application::Impl::loadTrayIcon(){
     if(trayIcons.empty())return false;
-    const auto chosen=configuration.string("applicationIcon");
+    const auto chosen=configuration.applicationIcon();
     auto icon=std::find_if(trayIcons.begin(),trayIcons.end(),[&](const auto&i){return i.id==chosen;});
     if(icon==trayIcons.end())icon=std::find_if(trayIcons.begin(),trayIcons.end(),[](const auto&i){return i.id=="endfield";});
     DWORD light=0,size=sizeof(light);

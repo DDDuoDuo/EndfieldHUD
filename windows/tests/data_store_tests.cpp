@@ -477,6 +477,27 @@ void settingsVersion131() {
     writeSettings(Json::Object{{"showsCloseHint", "no"}});
     rejects([&] { SettingsStore invalid(root.path); }, "A non-Boolean close hint is invalid, like the other 1.3.0 switches");
     overlayLayout131(writeSettings, root.path);
+    // applicationIcon: a saved "battery" reads as the watch, loads unchanged
+    // and is stored as "watch" by the next save of any key.
+    {
+        Settings value = Settings::defaults();
+        check(value.applicationIcon() == "endfield", "The default app icon");
+        value.set("applicationIcon", "battery");check(value.applicationIcon() == "watch", "The retired battery icon reads as the watch");
+        value.set("applicationIcon", "babel");check(value.applicationIcon() == "babel", "Other icons read as saved");
+        value.fields.erase("applicationIcon");check(value.applicationIcon() == "endfield", "A missing icon reads as Endfield");
+    }
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().applicationIcon() == "watch" && store.value().string("applicationIcon") == "battery" &&
+              settingsFile(root.path)["settings"]["applicationIcon"] == Json("battery"), "Loading reads the watch and rewrites nothing");
+        check(!store.update(store.value()), "An update that changes nothing keeps \"battery\" on disk");
+        auto next = store.value();next.set("closeOnFocusLost", false);
+        check(store.update(next) && settingsFile(root.path)["settings"]["applicationIcon"] == Json("watch") && store.value().string("applicationIcon") == "watch",
+              "The next update of any key stores \"watch\" in the file and in the store's value");
+        const SettingsStore reloaded(root.path);
+        check(reloaded.value().string("applicationIcon") == "watch" && !reloaded.value().boolean("closeOnFocusLost"), "The watch reloads");
+    }
 }
 }
 

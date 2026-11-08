@@ -217,6 +217,9 @@ std::optional<double> barLength(const Json& value) {return value.isNumber()?barL
 // setting (never on load): chargeBarLength normalized, or removed when nil.
 // Both the file and the store's value hold the result.
 Settings saved(Settings value) {
+    // ConfigurationStore.update writes applicationIcon's raw value, so a
+    // retired "battery" read as the watch is stored as "watch".
+    if(std::as_const(value.fields)["applicationIcon"]==Json("battery")) value.set("applicationIcon",value.applicationIcon());
     if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
     // HUDOverlayLayout.save: written normalized, removed at the defaults (an
     // undecodable layout read as the defaults, so it is removed too).
@@ -275,6 +278,11 @@ bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);
 bool Settings::dailyBootLog() const {return flag(fields,"dailyBootLog",true);}
 bool Settings::facilityAlerts() const {return flag(fields,"facilityAlerts",true);}
 bool Settings::showsCloseHint() const {return flag(fields,"showsCloseHint",true);}
+std::string Settings::applicationIcon() const {
+    const auto& value=fields["applicationIcon"];
+    if(!value.isString()) return "endfield";
+    return value.string()=="battery"?"watch":value.string();
+}
 std::optional<double> Settings::chargeBarLength() const {return barLength(fields["chargeBarLength"]);}
 void Settings::setChargeBarLength(std::optional<double> value) {
     // An unchanged length keeps its saved token (the profile's number rule).

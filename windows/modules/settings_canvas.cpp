@@ -214,7 +214,7 @@ void SettingsCanvas::resetSession() {
 
 SettingsCanvas::Structure SettingsCanvas::structure() const {
     const bool about = module() == core::Module::about;
-    return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), stringOr(config(), "applicationIcon"),
+    return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), config().applicationIcon(),
         stringOr(config(), "accentHex"), about ? controller_->updateStatus().phase : SettingsUpdatePhase::idle,
         about ? controller_->updateStatus().latestVersion : std::string()};
 }
@@ -828,7 +828,7 @@ void SettingsCanvas::buildIcons(d::Page& page) {
     constexpr double gap = 10;
     const double size = (d::metric::boxWidth - 10 - double(columns - 1) * gap) / columns;
     auto& scroll = page.scrollArea("icons", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
-    const auto selected = stringOr(config(), "applicationIcon");
+    const auto selected = config().applicationIcon();
     for (std::size_t index = 0; index < icons.size(); ++index) {
         const auto& icon = icons[index];
         auto& tile = page.make<SettingsIconTile>("appIcon:" + icon.id, icon, iconTitle(icon.id, icon.title), d::Size{size, 96});

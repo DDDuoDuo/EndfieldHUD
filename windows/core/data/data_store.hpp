@@ -178,6 +178,11 @@ struct Settings {
     std::optional<double> chargeBarLength() const;
     void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
     bool showsCloseHint() const;
+    // HUDApplicationIcon(savedValue:): 1.3.0's retired "battery" icon reads as
+    // "watch" (loading rewrites nothing; the next save of any setting stores
+    // "watch"); absent or not a string reads as "endfield". Any other name is
+    // returned as saved: the icon roster lives with the resources.
+    std::string applicationIcon() const;
     // The decoded and normalized layout (the defaults when absent or invalid).
     OverlayLayout overlayLayout(const CharacterPrefix& prefix = {}) const;
     void setOverlayLayout(const OverlayLayout&, const CharacterPrefix& prefix = {}); // normalized; removed at the defaults
