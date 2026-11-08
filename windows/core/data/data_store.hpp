@@ -210,12 +210,25 @@ public:
     // Defaults cannot repeat first-run onboarding.
     bool hasLaunched() const noexcept { return launched_; }
     bool markLaunched(); // false when already marked; no write
+    // Two more Mac defaults keys outside AppConfiguration, kept in the envelope
+    // the same way: no Restore touches them and saving one changes no setting.
+    // "hudLastOpenedModule" (HUDOverlayLayout.lastModuleKey): the module the
+    // HUD last opened on, map when missing or not a module. A save writes only
+    // when the saved string differs (false: no write) and refuses a name that
+    // is not a module; diagnostic and test runs keep it in memory instead.
+    std::string lastOpenedModule() const;
+    bool saveLastOpenedModule(std::string_view module);
+    // "hudOverlaySanityMigrated" (ConfigurationStore.sanityMigrationKey): set
+    // once by the hidden-Sanity migration; any saved value counts as set.
+    bool sanityMigrated() const noexcept;
+    bool markSanityMigrated(); // false when already set; no write
 private:
     std::filesystem::path path_;
     Settings value_;
     Json envelope_{Json::Object{}};
     std::optional<std::string> persisted_;
     bool launched_{};
+    void write(Json envelope, const Settings& value); // version + record + the keys beside it
 };
 
 struct Profile {

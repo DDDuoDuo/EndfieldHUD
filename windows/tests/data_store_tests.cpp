@@ -498,6 +498,31 @@ void settingsVersion131() {
         const SettingsStore reloaded(root.path);
         check(reloaded.value().string("applicationIcon") == "watch" && !reloaded.value().boolean("closeOnFocusLost"), "The watch reloads");
     }
+    // hudLastOpenedModule and hudOverlaySanityMigrated live beside the record
+    // (like hasLaunched): saving them changes no setting.
+    writeSettings(Json::Object{{"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        const auto record = store.value();
+        check(store.lastOpenedModule() == "map" && !store.sanityMigrated(), "The first open shows Map; the migration has not run");
+        check(store.saveLastOpenedModule("calendar") && !store.saveLastOpenedModule("calendar") && store.lastOpenedModule() == "calendar" &&
+              store.value() == record, "The last module is written only when it changes, beside the record");
+        check(store.saveLastOpenedModule("addApp") && store.saveLastOpenedModule("hotkeys"), "Any module can be the last one");
+        rejects([&] { store.saveLastOpenedModule("teleporter"); }, "A name that is not a module is refused");
+        check(store.markSanityMigrated() && !store.markSanityMigrated() && store.sanityMigrated() && store.value() == record, "The migration flag is set once");
+        const auto file = settingsFile(root.path);
+        check(file["hudLastOpenedModule"] == Json("hotkeys") && file["hudOverlaySanityMigrated"] == Json(true) && !file["settings"].contains("hudLastOpenedModule") &&
+              !file["settings"].contains("hudOverlaySanityMigrated") && file["settings"]["theme"] == Json("light"), "Both keys sit in the envelope, outside the record");
+        auto next = store.value();next.set("theme", "dark");check(store.update(next), "A settings save");
+        const SettingsStore reloaded(root.path);
+        check(reloaded.lastOpenedModule() == "hotkeys" && reloaded.sanityMigrated() && reloaded.value().string("theme") == "dark", "A settings save keeps both keys");
+    }
+    for (const auto& stored : {Json("teleporter"), Json(4), Json(nullptr)}) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", Json::Object{}}, {"hudLastOpenedModule", stored}, {"hudOverlaySanityMigrated", "yes"}}).encode();
+        std::ofstream(root.path / "settings.json", std::ios::binary | std::ios::trunc).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        SettingsStore store(root.path);
+        check(store.lastOpenedModule() == "map" && store.sanityMigrated() && store.saveLastOpenedModule("map"), "An unknown last module reads as Map and saving Map replaces it; any migration value counts");
+    }
 }
 }
 

@@ -459,10 +459,29 @@ SettingsStore::SettingsStore(const std::filesystem::path& root) {
         } catch(const StoreError&) {throw;} catch(const std::exception&) {throw StoreError(StoreErrorCode::invalid,"Saved settings are invalid; the original was preserved");}
     }
 }
+void SettingsStore::write(Json envelope,const Settings& value) {
+    envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
+    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;
+}
 bool SettingsStore::markLaunched() {
     if(launched_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value_);envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
-    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;launched_=true;return true;
+    auto envelope=envelope_;envelope["hasLaunched"]=true;write(std::move(envelope),value_);launched_=true;return true;
+}
+std::string SettingsStore::lastOpenedModule() const {
+    const auto& stored=envelope_["hudLastOpenedModule"];
+    return stored.isString()&&ModuleLayout::isModule(stored.string())?stored.string():std::string("map");
+}
+bool SettingsStore::saveLastOpenedModule(std::string_view module) {
+    require(ModuleLayout::isModule(module),"Unknown HUD module");
+    if(const auto& stored=std::as_const(envelope_)["hudLastOpenedModule"];stored.isString()&&stored.string()==module) return false;
+    auto envelope=envelope_;envelope["hudLastOpenedModule"]=std::string(module);write(std::move(envelope),value_);return true;
+}
+bool SettingsStore::sanityMigrated() const noexcept {
+    return envelope_.contains("hudOverlaySanityMigrated")&&!envelope_["hudOverlaySanityMigrated"].isNull();
+}
+bool SettingsStore::markSanityMigrated() {
+    if(sanityMigrated()) return false;
+    auto envelope=envelope_;envelope["hudOverlaySanityMigrated"]=true;write(std::move(envelope),value_);return true;
 }
 bool SettingsStore::update(const Settings& next) {
     // Unchanged compares as the Mac does (normalized against normalized), so a
@@ -470,8 +489,7 @@ bool SettingsStore::update(const Settings& next) {
     // update that changes nothing.
     const auto value=saved(next);
     validateSettings(value);if(value==saved(value_) && persisted_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
-    detail::replaceFile(path_,persisted_,bytes,jsonLimit);value_=value;envelope_=std::move(envelope);persisted_=bytes;return true;
+    write(envelope_,value);value_=value;return true;
 }
 Profile Profile::defaults() {
     Profile value;value.awakeningDate=foundationNow();std::random_device random;
