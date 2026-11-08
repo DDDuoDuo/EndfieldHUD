@@ -321,7 +321,12 @@ void Application::Impl::finishConcealment(double time,bool inRequest){
     if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
     if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
         const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
-        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt)){projectionCommand(*command,now());return;}
+        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt)){
+            // tearDownSystemPresentation's lastSystemModule didSet: the hand-off
+            // saves the module left (Projection) before Projection takes over.
+            core::SystemOverlayEffects remembered;
+            for(const auto&e:closed)if(e.kind==core::SystemOverlayEffect::Kind::rememberModule)remembered.push(e);
+            perform(remembered,time);projectionCommand(*command,now());return;}
         // No display left: the hand-off ended (OverlayController.cancelProjection),
         // no Projection is active any more and the close completes as any other.
         setProjectionActive(false,time);

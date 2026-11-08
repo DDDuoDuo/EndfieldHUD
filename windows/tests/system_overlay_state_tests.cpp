@@ -349,6 +349,13 @@ void openOn() {
         next = cycle(life, life.toggle());
         save(next.second);
         check(next.first == core::Module::calendar && store == "calendar" && writes == 2, "The chosen module shown is the one last opened");
+        // Projection's hand-off closes the HUD on Projection: that close saves
+        // "projection" (finishConcealment performs it before Projection shows).
+        (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(core::Module::projection);
+        (void)life.close();
+        const auto handoff = life.didClose(life.generation());
+        check(handoff.size() == 1 && handoff[0].kind == K::rememberModule && handoff[0].module == core::Module::projection,
+              "Handing the HUD off to Projection saves Projection as the module left");
         // Forced closes and a quit save the module first, then terminate.
         (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(core::Module::eventLog);
         const auto forced = life.forceClose();
