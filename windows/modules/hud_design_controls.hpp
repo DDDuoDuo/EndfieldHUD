@@ -342,13 +342,24 @@ private:
     Builder* builder_; Layer *layer_, *shadow_, *body_, *arrow_, *text_; bool visible_{};
 };
 
+// HUDMenuAnchor: a control that shows while the menu it opened is open (the
+// dropdown's caret, the App Shortcut icon tile's chooser badge);
+// Canvas::openMenu / closeMenu set it on whichever anchor opened the menu.
+class MenuAnchor {
+public:
+    virtual bool isOpen() const noexcept = 0;
+    virtual void setOpen(bool) = 0;
+protected:
+    ~MenuAnchor() = default;
+};
+
 // HUDDropdown (LIB-51): regular 178 x 30 (or width), small 26 tall and
 // max(96, 12 + text + 14 + 9 + 10) wide; value ellipsised at x 12 (w - 45);
 // accent bar 2 x h scaleY 0 -> 1 (.14 E) on hover or open; caret 9 x 6 at
 // w - 14.5, open rotates 180 deg, hover moves 2 px down (.16 E); optional
 // value language; setArtwork replaces the value text with an aspect-fit
 // image (the icon-grid choosers), the text stays the spoken value.
-class Dropdown final : public Control {
+class Dropdown final : public Control, public MenuAnchor {
 public:
     enum class Height : std::uint8_t { regular, compact }; // Mac .small (`small` is a Windows macro, rpcndr.h)
     Dropdown(Builder&, std::string id, std::string label, std::string value, std::optional<TextRegion> valueLanguage = {},
@@ -356,8 +367,14 @@ public:
     const std::string& valueText() const noexcept { return value_; }
     void setValue(std::string, std::optional<TextRegion> language = {});
     void setArtwork(std::optional<ImageSource>, Size imageSize, double height);
-    bool isOpen() const noexcept { return open_; }
-    void setOpen(bool);
+    bool isOpen() const noexcept override { return open_; }
+    void setOpen(bool) override;
+    // HUDDropdown.caretLayer: the yellow chooser caret, `size` wide and tall,
+    // centred on `position` (animatable: it turns and nudges).
+    static Layer& caretLayer(Builder&, std::string_view id, Size size, Point position);
+    // HUDDropdown.renderCaret: the caret turns over while the menu is open
+    // and nudges 2 px toward the field's bottom on hover.
+    static void renderCaret(Layer& caret, bool open, bool hovered, const motion::Clock&);
     void hoverChanged() override;
     void enabledChanged() override;
     std::optional<AccessibilityRole> accessibilityRole() const override { return AccessibilityRole::popUp; }

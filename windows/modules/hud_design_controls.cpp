@@ -937,11 +937,7 @@ Dropdown::Dropdown(Builder& b, std::string id, std::string text, std::string val
     setBackground(*bar_, p.accentInk());
     bar_->setValue(Channel::scaleY, 0);
     text_ = &makeText(b, sub(this->id(), "dropdown.value"), "", style, {});
-    caret_ = &b.layer(sub(this->id(), "dropdown.caret"));
-    caret_->setAnimatable();
-    caret_->setBounds({9, 6});
-    caret_->setPosition({fieldWidth - 10 - 4.5, h / 2});
-    setPath(*caret_, triangleDown(9, 6), p.accentInk());
+    caret_ = &caretLayer(b, sub(this->id(), "dropdown.caret"), {9, 6}, {fieldWidth - 10 - 4.5, h / 2});
     l.add(*bar_); l.add(*text_); l.add(*caret_);
     setValue(std::move(value), valueLanguage);
     setTarget(localBounds(l));
@@ -966,15 +962,27 @@ void Dropdown::setArtwork(std::optional<ImageSource> source, Size imageSize, dou
     text_->setHidden(source.has_value());
 }
 void Dropdown::setOpen(bool open) { if (open != open_) { open_ = open; renderState(); } }
-// renderState (:88-95). The caret's transform is R(open ? pi : 0) then a 2 px
-// move toward the field's bottom while hovered (T(0, -2) in the rotated frame
-// when open is the same +2 px in the field): rotation and translateY channels.
+// renderState (:88-95).
 void Dropdown::renderState() {
     const bool hover = hovered() && enabled(), engaged = open_ || hover;
     const auto c = clock();
     motion::animate(*bar_, Channel::scaleY, engaged ? 1 : 0, duration::accentBar, c);
-    motion::animate(*caret_, Channel::rotation, open_ ? pi : 0, duration::caret, c);
-    motion::animate(*caret_, Channel::translateY, hover ? 2 : 0, duration::caret, c);
+    renderCaret(*caret_, open_, hover, c);
+}
+Layer& Dropdown::caretLayer(Builder& b, std::string_view id, Size size, Point position) {
+    Layer& caret = b.layer(id);
+    caret.setAnimatable();
+    caret.setBounds(size);
+    caret.setPosition(position);
+    setPath(caret, triangleDown(size.width, size.height), b.env.palette.accentInk());
+    return caret;
+}
+// The caret's transform is R(open ? pi : 0) then a 2 px move toward the
+// field's bottom while hovered (T(0, -2) in the rotated frame when open is
+// the same +2 px in the field): rotation and translateY channels.
+void Dropdown::renderCaret(Layer& caret, bool open, bool hovered, const motion::Clock& c) {
+    motion::animate(caret, Channel::rotation, open ? pi : 0, duration::caret, c);
+    motion::animate(caret, Channel::translateY, hovered ? 2 : 0, duration::caret, c);
 }
 void Dropdown::hoverChanged() { renderState(); }
 void Dropdown::enabledChanged() { layer().setValue(Channel::opacity, enabled() ? 1 : .35); }

@@ -552,6 +552,16 @@ void menus() {
     check(model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1 && model(caret, Channel::translateY) == 2 && near(caret.tracks().property[std::size_t(Channel::translateY)].duration, .16), "Hover: bar, caret 2 px down");
     w.move(std::nullopt); dropdown.setOpen(true);
     check(near(model(caret, Channel::rotation), 3.14159265358979323846) && model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1, "Open: caret turned, bar kept");
+    // The shared caret (Mac 345340f): any MenuAnchor shows its menu open; caretLayer / renderCaret draw and move it.
+    check(dynamic_cast<d::MenuAnchor*>(&dropdown) && dynamic_cast<d::MenuAnchor&>(dropdown).isOpen(), "The dropdown is a menu anchor");
+    auto& chip = d::Dropdown::caretLayer(w.b, "chip.caret", {8, 5}, {7.5, 7.5});
+    w.host(chip);
+    check(chip.bounds() == d::Size{8, 5} && chip.position() == Point{7.5, 7.5} && near(*shapeFill(chip), w.env.palette.accentInk()), "caretLayer: the yellow caret at its size and centre");
+    d::Dropdown::renderCaret(chip, true, true, w.env.clock());
+    check(near(model(chip, Channel::rotation), 3.14159265358979323846) && model(chip, Channel::translateY) == 2 && near(chip.tracks().property[std::size_t(Channel::rotation)].duration, .16),
+        "renderCaret: turned while open, nudged 2 px on hover (.16 E)");
+    d::Dropdown::renderCaret(chip, false, false, w.env.clock());
+    check(model(chip, Channel::rotation) == 0 && model(chip, Channel::translateY) == 0, "renderCaret: at rest when closed and not hovered");
     const auto popUp = items(dropdown, w.root);
     check(popUp.size() == 1 && popUp[0].role == d::AccessibilityRole::popUp && popUp[0].value == "简体中文", "popUp with the value");
     auto& small = w.b.make<d::Dropdown>("small", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::compact);

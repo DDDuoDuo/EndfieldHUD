@@ -443,7 +443,7 @@ Menu& Canvas::openMenu(std::string id, std::vector<Menu::Item> items, Rect ancho
     menuAnchor_.reset();
     if (anchor) {
         menuAnchor_ = anchor->id();
-        if (auto* dropdown = dynamic_cast<Dropdown*>(findControl(anchor->id()))) dropdown->setOpen(true);
+        if (auto* shown = dynamic_cast<MenuAnchor*>(findControl(anchor->id()))) shown->setOpen(true);
     }
     menu_->playEntrance(env().clock());
     ++structure_;
@@ -454,7 +454,7 @@ Menu& Canvas::openMenu(std::string id, std::vector<Menu::Item> items, Rect ancho
 void Canvas::closeMenu() {
     if (!menu_) return;
     std::shared_ptr<Menu> menu(std::move(menu_));
-    if (menuAnchor_) if (auto* dropdown = dynamic_cast<Dropdown*>(findControl(*menuAnchor_))) dropdown->setOpen(false);
+    if (menuAnchor_) if (auto* shown = dynamic_cast<MenuAnchor*>(findControl(*menuAnchor_))) shown->setOpen(false);
     menuAnchor_.reset();
     for (Control* control : menu->controls()) control->clearInteractionState();
     menu->layer().removeFromParent();
