@@ -11,6 +11,7 @@
 #include "modules/event_log_canvas.hpp"
 #include "modules/volume_canvas.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -442,6 +443,97 @@ void volumeCanvas() {
     canvas.resetSession();
     check(canvas.tab() == 0 && control(canvas, "volume"), "A new HUD session shows Devices");
 }
+// App-row icons (Windows: the Mac sets every icon at build, :353-362). A
+// cached icon (or a known missing one, the grey square) shows at once; one
+// still being extracted keeps its square clear and fades in when it lands (at
+// once under Reduce Motion). A row scrolled out of the request window keeps
+// its icon, scrolling and a page rebuilt while hidden show the cached icons
+// as the request binds them, and Devices asks for the rows App volume opens on.
+void volumeIcons() {
+    using Shows = m::VolumeCanvas::IconSquare::Shows;
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);   // motion on
+    VolumeModel model; model.state = VolumeModel::initial();
+    for (int i = 6; i <= 8; ++i) {
+        n::VolumeApplication a; a.id = std::to_string(900 + i); a.name = "Player " + std::to_string(i); a.pid = 4100u + unsigned(i); a.available = true;
+        model.state.applications.push_back(a);
+    }
+    // The provider: an answer per app (true: an icon, false: none), bound
+    // only while its row is asked for.
+    std::map<std::string, bool, std::less<>> answers;
+    std::vector<std::string> bound;
+    std::vector<std::vector<std::string>> requests;
+    const auto isBound = [&](std::string_view id) { return std::find(bound.begin(), bound.end(), id) != bound.end(); };
+    m::VolumeIconHooks icons;
+    icons.show = [&](std::span<const std::string> ids) { bound.assign(ids.begin(), ids.end()); requests.push_back(bound); };
+    icons.hide = [&] { bound.clear(); };
+    icons.icon = [&](std::string_view id) -> std::optional<d::ImageSource> {
+        const auto answer = answers.find(id);
+        if (!isBound(id) || answer == answers.end() || !answer->second) return std::nullopt;
+        return d::ImageSource{d::ImageSource::Kind::memory, "icon-" + std::string(id), {}, 1};
+    };
+    icons.pending = [&](std::string_view id) { return !isBound(id) || answers.find(id) == answers.end(); };
+    m::VolumeCanvas canvas(w.context, model.state, model.callbacks(), icons);
+    model.canvas = &canvas;
+    w.show(canvas);
+    using Ids = std::vector<std::string>;
+    check(!requests.empty() && requests.back() == Ids{"901", "902", "903", "904"}, "Volume on Devices asks for the icons of the rows App volume opens on");
+    answers["901"] = true; answers["902"] = false;
+    check(!canvas.iconsChanged(w.now), "Icons answered on Devices change no row");
+    static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true); canvas.settleSwap();
+    const auto square = [&](std::string_view id) {
+        const auto* s = canvas.iconSquareForTesting(id);
+        if (!s) throw std::runtime_error("No icon square for app " + std::string(id));
+        return s;
+    };
+    const auto opacity = [&](std::string_view id, double at) { return square(id)->layer->presented(d::Channel::opacity, at); };
+    const auto faded = [&](std::string_view id) { return square(id)->layer->tracks().property[std::size_t(d::Channel::opacity)].present(); };
+    check(requests.back() == Ids{"901", "902", "903", "904"} && square("901")->shows == Shows::icon && opacity("901", w.now) == 1
+        && square("902")->shows == Shows::none && opacity("902", w.now) == 1, "A cached icon and a known missing one (the grey square) show at build");
+    check(square("903")->shows == Shows::clear && opacity("903", w.now) == 0 && !square("903")->layer->content(),
+        "An icon still being extracted keeps its square clear, with no grey placeholder");
+    answers["903"] = true;
+    check(canvas.iconsChanged(w.now) && square("903")->shows == Shows::icon && opacity("903", w.now + .05) > 0 && opacity("903", w.now + .05) < 1,
+        "An icon that lands after its row was built fades in");
+    w.advance(1);
+    check(opacity("903", w.now) == 1 && !canvas.iconsChanged(w.now), "The fade ends on the icon");
+    w.appearance(Language::english);   // Reduce Motion
+    answers["904"] = true;
+    check(canvas.iconsChanged(w.now) && square("904")->shows == Shows::icon && opacity("904", w.now) == 1 && !faded("904"),
+        "Under Reduce Motion a late icon shows at once");
+    w.appearance(Language::english, false, false);
+    // The list's bottom (seven rows, 240 px down): the rows above leave the
+    // request window and keep their icons; a cached icon below shows at once.
+    answers["907"] = true;
+    const auto listPoint = centre(*control(canvas, "app:901"), canvas.root());
+    check(canvas.scroll(listPoint, {0, 400}, w.now) && canvas.applicationScrollOffset() == 240 && requests.back() == Ids{"904", "906", "907", "908"},
+        "The list's bottom asks for its last rows' icons");
+    check(square("901")->shows == Shows::icon && opacity("901", w.now) == 1 && square("902")->shows == Shows::none,
+        "Rows scrolled out of the request window keep their icons");
+    check(square("907")->shows == Shows::icon && opacity("907", w.now) == 1 && !faded("907"), "Scrolling shows a cached icon at once");
+    answers["906"] = true;
+    check(canvas.iconsChanged(w.now) && square("906")->shows == Shows::icon && square("901")->shows == Shows::icon,
+        "A lower row's icon landing keeps the icons of the rows above");
+    w.advance(1);
+    check(canvas.scroll(listPoint, {0, -400}, w.now) && canvas.applicationScrollOffset() == 0 && requests.back() == Ids{"901", "902", "903", "904"}
+        && square("901")->shows == Shows::icon && !canvas.iconsChanged(w.now), "Scrolling back up shows the cached icons");
+    // Another module shows, and the page goes stale meanwhile: it is rebuilt
+    // before it is active (its squares clear, not grey), and the activation
+    // shows the cached icons at once.
+    w.advance(1);
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(bound.empty(), "Leaving Volume withdraws its icon requests");
+    canvas.renderScaleChanged();
+    canvas.show(w.now);
+    check(square("901")->shows == Shows::clear && square("902")->shows == Shows::clear,
+        "A page rebuilt while hidden keeps its squares clear until it is active");
+    canvas.setActive(true, w.now);
+    bool cached = true;
+    for (const auto* id : {"901", "903", "904"}) cached = cached && square(id)->shows == Shows::icon && opacity(id, w.now) == 1 && !faded(id);
+    check(canvas.tab() == 1 && cached && square("902")->shows == Shows::none && !faded("902") && !canvas.iconsChanged(w.now),
+        "Back on App volume the rebuilt rows show the cached icons at once");
+    canvas.setActive(false, w.now);
+}
 
 // --- The Mac oracle -------------------------------------------------------------------------------
 struct Oracle {
@@ -689,7 +781,7 @@ void volumeOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        clipboardFormats(); clipboardCanvas(); eventLogText(); eventLogCanvas(); volumeCanvas();
+        clipboardFormats(); clipboardCanvas(); eventLogText(); eventLogCanvas(); volumeCanvas(); volumeIcons();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"clipboard", "eventLog", "volume"},
                 {"text", "layerDefaults", "clipboardFormat", "eventLogLines", "eventLogTimes", "eventLogMetadata"})) {
             Oracle oracle(*data);

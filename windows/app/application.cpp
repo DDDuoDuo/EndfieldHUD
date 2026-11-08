@@ -1531,7 +1531,7 @@ gpu::VolumeQueuedIconProvider* Application::Impl::constructVolumeIcons(gpu::Volu
     volumeIconRoute=utility->makeRoute();
     auto submit=[this](std::function<void()>work,gpu::VolumeQueuedIconProvider::Done done){
         return utility&&utility->submit(volumeIconRoute,std::move(work),[done=std::move(done)](std::exception_ptr error){done(bool(error));});};
-    auto changed=[this]{bool redraw{};if(volumeCanvas)isolate(volumeModuleOwner,"icons",[&]{redraw=volumeCanvas->iconsChanged();});if(redraw&&ready&&!stopping)host.invalidate();};
+    auto changed=[this]{bool redraw{};if(volumeCanvas)isolate(volumeModuleOwner,"icons",[&]{redraw=volumeCanvas->iconsChanged(now());});if(redraw&&ready&&!stopping)host.invalidate();};
     volumeIcons=std::make_unique<gpu::VolumeQueuedIconProvider>(std::move(submit),std::move(changed),std::move(extractor));
     return volumeIcons.get();
 }
@@ -1556,6 +1556,12 @@ void Application::Impl::constructVolume(){
         // Only an exact successful instance icon is shown (the Mac's nil icon otherwise).
         iconHooks.icon=[icons](std::string_view id)->std::optional<modules::design::ImageSource>{const auto*b=icons->plan().binding(id);
             if(!b||!b->image||b->result<0||b->typeFallback)return std::nullopt;return modules::design::ImageSource{modules::design::ImageSource::Kind::memory,b->imageKey,{},b->revision};};
+        // Not known yet: no binding (not asked for, or withdrawn), or a request
+        // at this revision that has not answered (fresh, or re-asked after the
+        // cache evicted its pixels). An answer without pixels is the grey square.
+        iconHooks.pending=[icons](std::string_view id){const auto&plan=icons->plan();const auto*b=plan.binding(id);if(!b)return true;
+            if(b->image||b->typeFallback||(b->result!=0&&b->result!=E_PENDING))return false;
+            return std::any_of(plan.requests().begin(),plan.requests().end(),[&](const auto&r){return r.imageKey==b->imageKey&&r.revision==b->revision;});};
     };
     if(args.nativeVolume){
         // The shared AudioRuntime binding: Volume's vote (reveal/conceal and the

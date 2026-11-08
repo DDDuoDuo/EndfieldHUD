@@ -11,6 +11,10 @@ namespace {
 constexpr double listTop = d::metric::headerHeight + 34 + 10;
 // A compact slider row with its PID line grows to 54 px (demo layout).
 constexpr double appRowHeight = 54;
+// An app icon that lands after its row was built fades in over the late
+// artwork reveal of Media Assembly's stage (setContentOpacity); the Mac sets
+// every icon at build, so a cached one shows at once.
+constexpr double iconFade = .16;
 std::string pid(const native::VolumeApplication& app) { return "PID " + std::to_string(app.pid); }
 // The Mac canvas keeps no reference to its HUDRowPlates (only the sliders,
 // dropdowns and mute button join the page), so each plate is released once
@@ -131,6 +135,8 @@ void VolumeCanvas::changed() {
     const auto status = snapshot_.status;
     if (status && status != lastStatus_) toast(d::Icon::warn, "Notice", "提示", *status);
     lastStatus_ = status;
+    // On Devices the listed apps change without a rebuild: the prefetch follows.
+    requestIcons();
 }
 bool VolumeCanvas::sliding() const {
     return std::any_of(page().controls().begin(), page().controls().end(), [](d::Control* c) {
@@ -145,7 +151,7 @@ void VolumeCanvas::cancelSliderGestures() {
 
 // --- Page (:125-206) ---------------------------------------------------------------------
 void VolumeCanvas::buildPage(d::Page& page) {
-    binders_.clear(); appList_ = nullptr; masterSlider_ = nullptr; selectedSlider_ = nullptr; iconLayers_.clear();
+    binders_.clear(); appList_ = nullptr; masterSlider_ = nullptr; selectedSlider_ = nullptr; iconSquares_.clear();
     renderedStructure_ = structure();
     auto& tabs = page.makeTabs("volumeTab", {{text("Devices", "设备"), d::Icon::devices}, {text("App volume", "应用音量"), d::Icon::apps}},
         tab_, d::metric::boxWidth);
@@ -171,7 +177,7 @@ void VolumeCanvas::buildPage(d::Page& page) {
     // binds icons already cached at once, so the rows take them now rather
     // than as a later change.
     requestIcons();
-    (void)iconsChanged();
+    (void)placeIcons(false);
 }
 bool VolumeCanvas::hasAdjustableApplication() const {
     const auto apps = listedApplications();
@@ -378,36 +384,63 @@ d::RowPlate& VolumeCanvas::applicationRow(d::Page& page, const native::VolumeApp
     auto& icon = page.makeLayer("volume.app.icon:" + appID);
     // The 18 px square and the name share the label line (centre y 20.5).
     icon.setFrame({18, 11.5, 18, 18});
-    placeIcon(icon, appID);
-    iconLayers_.emplace_back(appID, &icon);
+    (void)placeIcon(iconSquares_.emplace_back(IconSquare{appID, &icon}), false);
     auto& name = d::makeText(page.builder(), "volume.app.name:" + appID, app.name, d::type::rowLabel(),
         {18 + 18 + 8, 20.5 - 15.5 * .6, d::metric::sliderLabelColumn - 26, 15.5 * 1.2});
     plate.layer().add(icon); plate.layer().add(name);
     page.add(*row.slider);
     return plate;
 }
-void VolumeCanvas::placeIcon(d::Layer& layer, std::string_view applicationID) {
-    if (const auto image = icons_.icon ? icons_.icon(applicationID) : std::nullopt)
-        layer.setContent(d::image("image", d::localBounds(layer), *image, "resizeAspect"));
-    else d::setBackground(layer, d::rgb(0x4A4A4A));
-}
-bool VolumeCanvas::iconsChanged() {
-    bool changed = false;
-    for (const auto& [id, layer] : iconLayers_) {
-        const auto before = layer->content();
-        placeIcon(*layer, id);
-        changed = changed || layer->content() != before;
+// The icon, or the Mac's grey square for an app without one (:357-358).
+// While the icon is not known the square keeps what it shows: one whose row
+// left the request window (or whose page went inactive) keeps its icon. A
+// square built before its icon is known stays clear (an animatable surface,
+// decided at build) and fades in when it lands (`animated`; at once under
+// Reduce Motion and when the request bound it from the cache).
+bool VolumeCanvas::placeIcon(IconSquare& square, bool animated) {
+    using Shows = IconSquare::Shows;
+    d::Layer& layer = *square.layer;
+    const auto image = icons_.icon ? icons_.icon(square.applicationID) : std::nullopt;
+    if (!image && icons_.pending && icons_.pending(square.applicationID)) {
+        if (square.shows == Shows::clear && !layer.animatable()) { layer.setAnimatable(); layer.setValue(d::Channel::opacity, 0); }
+        return false;
     }
+    const auto before = layer.content();
+    if (image) layer.setContent(d::image("image", d::localBounds(layer), *image, "resizeAspect"));
+    else d::setBackground(layer, d::rgb(0x4A4A4A));
+    const Shows shows = image ? Shows::icon : Shows::none;
+    const bool changed = layer.content() != before || shows != square.shows;
+    if (square.shows == Shows::clear && layer.animatable())
+        d::motion::animate(layer, d::Channel::opacity, 1, animated ? iconFade : 0, clock(), d::easing::ease);
+    square.shows = shows;
     return changed;
 }
+bool VolumeCanvas::placeIcons(bool animated) {
+    bool changed = false;
+    for (auto& square : iconSquares_) changed = placeIcon(square, animated) || changed;
+    return changed;
+}
+bool VolumeCanvas::iconsChanged(double now) {
+    env().now = now;
+    return placeIcons(true);
+}
+const VolumeCanvas::IconSquare* VolumeCanvas::iconSquareForTesting(std::string_view applicationID) const {
+    const auto it = std::find_if(iconSquares_.begin(), iconSquares_.end(), [&](const auto& s) { return s.applicationID == applicationID; });
+    return it == iconSquares_.end() ? nullptr : &*it;
+}
 // The apps whose rows are in view or next to it (at most the icon plan's
-// eight), named on content and scroll events only.
+// eight), named on content and scroll events only. On Devices: the rows App
+// volume opens on (its list starts at the top), so the tab swap finds their
+// icons cached. The icons the request bound from the cache show at once,
+// as the Mac's build sets them; the others fade in when they land.
 void VolumeCanvas::requestIcons() {
     if (!icons_.show || !isActive()) return;
     std::vector<std::string> wanted;
-    if (tab_ == 1 && appList_) {
+    if (tab_ == 0 || appList_) {
         const auto apps = listedApplications();
-        const double pitch = appRowHeight + d::metric::rowGap, offset = appList_->offset(), height = appList_->layer().bounds().height;
+        const double pitch = appRowHeight + d::metric::rowGap;
+        const double offset = appList_ ? appList_->offset() : 0;
+        const double height = appList_ ? appList_->layer().bounds().height : appViewport().height;
         const long long first = std::max(0LL, (long long)std::floor(offset / pitch) - 1);
         const long long last = std::min((long long)apps.size() - 1, (long long)std::ceil((offset + height) / pitch));
         for (long long n = first; n <= last && wanted.size() < 8; ++n) wanted.push_back(apps[std::size_t(n)]->id);
@@ -416,6 +449,7 @@ void VolumeCanvas::requestIcons() {
     iconRequest_ = wanted;
     if (wanted.empty()) { if (icons_.hide) icons_.hide(); return; }
     icons_.show(wanted);
+    (void)placeIcons(false);
 }
 
 bool VolumeCanvas::routeAdjustable(const native::VolumeApplication& app) const {

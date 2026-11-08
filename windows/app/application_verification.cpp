@@ -2353,15 +2353,60 @@ int Application::Impl::runHiddenVerification(){
                         for(const auto&row:plan.applications()){if(!row.executable){exact=false;continue;}const auto*binding=plan.binding(row.applicationID);
                             if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&binding&&binding->image&&volumeIcons->images().acquire(binding->imageKey,binding->revision)!=nullptr;}
                             else{++without;exact=exact&&(!binding||!binding->image||binding->typeFallback);}}
-                        {const bool late=volumeCanvas->iconsChanged();hostCheck(exact&&withIcon>=2&&without==1&&!late,"Volume's app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon ("+std::to_string(plan.applications().size())+" rows, "+std::to_string(withIcon)+" with, "+std::to_string(without)+" without, exact "+std::to_string(exact)+", late "+std::to_string(late)+")");}
+                        {const bool late=volumeCanvas->iconsChanged(time);hostCheck(exact&&withIcon>=2&&without==1&&!late,"Volume's app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon ("+std::to_string(plan.applications().size())+" rows, "+std::to_string(withIcon)+" with, "+std::to_string(without)+" without, exact "+std::to_string(exact)+", late "+std::to_string(late)+")");}
                         const auto loaded=volumeIcons->stats();
                         hostCheck(loaded.jobs>=1&&loaded.published>=withIcon&&!loaded.inFlight&&utility->stats().workersStarted==workers&&(!shelf||shelf->resources().iconWorkerStarts==shelfIcons),
                             "Volume icons load on the shared utility worker: no thread of their own, and the Shelf's Shell icon worker is untouched");
                         volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(0,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
-                        hostCheck(volumeCanvas->tab()==0&&!volumeIcons->plan().active(),"Leaving App volume withdraws its icon requests");
+                        {const auto listed=volumeCanvas->listedApplications();const auto apps=volumeIcons->plan().applications();
+                         hostCheck(volumeCanvas->tab()==0&&listed.size()==5&&apps.size()==4&&apps.front().applicationID==listed.front()->id&&apps.back().applicationID==listed[3]->id,
+                             "On Devices the icon requests fall back to the rows App volume opens on ("+std::to_string(apps.size())+" apps)");}
                         volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(1,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
-                        hostCheck(volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volumeCanvas->iconsChanged(),"Returning to App volume binds the cached icons at once, without loading them again");
+                        hostCheck(volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volumeCanvas->iconsChanged(time),"Returning to App volume binds the cached icons at once, without loading them again");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
+                        // Every square shows its icon (or the grey no-icon square,
+                        // the synthetic app 3) and none of them faded in: the
+                        // request bound them from the cache.
+                        using Shows=modules::VolumeCanvas::IconSquare::Shows;
+                        // `seen` lists each row as shows/opacity/faded (shows: 0 clear, 1 icon, 2 none).
+                        const auto cachedAtOnce=[&](std::size_t rows,std::string&seen){const auto listed=volumeCanvas->listedApplications();bool all=listed.size()>=rows;
+                            for(std::size_t n=0;n<rows&&n<listed.size();++n){const auto*square=volumeCanvas->iconSquareForTesting(listed[n]->id);const bool none=listed[n]->executable&&listed[n]->executable->identity.objectID[0]==3;
+                                if(!square){all=false;seen+=" -";continue;}
+                                const double opacity=square->layer->value(modules::design::Channel::opacity);const bool faded=square->layer->tracks().property[std::size_t(modules::design::Channel::opacity)].present();
+                                seen+=" "+std::to_string(int(square->shows))+"/"+std::to_string(opacity)+"/"+std::to_string(faded);
+                                all=all&&square->shows==(none?Shows::none:Shows::icon)&&opacity==1&&!faded;}
+                            return all;};
+                        const auto drainIcons=[&]{for(unsigned round=0;round<8;++round){utility->waitIdle();utilityCompleted();if(!volumeIcons->stats().inFlight)break;}
+                            for(unsigned frame=0;frame<30;++frame)present(time+double(frame)/60,true);time+=1;};
+                        // A row scrolled out of the icon window keeps its icon when the
+                        // list's bottom asks for the lower rows' icons, and scrolling
+                        // back up shows the cached icons at once.
+                        if(const auto list=static_cast<tools::DesignModuleOwner&>(*volumeModuleOwner).core().clientRect({295,125+87,0,0})){
+                            const auto wheel=[&](double steps){bool taken=true;for(unsigned detent=0;detent<5;++detent){taken=volumeModuleOwner->wheel({list->x,list->y,steps,false,0,3},time)&&taken;
+                                for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.4;}return taken;};
+                            const auto first=volumeCanvas->listedApplications().front()->id,lastID=volumeCanvas->listedApplications().back()->id;
+                            const bool down=wheel(-1);drainIcons();const double bottom=volumeCanvas->applicationScrollOffset();
+                            const auto*last=volumeIcons->plan().binding(lastID);const auto*kept=volumeCanvas->iconSquareForTesting(first);
+                            hostCheck(down&&bottom==120&&last&&last->image&&!volumeIcons->plan().binding(first)&&kept&&kept->shows==Shows::icon,
+                                "A row scrolled out of the icon window keeps its icon when the lower rows' icons show (offset "+std::to_string(bottom)+")");
+                            const bool up=wheel(1);drainIcons();std::string seen;const bool cached=cachedAtOnce(4,seen);const bool late=volumeCanvas->iconsChanged(time);
+                            hostCheck(up&&volumeCanvas->applicationScrollOffset()==0&&cached&&!late,"Scrolling back up the app list shows the cached icons at once (offset "+
+                                std::to_string(volumeCanvas->applicationScrollOffset())+", rows"+seen+", late "+std::to_string(late)+")");
+                        }else hostCheck(false,"The Volume app list has a client rectangle");
+                        // Back on App volume after its page went stale while another
+                        // module showed (a render-scale change): the page is rebuilt
+                        // before it is active, and the activation shows the cached
+                        // icons at once, without loading them again.
+                        if(workModeModuleOwner&&registry.enabled(*workModeModuleOwner)){
+                            const auto jobs=volumeIcons->stats().jobs;
+                            selectModule(core::Module::workMode,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                            const bool hidden=!volumeCanvas->isActive();volumeCanvas->renderScaleChanged();
+                            selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                            std::string seen;const bool cached=cachedAtOnce(4,seen);const bool late=volumeCanvas->iconsChanged(time);
+                            hostCheck(hidden&&volumeCanvas->isActive()&&volumeCanvas->tab()==1&&cached&&!late&&volumeIcons->stats().jobs==jobs,
+                                "Returning to App volume after a rebuild while hidden shows the cached icons at once, without loading them again (rows"+seen+", late "+std::to_string(late)+", jobs "+
+                                std::to_string(volumeIcons->stats().jobs-jobs)+")");
+                        }else hostCheck(false,"Work Mode is available for the Volume stale-return check");
                     }
                     uia.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&uia.groups()==0,"Concealing disconnects every fragment");
                     uia.shutdown();
