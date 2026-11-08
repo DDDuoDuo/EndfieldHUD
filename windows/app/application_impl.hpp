@@ -325,6 +325,7 @@ struct Application::Impl {
     int runVisible();
     void shutdownVisible();
     int runHiddenVerification();
+    bool composedOnTopLayer(std::span<const gpu::LayerCompositionEntry>); // hidden checks of the top layer's order
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
     int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
     int runIdleTrace();         // hidden --idle-trace: closed and open idle on the real clock (wake-ups, frames, CPU)

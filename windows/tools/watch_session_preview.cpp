@@ -209,6 +209,7 @@ public:
     std::span<const gpu::LayerCompositionEntry>entries(core::Module m)override{return inner_->entries(m);}
     std::span<const gpu::LayerCompositionEntry>planeEntries()override{return inner_->planeEntries();}
     std::span<const gpu::LayerCompositionEntry>floatingEntries()override{return inner_->floatingEntries();}
+    std::span<const gpu::LayerCompositionEntry>topEntries()override{return inner_->topEntries();}
     std::span<const gpu::LayerCompositionEntry>modalEntries()override{return inner_->modalEntries();}
     void collected(gpu::Renderer&r)override{inner_->collected(r);}
     void release(gpu::Renderer&r)override{++audit_->releases;inner_->release(r);}

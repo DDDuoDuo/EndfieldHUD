@@ -277,6 +277,10 @@ struct ModuleCoverage {
     // step): one row of the report's actionTiming, with the host's keys
     // (module, action, ran, the *Ms timings, pagesBuilt, rasterizations, ...).
     std::function<void(ehud::data::Json)> timing;
+    // The entries were composed in the last presented frame on the HUD's top
+    // layer: after every floating entry (pinned notes last), before every
+    // area's modal card (the Sanity recovery menu, Mac b58f2e0).
+    std::function<bool(std::span<const native::LayerCompositionEntry>)> drawsOnTop;
 };
 
 class ModuleOwner {

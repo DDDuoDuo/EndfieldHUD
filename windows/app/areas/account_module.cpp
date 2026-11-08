@@ -917,6 +917,11 @@ private:
         step.check(!confirmState.request() && controller().record().linked && controller().presentation() == w.reference, "Esc cancels without an unlink");
         const auto toggle = d.gaugePoint("toggle");
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
+        // Mac b58f2e0 (accountPopoverDrawsOnTopForVerification): the menu is
+        // composed on the HUD's top layer, above the pinned notes and below
+        // the areas' modal cards.
+        step.check(!owner_->recoveryEntries().empty() && step.drawsOnTop && step.drawsOnTop(owner_->recoveryEntries()),
+                   "The open recovery menu draws on the top layer");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
         // The quit's preemption (SystemHUDView.presentQuitConfirmation): an
         // open popover is dismissed instead; a shut one lets the quit ask.
