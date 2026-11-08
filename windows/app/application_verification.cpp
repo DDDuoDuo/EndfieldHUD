@@ -48,6 +48,38 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"worldOnlyFrames",std::int64_t(b.frame.worldOnlyFrames-a.frame.worldOnlyFrames)},
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
+// The centre's contrast backdrop (SystemHUDView.moduleContrast, SHELL-27) as
+// the owned target shows it. A grid over its disc (box px around `centre`,
+// `radius` = 220 design units, through the centre's design plane `plane`
+// into target pixels) compares the frame with the backdrop (`on`) to the
+// same frame without it (`off`). Each premultiplied target pixel is first
+// composed over a mid grey desktop (encoded .5, as the transparent window is
+// composed), then the ink's alpha is recovered in encoded sRGB, where Core
+// Animation blends: black ink gives base x (1 - a), white ink a + base x
+// (1 - a). Each sample joins a bin of a tenth of the radius (10 and 11 lie
+// just outside the disc). Module content drawn above the backdrop hides it
+// (alpha 0 there), so a bin's median reads the uncovered majority. The Mac's
+// ramp is .58 at the centre, .40 at 60 % of the radius and 0 at the rim.
+struct ContrastReading{std::array<double,12> median{},expected{},baseAlpha{};std::array<std::size_t,12> samples{};Json bins;};
+double contrastRamp(double r){return r<=.6?.58+(.40-.58)*r/.6:r<1?.40*(1-(r-.6)/.4):0.;}
+double medianOf(std::vector<double>&v){if(v.empty())return 0;std::nth_element(v.begin(),v.begin()+static_cast<std::ptrdiff_t>(v.size()/2),v.end());return v[v.size()/2];}
+ContrastReading readContrast(const gpu::Readback&on,const gpu::Readback&off,const core::Projection&plane,core::Point centre,double radius,bool white){
+    need(!on.pixels.empty()&&on.width==off.width&&on.height==off.height&&on.rowBytes==off.rowBytes&&on.pixels.size()==off.pixels.size(),"The contrast readbacks share one target");
+    const auto shown=[](const gpu::Readback&image,std::size_t at){const auto*p=image.pixels.data()+at;return (.0722*p[0]+.7152*p[1]+.2126*p[2])/255.+.5*(1-p[3]/255.);}; // over the grey desktop
+    std::array<std::vector<double>,12> bins,bases;constexpr int steps=192; // about 200 samples in the innermost bin
+    for(int y=0;y<=steps;++y)for(int x=0;x<=steps;++x){
+        const double u=2.4*x/steps-1.2,v=2.4*y/steps-1.2,r=std::hypot(u,v);if(r>=1.2)continue;
+        const auto p=plane.project({centre.x+u*radius,centre.y+v*radius});if(!p||!(p->x>=0)||!(p->y>=0)||p->x>=on.width||p->y>=on.height)continue;
+        const auto at=static_cast<std::size_t>(std::floor(p->y))*on.rowBytes+static_cast<std::size_t>(std::floor(p->x))*4;
+        const double base=std::min(shown(off,at),1.),ink=std::min(shown(on,at),1.);
+        if(white?base>.98:base<.02)continue;
+        const auto bin=std::min<std::size_t>(11,static_cast<std::size_t>(r*10));
+        bins[bin].push_back(white?(ink-base)/(1-base):1-ink/base);bases[bin].push_back(off.pixels[at+3]/255.);}
+    ContrastReading reading;Json::Array rows;
+    for(std::size_t n=0;n<bins.size();++n){reading.samples[n]=bins[n].size();reading.expected[n]=contrastRamp((static_cast<double>(n)+.5)/10);
+        reading.median[n]=medianOf(bins[n]);reading.baseAlpha[n]=medianOf(bases[n]);
+        rows.push_back(Json::Object{{"radius",static_cast<double>(n)/10},{"samples",std::int64_t(reading.samples[n])},{"alpha",reading.median[n]},{"expected",reading.expected[n]},{"baseAlpha",reading.baseAlpha[n]}});}
+    reading.bins=std::move(rows);return reading;}
 // The traced host never spins on a past wake: an owner that keeps reporting
 // a wake already due (one that waits for a frame or an event that does not
 // come) has the host's deadline wake fire about 2,000 times a second, with
@@ -948,6 +980,90 @@ int Application::Impl::runHiddenVerification(){
         const double scrollAfter=session->scrollPosition();need(scrollAfter<scrollBefore-1e-6,"Navigation scroll benchmark did not move downward");
         close(at(14));measure("closing",31,[&](unsigned i){present(at(14+i/60.),true);});
         measure("concealed",120,[&](unsigned i){need(!session->sample(at(15+i/60.)),"Concealed session emitted geometry");need(!session->demand(at(15+i/60.)).presented,"Concealed session requested presentation");});
+        // SystemHUDView.moduleContrast (SHELL-27, 1.3.1 item 16): the centre's
+        // radial contrast backdrop renders as on the Mac. The close above ends
+        // as a real one does (concealed(): the backdrop's scene is parked),
+        // then one opening (17...19.95 s, before the coverage opening at 20 s)
+        // on Power: the backdrop is one part and one surface right below the
+        // module entries, it covers HUDModuleContent.viewportFrame (280, 100,
+        // 440 x 440) on the centre plane, and the readback with it over the
+        // same frame without it shows the Mac's ramp: in the ring Power leaves
+        // uncovered (from 30 % of the radius out; Power's opaque centre is
+        // drawn above it) on the shown frame, and over the whole disc, centre
+        // included, drawn without the modules, black (dark) and white (the
+        // Light theme setting), with nothing outside the disc. It fades out
+        // behind Now Playing and back on Power.
+        Json contrastReport;
+        if(moduleContrast&&notes){namespace d=modules::design;auto&c=*moduleContrast;
+            const auto frames=[&](double from,double to){for(double t=from;t<to+1e-9;t+=1/60.)present(at(t),true);};
+            const auto opacity=[&](double t){return d::samplePlacement(c.ramp,c.root,hostTime(at(t))).opacity;};
+            const auto original=notes->selected();
+            concealed(at(16.9));const auto parks=c.scene.stats().parks;
+            need(parks>=1&&!c.posed,"A concealed HUD parks the contrast backdrop");
+            open(at(17));frames(17,18.2);
+            selectModule(core::Module::power,at(18.2));frames(18.2,18.8);
+            need(notes->selected()==core::Module::power&&chromePlan&&chromePlan->projection().center,"The contrast probe shows Power on the open HUD");
+            need(c.posed&&c.dark==true&&c.visible,"The reopened HUD poses the dark contrast backdrop again");
+            const auto stats=c.scene.stats();
+            need(stats.parts==1&&stats.surfaces==1,("The contrast backdrop is one part and one surface ("+std::to_string(stats.parts)+" parts, "+std::to_string(stats.surfaces)+" surfaces)").c_str());
+            const auto entries=c.scene.entries();bool below=!entries.empty()&&moduleEntryBegin>=entries.size()&&moduleEntryBegin<=ordered.size();
+            for(std::size_t n=0;below&&n<entries.size();++n)below=ordered[moduleEntryBegin-entries.size()+n].scene==entries[n].scene;
+            need(below,"The contrast backdrop's entries sit right below the module entries");
+            // The sampled surface corners through designBoxWorld against the
+            // viewport frame's design corners through the centre, in target px.
+            const auto&center=*chromePlan->projection().center;
+            const auto viewport=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+            const auto boxPlane=core::Projection::viewport(viewport*source::designBoxWorld(center),metrics.pixelWidth,metrics.pixelHeight);
+            const auto designPlane=core::Projection::viewport(viewport*center,metrics.pixelWidth,metrics.pixelHeight);
+            const auto pose=d::samplePlacement(c.ramp,c.root,hostTime(at(18.8)));const auto size=c.ramp.bounds();double cornerError=0;
+            for(unsigned n=0;n<4;++n){const double u=n&1,v=n>>1;
+                const auto shown=boxPlane.project(pose.world.apply({u*size.width,v*size.height})),expected=designPlane.project({280+440*u,100+440*v});
+                need(shown&&expected,"The contrast backdrop's corners project onto the target");cornerError=std::max(cornerError,std::hypot(shown->x-expected->x,shown->y-expected->y));}
+            need(cornerError<.5,("The contrast backdrop covers the module viewport frame (280, 100, 440 x 440) on the centre plane (corner off by "+std::to_string(cornerError)+" px)").c_str());
+            need(pose.visible&&opacity(18.8)==1,"The contrast backdrop shows at full opacity on Power");
+            // Readbacks of the shown frame: with it, then without it (its opacity
+            // 0 for one frame). Power's opaque centre covers the inner disc there.
+            const core::Point disc{295,305};const double radius=220/d::geometry::baseUnit;
+            present(at(18.81),true);const auto on=renderer.readback();saveTarget("contrast-on",at(18.81));
+            c.ramp.setValue(d::Channel::opacity,0);present(at(18.82),true);const auto off=renderer.readback();saveTarget("contrast-off",at(18.82));
+            c.ramp.setValue(d::Channel::opacity,1);
+            // The whole disc, its centre included: one frame time drawn only up to
+            // the module entries, with the backdrop and without it. The next
+            // present publishes the full list again (published cleared).
+            const auto bare=[&](double t,bool shown){c.ramp.setValue(d::Channel::opacity,shown?1.:0.);present(at(t),true);
+                composition.setEntries(renderer,std::span<const gpu::LayerCompositionEntry>(ordered).first(moduleEntryBegin));composition.present(renderer);renderer.draw(false);
+                auto image=renderer.readback();published.clear();c.ramp.setValue(d::Channel::opacity,1);return image;};
+            const auto bareOn=bare(18.83,true),bareOff=bare(18.83,false);saveTarget("contrast-bare",at(18.83));
+            // Light through the theme setting, as the app applies it (theme ->
+            // watchAppearance.dark -> the ramp's white ink), then the saved theme.
+            const auto theme=configuration.string("theme");
+            configuration.set("theme","light");configurationPending=true;applyConfiguration(at(18.84));present(at(18.84),true);
+            need(c.dark==false,"The Light theme repaints the contrast backdrop white");
+            const auto lightOn=bare(18.85,true),lightOff=bare(18.85,false);
+            configuration.set("theme",theme);configurationPending=true;applyConfiguration(at(18.86));present(at(18.86),true);
+            need(c.dark==watchAppearance.dark,"The saved theme repaints the contrast backdrop again");
+            const auto dark=readContrast(on,off,boxPlane,disc,radius,false),darkBare=readContrast(bareOn,bareOff,boxPlane,disc,radius,false),white=readContrast(lightOn,lightOff,boxPlane,disc,radius,true);
+            // Now Playing hides it after the .13 s linear fade; Power shows it again.
+            selectModule(core::Module::nowPlaying,at(18.87));frames(18.87,19.07);
+            const auto hidden=opacity(19.07);const bool hiddenSelected=notes->selected()==core::Module::nowPlaying;
+            selectModule(core::Module::power,at(19.07));frames(19.07,19.27);const auto reshown=opacity(19.27);
+            selectModule(original,at(19.27));frames(19.27,19.42);
+            close(at(19.42));frames(19.42,19.95);
+            need(session->phase()==core::VisibilityPhase::concealed,"The contrast probe's HUD closed before the coverage opening");
+            const auto edge=boxPlane.project({disc.x+radius,disc.y}),middle=boxPlane.project(disc);need(edge&&middle,"The contrast disc projects onto the target");
+            contrastReport=Json::Object{{"module","power"},{"driver",args.warp?"WARP":"hardware"},{"sourcePassEnabled",renderer.stats().sourcePassEnabled},{"parks",std::int64_t(parks)},
+                {"parts",std::int64_t(stats.parts)},{"surfaces",std::int64_t(stats.surfaces)},{"entries",std::int64_t(entries.size())},{"cornerErrorPixels",cornerError},
+                {"radiusPixels",std::hypot(edge->x-middle->x,edge->y-middle->y)},{"opacityPower",1.},{"opacityNowPlaying",double(hidden)},{"opacityReselected",double(reshown)},
+                {"centreRatio",1-darkBare.median[0]},{"dark",dark.bins},{"darkWithoutModules",darkBare.bins},{"lightWithoutModules",white.bins}};
+            // Shown frame: the ring Power leaves uncovered (30 % of the radius
+            // out). Without the modules: every bin, the centre's .58 included.
+            for(const auto*reading:{&dark,&darkBare,&white})for(std::size_t n=reading==&dark?3:0;n<reading->median.size();++n){
+                const auto miss=std::abs(reading->median[n]-reading->expected[n]);
+                need(reading->samples[n]>=100&&miss<=(n<10?.04:.01),("The "+std::string(reading==&white?"Light":reading==&dark?"dark":"dark (without the modules)")+" contrast backdrop's readback at "+std::to_string(n*10)+" % of its radius shows the Mac ramp (alpha "+
+                    std::to_string(reading->median[n])+" for "+std::to_string(reading->expected[n])+", "+std::to_string(reading->samples[n])+" samples)").c_str());}
+            need(hiddenSelected&&hidden==0,"The contrast backdrop fades out behind Now Playing");
+            need(reshown==1,"The contrast backdrop fades back in on Power");
+        }
         unsigned coverageOpening{},coverageButtons{};Json::Array coverageResults;
         if(args.coverage){
             settings.ambientEnabled=true;session->setSettings(settings,at(20));session->setScrollPosition(1,at(20));open(at(20));
@@ -2983,7 +3099,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        if(!contrastReport.isNull())report["moduleContrast"]=std::move(contrastReport);report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
         // Teardown check: Projection's centre page (otherwise built only with

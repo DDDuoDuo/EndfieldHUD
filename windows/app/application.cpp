@@ -312,13 +312,14 @@ void Application::Impl::constructDesignOverlay(){
     designOverlay->resize(metrics);registry.add(*designOverlay);
     moduleContrast=std::make_unique<ModuleContrast>(rasterizer,rasterOptions);
 }
-// SystemHUDView.moduleContrast (SystemHUDView.swift:2183-2189, 2615-2616): a
+// SystemHUDView.moduleContrast (SystemHUDView.swift:2312-2318, 2767-2769): a
 // radial CAGradientLayer over HUDModuleContent.viewportFrame (280, 100, 440 x
 // 440 design units, centred on the disc centre 500, 320 = box px 295, 305)
 // on the core plane under the module host: black (Light: white) .58 at the
 // centre, .40 at 60 %, clear at the ellipse (startPoint .5/.5, endPoint 1/1).
 // It is a smooth ramp, so it is rasterized at a quarter of its box size and
-// scaled up (one 165 px surface instead of 661 px at density 1). Windows
+// scaled up (one 165 px surface instead of 661 px at density 1); the hidden
+// verification reads the ramp back (application_verification.cpp). Windows
 // 1.2.0 never drew it. While the Map is presented the bottom plates are cut
 // out of it (SystemHUDView.mapContrastMask; MapOwner::hostCut).
 Application::Impl::ModuleContrast::ModuleContrast(gpu::LayerRasterizer&r,const gpu::LayerRasterOptions&o)

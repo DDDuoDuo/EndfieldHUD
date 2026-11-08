@@ -83,6 +83,13 @@ if(NOT action_missing AND action_count GREATER 0)
     message(STATUS "Action ${action_module} ${action_name}:${row}")
   endforeach()
 endif()
+# The centre's contrast backdrop as the readback showed it (radius bins of
+# recovered alpha against the Mac ramp). The probe must have run.
+string(JSON contrast ERROR_VARIABLE contrast_missing GET "${report}" moduleContrast)
+if(contrast_missing)
+  message(FATAL_ERROR "The report has no centre contrast probe (moduleContrast)")
+endif()
+message(STATUS "Centre contrast: ${contrast}")
 string(JSON modules LENGTH "${report}" moduleResults)
 string(JSON lifecycle GET "${report}" productionLifecycleChecks)
 # Every module cycle and every production lifecycle/quit assertion ran.
