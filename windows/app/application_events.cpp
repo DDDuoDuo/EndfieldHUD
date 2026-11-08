@@ -84,6 +84,10 @@ bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&polic
     bool handled{};
     if(!registry.guard(owner,[&]{handled=owner.pointer(e,hostTime(time));},"pointer"))return false;
     time=hostTime(time);
+    // A release that began placing the HUD elements (Settings' Edit position
+    // and size) re-lit its row after the activation: placing keeps every
+    // other control unlit (SystemHUDView.clearControlHighlights).
+    if(placingOverlay()&&&owner!=hudElements.get())clearControlHighlights(time);
     if(policy.alwaysUpdateEnvironment||handled){if(policy.updatesPointerLock)environment.pointerLocked=pointerLocked();environment.pointer=p;session->setEnvironment(environment,time);}
     if(handled){
         automationChanged();

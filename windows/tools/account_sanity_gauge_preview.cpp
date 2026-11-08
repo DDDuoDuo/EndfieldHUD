@@ -142,7 +142,7 @@ bool AccountSanityGaugePreview::key(const app::KeyEvent& e,bool modified,double 
     i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);
     return true; // the open recovery menu owns the keyboard (host checks its summon shortcut first)
 }
-bool AccountSanityGaugePreview::dismiss(double t) {auto& i=*impl_;i.advance(t);const bool closed=i.model.dismiss();if(closed) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);return closed;}
+bool AccountSanityGaugePreview::dismiss(double t,bool animated) {auto& i=*impl_;i.advance(t);const bool closed=i.model.dismiss();if(closed) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion||!animated);return closed;}
 std::optional<double> AccountSanityGaugePreview::nextWakeTime(double hostTime) const {
     const auto& i=*impl_;std::optional<double> wake;
     const auto earliest=[&](double at){wake=wake?std::min(*wake,at):at;};

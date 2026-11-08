@@ -240,7 +240,7 @@ public:
         if (const auto* work = host_.workMode()) workRevision_ = work->revision();
         host_.publish<AccountProfileLink>(AccountProfileLink::key, *this);
         // The quit asks only once an open recovery popover is closed (Mac 1.3.0).
-        quitPreemption_ = [this](double time) { return owner_ && owner_->dismissWalletPopover(time); };
+        quitPreemption_ = [this](double time, bool animated) { return owner_ && owner_->dismissWalletPopover(time, animated); };
         host_.publish<QuitPreemption>(quitPreemptionService, quitPreemption_);
         // The daily boot log's SANITY line (SystemHUDView.bootLogLines :3073-3075):
         // accountController.sanityPresentation() and the seconds from now to
@@ -921,8 +921,12 @@ private:
         // The quit's preemption (SystemHUDView.presentQuitConfirmation): an
         // open popover is dismissed instead; a shut one lets the quit ask.
         if (const auto* preempt = host_.find<QuitPreemption>(quitPreemptionService)) {
-            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05) &&
-                       !owner_->gauge().model().popoverOpen() && !(*preempt)(d.t += .05), "A quit closes the open recovery popover instead of asking");
+            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05, true) &&
+                       !owner_->gauge().model().popoverOpen() && !(*preempt)(d.t += .05, true), "A quit closes the open recovery popover instead of asking");
+            // Placing the HUD elements closes it at once (dismiss(animated: false)).
+            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05, false), "Placing closes the open recovery popover");
+            d.frame();
+            step.check(!owner_->gauge().model().popoverOpen() && owner_->recoveryEntries().empty(), "The recovery popover closed for placing draws nothing at the next frame");
         } else step.check(false, "The quit preemption is published");
         {
             // The same controls through the ModuleOwner UIA hooks (Mac AX

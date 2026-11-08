@@ -57,8 +57,10 @@ struct ApplicationFileResult {
 // accountGauge.dismiss(); return }`. The area that owns the header sanity
 // wallet publishes one QuitPreemption under quitPreemptionService: called
 // before the quit is asked, true when it closed an open recovery popover
-// (the quit is then not asked; the next press asks).
-using QuitPreemption = std::function<bool(double time)>;
+// (the quit is then not asked; the next press asks). Placing the HUD
+// elements calls it too, with animated false (beginOverlayPlacement:
+// `accountGauge.dismiss(animated: false)`).
+using QuitPreemption = std::function<bool(double time, bool animated)>;
 inline constexpr std::string_view quitPreemptionService = "hud.quitPreemption";
 
 class ApplicationHost {

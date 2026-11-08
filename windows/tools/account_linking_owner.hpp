@@ -140,7 +140,7 @@ public:
     std::optional<app::ModuleCursor> cursorAt(core::Point) const;
     // SystemHUDView.presentQuitConfirmation: an open recovery popover closes
     // instead of the quit being asked; true when one was open.
-    bool dismissWalletPopover(double time);
+    bool dismissWalletPopover(double time, bool animated = true);
     bool flush(double time);                            // shutdown barrier: the latest Account cache bytes are written
 
     // Personal Profile observer: an avatar change outside game sync turns

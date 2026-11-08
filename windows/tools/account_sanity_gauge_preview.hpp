@@ -55,7 +55,8 @@ public:
     bool capturesPointer() const noexcept;   // open recovery popover consumes clicks
     bool pointer(const app::PointerEvent&,double time);
     bool key(const app::KeyEvent&,bool modified,double time); // Esc closes; Return/Enter/Space refresh
-    bool dismiss(double time);
+    // HUDAccountGauge.dismiss(animated:): animated false closes the menu at once.
+    bool dismiss(double time,bool animated=true);
     std::optional<double> nextWakeTime(double hostTime) const;
     bool deadline(double hostTime);
     const modules::hypergryph::SanityGaugeModel& model() const noexcept;

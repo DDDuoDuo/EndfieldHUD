@@ -1237,6 +1237,15 @@ void focusMoves(RecordedMeasurer& measurer) {
     check(a.bodyFocused && !b.bodyFocused && b.bodyEnds == 1 && a.bodyEnds == 0, "A press another canvas took ends this canvas's body editor, saving");
     w.context.editorFocusMoved();
     check(!a.bodyFocused && a.bodyEnds == 1 && b.bodyEnds == 1, "A press no canvas took ends every focused body editor once");
+    // SystemHUDView.beginOverlayPlacement: an open design menu closes; a
+    // pop-over is left alone.
+    d::Menu::Item item; item.id = "one"; item.title = "One";
+    a.openMenu("field.menu", {item}, Rect{20, 120, 260, 34}, nullptr, std::nullopt, [](const d::Menu::Item&) {});
+    b.openPopover(std::make_unique<d::Popover>(b.env(), "Pen", std::nullopt, 270, 60), nullptr, Rect{20, 120, 260, 34}, {});
+    check(a.menuOpen() && b.popoverOpen(), "A menu and a pop-over are open");
+    w.context.closeMenus();
+    check(!a.menuOpen() && b.popoverOpen(), "Context::closeMenus closes every canvas's menu and leaves pop-overs");
+    b.closePopover();
     w.context.setEditorHost(nullptr);
 }
 

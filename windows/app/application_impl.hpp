@@ -525,6 +525,7 @@ struct Application::Impl {
     bool moduleInputAllowed() const;
     bool clockAcceptsInput() const;
     void setClockHovered(bool);
+    void clearControlHighlights(double time);
     void clockHover(const PointerEvent&);
     bool clockPress(const PointerEvent&, double time);
     bool clockWheel(const WheelEvent&, double time);

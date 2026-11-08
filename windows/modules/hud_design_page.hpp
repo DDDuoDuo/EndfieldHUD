@@ -100,6 +100,10 @@ public:
     // (TextField::editorFocusLost) and a focused body editor blurs (its
     // textDidEndEditing save); nothing else changes.
     void editorFocusMoved(const Canvas* except = nullptr);
+    // Every canvas's open menu closes (SystemHUDView.beginOverlayPlacement:
+    // `if activeDesignCanvas?.isMenuOpen == true { closeMenu() }`); pop-overs
+    // stay.
+    void closeMenus();
     void toast(ToastRequest, std::function<void()> completion = {});
     // L10n.text / core::localized in the context language.
     std::string text(std::string_view english, std::string_view simplifiedChinese,

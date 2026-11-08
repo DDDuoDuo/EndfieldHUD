@@ -234,7 +234,7 @@ bool AccountLinkingOwner::message(const app::NativeMessage& m,double t) {
     i.advance(t);i.services->drain();return true;
 }
 std::optional<app::ModuleCursor> AccountLinkingOwner::cursorAt(core::Point p) const {return impl_->page->cursorAt(p);}
-bool AccountLinkingOwner::dismissWalletPopover(double t) {auto& i=*impl_;i.advance(t);if(!i.gauge||!i.gauge->model().popoverOpen())return false;(void)i.gauge->dismiss(i.time);return true;}
+bool AccountLinkingOwner::dismissWalletPopover(double t,bool animated) {auto& i=*impl_;i.advance(t);if(!i.gauge||!i.gauge->model().popoverOpen())return false;(void)i.gauge->dismiss(i.time,animated);return true;}
 void AccountLinkingOwner::cancelInteraction(double t) {auto& i=*impl_;i.advance(t);i.page->cancelInteraction(i.time);i.gauge->dismiss(i.time);}
 bool AccountLinkingOwner::flush(double t) {impl_->advance(t);return impl_->services->flush();}
 void AccountLinkingOwner::profileAvatarChanged(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarChanged(filename);}

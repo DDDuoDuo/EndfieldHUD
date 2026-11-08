@@ -103,6 +103,9 @@ void Context::update(double unit, double windowScale, double now) {
 void Context::editorFocusMoved(const Canvas* except) {
     for (Canvas* canvas : std::vector<Canvas*>(canvases_)) if (canvas != except) canvas->editorFocusLost();
 }
+void Context::closeMenus() {
+    for (Canvas* canvas : std::vector<Canvas*>(canvases_)) canvas->closeMenu();
+}
 // confirm (:85-89): every canvas closes its popups first.
 void Context::confirm(ConfirmRequest request, std::function<void()> onConfirm, std::function<void()> onCancel) {
     for (Canvas* canvas : std::vector<Canvas*>(canvases_)) canvas->closePopups();

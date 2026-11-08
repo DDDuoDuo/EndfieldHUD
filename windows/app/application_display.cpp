@@ -229,15 +229,21 @@ bool Application::Impl::placingOverlay() const noexcept { return hudElements && 
 bool Application::Impl::allowsInputBesidePlacement() const { return moduleInputAllowed() && !placingOverlay(); }
 // beginOverlayPlacement: only while module input is allowed, nothing is
 // placed and the confirm bar is down. A design field being edited commits,
-// the Sanity recovery menu closes, the source watch's buttons wait.
+// an open design menu closes, the Sanity recovery menu closes at once, every
+// control drops its highlight, the source watch's buttons wait.
 void Application::Impl::beginOverlayPlacement(double time) {
     if (!hudElements || placingOverlay() || !moduleInputAllowed()) return;
     time = hostTime(time);
-    designOverlay->context().editorFocusMoved();
+    auto& context = designOverlay->context();
+    context.editorFocusMoved();
+    context.closeMenus();
     if (areaHost) if (auto* preempt = areaHost->find<QuitPreemption>(quitPreemptionService))
-        (void)isolateService(quitPreemptionService, "HUD elements", [&] { (void)(*preempt)(time); });
-    setClockHovered(false);
-    if (!hudElements->begin(appliedOverlayLayout, time)) return;
+        (void)isolateService(quitPreemptionService, "HUD elements", [&] { (void)(*preempt)(time, false); });
+    clearControlHighlights(time);
+    // `let layout = configuration.overlayLayout`: the record the HUD was just
+    // handed (a field committed above publishes synchronously), not the copy
+    // the next frame applies.
+    if (!hudElements->begin(configuration.overlayLayout(graphemes), time)) return;
     // SystemHUDView.updateNavigationButtonStates: the source watch's buttons
     // and the navigation peers wait (allowsInputBesidePlacement). The editor
     // takes every pointer event meanwhile, so the watch only drops its hover
@@ -293,6 +299,16 @@ void Application::Impl::applyOverlayTitle() {
     title.title = layout.shownTitle(); title.subtitle = layout.shownSubtitle();
     title.size = placed.size; title.origin = {frame.x, frame.y}; title.shown = layout.showsTitle;
     if (chrome->setContent(chromeContent) && ready && !stopping) host.invalidate();
+}
+// SystemHUDView.clearControlHighlights: every owner on the pointer routes
+// drops its hover and pressed look (the leave each one already handles: the
+// module canvases, pinned notes, the Sanity gauge, the facility tags), and
+// the clock its plate. The pointer itself stays where it is.
+void Application::Impl::clearControlHighlights(double time) {
+    const PointerEvent leave{PointerKind::leave, PointerButton::none, 0, 0};
+    for (const auto chain : {ModuleRegistry::Chain::pointerCapture, ModuleRegistry::Chain::pointer})
+        (void)registry.first(chain, [&](ModuleOwner& o, const ModuleRouting&) { (void)o.pointer(leave, hostTime(time)); return false; }, "pointer");
+    setClockHovered(false);
 }
 void Application::Impl::setClockHovered(bool value) {
     if (!chrome || chromeContent.clockHovered == value) return;

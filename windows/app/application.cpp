@@ -2677,7 +2677,7 @@ void Application::Impl::presentQuitConfirmation(double time){
     auto&context=designOverlay->context();if(context.overlay().capturesInput())return;
     // An open sanity recovery popover is dismissed instead (the account area's QuitPreemption).
     if(areaHost)if(auto*preempt=areaHost->find<QuitPreemption>(quitPreemptionService)){bool dismissed{};
-        if(isolateService(quitPreemptionService,"quit",[&]{dismissed=(*preempt)(hostTime(time));})&&dismissed){automationChanged();refresh(time);return;}}
+        if(isolateService(quitPreemptionService,"quit",[&]{dismissed=(*preempt)(hostTime(time),true);})&&dismissed){automationChanged();refresh(time);return;}}
     quitPromptOpen=true;
     modules::design::ConfirmRequest request;request.id="quit";
     request.title=context.text("Quit EndfieldHUD?","退出 EndfieldHUD？");request.message=context.text("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。");
