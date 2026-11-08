@@ -158,6 +158,18 @@ void helperOwner(){
     check(audioHelperOwner(web,std::vector{games,explorer},system)==0,"A helper in a subfolder of its launcher's folder belongs to the launcher");
     const I steam{"C:\\Steam\\steam.exe",50,6},cefHost{"C:\\Steam\\bin\\cef\\steamwebhelper.exe",60,7},cef{"C:\\Steam\\bin\\cef\\steamwebhelper.exe",70,8};
     check(audioHelperOwner(cef,std::vector{cefHost,steam,explorer},system)==1,"The outermost in-folder ancestor is the app");
+    // A launcher's own folder can hold whole apps (Steam's default library,
+    // a launcher's games folder). An app in its own right (an app window or
+    // an AppUserModelID) keeps its own name; its helpers belong to it, never
+    // to the launcher above it.
+    const I steamApp{steam.path,50,6,true},game{"C:\\Steam\\steamapps\\common\\Some Game\\game.exe",80,20,true},gameAudio{"C:\\Steam\\steamapps\\common\\Some Game\\bin\\audio.exe",90,21};
+    check(!audioHelperOwner(game,std::vector{steamApp,explorer},system)&&!audioHelperOwner(game,std::vector{steam,explorer},system),"A game in the launcher's library keeps its own name");
+    check(audioHelperOwner(gameAudio,std::vector{game,steamApp,explorer},system)==0,"A game's helper belongs to the game, not the launcher above it");
+    const I gamesApp{games.path,100,4,true},launched{"D:\\Hypergryph Launcher\\games\\Endfield\\Endfield.exe",160,22,true};
+    check(!audioHelperOwner(launched,std::vector{gamesApp,explorer},system),"A game the launcher starts from its games folder keeps its own name");
+    check(audioHelperOwner(web,std::vector{gamesApp,explorer},system)==0,"The launcher's windowless web helper still belongs to the launcher");
+    check(!audioHelperOwner(I{web.path,150,5,true},std::vector{gamesApp,explorer},system),"A helper with an app window of its own is its own app");
+    check(audioHelperOwner(cef,std::vector{I{cefHost.path,60,7,true},steamApp,explorer},system)==0,"The walk stops at the first ancestor that is an app in its own right");
     check(!audioHelperOwner(web,std::vector{I{"D:\\Other\\Games.exe",100,4}},system),"A launcher in another folder does not own the process");
     check(!audioHelperOwner(web,std::vector{I{games.path,151,4}},system)&&!audioHelperOwner(web,std::vector{I{games.path,150,4}},system),"A parent created after (or with) its child is a reused PID and owns nothing");
     check(audioHelperOwner(cef,std::vector{cefHost,I{steam.path,65,6}},system)==0,"The walk stops at a younger ancestor");
@@ -169,11 +181,21 @@ void helperOwner(){
     check(audioHelperOwner(viewAudio,std::vector{view,host,explorer},system)==1,"A WebView2 audio process plays for its host app");
     const I launcher{"C:\\Program Files\\Contoso\\Launcher.exe",90,14};
     check(audioHelperOwner(viewAudio,std::vector{view,host,launcher,explorer},system)==2,"The host is then named after its own app");
+    check(audioHelperOwner(viewAudio,std::vector{view,I{host.path,100,11,true},launcher,explorer},system)==1,"A host that is an app in its own right is the app");
+    check(audioHelperOwner(I{viewAudio.path,120,13,true},std::vector{view,host,explorer},system)==1,"The runtime is never an app in its own right");
     check(!audioHelperOwner(viewAudio,std::vector{view,I{"C:\\Windows\\SystemApps\\Shell\\Widgets.exe",100,15}},system),"A WebView2 host inside the Windows folder is not an app");
     check(!audioHelperOwner(viewAudio,std::vector{view},system)&&!audioHelperOwner(viewAudio,std::vector{I{view.path,130,12}},system),"A runtime with no older host keeps its own name");
     check(!audioHelperOwner(I{"",5,1},std::vector{chrome},system)&&!audioHelperOwner(I{chrome.path,0,1},std::vector{chrome},system),"An unknown path or creation time owns nothing");
     std::vector<I>deep(40,I{"C:\\Deep\\a.exe",0,1});for(std::size_t n=0;n<deep.size();++n)deep[n].created=1000-n;
     check(audioHelperOwner(I{"C:\\Deep\\b.exe",2000,2},deep,system)==audioHelperAncestorLimit-1,"The ancestry read is bounded");
+}
+// The folder and file-name rules shared with Activity (process_identity).
+void folderRule(){
+    check(pathInsideFolder("C:\\Windows\\System32\\cmd.exe","c:\\windows")&&pathInsideFolder("C:\\Windows\\x.exe","C:\\Windows\\")&&pathInsideFolder("C:\\Windows/x.exe","C:\\Windows"),"A path inside a folder, caselessly, either separator after it");
+    check(!pathInsideFolder("C:\\WindowsApps\\x.exe","C:\\Windows")&&!pathInsideFolder("C:\\Windows","C:\\Windows")&&!pathInsideFolder("C:\\Windows\\","C:\\Windows")&&!pathInsideFolder("C:\\x.exe",""),"A sibling, the folder itself or an empty folder is not inside");
+    check(executableInsideFolderOf("C:\\Steam\\bin\\x.exe","c:\\steam\\steam.exe")&&!executableInsideFolderOf("C:\\x.exe","C:\\steam.exe")&&!executableInsideFolderOf("C:\\Steam","C:\\Steam\\steam.exe"),"The executable folder rule, below a drive's root");
+    check(executableNamed("C:\\x\\MsEdgeWebView2.exe","msedgewebview2.exe")&&executableNamed("msedgewebview2.exe","msedgewebview2.exe")&&!executableNamed("C:\\x\\notmsedgewebview2.exe","msedgewebview2.exe")&&!executableNamed("C:\\x\\a.exe",""),"A file name compares caselessly and whole");
+    static_assert(processIsApplication(true,"")&&processIsApplication(false,"Contoso_x!App")&&!processIsApplication(false,""));
 }
 // The containing app and package family travel with the process's sessions.
 void helperRoutes(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable app{"C:\\explicit-synthetic\\Launcher.exe",{}};app.identity.objectID[0]=7;
@@ -195,12 +217,17 @@ void ancestorReader(){
     check(CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&child)!=0,"Start a hidden copy of the test binary");
     struct Reap{PROCESS_INFORMATION&p;~Reap(){TerminateProcess(p.hProcess,0);WaitForSingleObject(p.hProcess,5000);CloseHandle(p.hThread);CloseHandle(p.hProcess);}}reap{child};
     std::vector<WindowsProcessEntry>all;check(readWindowsProcesses(all),"One process snapshot");std::map<std::uint32_t,std::uint32_t>parents;for(const auto&e:all)if(e.pid&&e.pid!=e.parent)parents.emplace(e.pid,e.parent);
-    const auto ancestors=readWindowsAudioAncestors(child.dwProcessId,parents);
+    std::set<std::uint32_t>windows;check(readWindowsApplicationWindows(windows),"The app windows read in session 0");windows.erase(GetCurrentProcessId());
+    const auto ancestors=readWindowsAudioAncestors(child.dwProcessId,parents,windows);
     check(!ancestors.empty()&&ancestors[0].pid==GetCurrentProcessId(),"The child's nearest ancestor is this process");
     const auto created=readWindowsProcessCreation(child.hProcess);const auto path=readWindowsProcessPath(child.hProcess);check(created&&path,"Read the child's creation time and path");
     const auto mine=readWindowsProcessCreation(GetCurrentProcess());check(mine&&ancestors[0].created==*mine&&*mine<=*created,"The ancestor carries this process's creation time");
     std::string utf8(ancestors[0].path);check(audioHelperOwner({utf8,*created,child.dwProcessId},ancestors,"C:\\Windows")==0,"The same executable's child belongs to this process");
-    check(readWindowsAudioAncestors(0,parents).empty()&&readWindowsAudioAncestors(0xfffffff0u,parents).empty(),"An unknown PID has no ancestry");
+    check(!ancestors[0].application,"A windowless unpackaged ancestor is not an app in its own right");
+    check(!audioHelperOwner({utf8,*created,child.dwProcessId,true},ancestors,"C:\\Windows"),"A child that is an app in its own right keeps its own name");
+    windows.insert(GetCurrentProcessId());const auto windowed=readWindowsAudioAncestors(child.dwProcessId,parents,windows);
+    check(!windowed.empty()&&windowed[0].application&&audioHelperOwner({utf8,*created,child.dwProcessId},windowed,"C:\\Windows")==0,"An ancestor owning an app window is an app and owns its helper");
+    check(readWindowsAudioAncestors(0,parents,windows).empty()&&readWindowsAudioAncestors(0xfffffff0u,parents,windows).empty(),"An unknown PID has no ancestry");
 }
 #endif
 struct WorkerState{std::mutex mutex;std::vector<AudioSessionRecord>records{{"a","42:100",L"Fixture",42,true,true,.8f,0}};AudioSessionBackend::Wake wake;std::thread::id backendThread;unsigned reads{},opens{},closes{},pauses{},writes{};bool violation{};};
@@ -239,7 +266,7 @@ int main(int argc,char**argv){
 #else
     (void)argc;(void)argv;
 #endif
-    try{transactions();pausedPlayer();exitedProcess();silentProcess();idleProcesses();appearanceMetadata();helperOwner();helperRoutes();
+    try{transactions();pausedPlayer();exitedProcess();silentProcess();idleProcesses();appearanceMetadata();helperOwner();folderRule();helperRoutes();
 #ifdef _WIN32
         ancestorReader();
 #endif

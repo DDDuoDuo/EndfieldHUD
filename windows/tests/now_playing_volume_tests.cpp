@@ -89,6 +89,12 @@ void browsers(){
     auto web=process(301,"D:\\Hypergryph Launcher\\web\\QtWebEngineProcess.exe",6,true);web.applicationPath="D:\\Hypergryph Launcher\\Games.exe";web.applicationIdentity=file(7);
     check(routeFor("Games.exe",std::vector{process(300,web.applicationPath,7,false),web})==1,"A bare executable identity matches a helper through its app and prefers the one playing");
     check(!routeFor("Games.exe",std::vector{process(302,"C:\\x\\QtWebEngineProcess.exe",8,true)}),"A helper of another app is never matched");
+    // A game the launcher starts from its own folder is an app in its own
+    // right (audioHelperOwner): its route carries no app, so the launcher's
+    // paused session never moves the playing game's volume.
+    web.rendering=false;const auto game=process(303,"D:\\Hypergryph Launcher\\games\\Endfield\\Endfield.exe",9,true);
+    const auto launcher=m::nowPlayingAudioRouteFor({"Games.exe",{},{}},std::vector{game,web});
+    check(launcher.route==1&&launcher.matches==1,"\"Games.exe\" with a playing game beside its silent web helper picks the web helper, never the game");
 }
 // Source a6f2d27: a live route, then the process playing, then a failed
 // route, then the only match.

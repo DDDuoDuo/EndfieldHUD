@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,18 +24,25 @@ struct AudioApplicationExecutable {
 };
 bool validAudioApplicationExecutable(const AudioApplicationExecutable&)noexcept;
 // One process of a helper's ancestry: its executable path (UTF-8, as Windows
-// reports it), its creation time (FILETIME ticks) and its PID.
-struct AudioProcessImage {std::string path;std::uint64_t created{};std::uint32_t pid{};};
+// reports it), its creation time (FILETIME ticks), its PID, and whether it is
+// an app in its own right (processIsApplication: an app window or an
+// AppUserModelID).
+struct AudioProcessImage {std::string path;std::uint64_t created{};std::uint32_t pid{};bool application{};};
 // The ancestry read above a session's process, nearest parent first.
 inline constexpr std::size_t audioHelperAncestorLimit=16;
 // The app a helper process plays for (source ff06692: a helper is named after
 // the app that contains it; 0585a0e: WebKit's audio service is attributed to
 // the app it plays for): the index in `ancestors` (nearest parent first) of
 // that app's process, or none when the process is its own app.
+// - A process that is an app in its own right (`application`) is never a
+//   helper: a game a launcher starts from inside the launcher's folder keeps
+//   its own name (the Mac renames only a process with no running app).
 // - A helper belongs to the outermost ancestor, each one created before its
 //   child, whose executable's folder holds the helper's executable. The walk
 //   ends at the first ancestor that is younger, outside that folder, or in
-//   `systemFolder` (the Windows folder: Explorer is never an app's owner).
+//   `systemFolder` (the Windows folder: Explorer is never an app's owner),
+//   and stops at the first ancestor that is an app in its own right: that
+//   app is the owner (as Activity joins a helper to the app above it).
 // - A WebView2 runtime process (audioWebViewRuntime) plays for the nearest
 //   older ancestor outside the runtime, then that host's own app.
 // A command-line child of a launcher in another folder keeps its own name.
@@ -208,8 +216,10 @@ private:class Impl;std::unique_ptr<Impl>impl_;
 AudioSessionWorker::Factory nativeAudioSessionBackendFactory();
 // The ancestry audioHelperOwner reads for a live process: nearest parent
 // first, at most audioHelperAncestorLimit, from one process snapshot's
-// parent PIDs (`parents`: PID to parent PID). It stops at an ancestor that
-// cannot be opened or read. Exposed for the hidden native check.
-std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents);
+// parent PIDs (`parents`: PID to parent PID). An ancestor is an app in its
+// own right when it is in `windows` (readWindowsApplicationWindows) or has an
+// AppUserModelID. It stops at an ancestor that cannot be opened or read.
+// Exposed for the hidden native check.
+std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents,const std::set<std::uint32_t>&windows);
 #endif
 } // namespace endfield::native

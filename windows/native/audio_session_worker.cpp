@@ -13,29 +13,15 @@ namespace endfield::native {
 bool validAudioApplicationExecutable(const AudioApplicationExecutable&e)noexcept{
     return ehud::data::validWindowsFilePath(e.path)&&(!e.identity.volumeUUID||ehud::data::validUUID(*e.identity.volumeUUID));
 }
-namespace {
-char lower(char c)noexcept{return c>='A'&&c<='Z'?static_cast<char>(c-'A'+'a'):c;}
-bool caselessSuffix(std::string_view value,std::string_view suffix)noexcept{
-    if(value.size()<suffix.size())return false;value=value.substr(value.size()-suffix.size());
-    for(std::size_t n=0;n<suffix.size();++n)if(lower(value[n])!=lower(suffix[n]))return false;return true;
-}
-// `path` lies in `folder` (or below it), compared like executableInsideFolderOf.
-bool insideFolder(std::string_view path,std::string_view folder)noexcept{
-    while(!folder.empty()&&(folder.back()=='\\'||folder.back()=='/'))folder.remove_suffix(1);
-    if(folder.empty()||path.size()<=folder.size()+1||(path[folder.size()]!='\\'&&path[folder.size()]!='/'))return false;
-    for(std::size_t n=0;n<folder.size();++n)if(lower(path[n])!=lower(folder[n]))return false;return true;
-}
-}
 bool audioWebViewRuntime(std::string_view path)noexcept{
     // The shared Edge WebView2 runtime's processes all run this executable.
-    constexpr std::string_view runtime="msedgewebview2.exe";
-    return caselessSuffix(path,runtime)&&(path.size()==runtime.size()||path[path.size()-runtime.size()-1]=='\\'||path[path.size()-runtime.size()-1]=='/');
+    return executableNamed(path,"msedgewebview2.exe");
 }
 std::optional<std::size_t>audioHelperOwner(const AudioProcessImage&process,std::span<const AudioProcessImage>ancestors,std::string_view systemFolder){
     if(process.path.empty()||!process.created)return {};
     ancestors=ancestors.first(std::min(ancestors.size(),audioHelperAncestorLimit));
     const auto older=[](const AudioProcessImage&parent,const AudioProcessImage&child){return parent.created&&parent.created<child.created&&!parent.path.empty();};
-    const auto system=[&](const AudioProcessImage&a){return !systemFolder.empty()&&insideFolder(a.path,systemFolder);};
+    const auto system=[&](const AudioProcessImage&a){return !systemFolder.empty()&&pathInsideFolder(a.path,systemFolder);};
     const AudioProcessImage*helper=&process;std::optional<std::size_t>owner;std::size_t next=0;
     if(audioWebViewRuntime(process.path)){
         // 0585a0e analogue: the runtime's process plays for its host app.
@@ -44,8 +30,13 @@ std::optional<std::size_t>audioHelperOwner(const AudioProcessImage&process,std::
             if(!audioWebViewRuntime(a.path)){owner=next++;helper=&a;break;}}
         if(!owner)return {};
     }
-    // ff06692 analogue: the outermost older ancestor whose folder holds the helper.
-    for(const AudioProcessImage*child=owner?&ancestors[*owner]:&process;next<ancestors.size();++next){
+    // ff06692 analogue, gated as the Mac gates it on a process having no
+    // running app of its own: an app in its own right is never a helper.
+    else if(process.application)return {};
+    // The outermost older ancestor whose folder holds the helper, up to the
+    // first one that is an app in its own right (it owns its helpers, as an
+    // app bundle encloses its own; a launcher above it does not).
+    for(const AudioProcessImage*child=owner?&ancestors[*owner]:&process;next<ancestors.size()&&!child->application;++next){
         const auto&a=ancestors[next];if(!older(a,*child)||system(a)||!executableInsideFolderOf(helper->path,a.path))break;
         owner=next;child=&a;
     }

@@ -22,7 +22,7 @@ ActivityCatalogResult buildActivityCatalog(const ActivityCatalogInventory&input)
     // began cannot inherit an older occupant's window or parent metadata.
     if(input.captureStartID)std::erase_if(all,[&](const auto&entry){return entry.second->startID>input.captureStartID;});
     std::map<std::string,modules::ActivityAppIdentity,std::less<>>groups;std::map<std::uint32_t,std::string>owner;
-    for(const auto&[pid,p]:all)if(p->appWindow||!p->applicationID.empty()){
+    for(const auto&[pid,p]:all)if(processIsApplication(p->appWindow,p->applicationID)){
         const auto id=key(*p);auto[it,inserted]=groups.try_emplace(id,modules::ActivityAppIdentity{id,p->name.empty()?p->imageKey:p->name,p->iconKey,{}});(void)inserted;owner.emplace(pid,id);
     }
     need(groups.size()<=modules::ActivityState::maximumApps,"Activity app inventory exceeds256");
@@ -130,17 +130,16 @@ struct NativeCatalog {
             // A packaged app's icon is its Start (AppsFolder) icon, not its executable's.
             identity.iconKey="appsfolder:"+identity.applicationID;}
         // App-card candidates only (inventory pass, never the 1 Hz usage read).
-        if(!usage&&(window||!identity.applicationID.empty()))identity.name=displayName(original,identity);
+        if(!usage&&processIsApplication(window,identity.applicationID))identity.name=displayName(original,identity);
         if(usage){FILETIME wall{};GetSystemTimePreciseAsFileTime(&wall);const auto memory=windowsActivityProcessMemory(process.value);if(memory&&ticks(wall)>=identity.startID&&ticks(userTime)<=UINT64_MAX-ticks(kernel)){modules::ActivityProcess p;p.pid=pid;p.startID=identity.startID;p.cpuTicks=ticks(userTime)+ticks(kernel);p.memoryBytes=*memory;const double uptime=double(GetTickCount64())*.001;p.startUptime=std::max(0.,uptime-double(ticks(wall)-p.startID)*1e-7);out.usage=p;}}
         return out;
     }
     ActivityCatalogInventory inventory(){ActivityCatalogInventory out;++pass;
         // A complete inventory retires names of identities no longer running.
-        struct Prune{NativeCatalog&c;const ActivityCatalogInventory&out;~Prune(){if(out.complete)std::erase_if(c.names,[&](const auto&e){return e.second.seen!=c.pass;});}}prune{*this,out};FILETIME began{};GetSystemTimePreciseAsFileTime(&began);out.captureStartID=ticks(began);if(!ensureSID()){out.complete=false;return out;}struct Windows{std::set<DWORD>pids;bool bounded{true};std::exception_ptr error;unsigned count{};}windows;
-        const auto callback=[](HWND hwnd,LPARAM value)->BOOL{auto&state=*reinterpret_cast<Windows*>(value);try{if(++state.count>8192){state.bounded=false;return FALSE;}if(GetWindow(hwnd,GW_OWNER)||GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW)return TRUE;DWORD pid{};GetWindowThreadProcessId(hwnd,&pid);if(pid)state.pids.insert(pid);return TRUE;}catch(...){state.error=std::current_exception();return FALSE;}};
-        if(!EnumWindows(callback,reinterpret_cast<LPARAM>(&windows))||!windows.bounded||windows.error){out.complete=false;return out;}
+        struct Prune{NativeCatalog&c;const ActivityCatalogInventory&out;~Prune(){if(out.complete)std::erase_if(c.names,[&](const auto&e){return e.second.seen!=c.pass;});}}prune{*this,out};FILETIME began{};GetSystemTimePreciseAsFileTime(&began);out.captureStartID=ticks(began);if(!ensureSID()){out.complete=false;return out;}std::set<std::uint32_t>windows;
+        if(!readWindowsApplicationWindows(windows)){out.complete=false;return out;}
         std::vector<WindowsProcessEntry>entries;out.complete=readWindowsProcesses(entries);
-        for(const auto&entry:entries)if(entry.pid&&entry.pid!=entry.parent){bool other{};if(auto value=read(entry.pid,entry.parent,windows.pids.contains(entry.pid),false,&other))out.processes.push_back(std::move(value->identity));else if(!other)out.unreadablePIDs.push_back(entry.pid);}
+        for(const auto&entry:entries)if(entry.pid&&entry.pid!=entry.parent){bool other{};if(auto value=read(entry.pid,entry.parent,windows.contains(entry.pid),false,&other))out.processes.push_back(std::move(value->identity));else if(!other)out.unreadablePIDs.push_back(entry.pid);}
         return out;
     }
 };

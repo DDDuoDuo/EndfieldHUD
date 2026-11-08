@@ -202,12 +202,17 @@ class NativeBackend final:public AudioSessionBackend {
         if(metadata.size()>=metadataCapacity&&!metadata.contains(key))metadata.erase(std::min_element(metadata.begin(),metadata.end(),[](const auto&a,const auto&b){return a.second.used<b.second.used;}));
         metadata.insert_or_assign(key,Metadata{processName,record.executable,record.appUserModelID,record.application,record.packageFamily,++metadataClock});
     }
-    // Parent PIDs from one process snapshot per open/collect batch, taken at
-    // the batch's first new process (helper attribution, audioHelperOwner).
-    std::optional<std::map<std::uint32_t,std::uint32_t>>batchParents;
-    const std::map<std::uint32_t,std::uint32_t>&parents(){
-        if(!batchParents){batchParents.emplace();std::vector<WindowsProcessEntry>all;(void)readWindowsProcesses(all);for(const auto&e:all)if(e.pid&&e.pid!=e.parent)batchParents->emplace(e.pid,e.parent);}
-        return *batchParents;
+    // Parent PIDs from one process snapshot, and the PIDs owning an app
+    // window, per open/collect batch, taken at the batch's first new process
+    // (helper attribution, audioHelperOwner). When the windows cannot be
+    // read, no process of the batch is named after another: whether it is an
+    // app in its own right is unknown, and a guess could mis-route a game.
+    struct ProcessTree{std::map<std::uint32_t,std::uint32_t>parents;std::set<std::uint32_t>windows;bool windowsRead{};};
+    std::optional<ProcessTree>batchProcesses;
+    const ProcessTree&processes(){
+        if(!batchProcesses){batchProcesses.emplace();std::vector<WindowsProcessEntry>all;(void)readWindowsProcesses(all);for(const auto&e:all)if(e.pid&&e.pid!=e.parent)batchProcesses->parents.emplace(e.pid,e.parent);
+            batchProcesses->windowsRead=readWindowsApplicationWindows(batchProcesses->windows);}
+        return *batchProcesses;
     }
     HRESULT comStatus;bool initialized{};DWORD thread=GetCurrentThreadId();std::wstring endpoint;
     ComPtr<IMMDeviceEnumerator>enumerator;ComPtr<IAudioSessionManager2>manager;ComPtr<NewSessions>notification;bool managerRegistered{};
@@ -249,9 +254,9 @@ class NativeBackend final:public AudioSessionBackend {
                         next.record.appUserModelID=applicationIdentity(next.process->value);
                         // A helper is named and drawn after the app it plays
                         // for (source ff06692, 0585a0e: audioHelperOwner).
-                        if(const auto self=path?utf8Optional(*path):std::string();!self.empty()){
-                            const auto ancestors=readWindowsAudioAncestors(pid,parents());
-                            if(const auto owner=audioHelperOwner({self,*stamp,pid},ancestors,windowsFolder())){
+                        if(const auto self=path?utf8Optional(*path):std::string();!self.empty()&&processes().windowsRead){
+                            const auto&tree=processes();const auto ancestors=readWindowsAudioAncestors(pid,tree.parents,tree.windows);
+                            if(const auto owner=audioHelperOwner({self,*stamp,pid,processIsApplication(tree.windows.contains(pid),next.record.appUserModelID)},ancestors,windowsFolder())){
                                 const auto&app=ancestors[*owner];const auto wide=utf16(app.path);
                                 std::optional<AudioApplicationExecutable>owned;if(!wide.empty())owned=executable(wide);
                                 if(owned){next.record.application=std::move(owned);label=wide;packaged.clear();
@@ -277,7 +282,7 @@ class NativeBackend final:public AudioSessionBackend {
         if(route&&!e.exitWait&&e.process&&e.process->value&&!e.exitReported&&!RegisterWaitForSingleObject(&e.exitWait,e.process->value,processExited,route.get(),INFINITE,WT_EXECUTEONLYONCE|WT_EXECUTEINWAITTHREAD))e.exitWait=nullptr;
         return S_OK;
     }
-    HRESULT collect(){if(!route)return S_OK;batchParents.reset();if(route->overflow.load(std::memory_order_acquire))return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);HRESULT first=S_OK;
+    HRESULT collect(){if(!route)return S_OK;batchProcesses.reset();if(route->overflow.load(std::memory_order_acquire))return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);HRESULT first=S_OK;
         for(auto&slot:route->created){auto*p=slot.load(std::memory_order_acquire);if(!p||p==reinterpret_cast<IAudioSessionControl*>(static_cast<std::uintptr_t>(1)))continue;p=slot.exchange(nullptr,std::memory_order_acq_rel);ComPtr<IAudioSessionControl>lease;lease.Attach(p);const auto hr=add(lease.Get());if(FAILED(hr)&&SUCCEEDED(first))first=hr;}
         return first;
     }
@@ -288,7 +293,7 @@ public:
     std::int32_t open(std::wstring_view id,Wake wake)override{if(!ownThread())return RPC_E_WRONG_THREAD;close();endpoint=id;return resume(std::move(wake));}
     std::int32_t resume(Wake wake)override{
         try{
-        if(!ownThread())return RPC_E_WRONG_THREAD;if(FAILED(comStatus))return comStatus;if(route)return S_OK;if(endpoint.empty())return E_INVALIDARG;batchParents.reset();
+        if(!ownThread())return RPC_E_WRONG_THREAD;if(FAILED(comStatus))return comStatus;if(route)return S_OK;if(endpoint.empty())return E_INVALIDARG;batchProcesses.reset();
         auto hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&enumerator));ComPtr<IMMDevice>device;
         if(SUCCEEDED(hr))hr=enumerator->GetDevice(endpoint.c_str(),&device);
         if(SUCCEEDED(hr))hr=device->Activate(__uuidof(IAudioSessionManager2),CLSCTX_INPROC_SERVER,nullptr,reinterpret_cast<void**>(manager.GetAddressOf()));
@@ -339,14 +344,14 @@ public:
 };
 }
 AudioSessionWorker::Factory nativeAudioSessionBackendFactory(){return []{return std::make_unique<NativeBackend>();};}
-std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents){
+std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents,const std::set<std::uint32_t>&windows){
     std::vector<AudioProcessImage>out;
     try{
         for(auto found=parents.find(pid);found!=parents.end()&&out.size()<audioHelperAncestorLimit;found=parents.find(found->second)){
             const auto parent=found->second;if(!parent||parent==pid||std::any_of(out.begin(),out.end(),[&](const auto&a){return a.pid==parent;}))break;
             Handle process;process.value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,parent);if(!process.value)break;
             const auto created=readWindowsProcessCreation(process.value);const auto path=readWindowsProcessPath(process.value);if(!created||!path)break;
-            auto text=utf8Optional(*path);if(text.empty())break;out.push_back({std::move(text),*created,parent});
+            auto text=utf8Optional(*path);if(text.empty())break;out.push_back({std::move(text),*created,parent,processIsApplication(windows.contains(parent),applicationIdentity(process.value))});
         }
     }catch(...){}// Attribution is presentation only: a failed read leaves the helper its own name.
     return out;
