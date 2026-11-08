@@ -771,12 +771,12 @@ final class NotesWorkspace: NSObject {
     /// Called before switching sections or closing. Finishes an active geometry
     /// gesture immediately; no pending animation, task, or timer survives.
     /// `keepingLeaves`: the HUD's close, inside which a card still entering or
-    /// leaving (a section switch, a deletion) finishes its motion; the hidden
-    /// HUD's full deactivation settles the rest.
+    /// leaving (a section switch, a deletion) finishes its motion. The HUD's
+    /// own cancel has already removed every other animation here, keeping
+    /// `leaveKeys`; the hidden HUD's full deactivation settles the rest.
     func cancelInteraction(keepingLeaves: Bool = false) {
         mouseUp(); pendingDeletionID = nil
-        if !keepingLeaves { presentationGeneration += 1 }
-        cancelAnimations(keepingLeaves: keepingLeaves)
+        if !keepingLeaves { cancelAnimations() }
         mouseMoved(at: nil)
         withoutActions {
             for item in notes {
@@ -1566,15 +1566,7 @@ final class NotesWorkspace: NSObject {
     /// A card's own entrance or leave: a section switch, a creation, a deletion.
     static let leaveKeys: Set<String> = ["notes.section", "notes.visibility"]
 
-    func cancelAnimations(keepingLeaves: Bool = false) {
-        if keepingLeaves {
-            func remove(_ layer: CALayer) {
-                for key in layer.animationKeys() ?? [] where !Self.leaveKeys.contains(key) { layer.removeAnimation(forKey: key) }
-                layer.sublayers?.forEach(remove)
-            }
-            remove(workspaceLayer)
-            return
-        }
+    func cancelAnimations() {
         presentationGeneration += 1
         func remove(_ layer: CALayer) {
             layer.removeAllAnimations(); layer.sublayers?.forEach(remove)
