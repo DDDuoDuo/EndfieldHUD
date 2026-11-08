@@ -157,7 +157,7 @@ public:
     // deploy entrance. Call from the factory, before the HUD first shows.
     // Owners registered as tools::DesignModuleOwner are marked automatically.
     virtual void setDesignScreen(core::Module) {}
-    // The applied preference record's System > Modules layout (order and
+    // The applied preference record's Display > Modules layout (order and
     // hidden set, ehud::data::Settings::moduleLayout), re-read once per
     // applied record; the revision moves only when the layout changed.
     virtual const ehud::data::ModuleLayout* moduleLayout() const noexcept { return nullptr; }

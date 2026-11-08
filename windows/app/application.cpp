@@ -2219,7 +2219,7 @@ void Application::Impl::applyConfiguration(double time){
     const auto hex=configuration.string("accentHex");for(unsigned n=0;n<3;++n)watchAppearance.accentSRGB[n]=std::stoul(hex.substr(n*2,2),nullptr,16)/255.;
     const auto a=watchAppearance.accentSRGB;const auto effective=watchAppearance.dark?a:source::sourceBlackBlend(a,.35);const std::array<double,4>accent{effective[0],effective[1],effective[2],1};
     backdropState.dark=watchAppearance.dark;backdropState.blurAmount=configuration.number("blurAmount");backdropState.backgroundDarkness=configuration.number("backgroundDarkness");
-    // System > Modules (HUDModuleLayout): order and hidden set, re-read once
+    // Display > Modules (HUDModuleLayout): order and hidden set, re-read once
     // per applied record (ApplicationHost::moduleLayout, the navigation).
     if(auto layout=configuration.moduleLayout();layout!=moduleLayout){moduleLayout=std::move(layout);++moduleLayoutRevision;}
     bindNavigation(time);
@@ -2658,7 +2658,7 @@ void Application::Impl::bindNavigation(double time){
     navigationDirty=false;if(!nativeAppearance)return;
     std::vector<gpu::WatchAppearanceEntry>entries;
     for(const auto&e:contentCatalog->entries())entries.push_back({e.action,e.target,moduleCaption(e.target,watchAppearance.language,e.title),"module:"+e.target,true});
-    // System > Modules: the visible right-hand modules in their order (B2b).
+    // Display > Modules: the visible right-hand modules in their order (B2b).
     auto navigation=baseNavigation;navigation.rightActions=layoutRightActions(baseNavigation.rightActions);const auto right=navigation.rightActions;
     if(auto*apps=appNavigation()){
         try{

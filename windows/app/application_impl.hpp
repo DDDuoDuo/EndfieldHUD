@@ -465,7 +465,7 @@ struct Application::Impl {
     void refreshUpdateStatus();
     AppShortcutNavigation* appNavigation() const noexcept;
     void bindNavigation(double time);
-    // System > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
+    // Display > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
     // HUDModuleLayout.restorable): the right-hand source actions in the
     // layout's visible order without the hidden ones, and the module the HUD
     // reopens on (application_navigation.cpp).
@@ -870,7 +870,7 @@ struct Application::Impl {
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
     std::uint32_t registeredMessages{};                  // registerMessage(): areas and design owners
-    // The applied record's System > Modules layout (ApplicationHost::moduleLayout).
+    // The applied record's Display > Modules layout (ApplicationHost::moduleLayout).
     ehud::data::ModuleLayout moduleLayout;
     std::uint64_t moduleLayoutRevision{};
     // SystemHUDView.animateEntrance: the first module of a session enters from

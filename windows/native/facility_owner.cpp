@@ -194,7 +194,7 @@ struct FacilityOwner::Impl {
         renderedLanguage = context.env().language;
         changed();
     }
-    // openFacilityModule (:3031-3034): opens the module even when it is hidden in System > Modules.
+    // openFacilityModule (:3031-3034): opens the module even when it is hidden in Display > Modules.
     void openModule(Kind kind) {
         if (!allowsInput()) return;
         host.selectModule(modules::facilityAlertModule(kind));

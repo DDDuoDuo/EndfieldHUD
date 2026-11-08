@@ -36,7 +36,7 @@ std::string makeWindowsMediaReference(std::string path, std::string displayName,
     std::optional<double> duration = {}, int frameCount = 1);
 
 // Mac HUDModuleLayout (Sources/HUDNavigationTarget.swift:84-144): order and
-// visibility of the 17 right-hand modules (System > Modules), by HUDModule
+// visibility of the 17 right-hand modules (Display > Modules), by HUDModule
 // raw value. Every value is normalized like the Mac init: unknown and
 // repeated names are dropped, configurable modules missing from the order are
 // appended in default order (modules a later version adds), hidden is kept in

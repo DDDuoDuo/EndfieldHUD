@@ -214,7 +214,7 @@ public:
             return work && work->snapshot(clock()).phase == modules::WorkModePhase::running;
         };
         // SystemHUDView: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)),
-        // also when Work Mode is hidden in System > Modules (hidden means no list entry only).
+        // also when Work Mode is hidden in Display > Modules (hidden means no list entry only).
         // Hidden coverage counts the request instead of leaving its Account step.
         o.openWorkMode = w ? std::function<void()>([w] { ++w->workModeOpens; }) : std::function<void()>([host] { host->selectModule(core::Module::workMode); });
         const auto& appearance = host_.appearance();

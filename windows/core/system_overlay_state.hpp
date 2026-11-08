@@ -165,7 +165,7 @@ public:
 
     // Mac 1.3.0 OverlayController: the HUD reopens on
     // configuration.moduleLayout.restorable(lastSystemModule): a module hidden
-    // in System > Modules is not restored, the first visible one stands in. An
+    // in Display > Modules is not restored, the first visible one stands in. An
     // explicit initial module request (tray Settings/About/Work Mode) is not
     // filtered. Without a rule the last module reopens unchanged.
     void setModuleRestore(std::function<Module(Module)> rule) { moduleRestore_ = std::move(rule); }

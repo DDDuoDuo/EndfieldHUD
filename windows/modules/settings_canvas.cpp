@@ -197,6 +197,7 @@ void SettingsCanvas::didActivate() {
 }
 void SettingsCanvas::didDeactivate() {
     cancelCapture();
+    setArrangingModules(false);
     // An interrupted drag never creates a preview after the HUD has gone;
     // an unanswered layout preview is reverted with its prompt.
     stagedScale_.reset(); stagedX_.reset(); stagedY_.reset();
@@ -300,16 +301,26 @@ std::string_view SettingsCanvas::section() const noexcept {
 // MARK: Pages (:145-164)
 void SettingsCanvas::buildPage(d::Page& page) {
     binders_.clear(); updateCells_ = nullptr; updateText_ = nullptr; updateSpoken_ = nullptr; updateStamp_ = nullptr; updateStrip_ = nullptr; aboutPage_ = nullptr; keycaps_ = nullptr;
-    moduleRows_.clear(); modulesScroll_ = nullptr; moduleDrag_.reset();
+    moduleRows_.clear(); modulesScroll_ = nullptr; moduleDrag_.reset(); arrangeToggle_ = nullptr;
+    // Arranging lasts while Modules is shown (a re-render there keeps it).
+    if (section_ != Section::modules) setArrangingModules(false);
     renderedStructure_ = structure();
     switch (module()) {
-    case core::Module::system: section_ == Section::modules ? buildModules(page) : buildSystem(page); break;
-    case core::Module::display: section_ == Section::battery ? buildBattery(page) : section_ == Section::icons ? buildIcons(page) : buildDisplay(page); break;
+    case core::Module::system: buildSystem(page); break;
+    case core::Module::display:
+        switch (section_) {
+        case Section::modules: buildModules(page); break;
+        case Section::battery: buildBattery(page); break;
+        case Section::icons: buildIcons(page); break;
+        default: buildDisplay(page); break;
+        }
+        break;
     case core::Module::hotkeys: buildHotkeys(page); break;
     default: section_ == Section::credits ? buildCredits(page) : buildAbout(page); break;
     }
 }
 void SettingsCanvas::go(Section next, bool forward) {
+    if (next != Section::modules) setArrangingModules(false);
     section_ = next;
     navigate(forward ? 1 : -1);
 }
@@ -339,13 +350,7 @@ void SettingsCanvas::buildSystem(d::Page& page) {
     auto& screen = dropdown(page, "screen", text("Display", "显示器"), displaySelectionTitle(), std::nullopt, [this](const d::Dropdown& anchor) { openDisplayMenu(anchor); });
     binders_.push_back([this, &screen] { screen.setValue(displaySelectionTitle()); });
     rows.push_back(&row("screen", text("Display", "显示器"), screen, page));
-    // Battery alerts live on Display > Battery alert (its Display method).
-    auto& shown = page.own<d::Chip>("modules.count", modulesCount(), d::Chip::Variant::dark);
-    const auto modulesTitle = text("Modules", "模块");
-    auto& modules = navRow("modules", modulesTitle, page, [this] { go(Section::modules, true); }, "›", {&shown.layer()});
-    modules.label = modulesTitle + ", " + modulesCount();
-    binders_.push_back([this, &shown, &modules, modulesTitle] { shown.setTitle(modulesCount()); modules.label = modulesTitle + ", " + modulesCount(); });
-    rows.push_back(&modules);
+    // Battery alerts live on Display > Battery alert, and Modules on Display > Modules.
     rows.push_back(&restoreRow(Settings::Scope::system, page));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"SYSTEM"}, "SYS-01", title("System", "系统设置"), d::format::pad2(std::int64_t(rows.size())), false);
@@ -434,19 +439,47 @@ void SettingsCanvas::confirmRestore(Settings::Scope scope) {
     });
 }
 
-// MARK: Modules (System > Modules, :249-398)
+// MARK: Modules (Display > Modules, :302-489)
 std::string SettingsCanvas::modulesCount() const {
     const auto layout = config().moduleLayout();
     return std::to_string(layout.visible().size()) + " / " + std::to_string(layout.order.size());
 }
+// modulesRow (:310-322): the Display row that opens Modules, with the shown / total count.
+d::RowPlate& SettingsCanvas::modulesRow(d::Page& page) {
+    auto& shown = page.own<d::Chip>("modules.count", modulesCount(), d::Chip::Variant::dark);
+    const auto modulesTitle = text("Modules", "模块");
+    auto& modules = navRow("modules", modulesTitle, page, [this] { go(Section::modules, true); }, "›", {&shown.layer()});
+    modules.label = modulesTitle + ", " + modulesCount();
+    binders_.push_back([this, &shown, &modules, modulesTitle] { shown.setTitle(modulesCount()); modules.label = modulesTitle + ", " + modulesCount(); });
+    return modules;
+}
+// setArrangingModules (:403-411): Arrange on HUD on or off (the switch, Back,
+// leaving the page or the HUD); it turns on only on this page.
+void SettingsCanvas::setArrangingModules(bool on) {
+    const bool next = on && module() == core::Module::display && section_ == Section::modules;
+    if (next == arranging_) { if (arrangeToggle_) arrangeToggle_->setOn(next, true); return; }
+    arranging_ = next;
+    if (arrangeToggle_) arrangeToggle_->setOn(next, true);
+    // TODO(B2): the HUD's side of Arrange on HUD. Off drops the HUD's preview
+    // (previewModuleOrder(nil)), and the HUD hears every real change
+    // (onArrangeModules) to drag its module buttons. Until then the switch
+    // only keeps its own state.
+}
 // Order and visibility of the right-hand list: drag a row by its grip (the
 // others reflow) or use its move buttons; the switch shows or hides it.
+// Above the list, Arrange on HUD lets the HUD's own module buttons be dragged.
 // Windows: a row's slot is its model translateY from where it was built (the
 // Mac animates position.y; same model geometry for hits, same .24 s SNAP).
 void SettingsCanvas::buildModules(d::Page& page) {
     const auto layout = config().moduleLayout();
     const double width = rowWidth();
-    auto& scroll = page.scrollArea("modules", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
+    const auto arrangeTitle = text("Arrange on HUD", "在界面上排列"), hint = text("Drag the module buttons on the right", "拖动右侧的模块按钮");
+    // A screen reader hears the hint with the switch: the row itself is not spoken.
+    auto& arrange = page.make<d::Toggle>("modulesArrange", arrangeTitle + ", " + hint, arranging_);
+    arrange.onChange = [this](bool on) { setArrangingModules(on); };
+    arrangeToggle_ = &arrange;
+    stack({&row("modulesArrange", arrangeTitle, {&arrange.layer()}, page, hint, {&arrange})}, page.layer(), page, d::metric::headerHeight, width);
+    auto& scroll = page.scrollArea("modules", {0, d::metric::headerHeight + modulePitch, d::metric::boxWidth, d::metric::bodyHeight - modulePitch});
     modulesScroll_ = &scroll;
     std::vector<d::RowPlate*> plates;
     for (const auto& module : layout.order) {
@@ -490,7 +523,7 @@ void SettingsCanvas::buildModules(d::Page& page) {
         if (!moduleDrag_) layoutModuleRows(config().moduleLayout().order, true);
     });
     restore.setEnabled(!layout.isDefault());
-    header().configure({"SYSTEM", "MODULES"}, "SYS-01", title("Modules", "模块"), d::format::pad2(std::int64_t(layout.order.size())), true);
+    header().configure({"DISPLAY", "MODULES"}, "SYS-02", title("Modules", "模块"), d::format::pad2(std::int64_t(layout.order.size())), true);
     wireBack(page, [this] { go(Section::main, false); });
 }
 // renderModuleStates (:312-325): switches, move buttons and the hidden rows' dimmed glyph.
@@ -661,6 +694,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     binders_.push_back([this, &style] { style.setValue(clockStyleTitle(stringOr(config(), "clockStyle"))); });
     rows.push_back(&row("clockStyle", text("Clock style", "时钟样式"), style, page));
     rows.push_back(&logoRow(page));
+    rows.push_back(&modulesRow(page));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
     const auto metric = std::string(knownOr(stringOr(c, "alertMetric"), metrics));

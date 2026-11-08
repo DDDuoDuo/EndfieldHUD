@@ -108,7 +108,7 @@ public:
     struct Changes {bool number{},visibility{},tooltip{},availability{},popover{};};
     std::function<void()> onRefresh;
     // SystemHUDView: accountGauge.onOpenWorkMode opens the Work Mode module
-    // (also when the user hid it in System > Modules).
+    // (also when the user hid it in Display > Modules).
     std::function<void()> onOpenWorkMode;
     GaugeTextWidths widths;
     Changes update(std::string value,std::string accessibilityLabel,bool visible,double scale,

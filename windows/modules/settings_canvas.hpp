@@ -1,9 +1,9 @@
 #pragma once
 // Settings on the redesign: the port of Sources/HUDSettingsCanvas.swift
 // (HUDSettingsCanvas, HUDIconTile) over the shared design library
-// (modules/hud_design_page.hpp). Four canvases (System with its Modules page,
-// Display with its Battery alert and App icon pages, Hotkeys, About with its
-// Credits page) share one SettingsController (modules/settings.hpp), which
+// (modules/hud_design_page.hpp). Four canvases (System, Display with its
+// Modules, Battery alert and App icon pages, Hotkeys, About with its Credits
+// page) share one SettingsController (modules/settings.hpp), which
 // keeps the preference transactions; this canvas presents and edits them.
 //
 // What stays on the host side (tools/settings_preview.hpp): the platform
@@ -91,6 +91,10 @@ public:
     bool capturingShortcut()const noexcept;
     void cancelCapture();
     std::string_view section()const noexcept;  // "main", "battery", "icons", "credits", "modules" (tests)
+    // Display > Modules > Arrange on HUD (isArrangingModules): never saved;
+    // it turns off on Back, on leaving the page or the HUD, and in buildPage
+    // whenever the section is not Modules.
+    bool arrangingModules()const noexcept{return arranging_;}
     // Test hook: a scoped Restore's confirm, also for HUD elements before its
     // page (and so its Restore row) is ported.
     void confirmRestoreForTesting(ehud::data::SettingsScope scope){confirmRestore(scope);}
@@ -140,6 +144,7 @@ private:
     std::map<std::string,ModuleRow,std::less<>> moduleRows_;
     design::ScrollArea* modulesScroll_{};
     std::optional<Drag> moduleDrag_;
+    bool arranging_{};design::Toggle* arrangeToggle_{};
     const ehud::data::Settings& config()const noexcept{return controller_->configuration();}
     template<class F> void update(F&& mutation);
     Structure structure()const;
@@ -155,6 +160,8 @@ private:
     design::RowPlate& restoreRow(ehud::data::SettingsScope,design::Page&);
     void confirmRestore(ehud::data::SettingsScope);
     std::string modulesCount()const;
+    design::RowPlate& modulesRow(design::Page&);
+    void setArrangingModules(bool);
     void buildModules(design::Page&);void renderModuleStates();void layoutModuleRows(const std::vector<std::string>&order,bool animated);
     void moveModule(const std::string&,int offset);void dragModule(const std::string&,design::DragGrip::Phase,design::Point);void confirmModulesReset();
     void buildDisplay(design::Page&);void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);

@@ -52,7 +52,7 @@ public:
     Variant variant() const noexcept { return variant_; }
     void setTitle(std::string);
     void setSublabel(std::optional<std::string>);
-    void setTitleInset(double);                 // room for a leading grip or glyph (System > Modules: 56)
+    void setTitleInset(double);                 // room for a leading grip or glyph (Display > Modules: 56)
     Rect titleFrame() const noexcept;           // the label's line box (redaction, tests)
     void setCluster(std::vector<Layer*>);       // right-aligned at w - 12 (- 22 nav), 8 apart
     Rect controlArea() const noexcept;          // slider rows: x 202 to w - 12, 30 tall

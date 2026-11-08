@@ -32,7 +32,8 @@ using namespace endfield::tests::design_oracle;
 using ehud::data::Settings;
 using L = core::Language;
 unsigned checks{};
-void check(bool v, const std::string& what) { ++checks; if (!v) throw std::runtime_error(what); }
+std::string lastCheck;
+void check(bool v, const std::string& what) { ++checks; lastCheck = what; if (!v) throw std::runtime_error(what); }
 
 constexpr std::array<core::Module, 4> modules{core::Module::system, core::Module::display, core::Module::hotkeys, core::Module::about};
 std::string_view moduleName(core::Module m) {
@@ -81,7 +82,7 @@ struct World {
     void hide(core::Module module) { (*this)[module].setActive(false, now); }
     d::Control& control(core::Module module, std::string_view id) {
         for (auto* c : (*this)[module].page().controls()) if (c->id() == id) return *c;
-        throw std::runtime_error("No control " + std::string(id));
+        throw std::runtime_error("No control " + std::string(id) + " on " + std::string((*this)[module].section()) + " after check " + lastCheck);
     }
     void activate(core::Module module, std::string_view id) { auto& c = (*this)[module]; c.env().now = now; control(module, id).activate(); }
     template <class F> void update(F&& mutation) { auto next = controller->configuration(); mutation(next); controller->update(std::move(next), now); }
@@ -172,12 +173,10 @@ void replay(const Json& data, const Json& manifest) {
     // The Mac 1.3.1 Settings pages not ported yet: their recorded differences
     // are listed but do not fail until the item named here lands, and each
     // must still differ, so a page that comes to match is taken off the list.
-    // System, Display: the page moves (Modules, Open on, HUD elements, Close
-    // hint and Restore rows in Mac order; Facility alerts on HUD elements).
-    // Battery alert: the battery bar editor. The watch icon's localized title
-    // comes with the watch icon.
+    // Display: the page moves (Open on, HUD elements and Close hint rows in
+    // Mac order; Facility alerts on HUD elements). Battery alert: the battery
+    // bar editor. The watch icon's localized title comes with the watch icon.
     const std::set<std::string> pendingPages{
-        "system/main", "system/menu.language", "system/menu.screen", "system/main.restored", "system/main.atDefaults",
         "display/main", "display/main.bottom", "display/menu.theme", "display/menu.clockStyle", "display/menu.centerLogo",
         "display/battery", "display/menu.method", "display/battery.alertsOff", "display/main.back", "display/main.restored"};
     const std::set<std::string> pendingIconTitles{"watch"};
@@ -203,8 +202,8 @@ void replay(const Json& data, const Json& manifest) {
         pendingFailures.insert(pendingFailures.end(), local.begin(), local.end());
     };
     // A recorded Mac page on a Settings page Windows has not ported yet
-    // (Display > Modules is still System > Modules; Display > HUD elements
-    // comes with its page): consumed in order, compared later.
+    // (Display > HUD elements comes with its page): consumed in order,
+    // compared later.
     std::vector<std::string> notReplayed;
     const auto skipRow = [&](core::Module module, std::string_view state) {
         check(page < pages.size() && pages[page]["module"].string() == moduleName(module) && pages[page]["state"].string() == state, "Replay order: " + std::string(state));
@@ -273,16 +272,13 @@ void replay(const Json& data, const Json& manifest) {
     }
     { const auto back = w[M::display].page().back; back(); }
     w.language = L::english; w.appearance();
-    // Display > Modules: the Windows list is still System > Modules, so its
-    // pages wait for the page moves; its Restore asks the same.
-    skipRow(M::display, "modules");
+    // Display > Modules
+    w.activate(M::display, "modules"); row(M::display, "modules");
     w.update([](Settings& s) { auto l = s.moduleLayout(); l.move("clipboard", 0); l.setHidden("archive", true); s.setModuleLayout(l); });
-    skipRow(M::display, "modules.changed");
-    w.hide(M::display); w.show(M::system); w.activate(M::system, "modules");
-    w.activate(M::system, "modulesReset"); ask("modulesReset"); w.clear();
+    row(M::display, "modules.changed");
+    w.activate(M::display, "modulesReset"); ask("modulesReset"); w.clear();
     w.update([](Settings& s) { s.setModuleLayout({}); });
-    { const auto back = w[M::system].page().back; back(); }
-    w.hide(M::system); w.show(M::display);
+    { const auto back = w[M::display].page().back; back(); }
     row(M::display, "main.back");
     // Display > HUD elements comes with its page; its Facility alerts switch
     // asks as Display's does now.
@@ -409,7 +405,7 @@ void contracts() {
     check(!w.controller->capturingShortcut(), "Leaving Hotkeys ends a recording");
     w.clear();
 
-    // --- System: display menu, modules, restore, Windows import row ----------
+    // --- System: display menu, restore -----------------------------------------
     w.show(M::system);
     check(w.control(M::system, "screen").label == "Display" && accessibilityValue(M::system, "screen") == "Pointer display", "The display field reads the pointer display");
     w.activate(M::system, "screen");
@@ -436,39 +432,64 @@ void contracts() {
         check(gone != items.end() && !gone->enabled && gone->on, "It is listed after the monitors, selected and disabled");
     }
     w[M::system].closeMenu();
-    w.activate(M::system, "modules");
-    check(w[M::system].section() == "modules", "Modules opens");
-    auto& notes = w.control(M::system, "up:notes");
-    check(!notes.enabled() && w.control(M::system, "down:power").enabled() == false, "The first row cannot move up, the last cannot move down");
-    w.activate(M::system, "down:notes");
+    w.hide(M::system);
+    // --- Display > Modules (HUDSettingsCanvas.buildModules, under Display) -----
+    w.show(M::display);
+    check(w.control(M::display, "modules").label == "Modules, 17 / 17", "Display's Modules row speaks the shown / total count");
+    w.activate(M::display, "modules");
+    check(w[M::display].section() == "modules", "Modules opens");
+    auto& notes = w.control(M::display, "up:notes");
+    check(!notes.enabled() && w.control(M::display, "down:power").enabled() == false, "The first row cannot move up, the last cannot move down");
+    w.activate(M::display, "down:notes");
     check(committed().moduleLayout().order[1] == "notes" && committed().fields["hudModuleOrder"].isArray(), "Move down saves the order");
-    const auto rowOf = [&](std::string_view module) -> d::Layer& { return w.control(M::system, "row:module:" + std::string(module)).layer(); };
+    const auto rowOf = [&](std::string_view module) -> d::Layer& { return w.control(M::display, "row:module:" + std::string(module)).layer(); };
     check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY) - 56) < 1e-9 && std::abs(rowOf("fileShelf").frame().y + rowOf("fileShelf").value(d::Channel::translateY)) < 1e-9,
         "The rows take their new slots (56 px apart)");
-    w.activate(M::system, "up:notes");
+    w.activate(M::display, "up:notes");
     check(committed().moduleLayout().isDefault() && !committed().fields.contains("hudModuleOrder"), "Back to the default order removes the key");
-    // Drag notes by its grip three rows down (the pointer in box px: the list starts at y 81, a row's grip centre at x 26, y 27).
-    auto& canvas = w[M::system];
-    check(canvas.cursor(d::Point{26, 81 + 27}) == d::Cursor::openHand && !canvas.cursor(d::Point{300, 81 + 27}), "The open hand shows over a grip only");
-    d::PointerInput press; press.point = {26, 108};
-    check(canvas.pointerDown({26, 108}, press, w.now), "The grip takes the press");
-    canvas.pointerDragged({26, 112}, w.now);
-    check(canvas.cursor(d::Point{26, 112}) == d::Cursor::closedHand, "The closed hand shows while dragging");
-    canvas.pointerDragged({26, 108 + 3 * 56}, w.now);
+    // Drag notes by its grip three rows down (the pointer in box px: the list starts one row pitch below the header, at
+    // y 81 + 56 under Arrange on HUD; a row's grip centre at x 26, y 27).
+    auto& canvas = w[M::display];
+    check(canvas.cursor(d::Point{26, 137 + 27}) == d::Cursor::openHand && !canvas.cursor(d::Point{300, 137 + 27}), "The open hand shows over a grip only");
+    d::PointerInput press; press.point = {26, 164};
+    check(canvas.pointerDown({26, 164}, press, w.now), "The grip takes the press");
+    canvas.pointerDragged({26, 168}, w.now);
+    check(canvas.cursor(d::Point{26, 168}) == d::Cursor::closedHand, "The closed hand shows while dragging");
+    canvas.pointerDragged({26, 164 + 3 * 56}, w.now);
     check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY) - 3 * 56) < 1e-9 && rowOf("notes").zPosition() == 10,
         "The dragged row follows the pointer above the others");
     check(std::abs(rowOf("archive").frame().y + rowOf("archive").value(d::Channel::translateY) - 2 * 56) < 1e-9, "The others reflow to the preview order");
-    canvas.pointerUp({26, 108 + 3 * 56}, w.now);
+    canvas.pointerUp({26, 164 + 3 * 56}, w.now);
     check(committed().moduleLayout().order[3] == "notes" && rowOf("notes").zPosition() == 0, "Dropping saves the slot");
     // At least one module stays visible.
     w.update([](Settings& s) { auto l = s.moduleLayout(); for (const auto& name : ehud::data::ModuleLayout::configurable) if (name != "power") l.setHidden(name, true); s.setModuleLayout(l); });
-    check(!w.control(M::system, "show:power").enabled() && w.control(M::system, "show:notes").enabled(), "The last visible module's switch is disabled");
-    check(w.control(M::system, "modulesReset").enabled(), "Restore default layout is enabled while the layout differs");
-    w.activate(M::system, "modulesReset");
+    check(!w.control(M::display, "show:power").enabled() && w.control(M::display, "show:notes").enabled(), "The last visible module's switch is disabled");
+    check(w.control(M::display, "modulesReset").enabled(), "Restore default layout is enabled while the layout differs");
+    w.activate(M::display, "modulesReset");
     check(overlay.decide(d::ConfirmState::Decision::confirm), "The reset asks first");
     (void)w.context.advance(w.now + 1);
-    check(committed().moduleLayout().isDefault() && toastTitle() == "Layout restored" && !w.control(M::system, "modulesReset").enabled(), "Confirmed: the default layout, a toast, the button disabled");
-    { const auto back = w[M::system].page().back; back(); }
+    check(committed().moduleLayout().isDefault() && toastTitle() == "Layout restored" && !w.control(M::display, "modulesReset").enabled(), "Confirmed: the default layout, a toast, the button disabled");
+    {
+        // The crumbs and code (DISPLAY / MODULES, SYS-02) are compared with the Mac's in replay.
+        const auto crumbs = w[M::display].header().crumbTexts();
+        check(std::find(crumbs.begin(), crumbs.end(), "DISPLAY") < std::find(crumbs.begin(), crumbs.end(), "MODULES") && std::find(crumbs.begin(), crumbs.end(), "SYSTEM") == crumbs.end(),
+            "Modules is a Display page");
+    }
+    auto& arrange = dynamic_cast<d::Toggle&>(w.control(M::display, "modulesArrange"));
+    check(arrange.label == "Arrange on HUD, Drag the module buttons on the right" && !arrange.isOn() && !w[M::display].arrangingModules(),
+        "Arrange on HUD sits above the list, off, its hint spoken with the switch");
+    w.activate(M::display, "modulesArrange");
+    check(arrange.isOn() && w[M::display].arrangingModules(), "The switch turns arranging on");
+    { const auto saves = w.saved.size(); w.activate(M::display, "modulesArrange"); w.activate(M::display, "modulesArrange");
+      check(w.saved.size() == saves, "Arrange on HUD is never saved"); }
+    { const auto back = w[M::display].page().back; back(); }
+    check(w[M::display].section() == "main" && !w[M::display].arrangingModules(), "Back returns to Display and turns arranging off");
+    w.activate(M::display, "modules"); w.activate(M::display, "modulesArrange");
+    w.hide(M::display);
+    check(!w[M::display].arrangingModules(), "Leaving the HUD turns arranging off");
+    w.show(M::system);
+    check(std::none_of(w[M::system].page().controls().begin(), w[M::system].page().controls().end(), [](const d::Control* c) { return c->id() == "modules"; }),
+        "System no longer lists Modules");
     w.activate(M::system, "restore");
     check(overlay.confirmState().request()->id == "restore" && overlay.decide(d::ConfirmState::Decision::confirm), "Restore default settings asks");
     (void)w.context.advance(w.now + 1);
@@ -696,18 +717,21 @@ void contracts() {
             w.appearance();
             return entering && kept;
         };
+        w.show(M::display);
+        w.activate(M::display, "modules");
+        check(w[M::display].section() == "modules" && area(M::display, "modules"), "Display opens Modules");
+        (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
+        check(area(M::display, "modules")->offset() > 0, "The Modules list scrolls");
+        leave(M::display);
+        w[M::display].show(w.now);
+        check(w[M::display].section() == "main" && onPage(M::display, "modules"),
+            "Display left on Modules shows its main page before the entrance plays");
+        check(staggersOnEntrance(M::display), "Display's main page plays the staggered entrance after Modules");
+        w.activate(M::display, "modules");
+        check(area(M::display, "modules") && area(M::display, "modules")->offset() == 0, "Modules opens again at the top");
+        leave(M::display);
         w.show(M::system);
-        w.activate(M::system, "modules");
-        check(w[M::system].section() == "modules" && area(M::system, "modules"), "System opens Modules");
-        (void)w[M::system].scroll({300, 300}, {0, 240}, w.now);
-        check(area(M::system, "modules")->offset() > 0, "The Modules list scrolls");
-        leave(M::system);
-        w[M::system].show(w.now);
-        check(w[M::system].section() == "main" && onPage(M::system, "modules"),
-            "System left on Modules shows its main page before the entrance plays");
         check(staggersOnEntrance(M::system), "System's main page plays the staggered entrance");
-        w.activate(M::system, "modules");
-        check(area(M::system, "modules") && area(M::system, "modules")->offset() == 0, "Modules opens again at the top");
         leave(M::system);
         w.show(M::display);
         (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
@@ -790,8 +814,9 @@ void deferredWork() {
     w.now = 0;
     w.show(M::system);
     w.activate(M::system, "focus");
-    w.activate(M::system, "modules");
     w.now = .2; w.hide(M::system); w.show(M::display);
+    w.activate(M::display, "modules");
+    { const auto back = w[M::display].page().back; back(); }
     w.activate(M::display, "centerLogo"); w[M::display].closeMenu();
     w.activate(M::display, "centerLogo"); w[M::display].closeMenu();
     w.activate(M::display, "appIcon");
