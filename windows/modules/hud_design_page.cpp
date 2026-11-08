@@ -39,13 +39,6 @@ const double* findOffset(const Offsets& offsets, std::string_view id) noexcept {
     for (const auto& [key, value] : offsets) if (key == id) return &value;
     return nullptr;
 }
-// Dictionary.merge { _, new in new }.
-void mergeOffsets(Offsets& into, const Offsets& from) {
-    for (const auto& [key, value] : from) {
-        auto it = std::find_if(into.begin(), into.end(), [&](const auto& item) { return item.first == key; });
-        if (it == into.end()) into.emplace_back(key, value); else it->second = value;
-    }
-}
 bool inside(Rect r, Point p) noexcept { return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height; }
 bool anyEditing(const std::vector<TextField*>& fields, const Layer& subtree) {
     return std::any_of(fields.begin(), fields.end(), [&](TextField* f) { return f->editing() && f->layer().isDescendant(subtree); });
@@ -252,23 +245,20 @@ void Canvas::rerenderIfStale() {
 void Canvas::rerender() {
     if (swapDeadline_) {                                 // the swap lands its own, rebuilt page
         if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
-        pending_ = makePage(pendingOffsets_, true);
+        pending_ = makePage({}, true);
         return;
     }
-    install(makePage(currentOffsets(), false), false);
+    install(makePage(showsFromTop_ ? Offsets{} : currentOffsets(), false), false);
 }
 std::vector<std::pair<std::string, double>> Canvas::currentOffsets() const {
     Offsets offsets;
     for (const auto& area : page_->scrollAreas()) if (!findOffset(offsets, area->id())) offsets.emplace_back(area->id(), area->offset());
     return offsets;
 }
-// navigate(dx:dy:) (:301-336).
+// navigate(dx:dy:) (:318-350). The next page, a Back included, starts at the top.
 void Canvas::navigate(double dx, double dy) {
     const Point offset = subpageOffset(dx, dy);
     closePopups(); endEditing(true); cancelGestures();
-    // Going back (dx < 0) returns each scroll area to where it was left.
-    mergeOffsets(retainedOffsets_, currentOffsets());
-    pendingOffsets_ = dx < 0 ? retainedOffsets_ : Offsets{};
     auto& deadlines = env().deadlines;
     const auto clock = env().clock();
     if (clock.reduceMotion || !attached_) {
@@ -277,7 +267,7 @@ void Canvas::navigate(double dx, double dy) {
             finishLeave();
             if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
         }
-        install(makePage(pendingOffsets_, false), false);
+        install(makePage({}, false), false);
         return;
     }
     // A swap in flight (Q / E pressed again) is retargeted and lands on time.
@@ -291,7 +281,7 @@ void Canvas::navigate(double dx, double dy) {
     }
     swapOffset_ = offset;
     if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
-    pending_ = makePage(pendingOffsets_, true);
+    pending_ = makePage({}, true);
     swapToken_ = deadlines.token();
     deadlines.after(*swapDeadline_, swapToken_, [this] { completeSwap(); });
 }
@@ -562,24 +552,31 @@ void Canvas::cancel(Deadlines::Token group) { if (group) env().deadlines.cancel(
 
 // --- Host-facing lifecycle (:241-282) ---------------------------------------------
 // makeContent: reveal a settled page, rebuild a stale one.
+// A module that was left (showsFromTop) builds its page from the top when a
+// list was left scrolled, before its entrance plays.
 void Canvas::show(double now) {
     begin(now);
     attached_ = true;
     revealSettledPage();
-    rerenderIfStale();
+    if (stale()) rerenderIfStale();
+    else if (showsFromTop_ && page_) {
+        const auto areas = page_->scrollAreas();
+        if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() > 0; })) rerender();
+    }
+    showsFromTop_ = false;
 }
 void Canvas::setActive(bool active, double now) {
     begin(now);
     if (active == active_) return;
     active_ = active;
     if (active) {
+        showsFromTop_ = false;                           // shown again without show() (a cancelled module swap)
         revealSettledPage();
         rerenderIfStale();
         didActivate();
     } else {
         willEndInteraction();
         closePopups(); endEditing(true); cancelGestures(); settleSwap(true);
-        retainedOffsets_.clear();
         didDeactivate();
     }
     notifyInput();
@@ -588,7 +585,6 @@ void Canvas::setActive(bool active, double now) {
 // the visible part follow the new offset); an unscrolled one stays.
 void Canvas::resetSession() {
     if (active_) return;
-    retainedOffsets_.clear(); pendingOffsets_.clear();
     if (!page_ || !renderedLanguage_) return;
     const auto areas = page_->scrollAreas();
     if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
@@ -611,6 +607,8 @@ void Canvas::prepareToLeave(double now) {
     settleSwap(true);
     willLeave();
     attached_ = false;
+    // Last, so a re-render made while the module leaves keeps its page.
+    showsFromTop_ = true;
 }
 void Canvas::cancelGestures() {
     for (Control* control : router_.controls()) {

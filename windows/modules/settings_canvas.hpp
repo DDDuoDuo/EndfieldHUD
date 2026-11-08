@@ -98,6 +98,9 @@ public:
     void didActivate()override;
     void didDeactivate()override;
     void willLeave()override{didDeactivate();}
+    // makeContent (:108-112): a page left on a sub-page shows the page it
+    // returned to with the entrance (built before it plays).
+    void show(double now)override;
     // A new HUD session (the Mac's new HUDSettingsCanvas, :19): the main
     // page, also after Display > Battery alert (kept across module switches).
     void resetSession()override;

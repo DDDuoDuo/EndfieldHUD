@@ -930,7 +930,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         try record("keyPrecedence", extra: ["results": keyResults])
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))   // the Q/E sub-navigations land
         try record("afterTabSwaps")
-        // Navigation: forward with a scrolled list, retarget, back restores offsets.
+        // Navigation: forward with a scrolled list, retarget, back (every sub-page starts at the top).
         canvas.page.scrollAreas[0].area.setOffset(120)
         canvas.depth = 1
         canvas.navigate(dx: 1)

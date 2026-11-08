@@ -266,6 +266,12 @@ std::optional<std::string> EventLogCanvas::status() const { return store_.snapsh
 double EventLogCanvas::listOffsetForTesting() const noexcept { return list_ ? list_->offset() : 0; }
 
 void EventLogCanvas::show(double now) {
+    // A return to the module starts the list at the top.
+    if (showsFromTop() && list_ && list_->offset() > 0) {
+        env().now = now;
+        listOffset_ = 0; list_ = nullptr; listPage_ = nullptr;
+        rerender();
+    }
     Canvas::show(now);
     refresh();
 }

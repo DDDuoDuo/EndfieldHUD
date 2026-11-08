@@ -253,6 +253,14 @@ void eventLogCanvas() {
     canvas.storeChanged();
     check(canvas.listOffsetForTesting() == 92 && canvas.header().counterText() == "501", "A new record keeps the top row in view");
     check(w.toasts()[0] == "Event log|The log could not be saved. New events are kept in this session.", "A failure that appears while open toasts (:262-267)");
+    // A return to the module starts the list at the top (:244-245); while it is shown,
+    // a refresh and an in-place re-render keep the scroll.
+    canvas.storeChanged(); canvas.rerender();
+    check(canvas.listOffsetForTesting() == 92, "A refresh and a re-render while active keep the list's scroll");
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    w.show(canvas);
+    check(canvas.listOffsetForTesting() == 0 && canvas.rowCountForTesting() == 9 && canvas.header().counterText() == "501", "Left scrolled and shown again, the list starts at the top");
+    canvas.scrollListForTesting(92);
     // Rows: label and readout (:341-364).
     const auto* row = control(canvas, "eventLog.row:00000000-0000-0000-0000-000000000003");
     check(row && row->label == "03:31, Shelf" && dynamic_cast<const d::RowPlate*>(row)->readout == "Added F.pdf" && row->layer().frame().height == 40,

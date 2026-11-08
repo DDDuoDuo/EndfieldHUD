@@ -321,6 +321,15 @@ void virtualisation() {
     check(!canvas.scroll({300, 60}, {0, 50}, w.now) && canvas.scrollOffset() == 0, "The wheel scrolls the grid only over it (:256-260)");
     canvas.keyDown(keyOf(d::key::end), w.now);
     check(canvas.scrollOffset() > 0 && control(canvas, "file:60"), "End scrolls to the bottom");
+    // Left scrolled, the shelf starts at the top when shown again (HUDDesignScreen showsFromTop)...
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    w.show(canvas);
+    check(canvas.scrollOffset() == 0 && control(canvas, "file:1"), "Shown again after it was left, the grid starts at the top");
+    // ...but files added while it was hidden still show at the bottom when it opens (keepsScrollOnNextShow).
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(canvas.importPaths(std::vector<std::string>{"C:\\Users\\Op\\Desktop\\Dropped.png"}) && store.items.size() == 61, "A file is added while the shelf is hidden");
+    w.show(canvas);
+    check(canvas.scrollOffset() > 0 && control(canvas, "file:61"), "A file added while the shelf was hidden still shows at the bottom when it opens");
 }
 
 // The other layout's tiles (Windows: the scene rasterizes them ahead). After

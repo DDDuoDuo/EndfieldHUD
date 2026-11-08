@@ -686,6 +686,8 @@ void FileShelfCanvas::reveal(const Set& ids, bool animated) {
     if (!renderedLanguage()) { pendingReveal_.insert(ids.begin(), ids.end()); return; }
     if (structure() != renderedStructure_) rerender();
     scrollGrid(1e12);
+    // The new files stay in view when the shelf is next shown.
+    keepsScrollOnNextShow();
     inputChanged();
     if (!animated || !isActive()) return;
     for (const auto& id : ids) if (const auto it = tiles_.find(id); it != tiles_.end()) d::motion::enter(it->second->layer(), {0, 16}, clock());

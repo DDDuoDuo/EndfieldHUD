@@ -839,6 +839,58 @@ void recordingModeWork(RecordedMeasurer& measurer) {
     check(!hidden.deferredBuild, "A language rebuild is not a late Recording mode build (the Mac rebuilds it when shown too)");
 }
 
+// Lists start at the top on return and on Back (HUDDesignScreen showsFromTop):
+// a Back starts at the top like a forward sub-page; a module that was left
+// builds its page from the top when next shown, once and only when a list was
+// left scrolled; in-place re-renders while it is shown keep the scroll.
+void listsFromTop(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas c(endfield::core::Module::clipboard, w.context);
+    const auto offset = [&] { return c.page().scrollAreas()[0]->offset(); };
+    const auto scroll = [&] { c.page().scrollAreas()[0]->setOffset(120); check(near(offset(), 120), "The fake list scrolls to 120"); };
+    const auto leave = [&] { c.prepareToLeave(w.now); c.setActive(false, w.now); };   // the owner's leave
+    const auto enter = [&] { c.show(w.now); c.setActive(true, w.now); };
+    enter();
+    check(!c.showsFromTop(), "A module shown for the first time has nothing to reset");
+    scroll();
+    c.rerender();
+    check(near(offset(), 120), "An in-place re-render while active keeps the list's scroll");
+    c.depth = 1; c.navigate(1); c.settleSwap();
+    check(near(offset(), 0), "A forward sub-page starts at the top");
+    scroll();
+    c.depth = 0; c.navigate(-1); c.settleSwap();
+    check(near(offset(), 0), "Back starts the list at the top too (no offsets kept for going back)");
+    scroll();
+    leave();
+    check(c.showsFromTop(), "Leaving the module marks its next showing to start at the top");
+    c.rerender();
+    check(near(offset(), 0) && c.showsFromTop(), "A re-render between prepareToLeave and show builds the list at the top");
+    auto pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages && near(offset(), 0) && !c.showsFromTop(), "Shown again with its list already at the top, the module builds nothing");
+    scroll();
+    leave();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages + 1 && near(offset(), 0) && !c.showsFromTop(), "Shown again with its list left scrolled, the module builds its page once, at the top");
+    leave();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages, "Shown again unscrolled, the module builds nothing");
+    scroll();
+    leave();
+    c.keepsScrollOnNextShow();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages && near(offset(), 120), "keepsScrollOnNextShow keeps the scroll it set for the next showing");
+    leave();
+    c.setActive(true, w.now);                                // a cancelled module swap: active again without show
+    check(!c.showsFromTop() && near(offset(), 120), "setActive(true) without show clears the flag and keeps the page");
+    pages = w.context.pagesBuilt();
+    c.show(w.now);
+    check(w.context.pagesBuilt() == pages && near(offset(), 120), "A later show of that module keeps its scroll");
+}
+
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
 // selection): every page that replaces another while the two are never in
 // the tree together takes its layer ids, so the scene finds unchanged parts
@@ -1040,6 +1092,7 @@ int main(int argc, char** argv) {
         lifetimes(measurer);
         recordingModeWork(measurer);
         keptIds(measurer);
+        listsFromTop(measurer);
         focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

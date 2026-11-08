@@ -480,7 +480,7 @@ void contracts() {
     check(scrolled > 0, "The Display list scrolls");
     w.activate(M::display, "battery");
     { const auto back = w[M::display].page().back; back(); }
-    check(w[M::display].page().scrollAreas()[0]->offset() == scrolled, "Back restores the Display list's scroll");
+    check(w[M::display].page().scrollAreas()[0]->offset() == 0, "Back returns the Display list to the top");
     w.activate(M::display, "battery");
     w.update([](Settings& s) { s.set("batteryAlertsEnabled", false); });
     check(accessibilityValue(M::display, "method") == "Don't display", "Alerts switched off read as Don't display");
@@ -514,6 +514,47 @@ void contracts() {
     check(committed().string("applicationIcon") == "babel", "An app icon tile picks the icon");
     w.hide(M::display);
     check(w[M::display].section() == "main", "Other sub-pages return to the main page when Display is left");
+    // Left on a sub-page (the owner's leave: prepareToLeave, then inactive), Settings
+    // shows the page it returns to when shown again, built before the entrance
+    // plays (HUDSettingsCanvas.makeContent), at the top.
+    {
+        const auto leave = [&](M module) { w[module].prepareToLeave(w.now); w.hide(module); };
+        const auto onPage = [&](M module, std::string_view id) {
+            const auto& controls = w[module].page().controls();
+            return std::any_of(controls.begin(), controls.end(), [&](const d::Control* c) { return c->id() == id; });
+        };
+        const auto atTop = [&](M module) {
+            const auto areas = w[module].page().scrollAreas();
+            return std::all_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() == 0; });
+        };
+        w.show(M::system);
+        w.activate(M::system, "modules");
+        (void)w[M::system].scroll({300, 300}, {0, 240}, w.now);
+        check(w[M::system].section() == "modules", "System opens Modules");
+        leave(M::system);
+        w[M::system].show(w.now);
+        check(w[M::system].section() == "main" && onPage(M::system, "modules") && atTop(M::system),
+            "System left on Modules shows its main page, at the top, before the entrance plays");
+        w[M::system].setActive(true, w.now);
+        check(onPage(M::system, "modules"), "Activation keeps that page (nothing left to swap in)");
+        leave(M::system);
+        w.show(M::display);
+        w.activate(M::display, "appIcon");
+        leave(M::display);
+        w[M::display].show(w.now);
+        check(w[M::display].section() == "main" && onPage(M::display, "appIcon") && atTop(M::display),
+            "Display left on App icon shows its main page, at the top, before the entrance plays");
+        w[M::display].setActive(true, w.now);
+        (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
+        check(w[M::display].page().scrollAreas()[0]->offset() > 0, "The Display list scrolls before Battery alert");
+        w.activate(M::display, "battery");
+        leave(M::display);
+        w.show(M::display);
+        check(w[M::display].section() == "battery", "Battery alert is kept when Display is left");
+        { const auto back = w[M::display].page().back; back(); }
+        check(w[M::display].section() == "main" && w[M::display].page().scrollAreas()[0]->offset() == 0, "Its Back lands on Display at the top");
+        leave(M::display);
+    }
     w.clear();
 
     // --- About: the update strip and links ------------------------------------

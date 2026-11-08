@@ -22,7 +22,7 @@
 //           auto& list = page.scrollArea("clipboard.rows", {0, 125, 590, height});
 //           for (...) { auto& card = page.make<design::ListCard>(...); list.content().add(card.layer());
 //                       page.add(card.controls()); page.stagger(card.layer()); }
-//           list.setContentHeight(contentHeight); page.restoreOffset(list);
+//           list.setContentHeight(contentHeight); page.restoreOffset(list);   // in-place re-renders only
 //       }
 //       bool handleKey(const design::KeyInput& k) override { ... }
 //   };
@@ -163,7 +163,8 @@ public:
     void stagger(Layer&);
     std::span<Layer* const> staggered() const noexcept { return staggered_; }
     ScrollArea& scrollArea(std::string id, Rect frame, Layer* parent = nullptr);
-    // Call after filling an area: a re-render keeps its position.
+    // Call after filling an area: an in-place re-render keeps its position
+    // (a sub-navigation, a Back or a return to the module has none).
     void restoreOffset(ScrollArea&);
     std::span<const std::unique_ptr<ScrollArea>> scrollAreas() const noexcept { return scrolls_; }
     Tabs* tabs{};                              // the first tab bar (Q / E cycle it)
@@ -267,8 +268,10 @@ public:
     std::string text(std::string_view english, std::string_view simplifiedChinese, std::span<const std::string_view> arguments = {}) const;
     ModuleTitle title(std::string_view english, std::string_view simplifiedChinese) const;
     // In-place re-render (LIB-75): no entrance, every scroll area keeps its
-    // offset by id; during a sub-page swap the new page stays held invisible
-    // until the swap lands. Text fields that are not editing are dropped.
+    // offset by id, except for a module that was left (showsFromTop), which
+    // comes back at the top; during a sub-page swap the new page starts at
+    // the top and stays held invisible until the swap lands. Text fields that
+    // are not editing are dropped.
     // The new page keeps the replaced page's layer ids unless that page holds
     // an editing field (makePage), so the scene reuses every part whose
     // artwork is unchanged instead of rasterizing the whole page again.
@@ -277,6 +280,12 @@ public:
     void rerenderKeepingIds() { rerender(); }
     // Shown: attached (show() .. prepareToLeave()) or active.
     bool isShown() const noexcept { return attached_ || active_; }
+    // The module was left (prepareToLeave): its next showing builds every
+    // list from the top. show() and setActive(true) clear it.
+    bool showsFromTop() const noexcept { return showsFromTop_; }
+    // Keeps the scroll a module set for its next showing (a reveal made while
+    // it was hidden, a File Shelf drag's retract) instead of starting at the top.
+    void keepsScrollOnNextShow() noexcept { showsFromTop_ = false; }
     // A change the Mac applies to every built page at once (Recording mode,
     // render scale; a module's own broadcast) that this hidden canvas applies
     // when next shown: show / setActive re-render it (recordingDeferred is
@@ -368,12 +377,12 @@ public:
     // makeContent(for:style:): a module re-syncs its model around it (Clipboard,
     // Event Log, Volume) and calls Canvas::show.
     virtual void show(double now);
-    void setActive(bool, double now);           // deactivation forgets retained sub-page offsets
+    void setActive(bool, double now);
     // The HUD closed (overlayConcealed): the Mac drops SystemHUDView and
     // builds every canvas anew at the next opening (OverlayController
     // .tearDownSystemPresentation `systemView = nil`), so what a canvas
-    // instance holds starts over. While inactive, retained offsets go and a
-    // scrolled page is built again at offset 0 (an unscrolled one stays);
+    // instance holds starts over. While inactive, a scrolled page is built
+    // again at offset 0 (an unscrolled one stays);
     // modules reset their own canvas state (selection, sub-page, tab,
     // drafts) and call this.
     virtual void resetSession();
@@ -454,7 +463,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{};
+    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{}, showsFromTop_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};
@@ -463,7 +472,6 @@ private:
     std::optional<double> swapDeadline_;
     Point swapOffset_;
     Layer* leaving_{};                          // the old page's layer while it leaves
-    std::vector<std::pair<std::string, double>> retainedOffsets_, pendingOffsets_;
     Deadlines::Token swapToken_{}, collectToken_{};
     std::vector<Deadlines::Token> timerGroups_;
     void begin(double now);                     // host entry: the clock
