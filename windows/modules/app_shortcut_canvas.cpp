@@ -346,6 +346,8 @@ void AppShortcutCanvas::dragRow(const std::string& id, d::DragGrip::Phase phase,
         break;
     case d::DragGrip::Phase::ended: {
         if (!reorder_ || reorder_->id() != id) return;
+        // Closing the HUD or leaving the module mid-drag puts the row back (Mac 2ca2482).
+        if (cancellingGestures()) { cancelReorder(); return; }
         const d::ListReorder state = std::move(*reorder_);
         reorder_.reset();
         state.drop(reorderRows()(id), clock());

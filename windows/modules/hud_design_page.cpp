@@ -616,6 +616,8 @@ void Canvas::prepareToLeave(double now) {
     showsFromTop_ = true;
 }
 void Canvas::cancelGestures() {
+    cancellingGestures_ = true;
+    struct Reset { bool& value; ~Reset() { value = false; } } reset{cancellingGestures_};
     for (Control* control : router_.controls()) {
         if (auto* slider = dynamic_cast<Slider*>(control)) slider->cancelDrag();
         control->clearInteractionState();

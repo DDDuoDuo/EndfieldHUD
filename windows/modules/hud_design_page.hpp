@@ -266,6 +266,10 @@ public:
     Layer& top() const noexcept { return *top_; }     // menus, pop-overs (z 30), the bubble (z 40)
     Page& page() const noexcept { return *page_; }
     bool isActive() const noexcept { return active_; }
+    // HUDDesignCanvas.isCancellingGestures: true while leaving or deactivating
+    // ends the controls' gestures; an `ended` a control reports then is an
+    // interruption, not a drop.
+    bool cancellingGestures() const noexcept { return cancellingGestures_; }
     std::optional<core::Language> renderedLanguage() const noexcept { return renderedLanguage_; }
     double now() const noexcept { return env().now; }
     motion::Clock clock() const noexcept { return env().clock(); }
@@ -471,7 +475,7 @@ private:
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{}, showsFromTop_{};
+    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{}, showsFromTop_{}, cancellingGestures_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};

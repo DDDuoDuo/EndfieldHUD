@@ -352,6 +352,24 @@ void reorderRules(const m::AppShortcutArtwork& art) {
     // A drag dropped where it started writes nothing.
     canvas.dragRow("B", 1);
     check(owner.requests.empty() && !canvas.reordering(), "Dropping on its own slot writes nothing");
+    // Leaving or deactivating mid-drag (2ca2482): the row goes back, nothing is written.
+    const auto startB = centre(*canvas.rowGrip("B"), canvas.root());
+    press.point = startB;
+    canvas.pointerDown(startB, press, w.now);
+    canvas.pointerDragged({startB.x, startB.y + m::AppShortcutCanvas::pitch}, w.now);
+    check(canvas.reordering(), "B is lifted");
+    canvas.setActive(false, w.now);
+    const auto& rowB = control(canvas, "apps:B")->layer();
+    check(!canvas.reordering() && owner.requests.empty() && rowB.value(d::Channel::translateY) == 0 && rowB.zPosition() == 0, "Deactivating mid-drag puts the row back and writes nothing");
+    w.show(canvas);
+    const auto startC = centre(*canvas.rowGrip("C"), canvas.root());
+    press.point = startC;
+    canvas.pointerDown(startC, press, w.now);
+    canvas.pointerDragged({startC.x, startC.y + m::AppShortcutCanvas::pitch}, w.now);
+    canvas.prepareToLeave(w.now);
+    check(!canvas.reordering() && owner.requests.empty(), "Leaving mid-drag puts the row back and writes nothing");
+    canvas.setActive(false, w.now);
+    w.show(canvas);
     // Nothing lifts while the chooser is open or during a file drop; the hand stays normal with the chooser.
     control(canvas, "apps:add")->activate();
     check(canvas.chooserOpen() && !canvas.cursor(centre(*canvas.rowGrip("A"), canvas.root())), "With the chooser open a grip shows the normal cursor");
