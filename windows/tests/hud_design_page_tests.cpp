@@ -586,6 +586,40 @@ void placementStrip(RecordedMeasurer& measurer, const J& overlay) {
         editor.pointerDown({-50, -50}, editor.layer(), {0, 0}, {0, 0});
         check(!editor.dragging(), "A decided strip starts no drag");
     }
+    // show(): the confirm bar's entrance. The band wipes from its centre over
+    // bandIn (snap); the marker and each row (title and slider) enter from
+    // (-12, 0) after confirmTextDelay + row x pillStep; Cancel and Confirm
+    // enter from (+12, 0) after pillDelay + index x pillStep.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "chargeBar", {
+            {"chargeBar.size", "Size", 100, {65, 160, 1, {}}, d::ValueFormat::percent},
+            {"chargeBar.length", "Length", 37, {14, 100, 1, {}}, d::ValueFormat::percent}});
+        const double t0 = w.now;
+        editor.show(w.context.env().clock());
+        namespace t = d::duration;
+        const auto* band = findLayer(editor.layer(), "placement.band");
+        check(band && near(band->presented(d::Channel::wipe, t0), 0) && near(band->presented(d::Channel::wipe, t0 + t::bandIn), 1) &&
+              near(band->presented(d::Channel::wipe, t0 + t::bandIn / 2), d::easing::snap.value(.5)), "Strip entrance: the band wipes in over bandIn (snap)");
+        // A layer entering from `dx` after `delay`: still at its offset and
+        // transparent just before, moving just after, settled at the end.
+        const auto enters = [&](const d::Layer* layer, double dx, double delay, const std::string& what) {
+            const double start = t0 + delay, eps = 1e-4;
+            const double moving = layer ? layer->presented(d::Channel::translateX, start + t::confirmText / 2) : 0;
+            check(layer && near(layer->presented(d::Channel::translateX, start - eps), dx) && near(layer->presented(d::Channel::opacity, start - eps), 0) &&
+                  std::abs(moving) > 0 && std::abs(moving) < std::abs(dx) && (moving > 0) == (dx > 0) &&
+                  near(layer->presented(d::Channel::translateX, start + t::confirmText + eps), 0) &&
+                  near(layer->presented(d::Channel::opacity, start + t::confirmText + eps), 1), "Strip entrance: " + what);
+        };
+        enters(findLayer(editor.layer(), "placement.marker"), -12, t::confirmTextDelay, "the marker from the left after confirmTextDelay");
+        for (std::size_t i = 0; i < 2; ++i) {
+            const double delay = t::confirmTextDelay + double(i) * t::pillStep;
+            enters(findLayer(editor.layer(), "placement.title." + std::to_string(i)), -12, delay, "title " + std::to_string(i) + " from the left, staggered by pillStep");
+            enters(&editor.sliders()[i]->layer(), -12, delay, "slider " + std::to_string(i) + " from the left with its title");
+        }
+        enters(&editor.cancel().layer(), 12, t::pillDelay, "Cancel from the right after pillDelay");
+        enters(&editor.confirm().layer(), 12, t::pillDelay + t::pillStep, "Confirm from the right one pillStep later");
+    }
 }
 
 // ---------------------------------------------------------------------------
