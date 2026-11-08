@@ -42,22 +42,38 @@ final class AudioApplicationAppearanceResolver {
     private var cache: [URL: AudioApplicationAppearance] = [:]
     private let loadIcon: (URL) -> NSImage?
     private let executablePath: (Int32) -> String?
+    private let responsiblePID: (Int32) -> Int32?
     convenience init(loadIcon: @escaping (URL) -> NSImage? = { NSWorkspace.shared.icon(forFile: $0.path) }) {
-        self.init(loadIcon: loadIcon, executablePath: PublicAppActivityBackend.path(pid:))
+        self.init(loadIcon: loadIcon, executablePath: PublicAppActivityBackend.path(pid:), responsiblePID: Self.responsiblePID)
     }
-    init(loadIcon: @escaping (URL) -> NSImage?, executablePath: @escaping (Int32) -> String?) {
-        self.loadIcon = loadIcon; self.executablePath = executablePath
+    init(loadIcon: @escaping (URL) -> NSImage?, executablePath: @escaping (Int32) -> String?,
+         responsiblePID: @escaping (Int32) -> Int32? = { _ in nil }) {
+        self.loadIcon = loadIcon; self.executablePath = executablePath; self.responsiblePID = responsiblePID
     }
     /// The app a process belongs to. A helper macOS lists as no app (such as
     /// a browser's audio service) is found from its executable's location.
+    /// A system XPC service that no app encloses (WebKit's GPU process, which
+    /// plays Safari's media) belongs to the app macOS holds responsible for it.
     func resolve(pid: Int32) -> AudioApplicationAppearance {
-        let running = NSRunningApplication(processIdentifier: pid)
+        var running = NSRunningApplication(processIdentifier: pid)
         let executable = running.map { $0.executableURL } ?? executablePath(pid).map { URL(fileURLWithPath: $0) }
         var appearance = resolve(bundleURL: running?.bundleURL, executableURL: executable)
+        if appearance.applicationURL == nil, executable?.path.contains(".xpc/") == true,
+           let owner = responsiblePID(pid), owner > 0, owner != pid, let host = NSRunningApplication(processIdentifier: owner) {
+            let hosted = resolve(bundleURL: host.bundleURL, executableURL: host.executableURL)
+            if hosted.applicationURL != nil { appearance = hosted; running = host }
+        }
         let name = running?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
         appearance.name = appearance.name ?? name.flatMap { $0.isEmpty ? nil : $0 }
         return appearance
     }
+    /// libsystem's unpublished responsibility lookup, found at run time; nil
+    /// where this macOS does not export it.
+    private static let responsibility: (@convention(c) (Int32) -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Int32).self)
+    }()
+    static func responsiblePID(_ pid: Int32) -> Int32? { responsibility.map { $0(pid) }.flatMap { $0 > 0 ? $0 : nil } }
     func resolve(bundleURL: URL?, executableURL: URL?) -> AudioApplicationAppearance {
         precondition(Thread.isMainThread)
         for candidate in [bundleURL, executableURL].compactMap({ $0 }) where candidate.isFileURL {
