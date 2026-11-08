@@ -180,6 +180,9 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         // The text and the picture or frame shown leave drawn with the page;
         // the picture is released shortly after, with its decoder already gone.
         bodyArea?.suspend(keepingArtwork: true)
+        // A video or audio item comes back paused, as a new presentation did;
+        // a GIF keeps the playback it had.
+        if presentation?.reference.kind == .video { presentation?.pause() }
         presentation?.setVisible(false, preserveArtworkOnHide: true)
         thumbnailGeneration += 1; metadataRequests.removeAll(); thumbnails.clear()
         panel?.cancel(nil); panel = nil; importTicket.cancel(); importTicket = ArchiveImportTicket()
