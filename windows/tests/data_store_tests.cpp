@@ -562,8 +562,19 @@ void settingsVersion131() {
         check(store.update(next) && !settingsFile(root.path)["settings"].contains("chargeBarLength") && !settingsFile(root.path)["settings"]["showsCloseHint"].boolean(),
               "The next save removes the unusable length and keeps the close hint off");
     }
-    writeSettings(Json::Object{{"showsCloseHint", "no"}});
-    rejects([&] { SettingsStore invalid(root.path); }, "A non-Boolean close hint is invalid, like the other 1.3.0 switches");
+    // A non-Boolean close hint reads as on and the record loads (its typed
+    // reader handles it; validateSettings does not reject 1.3.1 keys). The
+    // next save stores the Boolean read.
+    writeSettings(Json::Object{{"showsCloseHint", "no"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().showsCloseHint() && store.value().string("theme") == "light" && settingsFile(root.path)["settings"]["showsCloseHint"] == Json("no"),
+              "A non-Boolean close hint reads as on, the record loads and nothing is written");
+        check(!store.update(store.value()), "An update that changes nothing keeps the saved value");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root.path)["settings"]["showsCloseHint"] == Json(true) && store.value().fields["showsCloseHint"] == Json(true),
+              "The next save stores the close hint as on");
+    }
     overlayLayout131(writeSettings, root.path);
     // applicationIcon: a saved "battery" reads as the watch, loads unchanged
     // and is stored as "watch" by the next save of any key.

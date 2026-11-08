@@ -225,7 +225,9 @@ struct Settings {
     // (nil) keeps the classic 264 pt bar and it is not in defaults(). A finite
     // value above 0 reads as min(1, v); anything else, another type included,
     // reads as nil, and the next save stores it that way. showsCloseHint
-    // (Display > Close hint) is in defaults(); absent reads as on.
+    // (Display > Close hint) is in defaults(); absent or not a Boolean reads
+    // as on (the file still loads: validateSettings leaves its type to this
+    // reader), and the next save stores the Boolean read.
     std::optional<double> chargeBarLength() const;
     void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
     bool showsCloseHint() const;

@@ -177,6 +177,9 @@ Json encodeProfile(const Profile& profile) {
 void validateSettings(const Settings& value) {
     require(value.fields.isObject(),"Invalid settings object");const auto defaults=Settings::defaults();
     for(const auto& [key,expected]:defaults.fields.object()) {
+        // A 1.3.1 key is read by its typed accessor (a wrong type is its
+        // default), never rejected with the whole file.
+        if(key=="showsCloseHint") continue;
         const auto& actual=value.fields[key];
         require(expected.isNull() || (expected.isString()&&actual.isString()) || (expected.isNumber()&&actual.isNumber()) ||
             (expected.isBool()&&actual.isBool()) || (expected.isObject()&&actual.isObject()),"Invalid setting value type");
@@ -214,13 +217,15 @@ std::optional<double> barLength(double length) {
 }
 std::optional<double> barLength(const Json& value) {return value.isNumber()?barLength(value.number()):std::nullopt;}
 // The record as Mac ConfigurationStore.update writes it, on every save of any
-// setting (never on load): chargeBarLength normalized, or removed when nil.
-// Both the file and the store's value hold the result.
+// setting (never on load): chargeBarLength normalized, or removed when nil;
+// showsCloseHint as the Boolean read. Both the file and the store's value
+// hold the result.
 Settings saved(Settings value) {
     // ConfigurationStore.update writes applicationIcon's raw value, so a
     // retired "battery" read as the watch is stored as "watch".
     if(std::as_const(value.fields)["applicationIcon"]==Json("battery")) value.set("applicationIcon",value.applicationIcon());
     if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
+    if(!std::as_const(value.fields)["showsCloseHint"].isBool()) value.set("showsCloseHint",value.showsCloseHint());
     // HUDOverlayLayout.save: written normalized, removed at the defaults (an
     // undecodable layout read as the defaults, so it is removed too).
     if(value.fields.contains(OverlayLayout::key)) value.setOverlayLayout(value.overlayLayout());
