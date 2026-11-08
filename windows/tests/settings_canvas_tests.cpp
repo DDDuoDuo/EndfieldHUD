@@ -235,7 +235,7 @@ void replay(const Json& data, const Json& manifest) {
     w.activate(M::display, "recording"); ask("recordingOn");
     w.activate(M::display, "recording"); ask("recordingOff"); w.clear();
     (void)w[M::display].scroll({300, 300}, {0, -10000}, w.now);
-    for (const auto menu : {"theme", "clockStyle", "centerLogo"}) {
+    for (const auto menu : {"theme", "clockStyle", "centerLogo", "openModule"}) {
         w.activate(M::display, menu); row(M::display, std::string("menu.") + menu); w[M::display].closeMenu();
     }
     w.controller->previewScale(1.5, w.now); ask("layout");

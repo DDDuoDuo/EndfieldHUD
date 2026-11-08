@@ -169,7 +169,7 @@ private func toast(_ t: HUDToastRequest?) -> Any {
         control(.display, "recording").activate(); ask("recordingOn", .display)
         control(.display, "recording").activate(); ask("recordingOff", .display); clear()
         _ = canvases[.display]!.scroll(at: CGPoint(x: 300, y: 300), delta: CGPoint(x: 0, y: -10000))
-        for menu in ["theme", "clockStyle", "centerLogo"] {
+        for menu in ["theme", "clockStyle", "centerLogo", "openModule"] {
             control(.display, menu).activate(); try row(.display, "menu." + menu); canvases[.display]!.closeMenu()
         }
         controller.previewScale(1.5); ask("layout", .display)
