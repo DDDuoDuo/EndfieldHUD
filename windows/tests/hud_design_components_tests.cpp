@@ -988,6 +988,40 @@ void header() {
         check(near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].start - w.env.now, .2) && near(group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - w.env.now, .2)
             && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .25)
             && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].duration, .42), "A delayed entrance: the title wipe and fade after .2, the rule after .25");
+        // The extras (Mac 7d57641): the breadcrumb, code, tail, Back and the
+        // actions, in reading order, fade in through the stagger with the
+        // title (no slide), each the stagger's delay plus the open's later.
+        {
+            const auto extras = header.extras();
+            const std::vector<const d::Layer*> order{&must(header.layer(), "header.crumbs"), &must(header.layer(), "header.code"), &must(header.layer(), "header.tail"),
+                &header.back()->layer(), &must(header.layer(), "header.actions")};
+            check(extras.size() == order.size() && std::equal(extras.begin(), extras.end(), order.begin()), "Extras: crumbs, code, tail, Back, actions");
+            for (std::size_t i = 0; i < extras.size(); ++i) {
+                const auto& slot = extras[i]->tracks().slots[std::size_t(d::MotionSlot::enter)];
+                const auto& channels = extras[i]->tracks().slotChannels[std::size_t(d::MotionSlot::enter)];
+                check(slot[0].present() && channels[0] == d::Channel::opacity && near(slot[0].start - w.env.now, .2 + d::staggerDelay(int(i))) && near(slot[0].duration, d::duration::entrance)
+                    && !slot[1].present() && !slot[2].present(), "Extra " + std::to_string(i) + " fades in at .2 + its stagger, without a slide");
+            }
+            check(must(header.layer(), "header.actions").partRoot() && header.back()->layer().partRoot(), "The actions and Back fade as one image each (parts of their own)");
+            // E-D2: nothing the actions and Back draw meets anything the rest
+            // of the header draws (text boxes with their padding), so their
+            // groups and the header's composite a leave as one image would.
+            const d::Layer& actionsLayer = must(header.layer(), "header.actions");
+            const d::Layer& backLayer = header.back()->layer();
+            std::vector<d::Rect> own, rest;
+            const std::function<void(const d::Layer&, bool)> walk = [&](const d::Layer& l, bool split) {
+                if (l.hidden()) return;
+                split = split || &l == &actionsLayer || &l == &backLayer;
+                if ((l.content() || l.text()) && l.bounds().width > 0 && l.bounds().height > 0)
+                    (split ? own : rest).push_back(d::convert(d::localBounds(l), l, header.layer()));
+                for (const d::Layer* child : l.children()) walk(*child, split);
+            };
+            walk(header.layer(), false);
+            const auto meets = [](d::Rect a, d::Rect b) { return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height; };
+            bool overlap = false;
+            for (const auto& a : own) for (const auto& b : rest) overlap = overlap || meets(a, b);
+            check(own.size() > 2 && rest.size() > 5 && !overlap, "The actions and Back draw clear of the rest of the header");
+        }
         header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
         check(!header.back() && header.crumbTexts() == std::vector<std::string>{"// HUD"} && clear.layer().parent() == nullptr && near(must(header.layer(), "header.title").frame().x, 0),
             "Reconfigured: no back, one crumb, actions removed");
@@ -1642,7 +1676,28 @@ void oracle(const Json& data) {
             } else run.skip(label("header", "configured"), theme.light, hex(theme));
             if (language == endfield::core::Language::english && !theme.light && theme.accent == "FAD41F") {
                 header.setCounter("1,284"); header.playEntrance(w.env.clock());
-                if (const Json* r = row("header", "counterAndEntrance")) run.compare(label("header", "counterAndEntrance"), *r, header.layer(), w.root, header.controls());
+                if (const Json* r = row("header", "counterAndEntrance")) {
+                    run.compare(label("header", "counterAndEntrance"), *r, header.layer(), w.root, header.controls());
+                    // The extras' fade-in (Mac 7d57641): child by child (the
+                    // trees share their order), the same children enter
+                    // (hud.enter) at the same delays. A fixture recorded before
+                    // 7d57641 holds no header hud.enter and checks nothing here.
+                    const auto& macChildren = (*r)["layer"]["children"].array();
+                    const auto& ourChildren = header.layer().children();
+                    std::size_t entering = 0, same = 0;
+                    for (std::size_t i = 0; i < macChildren.size() && i < ourChildren.size(); ++i) {
+                        std::optional<double> mac, ours;
+                        if (macChildren[i].contains("animations"))
+                            for (const auto& a : macChildren[i]["animations"].array())
+                                if (a["key"].isString() && a["key"].string() == "hud.enter") mac = a.contains("delay") ? a["delay"].number() : 0.0;
+                        const auto& enter = ourChildren[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0];
+                        if (enter.present()) ours = enter.start - w.env.now;
+                        entering += mac.has_value();
+                        same += mac.has_value() == ours.has_value() && (!mac || near(*mac, *ours));
+                    }
+                    if (entering > 0)
+                        check(entering == 5 && macChildren.size() == ourChildren.size() && same == ourChildren.size(), label("header", "counterAndEntrance") + ": the extras enter as on the Mac");
+                }
                 header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
                 if (const Json* r = row("header", "reconfiguredNoBack")) run.compare(label("header", "reconfiguredNoBack"), *r, header.layer(), w.root, header.controls());
             }

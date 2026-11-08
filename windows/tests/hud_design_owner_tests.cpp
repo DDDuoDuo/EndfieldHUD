@@ -17,8 +17,11 @@
 #include <uiautomation.h>
 #include <wrl/client.h>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 using namespace endfield;
 using Microsoft::WRL::ComPtr;
 namespace d = modules::design;
@@ -91,6 +94,24 @@ struct FakeCanvas final : d::Canvas {
         d::Canvas::playPageEntrance(offset, delay);
     }
 };
+// A canvas with the real module header: Back, one primary action, and a
+// staggered body (the header extras' native check, Mac 7d57641).
+struct HeaderCanvas final : d::Canvas {
+    explicit HeaderCanvas(d::Context& c) : Canvas(core::Module::eventLog, c) {}
+    void buildPage(d::Page& page) override {
+        auto& action = page.make<d::Button>("check", text("Add", "添加"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
+        header().configure({"LOG", "DETAIL"}, "MOD-09", title("Clipboard", "剪贴板缓存"), "07", true, {&action});
+        auto& body = page.makeLayer("body");
+        body.setFrame({0, 120, 300, 40});
+        body.setContent(d::solid("body", {0, 0, 300, 40}, d::rgb(0x2A2A2A)));
+        page.layer().add(body);
+        page.stagger(body);
+    }
+};
+d::Layer& headerChild(d::Layer& header, std::string_view suffix) {
+    for (d::Layer* child : header.children()) if (std::string_view(child->id()).ends_with(suffix)) return *child;
+    throw std::runtime_error("No header layer ending in " + std::string(suffix));
+}
 core::ModulePresentationSample sample(core::Module m, bool attached = true) {
     core::ModulePresentationSample s;
     s.selected = s.requested = m;
@@ -631,6 +652,70 @@ void run(const std::filesystem::path& shader) {
             for (const auto& id : crowd) (void)cache.remove(id);
             unpublish({o, a, b, c});
         }
+    }
+    // --- the header extras (Mac 7d57641; E-D2, OPEN-B5-3) --------------------------------------
+    // The side actions and Back are parts of their own, so each fades in with
+    // the title as one image (a group), not surface by surface. The header's
+    // leave (a sub-page swap fades the whole header) still draws as one
+    // image: the frame equals the one the single-part header draws.
+    {
+        tools::DesignOwnerOptions o;
+        o.name = "headerTest"; o.raster.pixelsPerPoint = 1;
+        auto headerCore = std::make_unique<tools::DesignOwnerCore>(raster, context, o);
+        auto headerCanvas = std::make_unique<HeaderCanvas>(context);
+        auto* headerFake = headerCanvas.get();
+        headerCore->add(std::move(headerCanvas));
+        auto& c = *headerCore;
+        struct Withdrawn {
+            gpu::LayerComposition& composition; gpu::Renderer& renderer;
+            ~Withdrawn() { try { composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{}); } catch (...) {} }
+        } withdrawn{composition, renderer};
+        c.resize(metrics); c.setOverlayVisible(true, 200);
+        auto headerChrome = chrome; headerChrome.module = core::Module::eventLog;
+        const auto show = [&](double t) {
+            const app::ModuleFrame f{center, headerChrome, sample(core::Module::eventLog), 1, t, true};
+            c.update(f); c.upload(renderer);
+            std::vector<gpu::LayerCompositionEntry> entries;
+            for (const auto& e : c.entries(core::Module::eventLog)) entries.push_back(e);
+            composition.setEntries(renderer, entries);
+            composition.present(renderer);
+            renderer.draw(false);
+            c.collected(renderer);
+            return entries.size();
+        };
+        check(show(200) > 0 && headerFake->isActive(), "The header canvas shows");
+        auto& header = headerFake->header();
+        auto& actions = headerChild(header.layer(), "header.actions");
+        auto& back = header.back()->layer();
+        headerFake->playEntrance({0, 24}, 200.05);
+        const double mid = 200.05 + d::staggerDelay(4) + .1;   // Back (3) and the actions (4) mid-fade
+        show(mid);
+        const auto fading = [&](const d::Layer& l) { const double o2 = l.presented(d::Channel::opacity, mid); return o2 > .05 && o2 < .95; };
+        check(fading(actions) && fading(back), "Mid-entrance the actions and Back are fading in");
+        check(c.sceneStats(core::Module::eventLog)->groups == 2, "The actions and Back each fade through a group (one image), the rest of the header directly");
+        show(201.5);
+        check(c.sceneStats(core::Module::eventLog)->groups == 0, "At rest no group is held");
+        // The leave at its middle: the whole header at half opacity.
+        const auto readback = [&](double t) { show(t); return renderer.readback(); };
+        header.layer().setValue(d::Channel::opacity, .5);
+        const auto split = readback(201.6);
+        check(c.sceneStats(core::Module::eventLog)->groups >= 2, "Leaving, the header's parts fade through groups");
+        actions.setPartRoot(false); back.setPartRoot(false);
+        const auto single = readback(201.7);
+        check(c.sceneStats(core::Module::eventLog)->groups >= 1, "The single-part header fades through one group");
+        std::size_t drawn{}, differing{};
+        for (std::size_t i = 0; i + 3 < split.pixels.size() && split.pixels.size() == single.pixels.size(); i += 4) {
+            drawn += split.pixels[i + 3] > 0;
+            for (std::size_t k = 0; k < 4; ++k) if (std::abs(int(split.pixels[i + k]) - int(single.pixels[i + k])) > 2) { ++differing; break; }
+        }
+        check(split.pixels.size() == single.pixels.size() && drawn > 1000, "The leaving header draws");
+        check(differing == 0, "The header's leave draws exactly as the single-part header's one image");
+        actions.setPartRoot(true); back.setPartRoot(true);
+        header.layer().setValue(d::Channel::opacity, 1);
+        show(201.8);
+        composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{});
+        composition.present(renderer); renderer.draw(false);
+        c.collected(renderer); c.release(renderer);
     }
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);

@@ -1195,6 +1195,11 @@ void carriedEntrance(RecordedMeasurer& measurer) {
         for (std::size_t i = 0; i < rows.size(); ++i)
             check(std::abs(enterSlot(*rows[i]).start - (landing + d::staggerDelay(int(i)))) < 1e-9, "Row " + std::to_string(i) + " enters with the landing");
         check(near(rows.back()->presented(d::Channel::translateX, landing), rows.back()->value(d::Channel::translateX) + swap.x), "From the swap's offset");
+        // The new header's breadcrumb, code, tail, Back and actions fade in with its title (Mac 7d57641).
+        const auto extras = c.header().extras();
+        check(extras.size() == 5 && extras[3] == &c.header().back()->layer(), "The sub-page's header shows Back among its extras");
+        for (const auto* extra : extras)
+            check(extra->presented(d::Channel::opacity, landing + .03) < 1 && near(extra->presented(d::Channel::opacity, landing + .7), 1), "A header extra fades in after the swap: " + extra->id());
     }
     {
         // Reduce Motion: no entrance is recorded, and one recorded before is dropped.
