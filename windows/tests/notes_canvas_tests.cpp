@@ -9,6 +9,7 @@
 #include "modules/notes_canvas.hpp"
 #include "modules/notes_card_controls.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -28,8 +29,8 @@ struct World {
     d::Context context;
     double now{100};
     explicit World(d::TextMeasurer& m) : context(m, d::asciiUppercase) { context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, now); }
-    void appearance(Language language, bool light = false, bool recording = false) {
-        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = true; a.recordingMode = recording;
+    void appearance(Language language, bool light = false, bool recording = false, bool reduceMotion = true) {
+        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = reduceMotion; a.recordingMode = recording;
         context.apply(a, now);
     }
     void show(d::Canvas& c) { c.show(now); c.setActive(true, now); }
@@ -110,6 +111,51 @@ void rules() {
     canvas.setActive(false, w.now); canvas.resetSession();
     const auto length = std::uint32_t(canvas.noteArea()->document().text().size());
     check(canvas.noteArea()->document().selection().range == endfield::core::text::Range{length, length}, "A new HUD session puts the caret at the note's end");
+}
+// The TODO reorder through the shared ListReorder keeps the Notes timings
+// (:432-497): lift to z 10 and scale 1.015 over the hover duration, the
+// others glide in .18 s, the drop settles in .18 s, and the page is rebuilt
+// .2 s after the drop (at once under Reduce Motion). The cards sit at
+// slotY(0) = 4 with the card pitch.
+void reorderTimings() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false, false);
+    auto store = storeOf(three());
+    m::NotesCanvas canvas(w.context, *store, {});
+    w.show(canvas);
+    w.now += 2; w.context.advance(w.now);
+    const auto same = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    const auto trackTime = [](const d::Layer& l, d::Channel c) { return l.tracks().property[std::size_t(c)].duration; };
+    const double pitch = canvas.cardHeight + d::metric::rowGap;
+    const auto tasks = store->document().tasks;
+    auto& first = canvas.taskCard(tasks[0].id)->layer();
+    auto& second = canvas.taskCard(tasks[1].id)->layer();
+    check(first.frame().y == 4 && same(second.frame().y, 4 + pitch), "The cards sit at slotY(0) = 4, one card pitch apart");
+    const auto r = control(canvas, "task:" + tasks[0].id + ":grip")->rect(canvas.root());
+    const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+    d::PointerInput press; press.point = grip;
+    check(canvas.pointerDown(grip, press, w.now), "The TODO grip takes the press");
+    canvas.pointerDragged({grip.x, grip.y + 6}, w.now);
+    check(first.zPosition() == 10 && first.value(d::Channel::scaleX) == 1.015 && first.value(d::Channel::scaleY) == 1.015
+          && same(trackTime(first, d::Channel::scaleX), d::duration::hover), "Lift: z 10 and scale 1.015 over the hover duration");
+    canvas.pointerDragged({grip.x, grip.y + pitch + 10}, w.now);
+    check(same(first.value(d::Channel::translateY), pitch + 10) && same(second.value(d::Channel::translateY), -pitch)
+          && same(trackTime(second, d::Channel::translateY), .18), "The lifted card follows; the next one glides up in .18 s");
+    w.now += .5; w.context.advance(w.now);
+    canvas.pointerUp({grip.x, grip.y + pitch + 10}, w.now);
+    check(first.zPosition() == 0 && first.value(d::Channel::scaleX) == 1 && same(trackTime(first, d::Channel::scaleX), .18), "The drop settles the scale in .18 s");
+    check(same(first.value(d::Channel::translateY), pitch) && same(trackTime(first, d::Channel::translateY), .18), "The card settles into its slot in .18 s");
+    check(store->document().tasks[1].id == tasks[0].id, "The drop saves the slot");
+    const auto pages = w.context.pagesBuilt();
+    w.now += .15; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages, "No rebuild before the card has landed");
+    w.now += .1; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages + 1, "The page is rebuilt .2 s after the drop");
+    w.appearance(Language::english);
+    const auto reduced = w.context.pagesBuilt();
+    canvas.dragTask(tasks[2].id, 0);
+    w.context.advance(w.now);
+    check(store->document().tasks[0].id == tasks[2].id && w.context.pagesBuilt() == reduced + 1, "Under Reduce Motion the page is rebuilt at once");
 }
 // The TEXT note's editor is drawn by its host right after the note area's
 // part (NativeDesignScene::setInsertion keys on part roots, d::partRoots):
@@ -404,6 +450,7 @@ void notesOracle(Oracle& o) {
 int main(int argc, char** argv) {
     try {
         rules();
+        reorderTimings();
         noteEditorPart(""); noteEditorPart("Field note"); noteEditorClip();
         recordingWipe(); unavailable(); cardControls();
         if (const auto oracleData = loadOracle(argc > 1 ? argv[1] : nullptr, {"notes"}, {"text", "layerDefaults", "formatBar"})) {
