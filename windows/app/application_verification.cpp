@@ -412,7 +412,16 @@ int Application::Impl::runIdleTrace(){
                            <<", session "<<static_cast<unsigned>(session->phase())<<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
         need(first,"A summon draws the opening's first pose, then shows the window");};
     const auto openHUD=[&]{summon();host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
-    const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
+    // Each close's frames and the group targets its canvas fade takes (the
+    // HUD close's every native layer fading with it: Mac 5b2a9d3).
+    Json::Array closes;
+    const auto closeHUD=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;std::size_t peak=before.nativeGroupBytes;
+        perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();
+        pump(10,[&]{peak=std::max(peak,renderer.stats().nativeGroupBytes);return closed();});need(closed(),"The traced HUD closed");
+        const auto after=renderer.stats();
+        closes.push_back(Json::Object{{"frames",std::int64_t(host.stats().frames-frames)},{"groupRenders",std::int64_t(after.nativeGroupRenders-before.nativeGroupRenders)},
+            {"groupTargetAllocations",std::int64_t(after.nativeGroupTargetAllocations-before.nativeGroupTargetAllocations)},
+            {"groupBytesPeak",std::int64_t(peak)},{"groupBytesAfter",std::int64_t(after.nativeGroupBytes)}});};
     // An opening as the summon hotkey asks for it (OverlayController toggle):
     // the time to the window shown (its first pose drawn), to its first host
     // frame and to the open phase.
@@ -484,7 +493,7 @@ int Application::Impl::runIdleTrace(){
             {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
         {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"shownSeconds",reopening.shown},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
         {"anticipatedOpening",std::move(anticipated)},{"mediaRefusal",std::move(refusal)},{"anticipationDiscard",std::move(discard)},
-        {"quickReopeningShownSeconds",warm.shown},{"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
+        {"quickReopeningShownSeconds",warm.shown},{"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)},{"closes",std::move(closes)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
     // After the report (its numbers stay those of the windows above), the
