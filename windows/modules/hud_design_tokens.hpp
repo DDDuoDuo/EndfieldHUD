@@ -19,6 +19,7 @@
 // shipped "Keep this UI scale?" countdown stays 12 s
 // (modules::SettingsController::confirmationDuration, LIB-6).
 #include "core/motion.hpp"
+#include "core/render_scale.hpp"
 #include "core/scene.hpp"
 #include <array>
 #include <cstdint>
@@ -304,8 +305,13 @@ constexpr Rect boxRect(double unit = baseUnit) noexcept {
 // LIB-97). boxScale: backing px per box px = clamp(windowScale x unit, 1, 8),
 // non-finite -> 2. Text leaves request min(4, ceil(clamp(s, 1, 4) x 1.35));
 // other layers clamp(s, 1, 4); cached artwork ceil(s) capped at 8.
+// `magnification` (HUDRenderScale.contentScale / glyphScale) is a layer
+// transform above the buffer that enlarges it on screen (a Display > HUD
+// elements size; non-finite or not above 0 reads as 1): every buffer grows
+// with it, text to min(4 m, ceil(clamp(s, 1, 4) x 1.35 x m)) so the cap stays
+// 4 pixels per on-screen point, other layers to clamp(s, 1, 4) x m.
 double boxScale(double windowScale, double unit) noexcept;
-double textContentsScale(double boxScale) noexcept;
-double layerContentsScale(double boxScale) noexcept;
+double textContentsScale(double boxScale, double magnification = 1) noexcept;
+double layerContentsScale(double boxScale, double magnification = 1) noexcept;
 double artworkScale(double boxScale) noexcept;
 } // namespace endfield::modules::design

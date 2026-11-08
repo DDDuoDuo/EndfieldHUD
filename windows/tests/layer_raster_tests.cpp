@@ -384,6 +384,15 @@ void textDensity(){
     check(raster.rasterize("density.capped",1,capped,options)->width==408,"The text density is capped at 4");
     auto lower=label;lower["contentsScale"]=1;lower["position"]=Json::Array{0,0};
     check(raster.rasterize("density.lower",1,lower,options)->width==204,"A text scale below the raster's own keeps pixelsPerPoint");
+    // A magnified surface (LayerRasterOptions::magnification, a Display > HUD
+    // elements size): the cap is 4 x m, and pixelsPerPoint may reach it too.
+    auto magnified=options;magnified.magnification=2;auto enlarged=label;enlarged["contentsScale"]=6;enlarged["position"]=Json::Array{0,0};
+    check(raster.rasterize("density.magnified",1,enlarged,magnified)->width==612,"At magnification 2 a text leaf paints at its contentsScale 6");
+    enlarged["contentsScale"]=12;check(raster.rasterize("density.magnifiedCap",1,enlarged,magnified)->width==816,"The magnified cap is 4 x 2");
+    magnified.pixelsPerPoint=6;magnified.textContentsScale=false;
+    check(raster.rasterize("density.magnifiedPlate",1,plate,magnified)->width==732,"A magnified surface may paint above 4 pixels per point");
+    bool refused=false;try{magnified.magnification=1;(void)raster.rasterize("density.unmagnified",1,plate,magnified);}catch(const std::exception&){refused=true;}
+    check(refused,"Without a magnification pixelsPerPoint stays at most 4");
     const auto painted=text->straightRGBA;check(nonzeroAlpha(*text)>50,"The dense label paints its glyphs");
     check(raster.releasePixels("density.text",text),"The dense raster gives its pixels back");
     std::vector<std::uint8_t> again;raster.repaint(*text,again);check(again==painted,"It repaints byte for byte at its own density");

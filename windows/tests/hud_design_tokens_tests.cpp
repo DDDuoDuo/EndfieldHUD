@@ -195,6 +195,19 @@ void typeScale() {
     check(d::boxScale(std::numeric_limits<double>::infinity(), 1) == 2 && d::boxScale(NAN, 1) == 2, "Non-finite render scale -> 2");
     check(d::textContentsScale(1.3315) == 2 && d::textContentsScale(2) == 3 && d::textContentsScale(3.5) == 4 && d::textContentsScale(.5) == 2, "Text: min(4, ceil(clamp(s,1,4) x 1.35))");
     check(d::layerContentsScale(9) == 4 && d::layerContentsScale(.2) == 1 && d::layerContentsScale(2.5) == 2.5 && d::layerContentsScale(NAN) == 2, "Layers: clamp(s, 1, 4)");
+    // HUDRenderScale.glyphScale / contentScale with a magnification (Mac
+    // a9971ec): a layer transform enlarges the buffer, so the cap is 4 pixels
+    // per on-screen point. Magnification 1 is the rule above, bit for bit.
+    for (const double s : {.5, 1., 1.3315, 2., 2.3, 3.5, 9., double(NAN), std::numeric_limits<double>::infinity()})
+        check(d::textContentsScale(s, 1) == d::textContentsScale(s) && d::layerContentsScale(s, 1) == d::layerContentsScale(s), "Magnification 1 changes nothing");
+    check(d::textContentsScale(2, 2) == 6 && d::textContentsScale(3, 2) == 8 && d::textContentsScale(4, 1.5) == 6 && d::textContentsScale(1, 2) == 3,
+          "Text at a magnification: min(4 m, ceil(clamp(s, 1, 4) x 1.35 x m))");
+    check(d::textContentsScale(2, .5) == 2 && d::textContentsScale(2, .25) == 1 && d::textContentsScale(9, 4) == 16, "Below 1 the buffer shrinks with it; the cap scales too");
+    check(d::layerContentsScale(2, 2) == 4 && d::layerContentsScale(3, 2) == 6 && d::layerContentsScale(4, 1.5) == 6 && d::layerContentsScale(2, .5) == 1 && d::layerContentsScale(9, 2) == 8,
+          "Layers at a magnification: clamp(s, 1, 4) x m");
+    for (const double m : {double(NAN), std::numeric_limits<double>::infinity(), 0., -2.})
+        check(d::textContentsScale(2, m) == 3 && d::layerContentsScale(2, m) == 2, "A non-finite or non-positive magnification reads as 1");
+    check(endfield::core::maximumRenderScale == 4 && endfield::core::renderMagnification(2) == 2 && endfield::core::renderMagnification(NAN) == 1, "HUDRenderScale.maximum and factor");
     check(d::artworkScale(2.1) == 3 && d::artworkScale(9) == 8 && d::artworkScale(.3) == 1 && d::artworkScale(NAN) == 2, "Artwork: clamp(ceil(s), 1, 8)");
 }
 

@@ -2,6 +2,7 @@
 
 #include "core/data/json.hpp"
 #include "core/scene.hpp"
+#include "core/render_scale.hpp"
 #include "core/notes_rich_text.hpp"
 #include "native/font_resources.hpp"
 #include <cstdint>
@@ -66,6 +67,14 @@ struct LayerRasterOptions {
     // stay in points, so only the pixel count grows. Other callers' exported
     // source JSON carries contentsScale on every layer: off by default.
     bool textContentsScale{};
+    // HUDRenderScale's magnification: a transform above the rastered layer
+    // enlarges it on screen (a Display > HUD elements size; non-finite or not
+    // above 0 reads as 1). Its text leaves then carry textContentsScale(s, m)
+    // up to 4 x m, and the text density's cap follows (4 x m pixels per point,
+    // still 4 per on-screen point). pixelsPerPoint stays the caller's: a
+    // magnified surface passes layerContentsScale(s, m), so it may reach
+    // 4 x m too (0.25 ... 4 x m).
+    double magnification{1};
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };

@@ -173,13 +173,15 @@ bool italicText(const Json&descriptor){
     return false;}
 bool containsText(const Json&node){if(node["text"].isObject())return true;if(node["children"].isArray())for(const auto&child:node["children"].array())if(containsText(child))return true;return false;}
 // The density a raster is painted at (LayerRasterOptions::textContentsScale):
-// the largest contentsScale of its shown text leaves, at most 4, never below
-// pixelsPerPoint. Measure, paint and repaint read it from the same layer, so
-// a released image paints again at its own density. Content events only.
+// the largest contentsScale of its shown text leaves, at most 4 x the
+// options' magnification, never below pixelsPerPoint. Measure, paint and
+// repaint read it from the same layer, so a released image paints again at
+// its own density. Content events only.
 double rasterDensity(const Json&layer,const LayerRasterOptions&o){
     if(!o.textContentsScale)return o.pixelsPerPoint;double density=o.pixelsPerPoint;
+    const double cap=core::maximumRenderScale*core::renderMagnification(o.magnification);
     const auto visit=[&](const Json&node,unsigned depth,const auto&self)->void{if(depth>64||flag(node["hidden"]))return;
-        if(node["text"].isObject()&&node["contentsScale"].isNumber()&&std::isfinite(node["contentsScale"].number()))density=std::max(density,std::min(4.,node["contentsScale"].number()));
+        if(node["text"].isObject()&&node["contentsScale"].isNumber()&&std::isfinite(node["contentsScale"].number()))density=std::max(density,std::min(cap,node["contentsScale"].number()));
         if(node["children"].isArray())for(const auto&child:node["children"].array())self(child,depth+1,self);};
     visit(layer,0,visit);return density;}
 std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invalid("Typography descriptor nesting exceeds limit");std::size_t result=sizeof(Json);auto add=[&](std::size_t n){if(n>LayerRasterizer::maximumTypographyDescriptorBytes-result)invalid("Typography descriptor exceeds limit");result+=n;};if(v.isString())add(v.string().capacity()+1);else if(v.isArray()){add(v.array().capacity()*sizeof(Json));for(const auto&a:v.array())add(retainedJsonBytes(a,depth+1));}else if(v.isObject())for(const auto&[k,a]:v.object()){add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1);add(retainedJsonBytes(a,depth+1));}return result;}
@@ -1223,7 +1225,7 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
 std::shared_ptr<const LayerRasterImage> LayerRasterizer::Impl::raster(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options,bool releasable,std::shared_ptr<const Recipe> reuse){
     auto& r=*this;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id))invalid("Invalid retained layer ID");
-    if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>4
+    if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>core::maximumRenderScale*core::renderMagnification(options.magnification)
        ||!std::isfinite(options.paddingPoints)||options.paddingPoints<0||options.paddingPoints>64)invalid("Invalid local raster scale/padding");
     if(!std::isfinite(options.textDocumentOffset.x)||!std::isfinite(options.textDocumentOffset.y)||options.textDocumentOffset.x<0||options.textDocumentOffset.x>3e9||options.textDocumentOffset.y<0||options.textDocumentOffset.y>3e9)invalid("Invalid plain document offset");
     if(options.textDocumentOffset.x!=0&&!flag(layer["text"]["sourceSingleLineField"]))invalid("Horizontal document offset requires an explicit single-line field");
