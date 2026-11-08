@@ -135,6 +135,10 @@ public:
     SystemOverlayEffects openSettingsModule(Module);   // tray Settings (system) / About (about)
     SystemOverlayEffects openWorkMode(double now);     // tray Work Mode
     SystemOverlayEffects reopen();                     // relaunch: applicationShouldHandleReopen
+    // OverlayController's return from Projection (Projection closed): the HUD
+    // reopens on moduleLayout.restorable(lastSystemModule), the module it
+    // left, as an explicit request, so a chosen Open on module cannot replace it.
+    SystemOverlayEffects returnFromProjection();
     // OverlayController entry points.
     SystemOverlayEffects close(bool interruptOpening = false); // closeSystemOverlay
     SystemOverlayEffects requestQuit();                // confirmed red power button

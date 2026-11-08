@@ -220,6 +220,14 @@ SystemOverlayEffects SystemOverlayLifecycle::reopen() {
     if (!state_.active()) (void)appToggle(out);
     return out;
 }
+SystemOverlayEffects SystemOverlayLifecycle::returnFromProjection() {
+    SystemOverlayEffects out;
+    if (state_.active()) return out;
+    initialModuleRequest_ = restorable(lastSystemModule_);
+    // A refused opening leaves no request behind for a later one.
+    if (!appToggle(out)) initialModuleRequest_.reset();
+    return out;
+}
 SystemOverlayEffects SystemOverlayLifecycle::close(bool interruptOpening) {
     SystemOverlayEffects out; closeOverlay(interruptOpening, out); return out;
 }

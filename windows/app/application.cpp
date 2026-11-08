@@ -3066,7 +3066,7 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
         automationChanged();refresh(now());break;
     }
     case A::closeProjection:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("dismiss",[&]{projection->dismiss(hostTime(time),settings.reduceMotion);});automationChanged();refresh(time);break;
-    case A::showHUD:projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.openOverlay(),time);break;
+    case A::showHUD:projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.returnFromProjection(),time);break;
     case A::external:{projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
         const auto action=command.externalID?static_cast<gpu::TrayAction>(*command.externalID):gpu::TrayAction::openOverlay;
         if(action==gpu::TrayAction::quit){perform(lifecycle.requestTermination(),time);break;}

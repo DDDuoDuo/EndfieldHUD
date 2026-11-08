@@ -251,6 +251,22 @@ void openOn() {
         check(cycle(life, life.openSettingsModule(core::Module::addApp)).first == core::Module::addApp && life.lastModule() == core::Module::addApp,
               "A failed launch reopens on Add App over a chosen module");
         check(cycle(life, life.toggle()).first == core::Module::hotkeys, "The next ordinary open goes back to the chosen module");
+        // Projection closes the HUD it was opened from, then returns to the
+        // module the HUD left, swapped when hidden, over a chosen module.
+        chosen = core::Module::calendar;
+        (void)cycle(life, life.toggle(), core::Module::projection);
+        check(life.lastModule() == core::Module::projection && cycle(life, life.returnFromProjection()).first == core::Module::projection,
+              "The return from Projection opens Projection over a chosen module");
+        (void)cycle(life, life.toggle(), core::Module::map);
+        check(cycle(life, life.returnFromProjection()).first == core::Module::notes && !life.initialModuleRequest(),
+              "A hidden module left is swapped for the first visible one, and the request is consumed");
+        (void)life.toggle();
+        check(life.returnFromProjection().empty() && !life.initialModuleRequest(), "An active HUD is not reopened");
+        (void)life.didOpen(life.generation()); (void)life.close(); (void)life.didClose(life.generation());
+        life.setSuspended(true);
+        check(life.returnFromProjection().empty() && !life.initialModuleRequest(), "A refused return leaves no request behind");
+        life.setSuspended(false);
+        check(cycle(life, life.toggle()).first == core::Module::notes, "The next open goes back to the chosen module (hidden, so the first visible one)");
     }
     {   // A normal run: the saved module opens first, and every teardown asks
         // the owner to save the module left (the store writes only a change).
