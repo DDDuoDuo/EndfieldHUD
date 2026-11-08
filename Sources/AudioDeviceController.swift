@@ -8,7 +8,6 @@ struct AudioDeviceInfo: Identifiable, Equatable {
     var outputChannels: Int = 0
     var inputChannels: Int = 0
     var isHeadphones = false
-    var isBluetooth = false
     var canBeDefaultOutput = true
     var canBeDefaultInput = true
     var transportType: UInt32? = nil
@@ -572,7 +571,6 @@ private final class AudioDeviceStateEngine {
                     uid: uid,
                     outputChannels: outputChannels, inputChannels: inputChannels,
                     isHeadphones: headphones(id, desired: &desired),
-                    isBluetooth: transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE,
                     canBeDefaultOutput: uint(property(id, kAudioDevicePropertyDeviceCanBeDefaultDevice, scope: Self.output)) == 1,
                     canBeDefaultInput: uint(property(id, kAudioDevicePropertyDeviceCanBeDefaultDevice, scope: Self.input)) == 1,
                     transportType: transport)
