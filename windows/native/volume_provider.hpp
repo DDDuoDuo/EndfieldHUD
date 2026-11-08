@@ -4,7 +4,6 @@
 #include "native/system_services.hpp"
 
 namespace endfield::native {
-class AudioDefaultDeviceSelector;
 enum class VolumeProviderFailureKind { unavailable, unsupported, deviceChanged, invalidValue, native };
 struct VolumeProviderFailure {
     VolumeProviderFailureKind kind{};
@@ -72,15 +71,4 @@ private:
     struct State;std::shared_ptr<State>state_;
 };
 
-#ifdef _WIN32
-// Older SystemServices-backed access (owner-thread STA audio). Without
-// optionalDefaultDevices this only captures references. With it, the factory
-// additionally probes version/COM capability, never endpoint state.
-// Neither form starts audio or changes routing during construction.
-// The explicit activation vote is mandatory so sharing SystemServices with
-// other modules cannot accidentally pause their audio observations.
-VolumeProviderAccess volumeProviderAccess(SystemServices&,
-    std::function<std::int32_t(bool)> sharedAudioActivation,
-    std::shared_ptr<AudioDefaultDeviceSelector> optionalDefaultDevices={});
-#endif
 } // namespace endfield::native

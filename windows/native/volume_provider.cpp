@@ -1,5 +1,4 @@
 #include "native/volume_provider.hpp"
-#include "native/audio_default_device.hpp"
 #include "native/audio_endpoint_model.hpp"
 #include <algorithm>
 #include <cmath>
@@ -167,34 +166,4 @@ void VolumeProviderBinding::setErrorText(VolumeProviderErrorText value){const au
 std::optional<Failure>VolumeProviderBinding::lastFailure()const noexcept{return state_->failure;}
 void VolumeProviderBinding::close()noexcept{const auto s=state_;s->close();}
 
-#ifdef _WIN32
-VolumeProviderAccess volumeProviderAccess(SystemServices&service,std::function<std::int32_t(bool)>activation,std::shared_ptr<AudioDefaultDeviceSelector>defaults){
-    if(!activation)throw std::invalid_argument("Volume requires an explicit shared activation vote");
-    // Converted only when the borrowed SystemServices snapshot changes; an
-    // unchanged comparison does not allocate on slider writes.
-    struct Cache{AudioSnapshot source;AudioEndpointSnapshot converted;bool valid{};};const auto cache=std::make_shared<Cache>();
-    VolumeProviderAccess a;
-    a.readSnapshot=[&service,cache]() -> const AudioEndpointSnapshot&{const auto&s=service.audio();if(!cache->valid||!(cache->source==s)){cache->converted=audioEndpointSnapshotFromSystem(s);cache->source=s;cache->valid=true;}return cache->converted;};
-    a.requestActive=std::move(activation);
-    a.setVolume=[&service](std::wstring_view,float v){return static_cast<std::int32_t>(service.set_master_volume(v));};
-    a.setBalance=[&service](std::wstring_view,float v){return static_cast<std::int32_t>(service.set_output_balance(v));};
-    a.setMute=[&service](std::wstring_view,bool v){return static_cast<std::int32_t>(service.set_master_mute(v));};
-    a.setAppGain=[&service](std::string_view id,float v){return static_cast<std::int32_t>(service.set_application_gain(std::string(id),v));};
-    a.stopApp=[&service](std::string_view id){return static_cast<std::int32_t>(service.stop_application(std::string(id)));};
-    a.stopAllApps=[&service]{return static_cast<std::int32_t>(service.stop_applications());};
-    if(defaults&&defaults->capability().supported){
-        const auto select=[&service,defaults](std::wstring_view id,AudioDefaultFlow flow){
-            const auto result=defaults->select(flow,id);
-            // Regardless of partial failure, publish the real final topology.
-            // A successful output-default action also returns the shared volume
-            // control target to the actual default. This call alone never routes
-            // audio; only the preceding guarded selector performs that action.
-            const auto refresh=flow==AudioDefaultFlow::output&&result.succeeded()?service.select_audio_endpoint({}):service.refresh_audio();
-            if(result.rollbackStatus<0)return result.rollbackStatus;if(result.status<0)return result.status;return static_cast<std::int32_t>(refresh);
-        };
-        a.setDefaultOutput=[select](auto id){return select(id,AudioDefaultFlow::output);};
-        a.setDefaultInput=[select](auto id){return select(id,AudioDefaultFlow::input);};
-    }return a;
-}
-#endif
 } // namespace endfield::native

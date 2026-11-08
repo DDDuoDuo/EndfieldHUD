@@ -14,7 +14,6 @@
 #include <vector>
 
 namespace endfield::native {
-struct AudioSnapshot; // native/system_services.hpp
 struct VolumeDevice {
     std::string id,name;bool headphones{},bluetooth{},canBeDefaultOutput{true},canBeDefaultInput{true};
     bool operator==(const VolumeDevice&)const=default;
@@ -66,7 +65,4 @@ void validateVolumeSnapshot(const VolumeSnapshot&);
 // Icons remain asynchronous shared-cache bindings supplied by the presentation
 // owner. Endpoint-control selection is NOT public default-device switching.
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&);
-// Adapter for the older SystemServices audio snapshot (no Bluetooth or
-// fixed-volume information; the controlled endpoint stands for the output).
-AudioEndpointSnapshot audioEndpointSnapshotFromSystem(const AudioSnapshot&);
 } // namespace endfield::native
