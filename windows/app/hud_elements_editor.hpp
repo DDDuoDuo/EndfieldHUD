@@ -14,7 +14,7 @@
 // title), below it or above it near the bottom, and holds still while one of
 // its sliders or an element has the pointer. Confirm (or Return) saves every
 // placement as drawn, once and only if something changed; Cancel, Esc, the
-// HUD closing or its input switching off drops the draft. A theme flip
+// closed HUD once hidden or its input switching off drops the draft. A theme flip
 // rebuilds the strip from the draft without its entrance.
 //
 // ModuleOwner role: registered right after the shared design overlay. While
@@ -25,6 +25,9 @@
 // elsewhere). The strip and the marks are its topEntries (the HUD's top
 // layer): the marks on the core plane, the strip on the content box. Its
 // sliders and pills are its UI Automation items. No timer, thread or window.
+// The HUD close ends the editor's press and takes no input from its start;
+// the strip, the marks and the draft stay drawn and fade with the close, and
+// the hidden HUD (overlayConcealed, overlayRetracted) drops the draft.
 #ifdef _WIN32
 #include "app/module_owner.hpp"
 #include "core/hud_overlay_geometry.hpp"
@@ -93,6 +96,7 @@ public:
     bool wheel(const WheelEvent&, double) override;
     bool key(const KeyEvent&, double) override;
     void cancelInteraction(double) override;
+    bool hostEvent(const HostEvent&, double) override;
     std::optional<ModuleCursor> cursorAt(core::Point) const override;
     bool automationRefresh(IRawElementProviderFragmentRoot*) override;
     std::size_t automationCount() const override;

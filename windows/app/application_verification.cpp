@@ -2770,15 +2770,27 @@ int Application::Impl::runHiddenVerification(){
                     if(clockAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
                         hostCheck(clockAutomation->automationCount()>0&&hudElements->automationCount()==0,"After Cancel the clock's peers are listed again and the strip's are gone");
                         uia.disconnectOwners();uia.shutdown();}
-                    // deactivateModuleInput: the HUD closing drops a moved draft unsaved.
+                    // The HUD close (48584b5): a press on an element ends at once and
+                    // nothing takes input; the strip, the marks and the moved draft
+                    // stay drawn to fade with the close; the closed HUD drops the
+                    // draft unsaved once hidden.
                     beginOverlayPlacement(time);present(time,true);time+=.1;
                     {const auto shut=hudElements->frames()[G::index(G::Element::sanity)];
                         if(const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2}))drag(*press,{-40,30});}
-                    {const bool moved=hudElements->draft()&&hudElements->draft()->sanity!=saved.sanity;
-                        hudElements->overlayClosing(time);
+                    {const auto*draft=hudElements->draft();const bool moved=draft&&draft->sanity!=saved.sanity;const auto movedDraft=draft?std::optional(*draft):std::nullopt;
+                        const auto shut=hudElements->frames()[G::index(G::Element::sanity)];const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2});
+                        if(press)(void)hudElements->pointer({PointerKind::down,PointerButton::left,press->x,press->y},time);
+                        const bool pressed=hudElements->dragged().has_value();
+                        hudElements->overlayClosing(time);present(time+.05,true);
+                        const bool kept=placingOverlay()&&hudElements->draft()&&*hudElements->draft()==*movedDraft&&shownOverlayLayout()==*movedDraft&&!hudElements->dragged()&&
+                            !hudElements->topEntries().empty()&&!hudElements->capturesPointer()&&!hudElements->capturesKeys()&&!hudElements->covers({0,0});
+                        const bool ignored=press&&!hudElements->pointer({PointerKind::move,PointerButton::none,press->x+50,press->y},time+.06)&&
+                            !hudElements->pointer({PointerKind::up,PointerButton::left,press->x+50,press->y},time+.07)&&*hudElements->draft()==*movedDraft;
+                        hostCheck(moved&&pressed&&kept&&ignored,"The HUD close ends the press and keeps the strip, the marks and the moved draft drawn, taking no input");
+                        (void)hudElements->hostEvent({HostEvent::Kind::overlayConcealed,0},time+.4);
                         const bool dropped=!placingOverlay()&&shownOverlayLayout()==saved&&settingsUI->controller().committed().overlayLayout(graphemes)==saved;
-                        hudElements->setOverlayVisible(true,time);present(time,true);time+=.1;
-                        hostCheck(moved&&dropped,"The HUD closing drops the moved draft unsaved");}
+                        hudElements->setOverlayVisible(true,time+.4);present(time+.4,true);time+=.5;
+                        hostCheck(dropped,"The hidden HUD drops the moved draft unsaved");}
                     // A Title text committed in the same turn as Edit position and size
                     // (published before a frame applies it): placing starts from it,
                     // and Return saves every placement as drawn and keeps it.

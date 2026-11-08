@@ -86,6 +86,10 @@ struct HudElementsEditor::Impl {
     std::unique_ptr<gpu::NativeDesignAutomation> automation;
     double time{};
     bool visible{}, posed{}, pressed{}, uploadedMarks{};
+    // From the HUD close's start until the hidden HUD (overlayConcealed,
+    // overlayRetracted) or a reopen: the strip, the marks and the draft stay
+    // drawn where they are and fade with the close; nothing takes input.
+    bool closing{};
     Impl(gpu::LayerRasterizer& r, d::Context& c, HudElementsEditorOptions o)
         : raster(r), context(c), options(std::move(o)), strip(r, options.raster, "hud.elements.editor") {
         for (const auto e : G::elements) {
@@ -296,13 +300,36 @@ void HudElementsEditor::setAppearance(const ModuleAppearance& a, double t) {
     i.layout();
     i.changed();
 }
+// A hidden or reopened HUD (deactivateModuleInput): placing is cancelled.
 void HudElementsEditor::setOverlayVisible(bool v, double t) {
     auto& i = *impl_;
     i.clock(t);
     i.visible = v;
-    if (!v) i.finish(false); // deactivateModuleInput: placing is cancelled
+    i.closing = false;
+    i.finish(false);
 }
-void HudElementsEditor::overlayClosing(double t) { setOverlayVisible(false, t); }
+// The HUD close (48584b5, SystemHUDView.deactivateModuleInput(forRetraction:)):
+// the editor's press ends at once and nothing takes input; the strip, the
+// marks and the draft stay drawn to fade with the close, and the closed HUD
+// drops the draft once hidden (hostEvent).
+void HudElementsEditor::overlayClosing(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    i.visible = false;
+    if (!i.draft || !i.editor) { i.finish(false); return; }
+    i.closing = true;
+    i.editor->cancelPointer(); i.dragged.reset(); i.pressed = false;
+    i.changed();
+}
+bool HudElementsEditor::hostEvent(const HostEvent& e, double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    if (e.kind != HostEvent::Kind::overlayConcealed && e.kind != HostEvent::Kind::overlayRetracted) return false;
+    const bool placed = placing();
+    i.closing = false;
+    i.finish(false);
+    return placed;
+}
 void HudElementsEditor::update(const ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
@@ -315,8 +342,9 @@ void HudElementsEditor::update(const ModuleFrame& frame) {
     i.posed = true;
     if (!i.editor) { i.collectEditors(); return; }
     // The marks (and a strip beside them) follow the elements' natural sizes:
-    // an alert arriving or clearing while placing (facilityChanged).
-    i.layout();
+    // an alert arriving or clearing while placing (facilityChanged). The
+    // close keeps them where they are drawn.
+    if (!i.closing) i.layout();
     // The strip on the content box at its origin (overlayEditorHost in box
     // coordinates), the marks on the core plane; the top layer fades with the
     // HUD close as every native layer does (5b2a9d3: topLayout).
@@ -371,16 +399,24 @@ void HudElementsEditor::release(gpu::Renderer& r) {
     need(i.strip.releaseResources(r), "HUD elements strip still published at teardown");
     for (auto& scene : i.markScenes) need(scene->releaseResources(r), "HUD elements marks still published at teardown");
 }
-bool HudElementsEditor::covers(core::Point) const { return placing(); }
+// Placing takes input until the HUD close starts; the parallax stays frozen
+// while the strip is drawn.
+bool HudElementsEditor::covers(core::Point) const { return placing() && !impl_->closing; }
 bool HudElementsEditor::pointerLocked() const { return placing(); } // freezes the parallax (lockParallaxForActiveInput)
-bool HudElementsEditor::capturesPointer() const { return placing(); }
-bool HudElementsEditor::capturesWheel() const { return placing(); }
-bool HudElementsEditor::capturesKeys() const { return placing(); }
-bool HudElementsEditor::suppressesKeyFilters() const { return placing(); }
+bool HudElementsEditor::capturesPointer() const { return placing() && !impl_->closing; }
+bool HudElementsEditor::capturesWheel() const { return placing() && !impl_->closing; }
+bool HudElementsEditor::capturesKeys() const { return placing() && !impl_->closing; }
+bool HudElementsEditor::suppressesKeyFilters() const { return placing() && !impl_->closing; }
 bool HudElementsEditor::pointer(const PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
     if (!i.draft || !i.editor) return false;
+    // The close: no press, drag or release; the first move or a leave clears
+    // the highlights (clearControlHighlights).
+    if (i.closing) {
+        if (e.kind == PointerKind::move || e.kind == PointerKind::leave) { i.editor->updateHighlights(i.editor->layer(), std::nullopt); i.changed(); }
+        return false;
+    }
     const core::Point p{e.x, e.y};
     const bool left = e.button == PointerButton::left;
     switch (e.kind) {
@@ -402,13 +438,13 @@ bool HudElementsEditor::pointer(const PointerEvent& e, double t) {
     i.changed();
     return true;
 }
-bool HudElementsEditor::wheel(const WheelEvent&, double t) { impl_->clock(t); return placing(); }
+bool HudElementsEditor::wheel(const WheelEvent&, double t) { impl_->clock(t); return capturesWheel(); }
 // keyDown: Esc cancels and Return confirms (unmodified); every key is the
 // editor's while placing (the host checks its summon shortcut first).
 bool HudElementsEditor::key(const KeyEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.draft || !i.editor) return false;
+    if (!i.draft || !i.editor || i.closing) return false;
     if (e.kind != KeyKind::down) return true;
     const auto held = [](int key) { return (GetKeyState(key) & 0x8000) != 0; };
     if (e.alt || held(VK_CONTROL) || held(VK_SHIFT) || held(VK_LWIN) || held(VK_RWIN)) return true;
@@ -430,7 +466,7 @@ void HudElementsEditor::cancelInteraction(double t) {
 // element's hit frame (shown or hidden), the normal cursor elsewhere.
 std::optional<ModuleCursor> HudElementsEditor::cursorAt(core::Point p) const {
     const auto& i = *impl_;
-    if (!i.draft || !i.editor) return std::nullopt;
+    if (!i.draft || !i.editor || i.closing) return std::nullopt;
     if (i.editor->dragging()) return ModuleCursor::closedHand;
     if (const auto local = i.stripPoint(p); local && i.editor->stripContains(*local, i.editor->layer())) return ModuleCursor::source;
     if (const auto plane = i.corePoint(p); plane && i.elementAt(*plane)) return ModuleCursor::openHand;
@@ -444,7 +480,7 @@ bool HudElementsEditor::automationRefresh(IRawElementProviderFragmentRoot* root)
         // The screen-reader stand-ins for the strip (overlayEditorStandIns).
         host.items = [&i] {
             std::vector<d::AccessibilityItem> items;
-            if (i.draft && i.editor) i.editor->accessibilityItems(i.editor->layer(), items);
+            if (i.draft && i.editor && !i.closing) i.editor->accessibilityItems(i.editor->layer(), items);
             return items;
         };
         host.toScreen = [&i](core::Rect r) -> std::optional<core::Rect> {
@@ -453,13 +489,13 @@ bool HudElementsEditor::automationRefresh(IRawElementProviderFragmentRoot* root)
                 projected(i.boxProjection, i.metrics.scale, {r.x + i.stripOrigin.x, r.y + i.stripOrigin.y, r.width, r.height}));
         };
         host.invoke = [&i](std::string_view id) {
-            if (!i.draft || !i.editor) return false;
+            if (!i.draft || !i.editor || i.closing) return false;
             i.clock(i.options.now ? i.options.now() : i.time);
             i.editor->perform(id);
             return true;
         };
         host.setValue = [&i](std::string_view id, double value) {
-            if (!i.draft || !i.editor) return false;
+            if (!i.draft || !i.editor || i.closing) return false;
             i.clock(i.options.now ? i.options.now() : i.time);
             i.editor->adjust(id, value);
             return true;
