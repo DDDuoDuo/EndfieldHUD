@@ -333,10 +333,12 @@ struct PerAppAudioInputLayout: Equatable {
     /// The tap is the one stream whose removal leaves exactly the device's own
     /// input streams, in order, by channel count and layout, or the only
     /// stream when the aggregate leaves the device's inputs out. When two
-    /// positions fit (a stereo microphone shaped like the tap) the route is
+    /// positions fit (a stereo microphone shaped like the tap), or the only
+    /// stream could be a microphone stream shaped like the tap, the route is
     /// refused rather than risk switching on the microphone.
     static func locate(aggregate: [AudioStreamBasicDescription], device: [AudioStreamBasicDescription],
                        isTap: (AudioStreamBasicDescription) -> Bool) -> PerAppAudioInputLayout? {
+        if aggregate.count == 1, device.contains(where: isTap) { return nil }
         let device = aggregate.count == 1 ? [] : device
         guard aggregate.count == device.count + 1 else { return nil }
         func planar(_ format: AudioStreamBasicDescription) -> Bool { format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 }
