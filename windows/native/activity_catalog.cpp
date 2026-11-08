@@ -1,6 +1,7 @@
 #include "native/activity_catalog.hpp"
 #include "native/activity_provider.hpp"
 #include "native/activity_gpu.hpp"
+#include "native/process_identity.hpp"
 #include "core/data/json.hpp"
 #include <algorithm>
 #include <cmath>
@@ -12,7 +13,6 @@ void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}
 bool text(std::string_view s,std::size_t cap){return s.size()<=cap&&ehud::data::Json::validUtf8(s)&&s.find('\0')==s.npos;}
 void validate(const ActivityCatalogProcess&p){need(p.pid&&p.startID&&p.pid!=p.parent&&!p.imageKey.empty()&&text(p.imageKey,4096)&&text(p.applicationID,4096)&&text(p.name,4096)&&text(p.iconKey,4096),"Invalid Activity process identity");}
 std::string key(const ActivityCatalogProcess&p){return p.applicationID.empty()?"image:"+p.imageKey:"app:"+p.applicationID;}
-bool childImage(std::string_view image,std::string_view parent){const auto slash=parent.find_last_of("/\\");return slash!=parent.npos&&slash>3&&image.size()>slash+1&&image.substr(0,slash+1)==parent.substr(0,slash+1);}
 }
 ActivityCatalogResult buildActivityCatalog(const ActivityCatalogInventory&input){
     need(input.processes.size()<=8192&&input.unreadablePIDs.size()<=8192-input.processes.size(),"Activity process inventory exceeds8192");ActivityCatalogResult out;out.complete=input.complete;std::map<std::uint32_t,const ActivityCatalogProcess*>all;
@@ -30,7 +30,7 @@ ActivityCatalogResult buildActivityCatalog(const ActivityCatalogInventory&input)
     std::vector<const ActivityCatalogProcess*>ordered;ordered.reserve(all.size());for(const auto&[_,p]:all)ordered.push_back(p);std::sort(ordered.begin(),ordered.end(),[](auto*a,auto*b){return a->startID<b->startID||(a->startID==b->startID&&a->pid<b->pid);});
     for(const auto*p:ordered){if(owner.contains(p->pid))continue;const auto direct=groups.find(key(*p));if(direct!=groups.end()){owner.emplace(p->pid,direct->first);continue;}
         if(!p->applicationID.empty())continue;const auto parent=all.find(p->parent);if(parent==all.end()||parent->second->startID>=p->startID)continue;const auto owned=owner.find(p->parent);if(owned==owner.end()||!owned->second.starts_with("image:"))continue;
-        const auto root=owned->second.substr(6);if(childImage(p->imageKey,root))owner.emplace(p->pid,owned->second);
+        const auto root=owned->second.substr(6);if(executableInsideFolderOf(p->imageKey,root))owner.emplace(p->pid,owned->second);
     }
     for(const auto&[pid,id]:owner){groups.at(id).processIDs.push_back(pid);out.identities.emplace(pid,*all.at(pid));}
     out.apps.reserve(groups.size());for(auto&[_,app]:groups)out.apps.push_back(std::move(app));return out;
@@ -86,7 +86,6 @@ modules::ActivityAppsRaw ActivityCatalogSampler::sample(double stamp,double now)
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <tlhelp32.h>
 #include <appmodel.h>
 #include <psapi.h>
 #include <shlobj_core.h>
@@ -121,8 +120,8 @@ struct NativeCatalog {
     bool ensureSID(){if(!sid)sid=userSID(GetCurrentProcess());return bool(sid);}
     std::optional<ActivityCatalogReading>read(std::uint32_t pid,std::uint32_t parent,bool window,bool usage,bool*otherUser=nullptr){
         if(!ensureSID())return {};Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid)};if(!process.value)return {};auto user=userSID(process.value);if(!user)return {};if(!EqualSid(user->data(),sid->data())){if(otherUser)*otherUser=true;return {};}
-        std::array<wchar_t,32768>path{};DWORD n=DWORD(path.size());FILETIME created{},exit{},kernel{},userTime{};if(!QueryFullProcessImageNameW(process.value,0,path.data(),&n)||!n||!GetProcessTimes(process.value,&created,&exit,&kernel,&userTime)||!ticks(created))return {};
-        std::wstring original(path.data(),n),normalized(n,L'\0');if(!LCMapStringEx(LOCALE_NAME_INVARIANT,LCMAP_LOWERCASE,original.data(),int(n),normalized.data(),int(n),nullptr,nullptr,0))return {};
+        const auto image=readWindowsProcessPath(process.value);FILETIME created{},exit{},kernel{},userTime{};if(!image||!GetProcessTimes(process.value,&created,&exit,&kernel,&userTime)||!ticks(created))return {};
+        const std::wstring&original=*image;const auto n=original.size();std::wstring normalized(n,L'\0');if(!LCMapStringEx(LOCALE_NAME_INVARIANT,LCMAP_LOWERCASE,original.data(),int(n),normalized.data(),int(n),nullptr,nullptr,0))return {};
         ActivityCatalogReading out;auto&identity=out.identity;identity.pid=pid;identity.parent=parent;identity.startID=ticks(created);identity.imageKey=utf8(normalized);identity.iconKey=utf8(original);identity.appWindow=window;if(identity.imageKey.empty())return {};
         const auto slash=original.find_last_of(L"\\/");auto label=original.substr(slash==original.npos?0:slash+1);if(label.size()>4&&label.substr(label.size()-4)==L".exe")label.resize(label.size()-4);identity.name=utf8(label);
         UINT32 size{};const auto query=GetApplicationUserModelId(process.value,&size,nullptr);
@@ -138,8 +137,10 @@ struct NativeCatalog {
         // A complete inventory retires names of identities no longer running.
         struct Prune{NativeCatalog&c;const ActivityCatalogInventory&out;~Prune(){if(out.complete)std::erase_if(c.names,[&](const auto&e){return e.second.seen!=c.pass;});}}prune{*this,out};FILETIME began{};GetSystemTimePreciseAsFileTime(&began);out.captureStartID=ticks(began);if(!ensureSID()){out.complete=false;return out;}struct Windows{std::set<DWORD>pids;bool bounded{true};std::exception_ptr error;unsigned count{};}windows;
         const auto callback=[](HWND hwnd,LPARAM value)->BOOL{auto&state=*reinterpret_cast<Windows*>(value);try{if(++state.count>8192){state.bounded=false;return FALSE;}if(GetWindow(hwnd,GW_OWNER)||GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW)return TRUE;DWORD pid{};GetWindowThreadProcessId(hwnd,&pid);if(pid)state.pids.insert(pid);return TRUE;}catch(...){state.error=std::current_exception();return FALSE;}};
-        if(!EnumWindows(callback,reinterpret_cast<LPARAM>(&windows))||!windows.bounded||windows.error){out.complete=false;return out;}Handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};if(snapshot.value==INVALID_HANDLE_VALUE){out.complete=false;return out;}
-        PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.value,&entry)){out.complete=GetLastError()==ERROR_NO_MORE_FILES;return out;}unsigned count{};do{if(++count>8192){out.complete=false;return out;}if(entry.th32ProcessID&&entry.th32ProcessID!=entry.th32ParentProcessID){bool other{};if(auto value=read(entry.th32ProcessID,entry.th32ParentProcessID,windows.pids.contains(entry.th32ProcessID),false,&other))out.processes.push_back(std::move(value->identity));else if(!other)out.unreadablePIDs.push_back(entry.th32ProcessID);}}while(Process32NextW(snapshot.value,&entry));out.complete=GetLastError()==ERROR_NO_MORE_FILES;return out;
+        if(!EnumWindows(callback,reinterpret_cast<LPARAM>(&windows))||!windows.bounded||windows.error){out.complete=false;return out;}
+        std::vector<WindowsProcessEntry>entries;out.complete=readWindowsProcesses(entries);
+        for(const auto&entry:entries)if(entry.pid&&entry.pid!=entry.parent){bool other{};if(auto value=read(entry.pid,entry.parent,windows.pids.contains(entry.pid),false,&other))out.processes.push_back(std::move(value->identity));else if(!other)out.unreadablePIDs.push_back(entry.pid);}
+        return out;
     }
 };
 }
@@ -167,8 +168,8 @@ std::string windowsActivityPackagedName(const std::wstring&aumid){
     if(value==aumid)return {};
     return utf8(value);
 }
-std::map<std::uint32_t,std::uint32_t>readWindowsActivityThreads(){std::map<std::uint32_t,std::uint32_t>out;Handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};if(snapshot.value==INVALID_HANDLE_VALUE)return out;
-    PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.value,&entry))return out;unsigned count{};do{if(++count>8192)break;if(entry.th32ProcessID)out.emplace(entry.th32ProcessID,entry.cntThreads);}while(Process32NextW(snapshot.value,&entry));return out;}
+std::map<std::uint32_t,std::uint32_t>readWindowsActivityThreads(){std::map<std::uint32_t,std::uint32_t>out;std::vector<WindowsProcessEntry>entries;(void)readWindowsProcesses(entries);
+    for(const auto&entry:entries)if(entry.pid)out.emplace(entry.pid,entry.threads);return out;}
 ActivityCatalogSampler::Readers windowsActivityCatalogReaders(){auto state=std::make_shared<NativeCatalog>();return {[state]{return state->inventory();},[state](auto pid){return state->read(pid,0,false,true);},[](std::span<const std::uint32_t>pids){return readWindowsActivityGPU(pids);},[]{return readWindowsActivityThreads();}};}
 }
 #else
