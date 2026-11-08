@@ -2675,6 +2675,9 @@ void Application::Impl::importReaderReference(std::uint64_t generation,std::stri
         catch(const std::exception&){reader->receiveImportError(generation,modules::readerImportFailure(std::current_exception(),watchAppearance.language),hostTime(time));}});
 }
 void Application::Impl::activate(const WatchActivation&event){
+    // Arrange on HUD: the right-hand tiles are dragged, not opened, whatever
+    // reached them (SystemHUDView onAction: pointer and VoiceOver).
+    if(arrangingModules&&session&&session->rowAction(event.buttonID))return;
     if(event.action==quitAction){
         if(designOverlay)presentQuitConfirmation(now());
         else perform(lifecycle.requestQuit(),now());
