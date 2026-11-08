@@ -22,6 +22,26 @@ struct AudioApplicationExecutable {
     bool operator==(const AudioApplicationExecutable&)const=default;
 };
 bool validAudioApplicationExecutable(const AudioApplicationExecutable&)noexcept;
+// One process of a helper's ancestry: its executable path (UTF-8, as Windows
+// reports it), its creation time (FILETIME ticks) and its PID.
+struct AudioProcessImage {std::string path;std::uint64_t created{};std::uint32_t pid{};};
+// The ancestry read above a session's process, nearest parent first.
+inline constexpr std::size_t audioHelperAncestorLimit=16;
+// The app a helper process plays for (source ff06692: a helper is named after
+// the app that contains it; 0585a0e: WebKit's audio service is attributed to
+// the app it plays for): the index in `ancestors` (nearest parent first) of
+// that app's process, or none when the process is its own app.
+// - A helper belongs to the outermost ancestor, each one created before its
+//   child, whose executable's folder holds the helper's executable. The walk
+//   ends at the first ancestor that is younger, outside that folder, or in
+//   `systemFolder` (the Windows folder: Explorer is never an app's owner).
+// - A WebView2 runtime process (audioWebViewRuntime) plays for the nearest
+//   older ancestor outside the runtime, then that host's own app.
+// A command-line child of a launcher in another folder keeps its own name.
+std::optional<std::size_t>audioHelperOwner(const AudioProcessImage&process,std::span<const AudioProcessImage>ancestors,std::string_view systemFolder);
+// The Windows analogue of macOS's system XPC audio service outside any app:
+// the shared Edge WebView2 runtime's executable.
+bool audioWebViewRuntime(std::string_view path)noexcept;
 // Internal provider for SystemServices, not another application service. Exact
 // session IDs are backend lease keys; processKey is PID + creation-time identity.
 // A backend must never invent process ownership for multi-process/system audio.
@@ -45,6 +65,12 @@ struct AudioSessionRecord {
     // on the still-existing session (Windows persists the level per app); the
     // backend releases the session on its next read. Never listed as an app.
     bool exited{};
+    // The app this process plays for when it is a helper (audioHelperOwner):
+    // its executable names and draws the Volume row and joins Now Playing.
+    // The session's own executable stays the route's process identity.
+    std::optional<AudioApplicationExecutable> application;
+    // The process's package family name; empty when it has no package.
+    std::string packageFamily;
     bool operator==(const AudioSessionRecord&)const=default;
 };
 // Native float scalars are compared with this tolerance everywhere a readback
@@ -66,6 +92,9 @@ struct AudioApplicationRoute {
     // now). Now Playing reads it for window-title players, which report no
     // play state; a play/pause republishes the applications.
     bool rendering{};
+    // Shared by every session of this process; reset when they disagree.
+    std::optional<AudioApplicationExecutable> application;
+    std::string packageFamily;
     bool operator==(const AudioApplicationRoute&)const=default;
 };
 struct AudioSessionSnapshot {
@@ -177,5 +206,10 @@ private:class Impl;std::unique_ptr<Impl>impl_;
 // Constructed on the worker MTA only. Merely obtaining the factory does not
 // activate COM/audio; tests must inject their own backend rather than invoke it.
 AudioSessionWorker::Factory nativeAudioSessionBackendFactory();
+// The ancestry audioHelperOwner reads for a live process: nearest parent
+// first, at most audioHelperAncestorLimit, from one process snapshot's
+// parent PIDs (`parents`: PID to parent PID). It stops at an ancestor that
+// cannot be opened or read. Exposed for the hidden native check.
+std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents);
 #endif
 } // namespace endfield::native

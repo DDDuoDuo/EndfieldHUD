@@ -1,4 +1,5 @@
 #include "native/audio_session_worker.hpp"
+#include "native/process_identity.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -8,7 +9,12 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 namespace {
 using namespace endfield::native;
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
@@ -137,6 +143,66 @@ void appearanceMetadata(){Fake f;AudioSessionRoutes routes;AudioApplicationExecu
     f.records[1].executable=e;routes.update(f.records,f);const auto previous=routes.applications();auto broken=f.records;broken.back().executable->path="relative.exe";bool rejected{};try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected&&routes.applications()==previous,"Malformed late executable metadata rejects before route mutation");
     broken=f.records;broken[0].processKey.clear();broken[0].pid=0;rejected=false;try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Unowned/system session cannot attach guessed executable artwork");
 }
+// Source ff06692 (a helper is named after the app that contains it) and
+// 0585a0e (WebKit's audio service plays for its app), on Windows ancestry.
+void helperOwner(){
+    using I=AudioProcessImage;const std::string system="C:\\Windows";
+    const I explorer{"C:\\Windows\\explorer.exe",10,1};
+    // The live Chrome probe: the audio-service utility is chrome.exe again,
+    // started by the main chrome.exe, started by Explorer.
+    const I chrome{"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",100,2},audio{chrome.path,200,3};
+    check(audioHelperOwner(audio,std::vector{chrome,explorer},system)==0,"Chrome's audio utility belongs to the main chrome.exe; Explorer never owns an app");
+    check(!audioHelperOwner(chrome,std::vector{explorer},system),"A process launched by Explorer is its own app");
+    // The live Hypergryph probe: QtWebEngineProcess.exe under Games.exe.
+    const I games{"D:\\Hypergryph Launcher\\Games.exe",100,4},web{"D:\\Hypergryph Launcher\\web\\QtWebEngineProcess.exe",150,5};
+    check(audioHelperOwner(web,std::vector{games,explorer},system)==0,"A helper in a subfolder of its launcher's folder belongs to the launcher");
+    const I steam{"C:\\Steam\\steam.exe",50,6},cefHost{"C:\\Steam\\bin\\cef\\steamwebhelper.exe",60,7},cef{"C:\\Steam\\bin\\cef\\steamwebhelper.exe",70,8};
+    check(audioHelperOwner(cef,std::vector{cefHost,steam,explorer},system)==1,"The outermost in-folder ancestor is the app");
+    check(!audioHelperOwner(web,std::vector{I{"D:\\Other\\Games.exe",100,4}},system),"A launcher in another folder does not own the process");
+    check(!audioHelperOwner(web,std::vector{I{games.path,151,4}},system)&&!audioHelperOwner(web,std::vector{I{games.path,150,4}},system),"A parent created after (or with) its child is a reused PID and owns nothing");
+    check(audioHelperOwner(cef,std::vector{cefHost,I{steam.path,65,6}},system)==0,"The walk stops at a younger ancestor");
+    check(!audioHelperOwner(I{"C:\\Tools\\bin\\ffplay.exe",90,9},std::vector{I{"C:\\Windows\\System32\\cmd.exe",80,8},I{"C:\\Tools\\host.exe",70,7}},system),"A command-line child is never renamed after its launcher");
+    check(!audioHelperOwner(I{"C:\\Windows\\System32\\rundll32.exe",90,9},std::vector{explorer},system),"Explorer never owns a Windows tool");
+    // 0585a0e analogue: the shared WebView2 runtime plays for its host.
+    const I host{"C:\\Program Files\\Contoso\\Contoso.exe",100,11},view{"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\130.0.1\\msedgewebview2.exe",110,12},viewAudio{view.path,120,13};
+    check(audioWebViewRuntime(view.path)&&audioWebViewRuntime("msedgewebview2.EXE")&&!audioWebViewRuntime("C:\\x\\notmsedgewebview2.exe")&&!audioWebViewRuntime(chrome.path),"The WebView2 runtime is recognised by its executable");
+    check(audioHelperOwner(viewAudio,std::vector{view,host,explorer},system)==1,"A WebView2 audio process plays for its host app");
+    const I launcher{"C:\\Program Files\\Contoso\\Launcher.exe",90,14};
+    check(audioHelperOwner(viewAudio,std::vector{view,host,launcher,explorer},system)==2,"The host is then named after its own app");
+    check(!audioHelperOwner(viewAudio,std::vector{view,I{"C:\\Windows\\SystemApps\\Shell\\Widgets.exe",100,15}},system),"A WebView2 host inside the Windows folder is not an app");
+    check(!audioHelperOwner(viewAudio,std::vector{view},system)&&!audioHelperOwner(viewAudio,std::vector{I{view.path,130,12}},system),"A runtime with no older host keeps its own name");
+    check(!audioHelperOwner(I{"",5,1},std::vector{chrome},system)&&!audioHelperOwner(I{chrome.path,0,1},std::vector{chrome},system),"An unknown path or creation time owns nothing");
+    std::vector<I>deep(40,I{"C:\\Deep\\a.exe",0,1});for(std::size_t n=0;n<deep.size();++n)deep[n].created=1000-n;
+    check(audioHelperOwner(I{"C:\\Deep\\b.exe",2000,2},deep,system)==audioHelperAncestorLimit-1,"The ancestry read is bounded");
+}
+// The containing app and package family travel with the process's sessions.
+void helperRoutes(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable app{"C:\\explicit-synthetic\\Launcher.exe",{}};app.identity.objectID[0]=7;
+    for(auto&r:f.records){r.application=app;r.packageFamily="Contoso.Player_abc";}
+    routes.update(f.records,f);check(routes.applications()[0].application==app&&routes.applications()[0].packageFamily=="Contoso.Player_abc"&&f.calls.empty(),"A helper's app and package family reach its route");
+    f.records[1].application->identity.objectID[0]=8;f.records[1].packageFamily="Other.App_x";routes.update(f.records,f);
+    check(!routes.applications()[0].application&&routes.applications()[0].packageFamily.empty()&&routes.applications()[0].available,"Sessions that disagree leave no app or family, and audio control stays");
+    auto broken=f.records;broken[0].application->path="relative.exe";bool rejected{};try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Malformed app metadata is rejected");
+    broken=f.records;broken[0].packageFamily=std::string(257,'a');rejected=false;try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"An oversized package family is rejected");
+    broken=f.records;broken[0].processKey.clear();broken[0].pid=0;broken[0].application.reset();broken[0].executable.reset();rejected=false;try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"An unowned session cannot carry a package family");
+}
+#ifdef _WIN32
+// Hidden native check: a copy of this test binary, started without a window,
+// reads this process as its parent at the same path, created earlier.
+int ancestorChild(){Sleep(30000);return 0;}
+void ancestorReader(){
+    wchar_t self[32768]{};const DWORD length=GetModuleFileNameW(nullptr,self,32768);check(length>0&&length<32768,"Read the test binary's path");
+    std::wstring command=L"\""+std::wstring(self,length)+L"\" --ancestor-child";STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION child{};
+    check(CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&child)!=0,"Start a hidden copy of the test binary");
+    struct Reap{PROCESS_INFORMATION&p;~Reap(){TerminateProcess(p.hProcess,0);WaitForSingleObject(p.hProcess,5000);CloseHandle(p.hThread);CloseHandle(p.hProcess);}}reap{child};
+    std::vector<WindowsProcessEntry>all;check(readWindowsProcesses(all),"One process snapshot");std::map<std::uint32_t,std::uint32_t>parents;for(const auto&e:all)if(e.pid&&e.pid!=e.parent)parents.emplace(e.pid,e.parent);
+    const auto ancestors=readWindowsAudioAncestors(child.dwProcessId,parents);
+    check(!ancestors.empty()&&ancestors[0].pid==GetCurrentProcessId(),"The child's nearest ancestor is this process");
+    const auto created=readWindowsProcessCreation(child.hProcess);const auto path=readWindowsProcessPath(child.hProcess);check(created&&path,"Read the child's creation time and path");
+    const auto mine=readWindowsProcessCreation(GetCurrentProcess());check(mine&&ancestors[0].created==*mine&&*mine<=*created,"The ancestor carries this process's creation time");
+    std::string utf8(ancestors[0].path);check(audioHelperOwner({utf8,*created,child.dwProcessId},ancestors,"C:\\Windows")==0,"The same executable's child belongs to this process");
+    check(readWindowsAudioAncestors(0,parents).empty()&&readWindowsAudioAncestors(0xfffffff0u,parents).empty(),"An unknown PID has no ancestry");
+}
+#endif
 struct WorkerState{std::mutex mutex;std::vector<AudioSessionRecord>records{{"a","42:100",L"Fixture",42,true,true,.8f,0}};AudioSessionBackend::Wake wake;std::thread::id backendThread;unsigned reads{},opens{},closes{},pauses{},writes{};bool violation{};};
 class ThreadFake final:public AudioSessionBackend {
     std::shared_ptr<WorkerState>s;
@@ -167,4 +233,14 @@ void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMut
     check(!worker.activate(L"fixture endpoint")&&!worker.setGain("42:100",.5f),"Closed worker rejects stale queued UI commands");
 }
 }
-int main(){try{transactions();pausedPlayer();exitedProcess();silentProcess();idleProcesses();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){
+#ifdef _WIN32
+    if(argc==2&&std::string(argv[1])=="--ancestor-child")return ancestorChild();
+#else
+    (void)argc;(void)argv;
+#endif
+    try{transactions();pausedPlayer();exitedProcess();silentProcess();idleProcesses();appearanceMetadata();helperOwner();helperRoutes();
+#ifdef _WIN32
+        ancestorReader();
+#endif
+        lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

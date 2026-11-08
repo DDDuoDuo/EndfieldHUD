@@ -1,6 +1,7 @@
 #include "audio_session_worker.hpp"
 #include "native/file_shelf_files.hpp"
 #include "native/audio_application_name.hpp"
+#include "native/process_identity.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -73,11 +74,15 @@ std::wstring fileDescription(std::wstring_view path){
 // A packaged process's application display name from its package manifest
 // (literal or ms-resource reference resolved through SHLoadIndirectString),
 // as the Windows mixer shows it. Empty without package identity or a name.
-std::wstring packagedName(HANDLE process){
+// `family` receives the package family name (Now Playing joins a helper
+// without an AppUserModelID of its own to its package's player).
+std::wstring packagedName(HANDLE process,std::string*family=nullptr){
     try{
         std::array<wchar_t,PACKAGE_FULL_NAME_MAX_LENGTH+1>full{};UINT32 length=static_cast<UINT32>(full.size());
         if(GetPackageFullName(process,&length,full.data())!=ERROR_SUCCESS)return {};
         const std::wstring_view fullName(full.data(),wcsnlen(full.data(),full.size()));if(fullName.empty())return {};
+        if(family){std::array<wchar_t,PACKAGE_FAMILY_NAME_MAX_LENGTH+1>name{};UINT32 count=static_cast<UINT32>(name.size());
+            if(PackageFamilyNameFromFullName(full.data(),&count,name.data())==ERROR_SUCCESS)*family=utf8Optional(std::wstring_view(name.data(),wcsnlen(name.data(),name.size())));}
         std::array<wchar_t,APPLICATION_USER_MODEL_ID_MAX_LENGTH>aumid{};UINT32 aumidLength=static_cast<UINT32>(aumid.size());
         const std::wstring_view application=GetApplicationUserModelId(process,&aumidLength,aumid.data())==ERROR_SUCCESS?audioPackageApplicationID(std::wstring_view(aumid.data(),wcsnlen(aumid.data(),aumid.size()))):std::wstring_view{};
         const std::wstring fullText(fullName);UINT32 pathLength{};
@@ -100,6 +105,12 @@ std::string applicationIdentity(HANDLE process)noexcept{
     return utf8Optional(std::wstring_view(buffer,wcsnlen(buffer,APPLICATION_USER_MODEL_ID_MAX_LENGTH)));
 }
 struct Handle{HANDLE value{};~Handle(){if(value)CloseHandle(value);}Handle()=default;Handle(const Handle&)=delete;Handle&operator=(const Handle&)=delete;};
+std::wstring utf16(std::string_view text){
+    if(text.empty()||text.size()>32767*3)return {};const int length=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);if(length<=0||length>=32768)return {};
+    std::wstring out(static_cast<std::size_t>(length),L'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),out.data(),length)!=length)return {};return out;
+}
+// The Windows folder (audioHelperOwner never attributes a helper to it).
+std::string windowsFolder(){std::array<wchar_t,MAX_PATH+1>path{};const UINT length=GetWindowsDirectoryW(path.data(),static_cast<UINT>(path.size()));return length&&length<path.size()?utf8Optional(std::wstring_view(path.data(),length)):std::string();}
 struct TaskString{LPWSTR value{};~TaskString(){CoTaskMemFree(value);}};
 std::optional<AudioApplicationExecutable>executable(std::wstring_view path)noexcept{
     try{if(path.empty()||path.size()>=32768||path.find(L'\0')!=path.npos)return {};const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(count<=0||count>32768)return {};
@@ -184,12 +195,19 @@ class NativeBackend final:public AudioSessionBackend {
     // kept across close/open: the idle session manager is released while no
     // one shows per-app audio, and reopening must not re-read executables.
     // Bounded; the least recently used identity leaves first.
-    struct Metadata{std::wstring name;std::optional<AudioApplicationExecutable>executable;std::string appUserModelID;std::uint64_t used{};};
+    struct Metadata{std::wstring name;std::optional<AudioApplicationExecutable>executable;std::string appUserModelID;std::optional<AudioApplicationExecutable>application;std::string packageFamily;std::uint64_t used{};};
     static constexpr std::size_t metadataCapacity=64;
     std::map<std::string,Metadata,std::less<>>metadata;std::uint64_t metadataClock{};
     void remember(const std::string&key,const AudioSessionRecord&record,const std::wstring&processName){
         if(metadata.size()>=metadataCapacity&&!metadata.contains(key))metadata.erase(std::min_element(metadata.begin(),metadata.end(),[](const auto&a,const auto&b){return a.second.used<b.second.used;}));
-        metadata.insert_or_assign(key,Metadata{processName,record.executable,record.appUserModelID,++metadataClock});
+        metadata.insert_or_assign(key,Metadata{processName,record.executable,record.appUserModelID,record.application,record.packageFamily,++metadataClock});
+    }
+    // Parent PIDs from one process snapshot per open/collect batch, taken at
+    // the batch's first new process (helper attribution, audioHelperOwner).
+    std::optional<std::map<std::uint32_t,std::uint32_t>>batchParents;
+    const std::map<std::uint32_t,std::uint32_t>&parents(){
+        if(!batchParents){batchParents.emplace();std::vector<WindowsProcessEntry>all;(void)readWindowsProcesses(all);for(const auto&e:all)if(e.pid&&e.pid!=e.parent)batchParents->emplace(e.pid,e.parent);}
+        return *batchParents;
     }
     HRESULT comStatus;bool initialized{};DWORD thread=GetCurrentThreadId();std::wstring endpoint;
     ComPtr<IMMDeviceEnumerator>enumerator;ComPtr<IAudioSessionManager2>manager;ComPtr<NewSessions>notification;bool managerRegistered{};
@@ -210,26 +228,39 @@ class NativeBackend final:public AudioSessionBackend {
                 auto process=std::make_unique<Handle>();
                 // SYNCHRONIZE lets termination be observed; a process whose DACL
                 // refuses it is still listed, only without the exit wake.
-                process->value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(!process->value)process->value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);FILETIME created{},exited{},kernel{},user{};
-                if(process->value&&GetProcessTimes(process->value,&created,&exited,&kernel,&user)){
-                    const auto stamp=(std::uint64_t(created.dwHighDateTime)<<32)|created.dwLowDateTime;next.record.pid=pid;next.record.processKey=std::to_string(pid)+":"+std::to_string(stamp);next.process=std::move(process);
+                process->value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);if(!process->value)process->value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);
+                if(const auto stamp=readWindowsProcessCreation(process->value)){
+                    next.record.pid=pid;next.record.processKey=std::to_string(pid)+":"+std::to_string(*stamp);next.process=std::move(process);
                     // Share one immutable discovery result across this exact
                     // process identity's sessions. No metadata I/O on read,
                     // volume events, hover, drag or native callback threads.
                     const auto prior=std::find_if(entries.begin(),entries.end(),[&](const auto&entry){return entry.second.record.processKey==next.record.processKey;});
-                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.processName=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
-                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.processName=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
+                    if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.processName=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;next.record.application=prior->second.record.application;next.record.packageFamily=prior->second.record.packageFamily;}
+                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.processName=known->second.name;next.record.appUserModelID=known->second.appUserModelID;next.record.application=known->second.application;next.record.packageFamily=known->second.packageFamily;known->second.used=++metadataClock;}
                     else{
                         // Packaged apps: the package application's DisplayName;
                         // otherwise the executable's product label, then its stem.
                         // audioProcessLabel takes the first valid label (no
                         // unpaired surrogate, within 4096 UTF-8 bytes), "PID n"
                         // last, as the source falls back name, bundle, PID.
-                        const auto packaged=packagedName(next.process->value);std::wstring_view token;
-                        std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
-                        if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){token=std::wstring_view(path.data(),length);next.record.executable=executable(token);}
+                        auto packaged=packagedName(next.process->value,&next.record.packageFamily);
+                        const auto path=readWindowsProcessPath(next.process->value);std::wstring label;
+                        if(path){label=*path;next.record.executable=executable(label);}
                         next.record.appUserModelID=applicationIdentity(next.process->value);
-                        next.processName=audioProcessLabel(packaged,[&]{return token.empty()?std::wstring{}:fileDescription(token);},token.empty()?std::wstring{}:std::filesystem::path(token).stem().wstring(),pid);
+                        // A helper is named and drawn after the app it plays
+                        // for (source ff06692, 0585a0e: audioHelperOwner).
+                        if(const auto self=path?utf8Optional(*path):std::string();!self.empty()){
+                            const auto ancestors=readWindowsAudioAncestors(pid,parents());
+                            if(const auto owner=audioHelperOwner({self,*stamp,pid},ancestors,windowsFolder())){
+                                const auto&app=ancestors[*owner];const auto wide=utf16(app.path);
+                                std::optional<AudioApplicationExecutable>owned;if(!wide.empty())owned=executable(wide);
+                                if(owned){next.record.application=std::move(owned);label=wide;packaged.clear();
+                                    // Its package display name, while that exact process runs.
+                                    Handle host;host.value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,app.pid);
+                                    if(host.value&&readWindowsProcessCreation(host.value)==app.created)packaged=packagedName(host.value);}
+                            }
+                        }
+                        next.processName=audioProcessLabel(packaged,[&]{return label.empty()?std::wstring{}:fileDescription(label);},label.empty()?std::wstring{}:std::filesystem::path(label).stem().wstring(),pid);
                     }
                     remember(next.record.processKey,next.record,next.processName);
                     // The session's own display name comes first when valid.
@@ -246,7 +277,7 @@ class NativeBackend final:public AudioSessionBackend {
         if(route&&!e.exitWait&&e.process&&e.process->value&&!e.exitReported&&!RegisterWaitForSingleObject(&e.exitWait,e.process->value,processExited,route.get(),INFINITE,WT_EXECUTEONLYONCE|WT_EXECUTEINWAITTHREAD))e.exitWait=nullptr;
         return S_OK;
     }
-    HRESULT collect(){if(!route)return S_OK;if(route->overflow.load(std::memory_order_acquire))return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);HRESULT first=S_OK;
+    HRESULT collect(){if(!route)return S_OK;batchParents.reset();if(route->overflow.load(std::memory_order_acquire))return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);HRESULT first=S_OK;
         for(auto&slot:route->created){auto*p=slot.load(std::memory_order_acquire);if(!p||p==reinterpret_cast<IAudioSessionControl*>(static_cast<std::uintptr_t>(1)))continue;p=slot.exchange(nullptr,std::memory_order_acq_rel);ComPtr<IAudioSessionControl>lease;lease.Attach(p);const auto hr=add(lease.Get());if(FAILED(hr)&&SUCCEEDED(first))first=hr;}
         return first;
     }
@@ -257,7 +288,7 @@ public:
     std::int32_t open(std::wstring_view id,Wake wake)override{if(!ownThread())return RPC_E_WRONG_THREAD;close();endpoint=id;return resume(std::move(wake));}
     std::int32_t resume(Wake wake)override{
         try{
-        if(!ownThread())return RPC_E_WRONG_THREAD;if(FAILED(comStatus))return comStatus;if(route)return S_OK;if(endpoint.empty())return E_INVALIDARG;
+        if(!ownThread())return RPC_E_WRONG_THREAD;if(FAILED(comStatus))return comStatus;if(route)return S_OK;if(endpoint.empty())return E_INVALIDARG;batchParents.reset();
         auto hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&enumerator));ComPtr<IMMDevice>device;
         if(SUCCEEDED(hr))hr=enumerator->GetDevice(endpoint.c_str(),&device);
         if(SUCCEEDED(hr))hr=device->Activate(__uuidof(IAudioSessionManager2),CLSCTX_INPROC_SERVER,nullptr,reinterpret_cast<void**>(manager.GetAddressOf()));
@@ -308,5 +339,17 @@ public:
 };
 }
 AudioSessionWorker::Factory nativeAudioSessionBackendFactory(){return []{return std::make_unique<NativeBackend>();};}
+std::vector<AudioProcessImage>readWindowsAudioAncestors(std::uint32_t pid,const std::map<std::uint32_t,std::uint32_t>&parents){
+    std::vector<AudioProcessImage>out;
+    try{
+        for(auto found=parents.find(pid);found!=parents.end()&&out.size()<audioHelperAncestorLimit;found=parents.find(found->second)){
+            const auto parent=found->second;if(!parent||parent==pid||std::any_of(out.begin(),out.end(),[&](const auto&a){return a.pid==parent;}))break;
+            Handle process;process.value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,parent);if(!process.value)break;
+            const auto created=readWindowsProcessCreation(process.value);const auto path=readWindowsProcessPath(process.value);if(!created||!path)break;
+            auto text=utf8Optional(*path);if(text.empty())break;out.push_back({std::move(text),*created,parent});
+        }
+    }catch(...){}// Attribution is presentation only: a failed read leaves the helper its own name.
+    return out;
+}
 } // namespace endfield::native
 #endif

@@ -1,4 +1,5 @@
 #include "audio_session_worker.hpp"
+#include "native/process_identity.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -11,6 +12,44 @@
 namespace endfield::native {
 bool validAudioApplicationExecutable(const AudioApplicationExecutable&e)noexcept{
     return ehud::data::validWindowsFilePath(e.path)&&(!e.identity.volumeUUID||ehud::data::validUUID(*e.identity.volumeUUID));
+}
+namespace {
+char lower(char c)noexcept{return c>='A'&&c<='Z'?static_cast<char>(c-'A'+'a'):c;}
+bool caselessSuffix(std::string_view value,std::string_view suffix)noexcept{
+    if(value.size()<suffix.size())return false;value=value.substr(value.size()-suffix.size());
+    for(std::size_t n=0;n<suffix.size();++n)if(lower(value[n])!=lower(suffix[n]))return false;return true;
+}
+// `path` lies in `folder` (or below it), compared like executableInsideFolderOf.
+bool insideFolder(std::string_view path,std::string_view folder)noexcept{
+    while(!folder.empty()&&(folder.back()=='\\'||folder.back()=='/'))folder.remove_suffix(1);
+    if(folder.empty()||path.size()<=folder.size()+1||(path[folder.size()]!='\\'&&path[folder.size()]!='/'))return false;
+    for(std::size_t n=0;n<folder.size();++n)if(lower(path[n])!=lower(folder[n]))return false;return true;
+}
+}
+bool audioWebViewRuntime(std::string_view path)noexcept{
+    // The shared Edge WebView2 runtime's processes all run this executable.
+    constexpr std::string_view runtime="msedgewebview2.exe";
+    return caselessSuffix(path,runtime)&&(path.size()==runtime.size()||path[path.size()-runtime.size()-1]=='\\'||path[path.size()-runtime.size()-1]=='/');
+}
+std::optional<std::size_t>audioHelperOwner(const AudioProcessImage&process,std::span<const AudioProcessImage>ancestors,std::string_view systemFolder){
+    if(process.path.empty()||!process.created)return {};
+    ancestors=ancestors.first(std::min(ancestors.size(),audioHelperAncestorLimit));
+    const auto older=[](const AudioProcessImage&parent,const AudioProcessImage&child){return parent.created&&parent.created<child.created&&!parent.path.empty();};
+    const auto system=[&](const AudioProcessImage&a){return !systemFolder.empty()&&insideFolder(a.path,systemFolder);};
+    const AudioProcessImage*helper=&process;std::optional<std::size_t>owner;std::size_t next=0;
+    if(audioWebViewRuntime(process.path)){
+        // 0585a0e analogue: the runtime's process plays for its host app.
+        const AudioProcessImage*child=&process;
+        for(;next<ancestors.size();++next){const auto&a=ancestors[next];if(!older(a,*child)||system(a))return {};child=&a;
+            if(!audioWebViewRuntime(a.path)){owner=next++;helper=&a;break;}}
+        if(!owner)return {};
+    }
+    // ff06692 analogue: the outermost older ancestor whose folder holds the helper.
+    for(const AudioProcessImage*child=owner?&ancestors[*owner]:&process;next<ancestors.size();++next){
+        const auto&a=ancestors[next];if(!older(a,*child)||system(a)||!executableInsideFolderOf(helper->path,a.path))break;
+        owner=next;child=&a;
+    }
+    return owner;
 }
 namespace {
 constexpr std::int32_t invalid=static_cast<std::int32_t>(0x80070057u),unexpected=static_cast<std::int32_t>(0x8000ffffu),notFound=static_cast<std::int32_t>(0x80070490u),changedState=static_cast<std::int32_t>(0x8000000cu);
@@ -34,14 +73,17 @@ public:
     std::vector<AudioApplicationRoute>apps;
     const AudioSessionRecord*record(std::string_view id)const{const auto i=std::find_if(records.begin(),records.end(),[&](const auto&r){return r.id==id;});return i==records.end()?nullptr:&*i;}
     void rebuild(){
-        struct Group{std::size_t index{};bool active{},writable{true},iconConflict{},identityConflict{};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
+        struct Group{std::size_t index{};bool active{},writable{true},iconConflict{},identityConflict{},applicationConflict{},familyConflict{};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
         for(const auto&r:records){if(r.processKey.empty()||!r.pid)continue;auto found=indices.find(r.processKey);
-            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()&&!r.exited});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error,r.executable,r.appUserModelID});}
+            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()&&!r.exited});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error,r.executable,r.appUserModelID,false,r.application,r.packageFamily});}
             else{auto&group=found->second;group.active=group.active||r.active;group.writable=group.writable&&r.controllable&&r.volume.has_value()&&!r.exited;if(r.error<0)next[group.index].error=r.error;
                 auto&app=next[group.index];if(!group.iconConflict&&r.executable){if(app.executable&&*app.executable!=*r.executable){app.executable.reset();group.iconConflict=true;}else app.executable=r.executable;}
                 // One process has one AppUserModelID. A disagreement is never
                 // resolved by picking one; Now Playing then finds no match.
-                if(!group.identityConflict&&!r.appUserModelID.empty()){if(app.appUserModelID.empty())app.appUserModelID=r.appUserModelID;else if(app.appUserModelID!=r.appUserModelID){app.appUserModelID.clear();group.identityConflict=true;}}}
+                if(!group.identityConflict&&!r.appUserModelID.empty()){if(app.appUserModelID.empty())app.appUserModelID=r.appUserModelID;else if(app.appUserModelID!=r.appUserModelID){app.appUserModelID.clear();group.identityConflict=true;}}
+                // Likewise its containing app and package family.
+                if(!group.applicationConflict&&r.application){if(app.application&&*app.application!=*r.application){app.application.reset();group.applicationConflict=true;}else app.application=r.application;}
+                if(!group.familyConflict&&!r.packageFamily.empty()){if(app.packageFamily.empty())app.packageFamily=r.packageFamily;else if(app.packageFamily!=r.packageFamily){app.packageFamily.clear();group.familyConflict=true;}}}
         }
         // Source: a paused player stays listed while its process lives (HAL
         // remembers its output devices). A Windows session persists Inactive
@@ -76,7 +118,7 @@ AudioSessionRoutes&AudioSessionRoutes::operator=(AudioSessionRoutes&&)noexcept=d
 const std::vector<AudioApplicationRoute>&AudioSessionRoutes::applications()const noexcept{return impl_->apps;}
 void AudioSessionRoutes::update(std::span<const AudioSessionRecord>records,AudioSessionBackend&backend){
     if(records.size()>maximumSessions)throw std::invalid_argument("Audio session budget exceeded");std::map<std::string,std::uint32_t,std::less<>>processes;std::map<std::string,bool,std::less<>>ids;std::size_t bytes{};
-    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume))||(r.executable&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.executable)))||r.persistentID.size()>4096||r.persistentID.find('\0')!=r.persistentID.npos||r.appUserModelID.size()>1024||r.appUserModelID.find('\0')!=r.appUserModelID.npos||(!r.appUserModelID.empty()&&r.processKey.empty()))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t)+r.persistentID.size()+r.appUserModelID.size();if(r.executable)bytes+=r.executable->path.size()+(r.executable->identity.volumeUUID?r.executable->identity.volumeUUID->size():0);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
+    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume))||(r.executable&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.executable)))||r.persistentID.size()>4096||r.persistentID.find('\0')!=r.persistentID.npos||r.appUserModelID.size()>1024||r.appUserModelID.find('\0')!=r.appUserModelID.npos||(!r.appUserModelID.empty()&&r.processKey.empty())||(r.application&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.application)))||r.packageFamily.size()>256||r.packageFamily.find('\0')!=r.packageFamily.npos||(!r.packageFamily.empty()&&r.processKey.empty()))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t)+r.persistentID.size()+r.appUserModelID.size()+r.packageFamily.size();for(const auto*e:{&r.executable,&r.application})if(*e)bytes+=(*e)->path.size()+((*e)->identity.volumeUUID?(*e)->identity.volumeUUID->size():0);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
     auto&i=*impl_;for(const auto&r:records)if(const auto*previous=i.record(r.id);previous&&(previous->processKey!=r.processKey||previous->pid!=r.pid))throw std::invalid_argument("Native audio session identity was reassigned");i.records.assign(records.begin(),records.end());
     // Source: a tap ends with its process and the app plays at full volume
     // next time. Windows persists the session level per app, so a terminated

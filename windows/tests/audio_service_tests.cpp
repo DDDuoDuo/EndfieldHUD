@@ -550,6 +550,17 @@ void outputsListApps(){
         check(w.defaultWrites.empty()&&w.defaultInput==mic&&!w.violation,"No input (or any) default is written");}
     s.stop();
 }
+// Source ff06692: a helper's Volume row is drawn with the icon of the app it
+// plays for; a process that is its own app keeps its executable's icon.
+void helperIcon(){
+    n::AudioEndpointSnapshot audio;audio.available=true;audio.applicationsSupported=true;
+    n::AudioApplicationExecutable own{"C:\\EndfieldHUD-Synthetic\\Launcher\\web\\Helper.exe",{}},app{"C:\\EndfieldHUD-Synthetic\\Launcher\\Games.exe",{}};
+    own.identity.objectID[0]=1;app.identity.objectID[0]=2;
+    n::AudioApplicationRoute helper;helper.id="10:1";helper.pid=10;helper.name=L"Games";helper.available=true;helper.executable=own;helper.application=app;
+    n::AudioApplicationRoute plain=helper;plain.id="11:1";plain.pid=11;plain.application.reset();
+    audio.applications={helper,plain};const auto v=n::volumeSnapshotFromEndpoints(audio);
+    check(v.applications.size()==2&&v.applications[0].executable==app&&v.applications[1].executable==own,"A helper row takes its app's icon; an app's own row keeps its executable's");
+}
 // Now Playing reads AudioApplicationRoute::rendering for window-title
 // players (NetEase keeps the song in its title while paused). A session
 // state event republishes it without repainting Volume; hiding per-app audio
@@ -761,7 +772,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();silentApp();silentAppMoved();processExit();hiddenOutputChange();failedRestore();gainStatus();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();silentApp();silentAppMoved();processExit();hiddenOutputChange();failedRestore();gainStatus();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();helperIcon();
 #ifdef _WIN32
         oneWorker();
 #endif
