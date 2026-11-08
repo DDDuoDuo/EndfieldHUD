@@ -499,13 +499,14 @@ Layer& ArchiveTile::classifiedStamp(Builder& b, std::string_view id, Point cente
     stamp.setBaseTransform(Affine::rotation(-10 * pi / 180));
     return stamp;
 }
-// setPoster (:458-469): a thumbnail filling the well in place of the doc glyph (nullopt restores it).
-TileMoreButton& ArchiveTile::attachMore(std::string id, std::string label) {
+// attachMore (1.3.1 :444-455).
+TileMoreButton& ArchiveTile::attachMore(std::string id, std::string spokenLabel) {
     if (more_) return *more_;
-    more_ = &builder_->make<TileMoreButton>(std::move(id), std::move(label), sub(this->id(), "more"));
+    more_ = &builder_->make<TileMoreButton>(std::move(id), std::move(spokenLabel), sub(this->id(), "more"));
     more_->attach(layer(), layer().bounds().width, brackets_);
     return *more_;
 }
+// setPoster (:458-469): a thumbnail filling the well in place of the doc glyph (nullopt restores it).
 void ArchiveTile::setPoster(std::optional<ImageSource> source) {
     if (style_ != Style::standard || (!source && !poster_)) return;
     if (!poster_ && source) {

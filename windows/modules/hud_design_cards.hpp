@@ -124,7 +124,7 @@ public:
     // Its layers are named after the tile's (<tile id>.more), so a tile
     // built ahead under the same layer id (File Shelf's other layout)
     // draws the same artwork.
-    TileMoreButton& attachMore(std::string id, std::string label);
+    TileMoreButton& attachMore(std::string id, std::string spokenLabel);
     TileMoreButton* more() const noexcept { return more_; }
     // HUDArchiveTile.bracketPath: the selection brackets (also Settings' icon tiles at inset 0).
     static PathBuilder bracketPath(Rect bounds, double inset);
