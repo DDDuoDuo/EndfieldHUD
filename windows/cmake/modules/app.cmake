@@ -141,6 +141,7 @@ if(BUILD_TESTING)
   add_test(NAME application_package_contracts COMMAND application_package_tests)
   add_executable(application_persistence_tests tests/application_persistence_tests.cpp)
   target_include_directories(application_persistence_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(application_persistence_tests PRIVATE hud_data)
   add_test(NAME application_persistence_contracts COMMAND application_persistence_tests)
   # Impl::cleanup drops every module adapter before the shared design Context.
   add_executable(application_teardown_tests tests/application_teardown_tests.cpp)
