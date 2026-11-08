@@ -109,6 +109,18 @@ struct DesignBox {
     }
 };
 
+// HUDDragGrip's drag rules, shared by the design library's DragGrip (which
+// forwards here) and the source list's Arrange on HUD drag.
+struct DragGripMotion {
+    // How far the pointer travels before a press becomes a drag.
+    static constexpr double liftDistance = 3;
+    // HUDDragGrip.edgeScrollStep: while a dragged row is `offset` points below
+    // the top of a list `length` points tall (negative above it), the signed
+    // number of points the list scrolls toward the pointer: up to 12 within
+    // 36 points of an edge or past it, negative toward the top, 0 elsewhere.
+    static double edgeScrollStep(double offset, double length) noexcept;
+};
+
 // Sources/HUDDesignTokens.swift HUDEasing (spec §0, §1.9), shared by the module
 // switch and the design library (which must not redefine them).
 struct DesignEasing {

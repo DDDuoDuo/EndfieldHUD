@@ -203,7 +203,7 @@ class DragGrip final : public Control {
 public:
     enum class Phase : std::uint8_t { began, moved, ended };
     // How far the pointer travels before a press becomes a drag.
-    static constexpr double liftDistance = 3;
+    static constexpr double liftDistance = core::DragGripMotion::liftDistance;
     DragGrip(Builder&, std::string id, std::string label, Size size, Point dotsAt);
     std::function<void(Phase, Point)> onDrag;
     bool dragging() const noexcept { return dragging_; }
@@ -215,11 +215,8 @@ public:
     // hand while a row is lifted, the open hand over a shown grip, otherwise
     // the owner has no cursor.
     static std::optional<Cursor> cursor(bool lifted, std::span<DragGrip* const> grips, std::optional<Point> rootPoint, const Layer& root);
-    // HUDDragGrip.edgeScrollStep: while a dragged row is `offset` points below
-    // the top of a list `length` points tall (negative above it), the signed
-    // number of points the list scrolls toward the pointer: up to 12 within
-    // 36 points of an edge or past it, negative toward the top, 0 elsewhere.
-    static double edgeScrollStep(double offset, double length) noexcept;
+    // HUDDragGrip.edgeScrollStep (core::DragGripMotion::edgeScrollStep).
+    static double edgeScrollStep(double offset, double length) noexcept { return core::DragGripMotion::edgeScrollStep(offset, length); }
     bool pointerDown(Point) override;
     void pointerDragged(Point) override;
     void pointerUp(Point) override;

@@ -139,6 +139,12 @@ void ModuleSelection::settle(Module module) {
     pending_.reset();
 }
 
+double DragGripMotion::edgeScrollStep(double offset, double length) noexcept {
+    constexpr double band = 36, step = 12;
+    if (offset < band) return -std::min(step, band - offset);
+    if (offset > length - band) return std::min(step, offset - length + band);
+    return 0;
+}
 double CubicTiming::value(double normalizedTime) const {
     if (!std::isfinite(normalizedTime))
         return normalizedTime > 0 ? 1 : 0;
