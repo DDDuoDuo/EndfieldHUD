@@ -422,7 +422,9 @@ private:
     // two worker steps: inspect / reinspect (a candidate), then save; or remove.
     struct Work { m::AppShortcutRequest request; bool saving{}; std::optional<m::ShortcutCandidate> candidate; };
 
-    static bool durable(m::ShortcutTaskKind k) noexcept { return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch; }
+    static bool durable(m::ShortcutTaskKind k) noexcept {
+        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move;
+    }
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
     // Executor completions run outside the registry's isolation: in
     // production a failure is logged without user content and the owner
@@ -528,8 +530,10 @@ private:
         } else {
             const auto* current = record(w.request.id);
             if (!current) {finishWork(std::nullopt, errorText(language_, m::ShortcutErrorCode::missing, false, {}));return true;}
-            // save: store.inspect(url: store.resolvedURL(for: id)); remove: store.remove(id:).
-            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::edit : m::ShortcutTaskKind::remove;t.record = *current;
+            // save: store.inspect(url: store.resolvedURL(for: id)); remove: store.remove(id:);
+            // move: store.move(id:to:), one write in the right-hand order.
+            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::edit : w.request.kind == K::move ? m::ShortcutTaskKind::move : m::ShortcutTaskKind::remove;
+            t.record = *current;t.index = w.request.index;
         }
         (void)submit(std::move(t), Purpose::request);
         return false;

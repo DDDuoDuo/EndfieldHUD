@@ -314,8 +314,9 @@ inline bool recordMicroTag(RecordedMeasurer& recorded, const Json& layer) {
 // page. Only such an oracle passes `pageListedTwice`, the controls of the
 // Windows page: a later Mac listing of an edit field that page holds is
 // skipped, and every other row, pop-over fields included, is compared in full.
-// TODO(Step 0a): the App Shortcut and Archive oracles are the only callers;
-// once their tools are rerun at the Mac pin, drop the argument and this filter.
+// TODO(Step 0a): the Archive oracle is the only caller (the App Shortcut
+// oracle was rerun at the Mac pin); once its tool is rerun too, drop the
+// argument and this filter.
 inline void compareAccessibility(const std::string& label, const Json& expected, std::span<const d::AccessibilityItem> items,
     std::vector<std::string>& failures, std::span<d::Control* const> pageListedTwice = {}) {
     static constexpr std::array<std::string_view, 9> roles{"button", "toggle", "popUp", "menuItem", "tab", "slider", "text", "edit", "group"};

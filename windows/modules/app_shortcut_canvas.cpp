@@ -8,12 +8,17 @@
 namespace endfield::modules {
 namespace d = design;
 namespace {
-// The 40 x 40 app icon tile (:322-347): the shortcut's artwork with an inset
-// ring rgba(0,0,0,.25); it opens Choose icon.
-class AppShortcutTile final : public d::Control {
+// The 40 x 40 app icon tile (:442-480): the shortcut's artwork with an inset
+// ring rgba(0,0,0,.25) and, on its lower right corner, a dark chip with the
+// yellow chooser caret of the dropdowns (Display > Center logo), so it reads
+// as a chooser; it opens Choose icon. The caret turns while that menu is open
+// (MenuAnchor) and nudges on hover.
+class AppShortcutTile final : public d::Control, public d::MenuAnchor {
 public:
+    static constexpr double badgeSide = 14;
     AppShortcutTile(d::Builder& b, std::string id, std::string label, const d::Menu::IconTile& artwork)
-        : Control(b.env, id, std::move(label), b.layer(id)), picture_(&b.layer(id + ".icon")), brighten_(&b.layer(id + ".brighten")) {
+        : Control(b.env, id, std::move(label), b.layer(id)), picture_(&b.layer(id + ".icon")), brighten_(&b.layer(id + ".brighten")),
+          caret_(&d::Dropdown::caretLayer(b, id + ".caret", {8, 5}, {badgeSide / 2 + .5, badgeSide / 2 + .5})) {
         const d::Rect bounds{0, 0, artwork.size.width, artwork.size.height};
         layer().setBounds(artwork.size); layer().setAnimatable();
         draw(artwork);
@@ -21,14 +26,22 @@ public:
         ring.setFrame(bounds); d::setBorder(ring, std::nullopt, d::black(.25), 1);
         brighten_->setFrame(bounds); d::setBackground(*brighten_, d::white(.07)); brighten_->setAnimatable();
         brighten_->setValue(d::Channel::opacity, 0);
-        for (d::Layer* part : {picture_, brighten_, &ring}) layer().add(*part);
+        d::Layer& badge = b.layer(id + ".badge");
+        badge.setFrame({bounds.width - badgeSide, bounds.height - badgeSide, badgeSide, badgeSide});
+        const auto& palette = b.env.palette;
+        badge.setContent(d::shape(badge.id(), d::localBounds(badge), d::chamfer({.5, .5, badgeSide - 1, badgeSide - 1}, 4, d::topLeft),
+            palette.token(d::ThemeToken::control), palette.token(d::ThemeToken::ringField)));
+        badge.add(*caret_);
+        for (d::Layer* part : {picture_, brighten_, &ring, &badge}) layer().add(*part);
         setTarget(bounds);
     }
+    bool isOpen() const noexcept override { return open_; }
+    void setOpen(bool open) override { if (open != open_) { open_ = open; renderCaret(); } }
     // The tile's colour and picture, in place (an icon the owner published
     // after the row was built), the row and its entrance left as they are.
     void setArtwork(const d::Menu::IconTile& artwork) { if (artwork != shown_) draw(artwork); }
     const d::Menu::IconTile& artwork() const noexcept { return shown_; }
-    void hoverChanged() override { d::applyHoverMotion(*this, 1, 1, .965, brighten_); }
+    void hoverChanged() override { d::applyHoverMotion(*this, 1, 1, .965, brighten_); renderCaret(); }
     void pressChanged() override { d::applyHoverMotion(*this, 1, 1, .965, brighten_); }
     std::optional<d::AccessibilityRole> accessibilityRole() const override { return d::AccessibilityRole::popUp; }
     void accessibilityItems(const d::Layer& root, std::vector<d::AccessibilityItem>& out) const override {
@@ -37,8 +50,10 @@ public:
         out.push_back(std::move(item));
     }
 private:
-    d::Layer *picture_, *brighten_;
+    d::Layer *picture_, *brighten_, *caret_;
     d::Menu::IconTile shown_;
+    bool open_{};
+    void renderCaret() { d::Dropdown::renderCaret(*caret_, open_, hovered() && enabled(), clock()); }
     void draw(const d::Menu::IconTile& artwork) {
         shown_ = artwork;
         d::setBackground(layer(), artwork.fill.value_or(d::clear));
@@ -51,7 +66,7 @@ private:
 }
 
 AppShortcutCanvas::AppShortcutCanvas(d::Context& context, const AppShortcutArtwork& artwork, AppShortcutCanvasServices services)
-    : Canvas(core::Module::addApp, context), artwork_(&artwork), services_(std::move(services)) {}
+    : Canvas(core::Module::addApp, context), artwork_(&artwork), services_(std::move(services)) { timers_ = timerGroup(); }
 AppShortcutCanvas::~AppShortcutCanvas() = default;
 
 // MARK: Store (:27-46)
@@ -64,7 +79,7 @@ void AppShortcutCanvas::didActivate() {
     if (store_) reload(*store_);
     if (storeError_) showError(*storeError_);
 }
-void AppShortcutCanvas::didDeactivate() { closeChooser(); dropTarget_ = false; }
+void AppShortcutCanvas::didDeactivate() { cancelReorder(); closeChooser(); dropTarget_ = false; }
 // reload (:40-46): rebuilds from the store when its records changed.
 void AppShortcutCanvas::reload(const ShortcutFile& file) {
     if (store_) store_ = file;
@@ -124,9 +139,14 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
     if (found == pending_.end()) return;
     pending_.erase(found);
     using K = AppShortcutRequest::Kind;
+    const bool dropped = landing_ && *landing_ == request;
+    if (dropped) landing_.reset();
     if (error || !committed) {
         showError(error.value_or(std::string{}));
-        if (request.kind == K::save) rerender(); // save: a failed rename shows the saved name again (:224-226)
+        // save: a failed rename shows the saved name again (:224-226); move:
+        // a refused write (the file changed on disk) puts the rows back in
+        // the saved order (:229-230, :256-258).
+        if (request.kind == K::save || request.kind == K::move) rerender();
         return;
     }
     // AppShortcutStore.save / remove committed.
@@ -139,7 +159,7 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
             return request.id.empty() ? std::none_of(before.begin(), before.end(), [&](const auto& b) { return b.id == v.id; }) : v.id == request.id; });
         if (saved != items_.rend() && onSaved) onSaved(*saved);
         // Windows relink of an imported shortcut: its row updates, no toast.
-        if (request.id.empty()) toast(d::Icon::plus, "App added", "已添加到右侧列表");
+        if (request.id.empty()) toast(d::Icon::plus, "App added", "已添加到右侧列表", text("Click the icon to change it", "点击图标即可更换"));
         revealsEnd_ = false;
         break;
     }
@@ -152,13 +172,37 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
         if (onRemoved) onRemoved(request.name);
         toast(d::Icon::trash, "Shortcut removed", "应用未被卸载");
         break;
+    case K::move: {
+        const auto before = itemIDs();
+        if (dropped) {
+            // dragRow's drop (:256-265): the rows already show the new order;
+            // the page order (accessibility) follows once the row has landed.
+            if (store_) store_ = *committed;
+            items_ = committed->items;
+            if (onReordered) onReordered();
+            after(d::ListReorder::landingDelay(env().reduceMotion), timers_, [this] { if (isActive() && !reorder_) rerender(); });
+            break;
+        }
+        // moveRow (:220-230): the list and the right-hand order follow, the moved row in view.
+        reload(*committed);
+        if (itemIDs() == before) break;
+        if (onReordered) onReordered();
+        const auto slot = std::find_if(items_.begin(), items_.end(), [&](const auto& v) { return v.id == request.id; });
+        if (list_ && slot != items_.end()) list_->reveal({0, double(slot - items_.begin()) * pitch, list_->contentWidth(), rowHeight});
+        break;
     }
+    }
+}
+std::vector<std::string> AppShortcutCanvas::itemIDs() const {
+    std::vector<std::string> ids;
+    for (const auto& v : items_) ids.push_back(v.id);
+    return ids;
 }
 
 // MARK: Page (:99-145)
 void AppShortcutCanvas::buildPage(d::Page& page) {
     built_ = true;
-    binders_.clear();
+    binders_.clear(); rows_.clear(); tiles_.clear(); grips_.clear(); list_ = nullptr; reorder_.reset();
     auto& add = page.make<d::Button>("apps:add", text("Add App", "添加应用"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
     add.place({0, 0});
     add.setEnabled(store_.has_value());
@@ -171,13 +215,14 @@ void AppShortcutCanvas::buildPage(d::Page& page) {
         empty.setOrigin({0, top}); page.layer().add(empty);
         page.stagger(empty);
     } else {
-        const double content = double(items_.size()) * (rowHeight + d::metric::rowGap) - d::metric::rowGap;
+        const double content = double(items_.size()) * pitch - d::metric::rowGap;
         auto& scroll = page.scrollArea("apps", {0, top, d::metric::boxWidth, height});
         scroll.setContentHeight(content);
+        list_ = &scroll;
         const double width = scroll.contentWidth();
         for (std::size_t index = 0; index < items_.size(); ++index) {
             auto& row = makeRow(items_[index], width, page);
-            row.layer().setOrigin({0, double(index) * (rowHeight + d::metric::rowGap)});
+            row.layer().setOrigin({0, double(index) * pitch});
             scroll.content().add(row.layer());
             page.stagger(row.layer());
         }
@@ -196,13 +241,23 @@ void AppShortcutCanvas::buildPage(d::Page& page) {
     }
 }
 
-// makeRow (:148-189): row plate 56, padding 8 10 6 16: tile, name field, Open, Remove.
+// makeRow (:148-196): row plate 56, padding 8 10 6 16: grip (in the left
+// padding), tile, name field, Open, Remove.
 d::RowPlate& AppShortcutCanvas::makeRow(const ShortcutRecord& record, double width, d::Page& page) {
     auto& row = page.make<d::RowPlate>("apps:" + record.id, "", std::nullopt, d::RowPlate::Variant::standard, "›", width, rowHeight);
     const double centre = 8 + (rowHeight - 14) / 2;
-    auto& tile = page.make<AppShortcutTile>("apps:" + record.id + ":icon", text("Choose icon", "选择图标") + ", " + record.name,
-        artwork(record.iconPreset, record));
     const std::string id = record.id;
+    // The row's left edge: drag to reorder; a press opens the item menu (Change icon, move,
+    // Remove), which is also how the keyboard and screen readers reach those actions.
+    auto& grip = page.make<d::DragGrip>("apps:" + record.id + ":grip", text("App options", "应用选项") + ", " + record.name,
+        d::Size{14, rowHeight}, d::Point{5, centre - 5});
+    auto* gripPointer = &grip;
+    grip.onActivate = [this, id, gripPointer] { openItemMenu(id, gripPointer); };
+    grip.onDrag = [this, id, gripPointer](d::DragGrip::Phase phase, d::Point point) {
+        if (const auto rootPoint = d::convert(point, gripPointer->layer(), root())) dragRow(id, phase, *rootPoint);
+    };
+    auto& tile = page.make<AppShortcutTile>("apps:" + record.id + ":icon", text("Change icon", "更换图标") + ", " + record.name,
+        artwork(record.iconPreset, record));
     binders_.push_back([this, &tile, id] { if (const auto* current = item(id)) tile.setArtwork(artwork(current->iconPreset, *current)); });
     tile.onActivate = [this, &tile, id] {
         if (menuOpen()) { closeMenu(); return; }
@@ -219,14 +274,119 @@ d::RowPlate& AppShortcutCanvas::makeRow(const ShortcutRecord& record, double wid
         d::Size{openX - 8 - fieldX, 30}, options);
     field.onCommit = [this, id, &field](const std::string& value) { rename(id, value, field); };
     registerField(field);
+    grip.layer().setOrigin({0, 0});
     tile.layer().setOrigin({16, centre - 20});
     field.layer().setOrigin({fieldX, centre - 15});
     openButton.layer().setOrigin({openX, centre - 15});
     removeButton.layer().setOrigin({removeX, centre - 15});
-    for (d::Layer* part : {&tile.layer(), &field.layer(), &openButton.layer(), &removeButton.layer()}) row.layer().add(*part);
+    for (d::Layer* part : {&grip.layer(), &tile.layer(), &field.layer(), &openButton.layer(), &removeButton.layer()}) row.layer().add(*part);
     page.add(row);
-    page.add(std::vector<d::Control*>{&tile, &field, &openButton, &removeButton});
+    page.add(std::vector<d::Control*>{&grip, &tile, &field, &openButton, &removeButton});
+    rows_.emplace_back(id, &row); tiles_.emplace_back(id, &tile); grips_.push_back(&grip);
     return row;
+}
+
+// openItemMenu (:198-217): the grip's press: Change icon, Move up, Move down, Remove.
+void AppShortcutCanvas::openItemMenu(const std::string& id, const d::Control* anchor) {
+    const auto found = std::find_if(items_.begin(), items_.end(), [&](const auto& v) { return v.id == id; });
+    const auto row = std::find_if(rows_.begin(), rows_.end(), [&](const auto& r) { return r.first == id; });
+    if (found == items_.end() || row == rows_.end()) return;
+    if (menuOpen()) { closeMenu(); return; }
+    const auto index = found - items_.begin();
+    const auto count = std::ptrdiff_t(items_.size());
+    std::vector<d::Menu::Item> entries(4);
+    entries[0].id = "icon"; entries[0].title = text("Change icon", "更换图标");
+    entries[1].id = "up"; entries[1].title = text("Move up", "上移"); entries[1].separatorBefore = true; entries[1].enabled = index > 0;
+    entries[2].id = "down"; entries[2].title = text("Move down", "下移"); entries[2].enabled = index + 1 < count;
+    entries[3].id = "remove"; entries[3].title = text("Remove", "移除"); entries[3].danger = true; entries[3].separatorBefore = true;
+    const d::Rect anchorRect = anchor ? anchor->rect(root()) : row->second->rect(root());
+    openMenu("apps:item", std::move(entries), anchorRect, anchor, 168, [this, id, index](const d::Menu::Item& picked) {
+        const auto* current = item(id);
+        if (!current) return;
+        if (picked.id == "icon") { if (auto* anchorTile = iconTile(id)) openIconMenu(*current, *anchorTile); }
+        else if (picked.id == "up") moveRow(id, index - 1);
+        else if (picked.id == "down") moveRow(id, index + 1);
+        else confirmRemove(*current);
+    });
+}
+// moveRow (:219-230): Move up / Move down: one store write, then the list and
+// the right-hand order follow (requestFinished).
+void AppShortcutCanvas::moveRow(const std::string& id, std::ptrdiff_t index) {
+    if (!store_) return;
+    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id; request.index = index;
+    (void)submit(std::move(request));
+}
+
+// MARK: Reordering by the grip (:232-280)
+d::ListReorder::Rows AppShortcutCanvas::reorderRows() const {
+    return [this](const std::string& id) -> d::Layer* {
+        const auto row = std::find_if(rows_.begin(), rows_.end(), [&](const auto& r) { return r.first == id; });
+        return row == rows_.end() ? nullptr : &row->second->layer();
+    };
+}
+// Lift, drag and drop as the Notes TODO cards (ListReorder); the drop is one
+// store write. Nothing lifts with one row, the chooser or a drop.
+void AppShortcutCanvas::dragRow(const std::string& id, d::DragGrip::Phase phase, d::Point point) {
+    if (!list_) return;
+    auto& list = *list_;
+    const auto local = d::convert(point, root(), list.content());
+    if (!local) return;
+    switch (phase) {
+    case d::DragGrip::Phase::began: {
+        d::Layer* row = reorderRows()(id);
+        if (items_.size() < 2 || chooser_ || dropTarget_ || landing_ || !row) return;
+        closePopups(); endEditing(true);
+        reorder_ = d::ListReorder::lift(id, itemIDs(), *row, local->y, 0, pitch, clock());
+        if (reorder_ && context().onLockParallax) context().onLockParallax();
+        break;
+    }
+    case d::DragGrip::Phase::moved:
+        if (!reorder_ || reorder_->id() != id) return;
+        reorder_->move(point, list, root(), reorderRows(), clock());
+        break;
+    case d::DragGrip::Phase::ended: {
+        if (!reorder_ || reorder_->id() != id) return;
+        const d::ListReorder state = std::move(*reorder_);
+        reorder_.reset();
+        state.drop(reorderRows()(id), clock());
+        if (state.order() == itemIDs() || !store_) return;
+        AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id; request.index = state.index();
+        landing_ = request;
+        // An owner that refuses the request at once: the rows return to the saved order.
+        if (!submit(std::move(request))) { landing_.reset(); rerender(); }
+        break;
+    }
+    }
+}
+// A lifted row returns to its slot (the module was left mid-drag).
+void AppShortcutCanvas::cancelReorder() {
+    if (!reorder_) return;
+    const d::ListReorder state = std::move(*reorder_);
+    reorder_.reset();
+    state.cancel(itemIDs(), reorderRows());
+}
+std::optional<d::Cursor> AppShortcutCanvas::cursor(std::optional<d::Point> point) const {
+    if (!reorder_ && !(isActive() && items_.size() > 1 && !chooser_)) return std::nullopt;
+    return d::DragGrip::cursor(reorder_.has_value(), grips_, point, root());
+}
+d::DragGrip* AppShortcutCanvas::rowGrip(std::string_view id) const {
+    const std::string wanted = "apps:" + std::string(id) + ":grip";
+    for (auto* g : grips_) if (g->id() == wanted) return g;
+    return nullptr;
+}
+d::Control* AppShortcutCanvas::iconTile(std::string_view id) const {
+    const auto found = std::find_if(tiles_.begin(), tiles_.end(), [&](const auto& t) { return t.first == id; });
+    return found == tiles_.end() ? nullptr : found->second;
+}
+// dragRowForTesting (:375-382).
+void AppShortcutCanvas::dragRow(const std::string& id, int slot) {
+    auto* g = rowGrip(id);
+    if (!g) return;
+    const auto start = d::convert(d::Point{7, 28}, g->layer(), root());
+    if (!start) return;
+    const auto found = std::find_if(items_.begin(), items_.end(), [&](const auto& v) { return v.id == id; });
+    d::ListReorder::simulate(*start, slot - (found == items_.end() ? 0 : int(found - items_.begin())), pitch,
+        [this, &id](d::DragGrip::Phase phase, d::Point point) { dragRow(id, phase, point); });
 }
 
 // openIconMenu (:192-200): every preset as the tile it would make, in an icon grid.
