@@ -842,6 +842,7 @@ int Application::Impl::runAnimationTrace(){
             rows.push_back(Json::Object{{"atMS",(now-start)*1000},{"intervalMS",interval},{"busyMS",cpu},{"presentMS",presentMS},{"afterDone",after},{"stages",std::move(stages)},{"owners",std::move(byOwner)},
                 {"textureUploads",std::int64_t(b.renderer.textureUploads-a.renderer.textureUploads)},{"textureUploadMS",(b.renderer.textureUploadSeconds-a.renderer.textureUploadSeconds)*1000},
                 {"meshUploads",std::int64_t(b.renderer.meshUploads-a.renderer.meshUploads)},{"nativeGroupRenders",std::int64_t(b.renderer.nativeGroupRenders-a.renderer.nativeGroupRenders)},
+                {"groupTargetAllocations",std::int64_t(b.renderer.nativeGroupTargetAllocations-a.renderer.nativeGroupTargetAllocations)},{"groupBytes",std::int64_t(b.renderer.nativeGroupBytes)},
                 {"drawListMS",(b.renderer.drawListSeconds-a.renderer.drawListSeconds)*1000},{"parkedRestores",std::int64_t(b.renderer.parkedRestores-a.renderer.parkedRestores)},
                 {"rasterizations",std::int64_t(b.raster.rasterizations-a.raster.rasterizations)},{"textLayouts",std::int64_t(b.raster.textLayoutsCreated-a.raster.textLayoutsCreated)},
                 {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},{"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)},
