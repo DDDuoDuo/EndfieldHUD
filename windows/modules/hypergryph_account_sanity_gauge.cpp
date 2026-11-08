@@ -154,13 +154,24 @@ Json sanityIconLayer(std::string id,double size) {
     d::addChildren(root,std::move(children));
     return root;
 }
-GaugePopoverLayout GaugePopoverLayout::make(std::array<double,2> labels,std::array<double,2> values,double templateWidth) {
+GaugePopoverLayout GaugePopoverLayout::make(std::array<double,2> labels,std::array<double,2> values,double templateWidth,GaugePopoverDirection direction) {
     for(const auto v:{labels[0],labels[1],values[0],values[1],templateWidth}) need(std::isfinite(v)&&v>=0,"Gauge popover widths are finite");
     GaugePopoverLayout out;
     const double value=std::ceil(std::max({values[0],values[1],templateWidth}))+slack;
     const double fixed=leading+columnGap+refreshGap+refreshWidth+trailing;
     const double width=std::min(maximumWidth,std::max(minimumWidth,fixed+std::ceil(std::max(labels[0],labels[1]))+slack+value));
-    out.frame=frameFor(width);out.valueWidth=value;out.labelWidth=width-fixed-value;return out;
+    out.frame=frameFor(width,direction);out.valueWidth=value;out.labelWidth=width-fixed-value;return out;
+}
+GaugePopoverDirection GaugePopoverLayout::direction(core::Rect gauge,core::Rect bounds) noexcept {
+    if(!(gauge.width>0)) return {};
+    const double scale=gauge.width/gauge_geometry::bounds.width;
+    const auto extent=[&](GaugePopoverDirection d){
+        const auto menu=frameFor(maximumWidth,d);
+        return core::Rect{gauge.x+menu.x*scale,gauge.y+menu.y*scale,menu.width*scale,menu.height*scale};
+    };
+    const auto designed=extent({}),mirrored=extent({true,true});
+    return {designed.x<bounds.x&&mirrored.x+mirrored.width<=bounds.x+bounds.width,
+            designed.y+designed.height>bounds.y+bounds.height&&mirrored.y>=bounds.y};
 }
 core::Rect GaugePopoverLayout::cell(unsigned index) const noexcept {
     const double y=rows[index%2];
@@ -221,6 +232,11 @@ SanityGaugeModel::Changes SanityGaugeModel::setScale(double base) {
     if(open_) changes.tooltip=renderTooltip();
     return changes;
 }
+SanityGaugeModel::Changes SanityGaugeModel::setPopoverDirection(GaugePopoverDirection direction) {
+    Changes changes;if(direction==direction_) return changes;
+    direction_=direction;tooltip_.layout.frame=GaugePopoverLayout::frameFor(tooltip_.layout.frame.width,direction_);
+    changes.popover=true;return changes;
+}
 SanityGaugeModel::Changes SanityGaugeModel::setSizeFactor(double size) {
     // AppConfiguration.clamp(sizeFactor, to: 0.25...4, fallback: 1).
     const double clamped=std::isfinite(size)?std::min(4.0,std::max(.25,size)):1;
@@ -241,7 +257,7 @@ bool SanityGaugeModel::renderTooltip() {
     renderedKey_=key;++tooltipRenders_;
     // HarmonyOS Sans, with the region's Noto for CJK labels.
     const auto width=[&](std::string_view text){return widths.standard?widths.standard(text):0.0;};
-    tooltip_.layout=GaugePopoverLayout::make({width(first),width(second)},{width(next),width(full)},width(GaugePopoverLayout::valueTemplate));
+    tooltip_.layout=GaugePopoverLayout::make({width(first),width(second)},{width(next),width(full)},width(GaugePopoverLayout::valueTemplate),direction_);
     tooltip_.text={first,second,next,full};tooltip_.refreshEnabled=sanity_->refreshAvailable&&!sanity_->isRefreshing;
     return true;
 }

@@ -267,6 +267,28 @@ void artwork(const h::GaugeAssets& assets,const Json& g) {
     check(lit>336*60/2&&lit<336*60,"Hover tint follows the wallet's irregular alpha silhouette");
 }
 }
+// HUDAccountGauge.popoverDirection(gauge:within:) (Mac 1.3.1): the widest
+// menu keeps to the core plane; the designed direction wins wherever it fits.
+void popoverDirection() {
+    using D=h::GaugePopoverDirection;using L=h::GaugePopoverLayout;const endfield::core::Rect plane{0,0,1000,640};
+    check(L::direction({562,2,168,42},plane)==D{},"At its authored place the menu opens left and down");
+    check(L::direction({0,2,168,42},plane)==D{true,false},"At the left edge the menu opens right");
+    check(L::direction({562,600,168,42},plane)==D{false,true},"At the bottom edge the menu opens up");
+    check(L::direction({0,500,336,84},plane)==D{true,true},"A doubled gauge measures the doubled widest menu");
+    check(L::direction({0,2,0,0},plane)==D{},"A gauge with no width keeps the designed direction");
+    check(L::frameFor(224,{true,true})==endfield::core::Rect{0,-63,224,65}&&L::frameFor(224)==endfield::core::Rect{-56,40,224,65},
+          "Mirrored, the menu sits above the wallet from its left edge");
+    h::SanityGaugeModel model;model.widths.standard=[](std::string_view t){return 7.0*static_cast<double>(t.size());};
+    const double now=800000000;h::SanityPresentation s{h::Game::endfield,42,360,now,now+60,now+3600,false,true};
+    model.update("42 / 360","Sanity",true,2,s,now,endfield::core::Language::english);
+    check(model.perform("toggle")&&model.popoverOpen()&&model.popoverRect().y==40,"The menu opens below the wallet");
+    const auto width=model.popoverRect().width;
+    check(model.setPopoverDirection({true,true}).popover&&model.popoverRect()==endfield::core::Rect{0,-63,width,65}&&!model.setPopoverDirection({true,true}).popover,
+          "A new direction mirrors the open menu once, keeping its width");
+    const auto refresh=model.tooltip().layout.refresh();
+    check(model.hover(endfield::core::Point{refresh.x+5,-63+refresh.y+5})==std::optional<std::string_view>("refresh"),"The mirrored refresh button takes the pointer");
+    check(model.mouseDown(endfield::core::Point{5,-30})&&model.popoverOpen(),"A press in the mirrored menu keeps it open");
+}
 int main(int argc,char** argv) {
     try {
         check(argc==4,"Pass the account oracle fixture, windows/resources/account and shell-redesign-source.json");
@@ -275,7 +297,7 @@ int main(int argc,char** argv) {
         const auto assets=h::GaugeAssets::load(std::filesystem::absolute(argv[2]).lexically_normal());
         const auto& g=fixture["gauge"];
         check(g["constants"]["font"].string()=="HarmonyOS Sans Medium","The Mac draws the gauge's text in HarmonyOS Sans Medium");
-        scaleRule(g);valueText(g);inkCentre();sanityIcon(g);tooltips(g);behaviour(g);artwork(assets,g);
+        scaleRule(g);valueText(g);inkCentre();sanityIcon(g);tooltips(g);behaviour(g);artwork(assets,g);popoverDirection();
         const auto shell=ehud::data::detail::readFile(argv[3],4*1024*1024);check(shell.has_value(),"Read the shell redesign oracle");menuOracle(Json::parse(*shell,4*1024*1024));
         std::cout<<"PASS "<<checks<<" sanity gauge checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}

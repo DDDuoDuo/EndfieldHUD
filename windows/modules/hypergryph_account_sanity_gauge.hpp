@@ -76,6 +76,13 @@ GaugeImage cellRaster(std::span<const std::uint8_t> straightRGBA,unsigned width,
 struct SanityIconPolygon {std::vector<core::Point> points;double white{};};
 const std::array<SanityIconPolygon,3>& sanityIconPolygons();
 Json sanityIconLayer(std::string id,double size);
+// HUDAccountGauge.PopoverDirection (Mac 1.3.1): which way the recovery menu
+// opens, left and down from the wallet's bottom-right corner as designed,
+// mirrored by an edge it would cross.
+struct GaugePopoverDirection {
+    bool opensRight{},opensUp{};
+    bool operator==(const GaugePopoverDirection&) const=default;
+};
 // HUDAccountGauge.Layout (Mac 1.3.0): the recovery menu, two rows of label
 // and value with the refresh button at the right. Columns take their measured
 // text; the menu widens from 224 up to 300 (growing left from the wallet's
@@ -89,8 +96,17 @@ struct GaugePopoverLayout {
     static constexpr std::string_view valueTemplate="000:00:00";
     core::Rect frame{frameFor(minimumWidth)};double labelWidth{},valueWidth{};
     // labels/values: measured widths; templateWidth: the width of valueTemplate.
-    static GaugePopoverLayout make(std::array<double,2> labels,std::array<double,2> values,double templateWidth);
-    static core::Rect frameFor(double width) noexcept {return {168-width,40,width,height};}
+    static GaugePopoverLayout make(std::array<double,2> labels,std::array<double,2> values,double templateWidth,GaugePopoverDirection={});
+    // Under the wallet, overlapping its bottom 2 points; mirrored, above it.
+    static core::Rect frameFor(double width,GaugePopoverDirection direction={}) noexcept {
+        return {direction.opensRight?0:168-width,direction.opensUp?42-40-height:40,width,height};
+    }
+    // HUDAccountGauge.popoverDirection(gauge:within:): the direction that
+    // keeps the widest (300 point) menu inside `bounds` for a gauge drawn at
+    // `gauge` (its 168 x 42 design times its size), in the same coordinates,
+    // so it does not depend on the language. The designed direction wins
+    // wherever it fits.
+    static GaugePopoverDirection direction(core::Rect gauge,core::Rect bounds) noexcept;
     static core::Rect refreshFor(double width) noexcept {return {width-trailing-refreshWidth,19,refreshWidth,refreshHeight};}
     core::Rect refresh() const noexcept {return refreshFor(frame.width);}
     core::Rect cell(unsigned index) const noexcept; // label, label, value, value
@@ -134,6 +150,10 @@ public:
     // clock ticks. Before the first update, or when the render scale stays,
     // nothing redraws (scale reports a refresh-arrow change alone).
     Changes setScale(double scale);
+    // HUDAccountGauge.popoverDirection, set by the host from where the gauge
+    // sits: the menu's frame mirrors at once (no new raster).
+    Changes setPopoverDirection(GaugePopoverDirection);
+    GaugePopoverDirection popoverDirection() const noexcept {return direction_;}
     // HUDAccountGauge.sizeFactor: the gauge's drawn size relative to its
     // 168 x 42 design (a placement size; 0.25...4, non-finite 1). A change
     // redraws the text and icon at the new size instead of stretching them.
@@ -179,6 +199,7 @@ public:
 private:
     std::optional<SanityPresentation> sanity_;Time date_{};std::string value_,label_;bool hidden_{true},open_{};
     double scale_{},iconScale_{},baseScale_{2},sizeFactor_{1};std::string renderedKey_;GaugeTooltip tooltip_;core::Language language_{core::Language::english};
+    GaugePopoverDirection direction_;
     std::uint64_t updates_{},numberRenders_{},iconRenders_{},tooltipRenders_{};
     bool renderTooltip();
     bool drawIcon(double scale);
