@@ -672,7 +672,7 @@ final class ReaderCanvas: HUDDesignCanvas {
 
     private func confirmRemove(_ book: ReaderBook) {
         confirm(HUDConfirmRequest(id: "readerRemove", title: L10n.text("Remove \(book.title) from the library?", "从书库移除 \(book.title)？"),
-                                  message: L10n.text("The file itself stays on disk.", "文件本身仍保留在磁盘上。"),
+                                  message: L10n.text("The file itself stays on disk", "文件本身仍保留在磁盘上"),
                                   confirmTitle: L10n.text("Remove", "移除"), danger: true, icon: .trash)) { [weak self] in
             self?.pendingRemoval = true
             self?.controller.removeBook(book.id)

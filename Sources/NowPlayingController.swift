@@ -92,12 +92,12 @@ enum NowPlayingFailure: Error, Equatable {
     var isAutomationGrant: Bool { self == .permissionRequired || self == .permissionDenied }
     var message: String {
         switch self {
-        case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。")
-        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。")
-        case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls.", "请允许辅助功能访问以读取此播放器的控制。")
-        case .unsupported: return L10n.text("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。")
-        case .timedOut: return L10n.text("The player did not respond. Try refreshing.", "播放器未响应，请尝试刷新。")
-        case .unavailable, .cancelled: return L10n.text("Play music in a supported player to connect automatically.", "在支持的播放器中播放音乐即可自动连接。")
+        case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器")
+        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面")
+        case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls", "请允许辅助功能访问以读取此播放器的控制")
+        case .unsupported: return L10n.text("This version of the player does not expose the required playback controls", "此版本的播放器未提供所需的播放控制")
+        case .timedOut: return L10n.text("The player did not respond. Try refreshing", "播放器未响应，请尝试刷新")
+        case .unavailable, .cancelled: return L10n.text("Play music in a supported player to connect automatically", "在支持的播放器中播放音乐即可自动连接")
         }
     }
 }

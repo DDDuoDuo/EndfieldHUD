@@ -815,7 +815,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
 
     private func commit(_ field: PersonalProfileField, _ text: String) {
         guard canEdit(field) else { return }
-        guard let store else { showError(L10n.text("Profile storage is unavailable.", "个人名片存储不可用。")); return }
+        guard let store else { showError(L10n.text("Profile storage is unavailable", "个人名片存储不可用")); return }
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         errorMessage = nil
         do {
@@ -1123,7 +1123,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
     }
 
     private func importImage(from url: URL, kind: UserProfileImageKind) {
-        guard let store else { showError(L10n.text("Profile storage is unavailable.", "个人名片存储不可用。")); return }
+        guard let store else { showError(L10n.text("Profile storage is unavailable", "个人名片存储不可用")); return }
         do {
             try store.importImage(from: url, kind: kind)
             if kind == .avatar { toast(icon: .user, "Picture changed", "已更换头像") }

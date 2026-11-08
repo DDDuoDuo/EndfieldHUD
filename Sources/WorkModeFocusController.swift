@@ -14,21 +14,21 @@ enum WorkModeFocusRunError: Error, Equatable {
     var message: String {
         switch self {
         case .unavailable:
-            return L10n.text("Automatic Focus requires macOS 11 or later.", "自动专注模式需要 macOS 11 或更新版本。")
+            return L10n.text("Automatic Focus requires macOS 11 or later", "自动专注模式需要 macOS 11 或更新版本")
         case .notConfigured:
-            return L10n.text("Add EndfieldCharge Focus Start and End shortcuts to enable automatic Focus.", "请添加 EndfieldCharge Focus Start 和 End 快捷指令以启用自动专注模式。")
+            return L10n.text("Add EndfieldCharge Focus Start and End shortcuts to enable automatic Focus", "请添加 EndfieldCharge Focus Start 和 End 快捷指令以启用自动专注模式")
         case .accessibilityRequired:
-            return L10n.text("Allow Accessibility to control Focus.", "允许辅助功能访问以控制专注模式。")
+            return L10n.text("Allow Accessibility to control Focus", "允许辅助功能访问以控制专注模式")
         case .controlCenterUnavailable:
-            return L10n.text("macOS Focus controls are unavailable.", "无法访问 macOS 专注模式控制。")
+            return L10n.text("macOS Focus controls are unavailable", "无法访问 macOS 专注模式控制")
         case .interrupted:
-            return L10n.text("Automatic Focus was interrupted.", "自动专注模式操作已中断。")
+            return L10n.text("Automatic Focus was interrupted", "自动专注模式操作已中断")
         case .stillRunning:
-            return L10n.text("Waiting for Shortcuts; the Focus change is not confirmed yet.", "正在等待快捷指令，尚未确认专注模式更改。")
+            return L10n.text("Waiting for Shortcuts; the Focus change is not confirmed yet", "正在等待快捷指令，尚未确认专注模式更改")
         case .launchFailed:
-            return L10n.text("Shortcuts could not open. Automatic Focus was not started.", "无法启动快捷指令，自动专注模式未启动。")
+            return L10n.text("Shortcuts could not open. Automatic Focus was not started", "无法启动快捷指令，自动专注模式未启动")
         case .commandFailed, .invalidResponse:
-            return L10n.text("Automatic Focus could not be confirmed. Check the current Focus.", "无法确认自动专注模式，请检查当前专注状态。")
+            return L10n.text("Automatic Focus could not be confirmed. Check the current Focus", "无法确认自动专注模式，请检查当前专注状态")
         }
     }
 }

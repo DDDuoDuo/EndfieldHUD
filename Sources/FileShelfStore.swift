@@ -59,17 +59,17 @@ enum FileShelfStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidRecord:
-            return L10n.text("The saved file shelf could not be read. Its original data has been preserved.", "无法读取暂存架数据，原始数据已保留。")
+            return L10n.text("The saved file shelf could not be read. Its original data has been preserved", "无法读取暂存架数据，原始数据已保留")
         case .newerVersion:
-            return L10n.text("This file shelf was saved by a newer version of EndfieldCharge.", "此暂存架由较新版本的 EndfieldCharge 保存。")
+            return L10n.text("This file shelf was saved by a newer version of EndfieldCharge", "此暂存架由较新版本的 EndfieldCharge 保存")
         case .changedOnDisk:
-            return L10n.text("The saved shelf changed outside this window. Restart EndfieldCharge before making changes.", "暂存架数据已在外部更改，请重新启动 EndfieldCharge 后再编辑。")
+            return L10n.text("The saved shelf changed outside this window. Restart EndfieldCharge before making changes", "暂存架数据已在外部更改，请重新启动 EndfieldCharge 后再编辑")
         case .invalidFile:
-            return L10n.text("Choose a file or folder that is available on this Mac.", "请选择此 Mac 上可访问的文件或文件夹。")
+            return L10n.text("Choose a file or folder that is available on this Mac", "请选择此 Mac 上可访问的文件或文件夹")
         case .missingItem:
-            return L10n.text("This item is no longer on the shelf.", "此项目已不在暂存架中。")
+            return L10n.text("This item is no longer on the shelf", "此项目已不在暂存架中")
         case .replacedItem:
-            return L10n.text("The original item is unavailable. A different item now occupies its old location.", "原始项目不可用，其他项目已占用了原来的位置。")
+            return L10n.text("The original item is unavailable. A different item now occupies its old location", "原始项目不可用，其他项目已占用了原来的位置")
         case .unavailable(let detail):
             return L10n.text("This item is unavailable: ", "此项目不可用：") + detail
         case .persistence(let detail):

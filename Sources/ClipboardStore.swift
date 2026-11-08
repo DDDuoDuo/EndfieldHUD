@@ -96,10 +96,10 @@ final class ClipboardStore {
     @discardableResult func setCapacity(_ value: Int) -> Bool {
         requireMainThread()
         guard value > 0 else {
-            setStatus(L10n.text("Keep at least one clipboard item.", "请至少保留一个剪贴板项目。")); return false
+            setStatus(L10n.text("Keep at least one clipboard item", "请至少保留一个剪贴板项目")); return false
         }
         guard items.filter(\.isPinned).count <= value else {
-            setStatus(L10n.text("Unpin some items before reducing the cache size.", "请先取消固定部分项目，再缩小缓存容量。")); return false
+            setStatus(L10n.text("Unpin some items before reducing the cache size", "请先取消固定部分项目，再缩小缓存容量")); return false
         }
         guard value != capacity else { return true }
         capacity = value
@@ -150,8 +150,8 @@ final class ClipboardStore {
             var bytes = next.reduce(item.payload.byteCount) { $0 + $1.payload.byteCount }
             while next.count >= capacity || bytes > Self.maximumRetainedBytes {
                 guard let index = next.lastIndex(where: { !$0.isPinned }) else {
-                    setStatus(L10n.text("The cache is full of pinned items. Unpin or remove an item to capture more.",
-                                        "缓存已被固定项目占满，请取消固定或移除项目后继续记录。"))
+                    setStatus(L10n.text("The cache is full of pinned items. Unpin or remove an item to capture more",
+                                        "缓存已被固定项目占满，请取消固定或移除项目后继续记录"))
                     return false
                 }
                 bytes -= next[index].payload.byteCount
@@ -184,7 +184,7 @@ final class ClipboardStore {
             pasteboard.clearContents()
             success = pasteboard.setData(data, forType: type)
         }
-        setStatus(success ? nil : L10n.text("This item could not be copied. Try again.", "无法复制此项目，请重试。"))
+        setStatus(success ? nil : L10n.text("This item could not be copied. Try again", "无法复制此项目，请重试"))
         return success
     }
 
@@ -287,10 +287,10 @@ final class ClipboardStore {
         case textTooLarge, imageTooLarge, imageDimensionsTooLarge, tooManyFiles
         var errorDescription: String? {
             switch self {
-            case .textTooLarge: return L10n.text("Text over 1 MB was skipped.", "已跳过超过 1 MB 的文本。")
-            case .imageTooLarge: return L10n.text("An image over 64 MB was skipped.", "已跳过超过 64 MB 的图像。")
-            case .imageDimensionsTooLarge: return L10n.text("An image over 100 megapixels was skipped.", "已跳过超过 1 亿像素的图像。")
-            case .tooManyFiles: return L10n.text("This file selection is too large to cache.", "此文件选择过大，无法缓存。")
+            case .textTooLarge: return L10n.text("Text over 1 MB was skipped", "已跳过超过 1 MB 的文本")
+            case .imageTooLarge: return L10n.text("An image over 64 MB was skipped", "已跳过超过 64 MB 的图像")
+            case .imageDimensionsTooLarge: return L10n.text("An image over 100 megapixels was skipped", "已跳过超过 1 亿像素的图像")
+            case .tooManyFiles: return L10n.text("This file selection is too large to cache", "此文件选择过大，无法缓存")
             }
         }
     }

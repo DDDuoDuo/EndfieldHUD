@@ -248,11 +248,11 @@ final class WorldMapSurface {
                 guard let self else { return }
                 switch terrain {
                 case .success(let data): self.terrain = data
-                case .failure: self.onError?(L10n.text("Terrain data could not be loaded.", "无法载入地形数据。"))
+                case .failure: self.onError?(L10n.text("Terrain data could not be loaded", "无法载入地形数据"))
                 }
                 switch countries {
                 case .success(let data): self.countries = data
-                case .failure: self.onError?(L10n.text("Country shapes could not be loaded.", "无法载入地图轮廓。"))
+                case .failure: self.onError?(L10n.text("Country shapes could not be loaded", "无法载入地图轮廓"))
                 }
                 self.raster.setData(terrain: self.terrain, countries: self.countries)
             }

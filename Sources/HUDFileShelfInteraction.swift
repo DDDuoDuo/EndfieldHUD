@@ -109,7 +109,7 @@ final class HUDFileShelfInteraction: NSObject, NSDraggingSource {
             let access = try store.access(id: id)
             defer { access.close() }
             guard NSWorkspace.shared.open(access.url) else {
-                canvas.showError(L10n.text("This item could not be opened.", "无法打开此项目。"))
+                canvas.showError(L10n.text("This item could not be opened", "无法打开此项目"))
                 return false
             }
             return true

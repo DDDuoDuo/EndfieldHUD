@@ -554,7 +554,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard !items.isEmpty, !clearing else { return }
         let count = items.count
         confirm(HUDConfirmRequest(id: "shelf.clear", title: L10n.text("Remove \(count) files from the shelf?", "从暂存架移除 \(count) 个文件？"),
-                                  message: L10n.text("Original files stay where they are.", "原文件保持不变。"),
+                                  message: L10n.text("Original files stay where they are", "原文件保持不变"),
                                   confirmTitle: L10n.text("Remove all", "全部移除"), danger: true, icon: .trash)) { [weak self] in
             self?.clearShelf()
         }
@@ -598,7 +598,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
         toast(icon: .warn, "Notice", "提示", detail: message)
     }
 
-    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable.", "文件暂存架存储不可用。")) }
+    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable", "文件暂存架存储不可用")) }
 
     /// Accessibility and verification actions: `shelf:add`, `shelf:clear`,
     /// `shelf:<id>:select|open|reveal|remove|menu`.

@@ -218,7 +218,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         }
         text.delegate = self
         text.setAccessibilityLabel(next.multiline ? L10n.text("Edit text note", "编辑文字便笺") : L10n.text("Edit checklist item", "编辑待办事项"))
-        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines.", "按 Esc 或 Command-Return 保存。文字便笺支持多行。"))
+        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines", "按 Esc 或 Command-Return 保存。文字便笺支持多行"))
         text.onFinish = { [weak self] in self?.finishEditing() }
         text.onToggle = { [weak self] in self?.onToggle?() }
         text.onEscape = { [weak self] in

@@ -2092,7 +2092,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         refreshAppNavigation(animated: false)
         let field = sourceWatchFailure ?? NSTextField(wrappingLabelWithString: "")
         NSLog("Source Watch render failure: %@", reason)
-        field.stringValue = L10n.text("The original menu could not be rendered. Please check the log.", "原始菜单无法渲染，请查看日志。")
+        field.stringValue = L10n.text("The original menu could not be rendered. Please check the log", "原始菜单无法渲染，请查看日志")
         field.textColor = .labelColor
         field.alignment = .center
         field.font = HUDFontResolver.nsFont(size: 15)
@@ -2626,7 +2626,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         navigation.hover(nil); identityCard.resetInteraction(animated: true)
         quitPromptOpen = true
         designContext.confirm(HUDConfirmRequest(id: "quit", title: L10n.text("Quit EndfieldHUD?", "退出 EndfieldHUD？"),
-                                                message: L10n.text("Notes, shelf files and settings are saved.", "便笺、暂存文件与设置均已保存。"),
+                                                message: L10n.text("Notes, shelf files and settings are saved", "便笺、暂存文件与设置均已保存"),
                                                 confirmTitle: L10n.text("Quit", "退出"), danger: true, icon: .power),
                               onConfirm: { [weak self] in self?.confirmQuit() },
                               onCancel: { [weak self] in self?.quitPromptOpen = false; self?.window?.makeFirstResponder(self) })

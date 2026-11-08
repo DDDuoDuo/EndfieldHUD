@@ -425,7 +425,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     }
     private func chooseShelf() {
         let choices = shelfChoices?() ?? []
-        guard !choices.isEmpty else { showMessage(L10n.text("The shelf has no images or videos.", "暂存架中没有图片或视频。")); return }
+        guard !choices.isEmpty else { showMessage(L10n.text("The shelf has no images or videos", "暂存架中没有图片或视频")); return }
         showMenu("shelf", items: choices.map { HUDMenu.Item(id: $0.id.uuidString, title: $0.title, enabled: $0.isSupported && $0.isAvailable) },
                  anchor: "media") { [weak self] item in
             guard let self, let id = UUID(uuidString: item.id) else { return }
@@ -439,7 +439,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     func importMedia(urls: [URL], at point: CGPoint? = nil, access: ShelfFileAccess? = nil) {
         guard active, !importing, !urls.isEmpty else { access?.close(); return }
         guard urls.count <= ProjectionModel.maximumMedia - model.media.count else {
-            access?.close(); showMessage(L10n.text("Projection supports up to 16 media items.", "投影最多可添加 16 个媒体。")); return
+            access?.close(); showMessage(L10n.text("Projection supports up to 16 media items", "投影最多可添加 16 个媒体")); return
         }
         importing = true; importGeneration += 1
         let ticket = ProjectionImportCancellation(); importTicket = ticket
@@ -561,7 +561,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
                 let retained = strokeLayer(stroke); strokes.addSublayer(retained)
                 strokeLayers.append(retained); renderedStrokes.append(stroke); onEvent?(.strokeCompleted)
             }
-            else { showMessage(L10n.text("This drawing has reached the stroke limit.", "此画布已达到笔画数量上限。")) }
+            else { showMessage(L10n.text("This drawing has reached the stroke limit", "此画布已达到笔画数量上限")) }
         }
         if eraseChanged { onEvent?(.erased) }
         pendingStroke = nil; lastEraserPoint = nil; eraseChanged = false; liveStroke.path = nil

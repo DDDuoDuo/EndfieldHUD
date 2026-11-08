@@ -526,7 +526,7 @@ final class NotesWorkspace: NSObject {
             if !erasing && !gesture.stroke.points.isEmpty {
                 var drawing = gesture.note.drawing ?? NotesDrawing()
                 if drawing.append(gesture.stroke) { gesture.note.drawing = drawing; gesture.erased = true }
-                else { errorMessage = L10n.text("Drawing limit reached. Create another drawing note.", "画画容量已满，请新建画画便笺。") }
+                else { errorMessage = L10n.text("Drawing limit reached. Create another drawing note", "画画容量已满，请新建画画便笺") }
             }
             if gesture.erased {
                 replace(gesture.note)
@@ -749,7 +749,7 @@ final class NotesWorkspace: NSObject {
                         styleStroke(live, stroke: gesture.stroke, size: viewport.size)
                     }
                 }
-            } else { errorMessage = L10n.text("Stroke limit reached. Release to start a new stroke.", "笔画长度已满，松开后可开始下一笔。") }
+            } else { errorMessage = L10n.text("Stroke limit reached. Release to start a new stroke", "笔画长度已满，松开后可开始下一笔") }
         }
         drawingGesture = gesture
         mouseMoved(at: point)
@@ -1583,7 +1583,7 @@ final class NotesWorkspace: NSObject {
     }
 
     private func reportUnavailable() {
-        errorMessage = L10n.text("Notes storage is unavailable.", "便笺存储不可用。")
+        errorMessage = L10n.text("Notes storage is unavailable", "便笺存储不可用")
         withoutActions { updateStatus() }
         onChange?()
     }

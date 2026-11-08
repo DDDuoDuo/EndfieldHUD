@@ -39,7 +39,7 @@ enum AppShortcutLauncher {
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { running, error in
             if let error { finish(.failure(error)) }
             else if let running { finish(.success(running)) }
-            else { finish(.failure(AppShortcutStoreError.unavailable(L10n.text("macOS did not return an application.", "macOS 未返回应用。")))) }
+            else { finish(.failure(AppShortcutStoreError.unavailable(L10n.text("macOS did not return an application", "macOS 未返回应用")))) }
         }
     }
 }

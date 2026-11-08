@@ -60,7 +60,7 @@ final class NotesCentreStore {
         if let value = try? JSONDecoder().decode(NotesCentreDocument.self, from: data), value.isValid { document = value; return }
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         try? FileManager.default.moveItem(at: url, to: directory.appendingPathComponent("centre-unreadable-\(stamp).json"))
-        loadError = L10n.text("The centre notes could not be read and were set aside.", "无法读取中央便笺，原文件已另存。")
+        loadError = L10n.text("The centre notes could not be read and were set aside", "无法读取中央便笺，原文件已另存")
     }
 
     /// Applies `change`; the document changes even when writing fails (the
@@ -119,7 +119,7 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
         workspace = NotesWorkspace(store: store, error: error, notesSelected: notesSelected,
                                    textLayoutRangeBudget: textLayoutRangeBudget, reduceMotion: reduceMotion)
         self.centre = centre ?? NotesCentreStore(directory: store?.directoryURL)
-        storageError = store == nil ? (error ?? L10n.text("Notes storage is unavailable.", "便笺存储不可用。")) : nil
+        storageError = store == nil ? (error ?? L10n.text("Notes storage is unavailable", "便笺存储不可用")) : nil
         super.init(module: .notes, context: context)
         workspace.onAction = { [weak self] event in self?.onAction?(event); self?.workspaceDidAct(event) }
         workspace.onChooseImage = { [weak self] point in self?.presentMediaSources(at: point) }

@@ -51,21 +51,21 @@ enum AppShortcutStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidApplication:
-            return L10n.text("Choose a macOS application (.app) with an available executable.", "请选择包含可用执行文件的 macOS 应用程序（.app）。")
+            return L10n.text("Choose a macOS application (.app) with an available executable", "请选择包含可用执行文件的 macOS 应用程序（.app）")
         case .invalidName:
-            return L10n.text("Enter a name of 1–128 characters without line breaks.", "请输入 1–128 个字符的名称，不含换行。")
+            return L10n.text("Enter a name of 1–128 characters without line breaks", "请输入 1–128 个字符的名称，不含换行")
         case .duplicate:
-            return L10n.text("This application is already saved. Edit its existing shortcut instead.", "此应用已添加，请编辑现有快捷方式。")
+            return L10n.text("This application is already saved. Edit its existing shortcut instead", "此应用已添加，请编辑现有快捷方式")
         case .missingItem:
-            return L10n.text("This app shortcut is no longer available.", "此应用快捷方式已不存在。")
+            return L10n.text("This app shortcut is no longer available", "此应用快捷方式已不存在")
         case .applicationChanged:
-            return L10n.text("A different application now occupies this location. Choose the application again.", "此位置的应用已更改，请重新选择应用。")
+            return L10n.text("A different application now occupies this location. Choose the application again", "此位置的应用已更改，请重新选择应用")
         case .invalidRecord:
-            return L10n.text("The saved app shortcuts could not be read. The original data has been preserved.", "无法读取应用快捷方式，原始数据已保留。")
+            return L10n.text("The saved app shortcuts could not be read. The original data has been preserved", "无法读取应用快捷方式，原始数据已保留")
         case .newerVersion:
-            return L10n.text("These app shortcuts were saved by a newer version of EndfieldCharge.", "这些快捷方式由较新版本的 EndfieldCharge 保存。")
+            return L10n.text("These app shortcuts were saved by a newer version of EndfieldCharge", "这些快捷方式由较新版本的 EndfieldCharge 保存")
         case .changedOnDisk:
-            return L10n.text("App shortcuts changed outside this window. Restart EndfieldCharge before editing.", "应用快捷方式已在外部更改，请重启 EndfieldCharge 后再编辑。")
+            return L10n.text("App shortcuts changed outside this window. Restart EndfieldCharge before editing", "应用快捷方式已在外部更改，请重启 EndfieldCharge 后再编辑")
         case .unavailable(let detail):
             return L10n.text("The application is unavailable: ", "应用不可用：") + detail
         case .persistence(let detail):

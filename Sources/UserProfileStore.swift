@@ -224,15 +224,15 @@ enum UserProfileStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidName: return L10n.text("Enter a name of 1–20 characters without line breaks.", "请输入 1–20 个字符的名称，不含换行。")
-        case .invalidTag: return L10n.text("Enter a tag of 1–10 characters without spaces or #.", "请输入 1–10 个字符的编号，不含空格或 #。")
-        case .invalidValue: return L10n.text("Enter a number within the allowed range.", "请输入允许范围内的数字。")
-        case .invalidImage: return L10n.text("Choose a readable image file.", "请选择可读取的图片文件。")
-        case .imageTooLarge: return L10n.text("Choose an image smaller than 128 MB.", "请选择小于 128 MB 的图片。")
-        case .imageDimensionsTooLarge: return L10n.text("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side.", "请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像。")
-        case .invalidRecord: return L10n.text("The personal card could not be read. The saved data has been preserved.", "无法读取个人名片，已保留原始数据。")
-        case .newerVersion: return L10n.text("This personal card was saved by a newer version of EndfieldHUD.", "此个人名片由较新版本的 EndfieldHUD 保存。")
-        case .changedOnDisk: return L10n.text("The personal card changed in another app instance. Restart before editing.", "个人名片已由另一个应用实例更改，请重启后编辑。")
+        case .invalidName: return L10n.text("Enter a name of 1–20 characters without line breaks", "请输入 1–20 个字符的名称，不含换行")
+        case .invalidTag: return L10n.text("Enter a tag of 1–10 characters without spaces or #", "请输入 1–10 个字符的编号，不含空格或 #")
+        case .invalidValue: return L10n.text("Enter a number within the allowed range", "请输入允许范围内的数字")
+        case .invalidImage: return L10n.text("Choose a readable image file", "请选择可读取的图片文件")
+        case .imageTooLarge: return L10n.text("Choose an image smaller than 128 MB", "请选择小于 128 MB 的图片")
+        case .imageDimensionsTooLarge: return L10n.text("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side", "请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像")
+        case .invalidRecord: return L10n.text("The personal card could not be read. The saved data has been preserved", "无法读取个人名片，已保留原始数据")
+        case .newerVersion: return L10n.text("This personal card was saved by a newer version of EndfieldHUD", "此个人名片由较新版本的 EndfieldHUD 保存")
+        case .changedOnDisk: return L10n.text("The personal card changed in another app instance. Restart before editing", "个人名片已由另一个应用实例更改，请重启后编辑")
         case .persistence(let detail): return L10n.text("The personal card could not be saved: ", "无法保存个人名片：") + detail
         }
     }

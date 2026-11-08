@@ -12,7 +12,7 @@ struct CorePerAppAudioFactory: PerAppAudioRouteFactory {
                     cancellation: cancellation, language: language, event: event)
             }
         }
-        throw PerAppAudioEngineError.message(L10n.text("App audio routing requires macOS 14.2 or later.", "应用音频路由需要 macOS 14.2 或更新版本。"))
+        throw PerAppAudioEngineError.message(L10n.text("App audio routing requires macOS 14.2 or later", "应用音频路由需要 macOS 14.2 或更新版本"))
     }
 }
 
@@ -82,13 +82,13 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
 
     func begin() throws {
         precondition(Thread.isMainThread)
-        guard !began else { throw PerAppAudioEngineError.message(L10n.text("This route has already been started.", "此路由已经启动过。")) }
+        guard !began else { throw PerAppAudioEngineError.message(L10n.text("This route has already been started", "此路由已经启动过")) }
         began = true; isStopped = false
         let deadline = DispatchWorkItem { [weak self] in
             guard let self, !self.isStopped, !self.isStopping else { return }
             self.worker.cancellation.cancel()
-            let detail = L10n.text("macOS did not finish starting audio processing. Cancellation is pending; the original app was not muted. Quit EndfieldCharge if macOS remains unresponsive.",
-                "macOS 未能完成音频处理启动，正在等待取消；应用原始输出未被静音。若系统持续无响应，请退出 EndfieldCharge。")
+            let detail = L10n.text("macOS did not finish starting audio processing. Cancellation is pending; the original app was not muted. Quit EndfieldCharge if macOS remains unresponsive",
+                "macOS 未能完成音频处理启动，正在等待取消；应用原始输出未被静音。若系统持续无响应，请退出 EndfieldCharge")
             self.terminalFailure = detail
             self.event(.failed(detail))
             _ = self.stop()
@@ -133,8 +133,8 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
         isStopping = true
         let deadline = DispatchWorkItem { [weak self] in
             guard let self, self.isStopping, !self.isStopped else { return }
-            let detail = L10n.text("Waiting for macOS to release the audio route. The app remains responsive; quit EndfieldCharge if audio is affected. No replacement route will start while cleanup is pending.",
-                "正在等待 macOS 释放音频路由。界面仍可操作；若声音受影响，请退出 EndfieldCharge。清理完成前不会启动替代路由。")
+            let detail = L10n.text("Waiting for macOS to release the audio route. The app remains responsive; quit EndfieldCharge if audio is affected. No replacement route will start while cleanup is pending",
+                "正在等待 macOS 释放音频路由。界面仍可操作；若声音受影响，请退出 EndfieldCharge。清理完成前不会启动替代路由")
             self.terminalFailure = detail
             self.event(.failed(detail))
         }
@@ -312,7 +312,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
 
     func begin() throws {
         requireExecution()
-        guard isStopped, !beginning else { throw message("This route is already running.", "此路由已在运行。") }
+        guard isStopped, !beginning else { throw message("This route is already running", "此路由已在运行") }
         beginning = true; defer { beginning = false }
         generation += 1
         do {
@@ -325,12 +325,12 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             self.description = description
             let create = hardware.createTap(description, id: &tap)
             guard create == noErr, tap != 0 else {
-                throw message("Could not create this app's audio tap. Check System Audio Recording permission in Privacy & Security, then retry.",
-                              "无法创建此应用的音频 Tap，请检查“隐私与安全性”中的“系统音频录制”权限后重试。")
+                throw message("Could not create this app's audio tap. Check System Audio Recording permission in Privacy & Security, then retry",
+                              "无法创建此应用的音频 Tap，请检查“隐私与安全性”中的“系统音频录制”权限后重试")
             }
             try checkCancellation()
             guard hal.writable(property(tap, kAudioTapPropertyDescription)) else {
-                throw message("This macOS audio tap cannot safely switch its mute behavior.", "此 macOS 音频 Tap 无法安全切换静音行为。")
+                throw message("This macOS audio tap cannot safely switch its mute behavior", "此 macOS 音频 Tap 无法安全切换静音行为")
             }
             let tapUID = try hal.string(property(tap, kAudioTapPropertyUID))
             guard !tapUID.isEmpty else { throw unsupportedFormat() }
@@ -449,10 +449,10 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         guard !failures.isEmpty else { return nil }
         let detail = failures.map(String.init).joined(separator: ", ")
         if !isStopped {
-            return localized("The route could not be fully removed. Retry Stop; quit EndfieldCharge if audio remains affected.",
-                             "未能完全移除音频路由，请重试停止；若音频仍受影响，请退出 EndfieldCharge。") + " (\(detail))"
+            return localized("The route could not be fully removed. Retry Stop; quit EndfieldCharge if audio remains affected",
+                             "未能完全移除音频路由，请重试停止；若音频仍受影响，请退出 EndfieldCharge") + " (\(detail))"
         }
-        return localized("The route was removed, but macOS reported a cleanup error.", "音频路由已移除，但 macOS 报告了清理错误。") + " (\(detail))"
+        return localized("The route was removed, but macOS reported a cleanup error", "音频路由已移除，但 macOS 报告了清理错误") + " (\(detail))"
     }
 
     private func validatePhysicalRoute() throws {
@@ -465,7 +465,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         }
         let stereo = try array(property(output.id, kAudioDevicePropertyPreferredChannelsForStereo, scope: kAudioDevicePropertyScopeOutput))
         guard stereo == [1, 2] else {
-            throw message("This experimental route requires the device's standard left/right stereo channel mapping.", "此实验性路由需要设备使用标准左右双声道映射。")
+            throw message("This experimental route requires the device's standard left/right stereo channel mapping", "此实验性路由需要设备使用标准左右双声道映射")
         }
         try validateProcess()
     }
@@ -497,8 +497,8 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             if alive == 1 { return }
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else {
-                throw message("The private audio device did not become ready. Its route was cancelled; try again after the audio device settles.",
-                              "私有音频设备未能就绪，路由已取消。请等待音频设备稳定后重试。")
+                throw message("The private audio device did not become ready. Its route was cancelled; try again after the audio device settles",
+                              "私有音频设备未能就绪，路由已取消。请等待音频设备稳定后重试")
             }
             _ = changed.wait(timeout: .now() + min(0.02, remaining))
         }
@@ -511,12 +511,12 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         let devices = try Set(array(property(application.id, kAudioProcessPropertyDevices, scope: kAudioDevicePropertyScopeOutput)).filter { $0 != 0 })
         guard pid == application.pid, pid != ProcessInfo.processInfo.processIdentifier,
               devices.isEmpty || devices == [output.id] else {
-            throw message("This process must output only to the selected device. Processes using another or several devices are not supported.",
-                          "此进程必须仅向所选设备输出，暂不支持使用其他或多个设备的进程。")
+            throw message("This process must output only to the selected device. Processes using another or several devices are not supported",
+                          "此进程必须仅向所选设备输出，暂不支持使用其他或多个设备的进程")
         }
         if let expected = application.bundleIdentifier, !expected.isEmpty {
             guard (try? hal.string(property(application.id, kAudioProcessPropertyBundleID))) == expected else {
-                throw message("The selected audio process changed. Select the app again.", "所选音频进程已更改，请重新选择应用。")
+                throw message("The selected audio process changed. Select the app again", "所选音频进程已更改，请重新选择应用")
             }
         }
     }
@@ -542,7 +542,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
                 do {
                     try self.validatePhysicalRoute()
                     if address.object == self.output.id || address.object == self.aggregate || self.formatProperties.contains(address) {
-                        throw self.message("The audio device format changed. Start this route again if needed.", "音频设备格式已更改，如有需要请重新启动此路由。")
+                        throw self.message("The audio device format changed. Start this route again if needed", "音频设备格式已更改，如有需要请重新启动此路由")
                     }
                 } catch { self.fail(error) }
                 }
@@ -567,12 +567,12 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             guard !stopping, let state = renderState else { return }
             guard cancellation?.isCancelled != true else { _ = stop(); return }
             if PerAppAudioPCM.load(state, PerAppAudioPCM.faultSlot) != 0 {
-                self.fail(self.message("The audio callback format changed. Stopping processing and restoring direct playback.", "音频回调格式已更改，正在停止处理并恢复原始播放。")); return
+                self.fail(self.message("The audio callback format changed. Stopping processing and restoring direct playback", "音频回调格式已更改，正在停止处理并恢复原始播放")); return
             }
             let ticks = PerAppAudioPCM.load(state, PerAppAudioPCM.tickSlot)
             if ticks != self.lastTicks { self.lastTicks = ticks; self.lastCallback = now }
             if self.activated {
-                if now - self.lastCallback > 1 { self.fail(self.message("Audio processing stopped responding. Stopping this route.", "音频处理停止响应，正在停止此路由。")) }
+                if now - self.lastCallback > 1 { self.fail(self.message("Audio processing stopped responding. Stopping this route", "音频处理停止响应，正在停止此路由")) }
             } else if PerAppAudioPCM.load(state, PerAppAudioPCM.signalSlot) != 0 {
                 do {
                     try self.validatePhysicalRoute()
@@ -594,8 +594,8 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
                     self.event(.active)
                 } catch { self.fail(error) }
             } else if now - self.primingStarted > 60 {
-                self.fail(self.message("No usable app audio arrived. Allow System Audio Recording, play audio, and try again. The app's original output was not muted.",
-                    "未收到可用的应用音频。请允许系统音频录制、播放音频后重试，应用原始输出未被静音。"))
+                self.fail(self.message("No usable app audio arrived. Allow System Audio Recording, play audio, and try again. The app's original output was not muted",
+                    "未收到可用的应用音频。请允许系统音频录制、播放音频后重试，应用原始输出未被静音"))
             }
     }
     private func fail(_ error: Error) {
@@ -639,7 +639,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             properties.insert(address)
         }
         guard formatProperties.isEmpty || formatProperties == properties else {
-            throw message("The audio streams changed during startup. Start this route again.", "音频流在启动过程中发生更改，请重新启动此路由。")
+            throw message("The audio streams changed during startup. Start this route again", "音频流在启动过程中发生更改，请重新启动此路由")
         }
         formatProperties = properties
     }
@@ -676,8 +676,8 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         AudioHALProperty(object: id, selector: selector, scope: scope)
     }
     private func unsupportedFormat() -> PerAppAudioEngineError {
-        message("This experimental route requires matching Float32 stereo streams and sample rates. This audio device or format is not supported.",
-                "此实验性路由需要格式和采样率匹配的 Float32 双声道音频流，暂不支持此音频设备或格式。")
+        message("This experimental route requires matching Float32 stereo streams and sample rates. This audio device or format is not supported",
+                "此实验性路由需要格式和采样率匹配的 Float32 双声道音频流，暂不支持此音频设备或格式")
     }
     private func localized(_ english: L10n.Text, _ chinese: L10n.Text) -> String { L10n.text(english, chinese, language: language) }
     private func describe(_ error: Error) -> String {
@@ -685,18 +685,18 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         // Worker failures use this route's immutable language snapshot instead.
         if let device = error as? AudioDeviceError {
             if case .hal(let status) = device {
-                return localized("macOS could not read the audio device (\(status)).", "macOS 无法读取音频设备（\(status)）。")
+                return localized("macOS could not read the audio device (\(status))", "macOS 无法读取音频设备（\(status)）")
             }
-            return localized("The audio device changed or could not provide valid route information.", "音频设备已更改或无法提供有效的路由信息。")
+            return localized("The audio device changed or could not provide valid route information", "音频设备已更改或无法提供有效的路由信息")
         }
         return error.localizedDescription
     }
     private func message(_ english: L10n.Text, _ chinese: L10n.Text) -> PerAppAudioEngineError { .message(localized(english, chinese)) }
     private func check(_ status: OSStatus) throws {
-        if status != noErr { throw message("macOS could not complete the audio route (\(status)).", "macOS 无法完成音频路由（\(status)）。") }
+        if status != noErr { throw message("macOS could not complete the audio route (\(status))", "macOS 无法完成音频路由（\(status)）") }
     }
     private func checkCancellation() throws {
-        if cancellation?.isCancelled == true { throw message("Audio routing was cancelled.", "音频路由已取消。") }
+        if cancellation?.isCancelled == true { throw message("Audio routing was cancelled", "音频路由已取消") }
     }
     private func requireExecution() {
         if let executionQueue { dispatchPrecondition(condition: .onQueue(executionQueue)) }

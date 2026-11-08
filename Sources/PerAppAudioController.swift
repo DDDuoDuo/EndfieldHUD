@@ -41,7 +41,7 @@ final class PerAppAudioController {
     private(set) var statusMessage: String?
     var isSupported: Bool { factory.isSupported }
     var capabilityMessage: String? {
-        isSupported ? nil : L10n.text("Experimental app volume requires macOS 14.2 or later.", "实验性应用音量需要 macOS 14.2 或更新版本。")
+        isSupported ? nil : L10n.text("Experimental app volume requires macOS 14.2 or later", "实验性应用音量需要 macOS 14.2 或更新版本")
     }
     private struct OwnedRoute { let generation: UUID; let route: PerAppAudioRoute }
     private var routes: [UInt32: OwnedRoute] = [:]
@@ -71,7 +71,7 @@ final class PerAppAudioController {
             return L10n.text("App volume needs an output device without a microphone or other input", "应用音量需要不带麦克风或其他输入的输出设备", language: language)
         }
         if outputChannels != 2 || transport.map({ !supportedTransports.contains($0) }) == true {
-            return L10n.text("This output device does not support app volume routing.", "此输出设备暂不支持应用音量路由。", language: language)
+            return L10n.text("This output device does not support app volume routing", "此输出设备暂不支持应用音量路由", language: language)
         }
         return nil
     }
@@ -85,11 +85,11 @@ final class PerAppAudioController {
     func availability(application: AudioApplicationInfo, output: AudioDeviceInfo) -> String? {
         if !isSupported { return capabilityMessage }
         if (!application.isRunningOutput && application.outputDeviceIDs.isEmpty) || application.pid <= 0 || application.pid == ProcessInfo.processInfo.processIdentifier {
-            return L10n.text("Choose another process with active audio output.", "请选择正在输出音频的其他进程。")
+            return L10n.text("Choose another process with active audio output", "请选择正在输出音频的其他进程")
         }
         if let refusal = outputAvailability(output) { return refusal }
         if !application.outputDeviceIDs.isEmpty && Set(application.outputDeviceIDs) != Set([output.id]) {
-            return L10n.text("This app uses a different output route.", "此应用使用其他输出路由。")
+            return L10n.text("This app uses a different output route", "此应用使用其他输出路由")
         }
         return nil
     }
@@ -109,14 +109,14 @@ final class PerAppAudioController {
     @discardableResult func start(application: AudioApplicationInfo, output: AudioDeviceInfo, initialGain: Double = 1) -> Bool {
         requireMain()
         guard initialGain.isFinite else {
-            statusMessage = L10n.text("Choose a finite app volume between 0% and 100%.", "请选择 0% 至 100% 之间的有效应用音量。")
+            statusMessage = L10n.text("Choose a finite app volume between 0% and 100%", "请选择 0% 至 100% 之间的有效应用音量")
             notify(); return false
         }
         let gain = min(1, max(0, initialGain))
         if let unavailable = availability(application: application, output: output) { statusMessage = unavailable; notify(); return false }
         guard routes[application.id] == nil,
               !sessions.contains(where: { $0.pid == application.pid && routes[$0.processID] != nil }) else {
-            statusMessage = L10n.text("Stop the existing route before starting another for this process.", "请先停止此进程的现有路由，再重新开始。")
+            statusMessage = L10n.text("Stop the existing route before starting another for this process", "请先停止此进程的现有路由，再重新开始")
             notify(); return false
         }
         let generation = UUID()
@@ -129,7 +129,7 @@ final class PerAppAudioController {
             sessions.append(PerAppAudioSession(processID: application.id, pid: application.pid, name: application.name,
                 gain: gain, state: .preparing, error: nil, applicationURL: application.applicationURL, icon: application.icon))
             route.setGain(gain)
-            statusMessage = L10n.text("Allow System Audio Recording if asked, then play audio in the selected app to activate.", "如有提示，请允许系统音频录制，然后在所选应用中播放音频以激活。")
+            statusMessage = L10n.text("Allow System Audio Recording if asked, then play audio in the selected app to activate", "如有提示，请允许系统音频录制，然后在所选应用中播放音频以激活")
             notify()
             try route.begin()
             return true

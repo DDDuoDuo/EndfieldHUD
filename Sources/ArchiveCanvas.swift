@@ -462,7 +462,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmRemoveCategory() {
         guard case .category(let id) = filter, let category = controller.categories.first(where: { $0.id == id }) else { return }
         confirm(HUDConfirmRequest(id: "removeCategory", title: L10n.text("Remove \(category.name)?", "删除\(category.name)？"),
-                                  message: L10n.text("Its documents move to Uncategorized.", "其中的文档将移至未分类。"),
+                                  message: L10n.text("Its documents move to Uncategorized", "其中的文档将移至未分类"),
                                   confirmTitle: L10n.text("Remove", "删除"), danger: true, icon: .trash)) { [weak self] in
             guard let self else { return }
             self.filter = .all
@@ -803,7 +803,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmDeclassify() {
         guard controller.selected != nil else { return }
         confirm(HUDConfirmRequest(id: "declassify", title: L10n.text("Remove classification?", "取消机密？"),
-                                  message: L10n.text("The password is deleted and the text stays readable.", "密码将被删除，文本保持可读。"),
+                                  message: L10n.text("The password is deleted and the text stays readable", "密码将被删除，文本保持可读"),
                                   confirmTitle: L10n.text("Declassify", "取消机密"), icon: .unlock)) { [weak self] in
             self?.controller.declassifySelected { [weak self] result in
                 switch result {
@@ -1073,7 +1073,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     private func openMediaMenu(_ anchor: HUDControl) {
         guard let entry = controller.selected, entry.media.count < 16 else {
-            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items.", "每个文档最多 16 项。"))
+            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items", "每个文档最多 16 项"))
             return
         }
         let choices = shelfChoices?() ?? []

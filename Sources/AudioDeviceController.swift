@@ -150,13 +150,13 @@ enum AudioDeviceError: LocalizedError {
     func message(language: AppLanguage) -> String {
         func localized(_ english: L10n.Text, _ chineseText: L10n.Text) -> String { L10n.text(english, chineseText, language: language) }
         switch self {
-        case .unavailable: return localized("Audio device information is unavailable.", "音频设备信息不可用。")
-        case .unsupported: return localized("This device does not support this control.", "此设备不支持该控制。")
-        case .deviceChanged: return localized("The audio device changed. Try the control again.", "音频设备已更改，请重试。")
-        case .invalidValue: return localized("The audio control value is invalid.", "音频控制值无效。")
-        case .readback: return localized("The device could not confirm the audio change.", "无法确认设备的音频更改。")
-        case .hal(let code): return localized("macOS could not complete the audio operation", "macOS 无法完成音频操作") + " (\(code))."
-        case .rollback: return localized("The audio change failed and could not be fully restored. Check the current device levels.", "音频更改失败且未能完全恢复，请检查当前设备音量。")
+        case .unavailable: return localized("Audio device information is unavailable", "音频设备信息不可用")
+        case .unsupported: return localized("This device does not support this control", "此设备不支持该控制")
+        case .deviceChanged: return localized("The audio device changed. Try the control again", "音频设备已更改，请重试")
+        case .invalidValue: return localized("The audio control value is invalid", "音频控制值无效")
+        case .readback: return localized("The device could not confirm the audio change", "无法确认设备的音频更改")
+        case .hal(let code): return localized("macOS could not complete the audio operation", "macOS 无法完成音频操作") + " (\(code))"
+        case .rollback: return localized("The audio change failed and could not be fully restored. Check the current device levels", "音频更改失败且未能完全恢复，请检查当前设备音量")
         }
     }
 }
@@ -774,12 +774,12 @@ private final class AudioDeviceStateEngine {
     private func readApplications(into next: inout AudioDeviceSnapshot, desired: inout Set<AudioHALProperty>) {
         guard let backend, backend.supportsProcessActivity,
               backend.has(systemProperty(kAudioHardwarePropertyProcessObjectList)) else {
-            next.applicationActivityMessage = localized("Active audio apps require macOS 14.2 or later and compatible Core Audio support.", "活跃音频应用需要 macOS 14.2 或更新版本及兼容的 Core Audio 支持。")
+            next.applicationActivityMessage = localized("Active audio apps require macOS 14.2 or later and compatible Core Audio support", "活跃音频应用需要 macOS 14.2 或更新版本及兼容的 Core Audio 支持")
             return
         }
         desired.insert(systemProperty(kAudioHardwarePropertyProcessObjectList))
         guard let processes: [UInt32] = try? array(systemProperty(kAudioHardwarePropertyProcessObjectList)) else {
-            next.applicationActivityMessage = localized("Active audio app information is unavailable.", "活跃音频应用信息不可用。")
+            next.applicationActivityMessage = localized("Active audio app information is unavailable", "活跃音频应用信息不可用")
             return
         }
         next.applicationActivitySupported = true
@@ -835,7 +835,7 @@ private final class AudioDeviceStateEngine {
         }
         for address in desired where listeners[address] == nil {
             do { listeners[address] = try backend.listen(address) { [weak self] in self?.scheduleRefresh() } }
-            catch { setStatus(localized("Some audio changes could not be observed. Reopen Volume to refresh.", "无法监听部分音频更改，请重新打开音量模块刷新。")) }
+            catch { setStatus(localized("Some audio changes could not be observed. Reopen Volume to refresh", "无法监听部分音频更改，请重新打开音量模块刷新")) }
         }
     }
     private func scheduleRefresh() {
