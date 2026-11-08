@@ -458,11 +458,10 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     private func validatePhysicalRoute() throws {
         try validateOutputUnchanged()
         let transport: UInt32 = try read(property(output.id, kAudioDevicePropertyTransportType))
-        guard transport == kAudioDeviceTransportTypeBuiltIn || transport == kAudioDeviceTransportTypeUSB,
-              try channels(output.id, scope: kAudioDevicePropertyScopeInput) == 0,
-              try channels(output.id, scope: kAudioDevicePropertyScopeOutput) == 2 else {
-            throw message("This experimental route requires the current built-in or USB stereo output, with no input channels. The device may have changed.",
-                          "此实验性路由需要当前内建或 USB 双声道输出设备，且该设备不能带输入声道。设备可能已更改。")
+        if let refusal = PerAppAudioController.outputSupport(transport: transport,
+            inputChannels: try channels(output.id, scope: kAudioDevicePropertyScopeInput),
+            outputChannels: try channels(output.id, scope: kAudioDevicePropertyScopeOutput), language: language) {
+            throw PerAppAudioEngineError.message(refusal)
         }
         let stereo = try array(property(output.id, kAudioDevicePropertyPreferredChannelsForStereo, scope: kAudioDevicePropertyScopeOutput))
         guard stereo == [1, 2] else {

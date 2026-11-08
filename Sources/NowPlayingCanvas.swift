@@ -491,13 +491,16 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     }
 
     /// Why the volume does not follow the slider: the player's Automation
-    /// state, else a failed per-app route's own error.
+    /// state, else a failed per-app route's own error, else why the current
+    /// output cannot carry the playing app's volume.
     private var volumeNotice: String? {
         guard controller.playerVolume == nil else { return nil }
         if let failure = controller.playerVolumeFailure { return failure.message }
         if controller.isAwaitingPermission { return NowPlayingFailure.permissionRequired.message }
-        guard let session = currentSession, session.state == .failed else { return nil }
-        return session.error
+        guard let session = currentSession else {
+            return audioApplication == nil ? nil : currentOutput.flatMap(perAppAudio.outputAvailability)
+        }
+        return session.state == .failed ? session.error : nil
     }
 
     /// Once the player's own volume is available, a per-app route this page

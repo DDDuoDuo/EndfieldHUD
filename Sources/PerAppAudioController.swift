@@ -55,17 +55,39 @@ final class PerAppAudioController {
     }
     func removeObserver(_ token: UUID) { requireMain(); observers.removeValue(forKey: token) }
 
+    /// Wired, wireless and display outputs a route can play through. AirPlay,
+    /// aggregate, virtual and unknown outputs stay unsupported.
+    static let supportedTransports: Set<UInt32> = [kAudioDeviceTransportTypeBuiltIn, kAudioDeviceTransportTypeUSB,
+        kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE, kAudioDeviceTransportTypeHDMI,
+        kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeThunderbolt, kAudioDeviceTransportTypeFireWire,
+        kAudioDeviceTransportTypePCI]
+
+    /// Why an output cannot carry app volume, or nil. The device list passes
+    /// its snapshot; the engine passes live values and its own language. A
+    /// route stacks every stream of the device, so a device with a microphone
+    /// (most Bluetooth headsets) would have it opened and is refused.
+    static func outputSupport(transport: UInt32?, inputChannels: Int, outputChannels: Int, language: AppLanguage? = nil) -> String? {
+        if inputChannels != 0 {
+            return L10n.text("App volume needs an output device without a microphone or other input", "应用音量需要不带麦克风或其他输入的输出设备", language: language)
+        }
+        if outputChannels != 2 || transport.map({ !supportedTransports.contains($0) }) == true {
+            return L10n.text("This output device does not support app volume routing.", "此输出设备暂不支持应用音量路由。", language: language)
+        }
+        return nil
+    }
+
+    /// Why no app can be routed through this output, or nil.
+    func outputAvailability(_ output: AudioDeviceInfo) -> String? {
+        if !isSupported { return capabilityMessage }
+        return Self.outputSupport(transport: output.transportType, inputChannels: output.inputChannels, outputChannels: output.outputChannels)
+    }
+
     func availability(application: AudioApplicationInfo, output: AudioDeviceInfo) -> String? {
         if !isSupported { return capabilityMessage }
         if (!application.isRunningOutput && application.outputDeviceIDs.isEmpty) || application.pid <= 0 || application.pid == ProcessInfo.processInfo.processIdentifier {
             return L10n.text("Choose another process with active audio output.", "请选择正在输出音频的其他进程。")
         }
-        if output.isBluetooth || output.outputChannels != 2 || output.inputChannels != 0 {
-            return L10n.text("This experimental route supports stereo output-only built-in or USB devices. Bluetooth and devices with input channels are not supported.", "此实验性路由支持仅具备双声道输出的内建或 USB 设备，暂不支持蓝牙或带输入声道的设备。")
-        }
-        if let transport = output.transportType, transport != kAudioDeviceTransportTypeBuiltIn && transport != kAudioDeviceTransportTypeUSB {
-            return L10n.text("This output device does not support app volume routing.", "此输出设备暂不支持应用音量路由。")
-        }
+        if let refusal = outputAvailability(output) { return refusal }
         if !application.outputDeviceIDs.isEmpty && Set(application.outputDeviceIDs) != Set([output.id]) {
             return L10n.text("This app uses a different output route.", "此应用使用其他输出路由。")
         }
