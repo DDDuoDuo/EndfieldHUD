@@ -2697,7 +2697,7 @@ void Application::Impl::activate(const WatchActivation&event){
 
 // SystemHUDView.presentQuitConfirmation (Mac 1.3.0; HUDQuitConfirmationView
 // is gone): the red power button asks on the shared confirm bar on the disc
-// ("Quit EndfieldHUD?" / "Notes, shelf files and settings are saved.", Quit,
+// ("Quit EndfieldHUD?" / "Notes, shelf files and settings are saved", Quit,
 // the default Cancel, red, the power glyph). Esc / Cancel / a press outside
 // keep the HUD; Return / Quit accept once, after the bar's 120 ms press (at
 // once under Reduce Motion), then the normal closing plays and the ordered

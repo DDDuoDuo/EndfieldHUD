@@ -164,7 +164,7 @@ public:
     // controller started): recorded as known, never treated as an edit.
     void profileAvatarBaseline(const std::optional<std::string>& filename);
     // An asynchronous cache file reports a failed write (Mac: the synchronous
-    // write's "Profile cache could not be saved." status).
+    // write's "Profile cache could not be saved" status).
     void cacheWriteFailed();
 
     AccountPresentation presentation() const;

@@ -72,7 +72,7 @@ std::string shelfText(ShelfText, core::Language);
 // Event Log wiring). Every callback runs on the UI thread.
 struct FileShelfServices {
     // FileShelfStore: a store that could not open answers nothing (available
-    // false: "File shelf storage is unavailable."). refresh / add / remove /
+    // false: "File shelf storage is unavailable"). refresh / add / remove /
     // clear throw on failure; describe() gives the error's text for a toast.
     bool available{true};
     std::function<std::vector<FileShelfItem>()> items;

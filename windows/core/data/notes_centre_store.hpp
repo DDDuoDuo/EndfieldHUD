@@ -95,7 +95,7 @@ public:
     // default document. An undecodable, invalid or oversized file is renamed
     // to centre-unreadable-<ISO8601 UTC, ':' -> '-'>.json beside it and never
     // overwritten (LoadIssue::setAside; the owner shows the Mac notice "The
-    // centre notes could not be read and were set aside."). A file that cannot
+    // centre notes could not be read and were set aside"). A file that cannot
     // be read or renamed leaves the store memory-only (LoadIssue::unavailable
     // or setAside with no rename): unlike the Mac, a later edit never replaces
     // it. unixNow stamps the set-aside name (default: system clock).

@@ -35,8 +35,8 @@ public:
 private:ArchiveClassificationErrorCode code_;
 };
 // The user-visible text (DOCS-311). The Mac pairs name the Keychain ("This
-// document's password is missing from the Keychain. It stays classified." /
-// "The Keychain could not be read. The document stays classified."); the
+// document's password is missing from the Keychain. It stays classified" /
+// "The Keychain could not be read. The document stays classified"); the
 // Windows verifiers live in the current user's DPAPI-protected store
 // (native/archive_password_vault.hpp), so Windows names that instead, in
 // five explicit languages (no Mac catalog pair exists for this wording).

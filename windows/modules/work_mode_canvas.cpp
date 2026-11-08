@@ -4,7 +4,7 @@
 // Removed with the v1.2.0 page (MODS-739, MODS-743): the .44 s expanded
 // layout, the clock "index" travel, the .985 button press, the Ready /
 // RUNNING / PAUSED / Stopped / Completed phase words, the invalid-duration hint
-// and the ". Space starts, pauses or resumes." help (MODS-729, MODS-741), and
+// and the ". Space starts, pauses or resumes" help (MODS-729, MODS-741), and
 // the auto-cancel of the custom editor when a session starts (MODS-734: a new
 // duration now ends a running session, and leaving commits the field).
 //

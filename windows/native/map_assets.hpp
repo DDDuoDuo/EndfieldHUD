@@ -23,8 +23,8 @@ struct MapGeographyPins {
 // their pins and decoded independently. A dataset that is missing, differs
 // from its pin or fails to decode stays absent with its failure flag set; a
 // failure never throws, so the Map keeps its pins and shows the source
-// message ("Terrain data could not be loaded." / "Country shapes could not
-// be loaded."). An empty root fails both. File IO: run on the shared utility
+// message ("Terrain data could not be loaded" / "Country shapes could not
+// be loaded"). An empty root fails both. File IO: run on the shared utility
 // worker, never on a warm frame.
 modules::MapGeography loadMapGeography(const std::filesystem::path&explicitAbsoluteRoot,const MapGeographyPins& ={});
 }
