@@ -96,6 +96,14 @@ public:
     void hoverChanged() override;
     // HUDArchiveTile.bracketPath: the selection brackets (also Settings' icon tiles at inset 0).
     static PathBuilder bracketPath(Rect bounds, double inset);
+    // The six filled rectangles bracketPath is made of (left then right: top,
+    // bottom, upright), for a caller drawing them without a path.
+    static std::array<Rect, 6> bracketRects(Rect bounds, double inset);
+    // HUDArchiveTile.applyArrangeMark (Display > Modules > Arrange on HUD):
+    // the corner marks on a right-hand tile that can be dragged, set 4 px
+    // wider while it is being dragged (`lifted`), filled with
+    // Palette::plateInk (both themes).
+    static std::array<Rect, 6> arrangeMarkRects(Rect bounds, bool lifted) { return bracketRects(bounds, lifted ? -4 : 0); }
     // HUDArchiveTile.docGlyph (:404-425): the 40 x 50 folded page (centred on
     // its position), also the File Shelf properties card's preview.
     static Layer& docGlyph(Builder&, std::string_view id, Extension, const std::optional<std::string>& label);

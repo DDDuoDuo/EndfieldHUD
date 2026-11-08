@@ -918,6 +918,13 @@ void cards() {
     check(model(must(tile.layer(), "tile.brackets"), Channel::opacity) == 1 && model(must(tile.layer(), "tile.brackets.selected"), Channel::opacity) == 1
         && model(must(tile.layer(), "tile.brackets.rest"), Channel::opacity) == 0 && near(must(tile.layer(), "tile.brackets.selected").tracks().property[std::size_t(Channel::opacity)].duration, .16),
         "Selection: brackets in (.1) and the -4 inset cross-faded in over .16");
+    {
+        // HUDArchiveTile.applyArrangeMark: the bracket rectangles, 4 px wider while lifted.
+        const auto rest = d::ArchiveTile::arrangeMarkRects({0, 0, 100, 80}, false), lifted = d::ArchiveTile::arrangeMarkRects({0, 0, 100, 80}, true);
+        check(near(rest[0], {0, 0, 9, 2}) && near(rest[1], {0, 78, 9, 2}) && near(rest[2], {0, 0, 2, 80}) && near(rest[3], {91, 0, 9, 2}) && near(rest[4], {91, 78, 9, 2}) && near(rest[5], {98, 0, 2, 80}),
+            "Arrange marks: two 9 x 2 arms and a 2 px upright at each side");
+        check(near(lifted[0], {-4, -4, 9, 2}) && near(lifted[5], {102, -4, 2, 88}), "Lifted: 4 px wider all round");
+    }
     check(near(*fill(must(tile.layer(), "tile.label")), d::fixed::counterBackground) && near(textColor(must(tile.layer(), "tile.label.text")), w.env.palette.yellow()), "Selected strip #151515, yellow label");
     w.move(w.centre(tile));
     check(model(must(tile.layer(), "tile.well"), Channel::translateY) == -2 && near(model(doc, Channel::rotation), -2 * 3.14159265358979323846 / 180) && model(doc, Channel::translateY) == -3,

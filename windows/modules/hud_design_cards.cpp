@@ -348,13 +348,19 @@ const char* extensionName(ArchiveTile::Extension e) {
 }
 }
 // bracketPath (:428-437): two 9 px wide vertical brackets, 2 px, open toward the centre.
-PathBuilder ArchiveTile::bracketPath(Rect bounds, double inset) {
+std::array<Rect, 6> ArchiveTile::bracketRects(Rect bounds, double inset) {
     const Rect r{bounds.x + inset, bounds.y + inset, bounds.width - 2 * inset, bounds.height - 2 * inset}; // CGRect.insetBy
-    PathBuilder p;
+    std::array<Rect, 6> rects;
+    std::size_t n = 0;
     for (const bool left : {true, false}) {
         const double x = left ? r.x : r.x + r.width - 9;
-        p.rect({x, r.y, 9, 2}).rect({x, r.y + r.height - 2, 9, 2}).rect({left ? r.x : r.x + r.width - 2, r.y, 2, r.height});
+        rects[n++] = {x, r.y, 9, 2}; rects[n++] = {x, r.y + r.height - 2, 9, 2}; rects[n++] = {left ? r.x : r.x + r.width - 2, r.y, 2, r.height};
     }
+    return rects;
+}
+PathBuilder ArchiveTile::bracketPath(Rect bounds, double inset) {
+    PathBuilder p;
+    for (const auto& rect : bracketRects(bounds, inset)) p.rect(rect);
     return p;
 }
 ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string title, Extension extension, std::optional<std::string> extensionLabel,

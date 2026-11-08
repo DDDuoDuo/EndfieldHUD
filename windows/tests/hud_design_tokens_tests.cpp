@@ -63,7 +63,10 @@ void palette() {
         same(dark.yellow, dark.accent, name + " yellow is the accent");
         same(dark.yellowHigh, v.high, name + " high"); same(dark.yellowLow, v.low, name + " low"); same(dark.yellowDeep, v.deep, name + " deep");
         same(light.ink, v.ink, name + " Light ink"); check(dark.ink == dark.yellow, name + " dark ink");
+        // HUDColor.plateInk: the Light ink in both themes (the Arrange on HUD marks on the light module plates).
+        same(dark.plateInk, v.ink, name + " plate ink in Dark"); check(light.plateInk == light.ink, name + " plate ink is the Light ink");
     }
+    same(standard.plateInk, 0x87780A, "Default plate ink reads in Dark too");
     // The formula on FAD41F itself (what a port must NOT show) differs from the authored stops.
     const auto formula = d::hsbShifted(d::rgb(0xFAD41F), -6.08, .923, .914);
     check(near(formula.r * 255, 228.5, 1e-9) && near(formula.g * 255, 177.720704576, 1e-6) && hex(formula) != 0xE9CF12, "The HSB shift of FAD41F (E4/E5 B2 2C) is not the authored E9CF12: the default is special-cased (inventory LIB-1)");

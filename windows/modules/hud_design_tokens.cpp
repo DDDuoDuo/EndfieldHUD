@@ -130,7 +130,8 @@ AccentPalette AccentPalette::make(std::string_view accentHex, bool light) {
         p.yellowLow = hsbShifted(base, -6.08, .923, .914);
         p.yellowDeep = hsbShifted(base, -4.16, .934, .945);
     }
-    p.ink = light ? darkened(p.yellowLow, .42) : p.yellow;
+    p.plateInk = darkened(p.yellowLow, .42);
+    p.ink = light ? p.plateInk : p.yellow;
     return p;
 }
 

@@ -77,8 +77,11 @@ Color hsbShifted(Color, double hueDegrees, double saturation, double brightness)
 struct AccentPalette {
     Hex accent{standardAccent};
     Color yellow, yellowHigh, yellowLow, yellowDeep;
-    // HUDColor.accentInk: yellow in dark; in Light yellowLow x .58 (darkened .42).
+    // HUDColor.accentInk: yellow in dark; in Light the plate ink.
     Color ink;
+    // HUDColor.plateInk: the accent as a thin line on the light module plates
+    // of the HUD's right-hand list in either theme: yellowLow x .58 (darkened .42).
+    Color plateInk;
     // The primary button gradient top to bottom: high, yellow, low (:231).
     std::array<Color, 3> primaryButton() const noexcept { return {yellowHigh, yellow, yellowLow}; }
     // The default FAD41F keeps its AUTHORED stops (never computed): FFFA00 /
@@ -169,6 +172,7 @@ public:
     Color yellowLow() const noexcept { return accent_.yellowLow; }
     Color yellowDeep() const noexcept { return accent_.yellowDeep; }
     Color accentInk() const noexcept { return accent_.ink; }
+    Color plateInk() const noexcept { return accent_.plateInk; }
     // HUDColor.tone: `hex` in dark, lightTone(hex) in Light, for greys drawn on
     // theme surfaces (plates, photos and fixed dark tags keep rgb()).
     Color tone(Hex, double alpha = 1) const noexcept;
