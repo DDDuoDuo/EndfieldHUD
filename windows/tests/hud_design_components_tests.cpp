@@ -406,6 +406,56 @@ void buttons() {
     check(near(*must(grip.layer(), "grip.dots").tint(), d::fixed::nearBlack), "Hover darkens the dots");
 }
 
+// HUDListReorder (Mac 3c7088a): the lifted row rises and follows the pointer,
+// the list scrolls under it past its edges, the others glide to their new
+// slots, the drop settles it and a cancel puts every row back at once.
+void listReorder() {
+    World w;
+    d::ScrollArea list(w.b, "reorder", {0, 100, 590, 120});
+    w.host(list.layer());
+    std::vector<std::pair<std::string, d::Layer*>> rows;
+    for (int n = 0; n < 4; ++n) {
+        d::Layer& row = w.arena.make("row." + std::to_string(n));
+        row.setAnimatable(); row.setFrame({0, 4 + 50. * n, 580, 44});
+        list.content().add(row);
+        rows.emplace_back("r" + std::to_string(n), &row);
+    }
+    list.setContentHeight(4 + 4 * 50);
+    const d::ListReorder::Rows find = [&](const std::string& id) -> d::Layer* {
+        for (auto& [key, row] : rows) if (key == id) return row;
+        return nullptr;
+    };
+    const std::vector<std::string> saved{"r0", "r1", "r2", "r3"};
+    const auto clock = w.env.clock();
+    check(!d::ListReorder::lift("missing", saved, *rows[0].second, 10, 4, 50, clock), "Nothing lifts for an id not in the order");
+    auto lifted = d::ListReorder::lift("r0", saved, *rows[0].second, 20, 4, 50, clock);
+    check(lifted && lifted->index() == 0 && rows[0].second->zPosition() == 10 && model(*rows[0].second, Channel::scaleX) == 1.015
+        && near(rows[0].second->tracks().property[std::size_t(Channel::scaleX)].duration, d::duration::hover), "Lift: z 10 and scale 1.015 over the hover duration");
+    // The pointer two pitches lower (root y = list top 100 + content y).
+    lifted->move({10, 100 + 20 + 100}, list, w.root, find, clock);
+    check(lifted->index() == 2 && lifted->order() == std::vector<std::string>{"r1", "r2", "r0", "r3"} && near(model(*rows[0].second, Channel::translateY), 100),
+        "The lifted row follows the pointer and takes its slot");
+    check(near(model(*rows[1].second, Channel::translateY), -50) && near(model(*rows[2].second, Channel::translateY), -50) && model(*rows[3].second, Channel::translateY) == 0
+        && near(rows[1].second->tracks().property[std::size_t(Channel::translateY)].duration, .18), "The others glide to their new slots in .18 s");
+    lifted->move({10, 100 + 120 + 40}, list, w.root, find, clock);
+    check(near(list.offset(), 20) && lifted->index() == 3, "Past the bottom edge the list scrolls half the distance under the row");
+    lifted->move({10, 100 - 10}, list, w.root, find, clock);
+    check(near(list.offset(), 15), "Past the top edge it scrolls back");
+    w.at(w.env.now + 1);
+    lifted->drop(rows[0].second, w.env.clock());
+    check(rows[0].second->zPosition() == 0 && model(*rows[0].second, Channel::scaleX) == 1 && near(rows[0].second->tracks().property[std::size_t(Channel::scaleX)].duration, .18),
+        "The drop settles the row in .18 s");
+    lifted->cancel(saved, find);
+    bool home = true;
+    for (auto& [key, row] : rows) home = home && model(*row, Channel::translateY) == 0 && model(*row, Channel::scaleY) == 1 && row->zPosition() == 0;
+    check(home, "A cancel puts every row back in the saved order at once");
+    check(d::ListReorder::landingDelay(false) == .2 && d::ListReorder::landingDelay(true) == 0, "The re-render waits .2 s for the landing, 0 under Reduce Motion");
+    std::vector<std::pair<d::DragGrip::Phase, Point>> phases;
+    d::ListReorder::simulate({7, 30}, -2, 50, [&](d::DragGrip::Phase phase, Point at) { phases.emplace_back(phase, at); });
+    check(phases.size() == 3 && phases[0] == std::pair{d::DragGrip::Phase::began, Point{7, 30}} && phases[2] == std::pair{d::DragGrip::Phase::ended, Point{7, -70}},
+        "simulate: began at the start, moved and ended slots x pitch away");
+}
+
 // ---------------------------------------------------------------------------
 // HUDSlider, HUDSliderBubble (HUDDesignSlider.swift)
 // ---------------------------------------------------------------------------
@@ -1585,7 +1635,7 @@ void oracle(const Json& data) {
 
 int main(int argc, char** argv) {
     try {
-        controlBase(); rows(); toggles(); buttons(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
+        controlBase(); rows(); toggles(); buttons(); listReorder(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr)) oracle(*data);
         else std::cout << "hud-design-source.json not present: Swift-derived contracts only\n";
         std::cout << "hud_design_components_tests: " << checks << " checks passed\n";

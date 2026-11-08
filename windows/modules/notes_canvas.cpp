@@ -112,7 +112,7 @@ d::Button& NotesCanvas::foldButton(d::Page& page, bool folded) {
     return button;
 }
 void NotesCanvas::buildPage(d::Page& page) {
-    cards_.clear(); builtSlots_.clear(); tabs_ = nullptr; formatBar_ = nullptr; foldButton_ = nullptr; reorder_.reset(); taskList_ = nullptr;
+    cards_.clear(); tabs_ = nullptr; formatBar_ = nullptr; foldButton_ = nullptr; reorder_.reset(); taskList_ = nullptr;
     if (editingTask_ && !editingTask_->field->editing()) editingTask_.reset();
     const auto& doc = document();
     const bool folded = doc.isFolded && options_.storageAvailable;
@@ -212,7 +212,6 @@ double NotesCanvas::buildTasks(d::Page& page, d::Layer& content, double top, std
             page.add(card.controls()); page.add(grip);
             staggered.push_back(&card.layer());
             cards_.emplace_back(id, &card);
-            builtSlots_.emplace_back(id, int(index));
         }
         list.setContentHeight(4 + natural);
         page.restoreOffset(list);
@@ -251,10 +250,6 @@ d::TextField& NotesCanvas::taskField(double width) {
 d::TaskCard* NotesCanvas::taskCard(const std::string& id) const {
     const auto it = std::find_if(cards_.begin(), cards_.end(), [&](const auto& c) { return c.first == id; });
     return it == cards_.end() ? nullptr : it->second;
-}
-int NotesCanvas::builtSlot(const std::string& id) const {
-    const auto it = std::find_if(builtSlots_.begin(), builtSlots_.end(), [&](const auto& s) { return s.first == id; });
-    return it == builtSlots_.end() ? 0 : it->second;
 }
 
 // The item menu (:348-369): grip press, right-click.
@@ -354,6 +349,10 @@ void NotesCanvas::finishTaskEdit(const std::string& id, std::optional<std::strin
 }
 
 // --- TODO: reordering by the grip (:432-497) -------------------------------------------
+// The lift, drag, drop and cancel are the shared ListReorder (HUDListReorder).
+d::ListReorder::Rows NotesCanvas::reorderRows() const {
+    return [this](const std::string& id) -> d::Layer* { auto* card = taskCard(id); return card ? &card->layer() : nullptr; };
+}
 void NotesCanvas::dragTask(const std::string& id, d::DragGrip::Phase phase, Point point) {
     if (!taskList_) return;
     auto& list = *taskList_;
@@ -363,64 +362,37 @@ void NotesCanvas::dragTask(const std::string& id, d::DragGrip::Phase phase, Poin
     case d::DragGrip::Phase::began: {
         auto* card = taskCard(id);
         const auto& tasks = document().tasks;
-        const auto it = std::find_if(tasks.begin(), tasks.end(), [&](const auto& t) { return t.id == id; });
-        if (!card || it == tasks.end()) return;
+        if (!card || std::none_of(tasks.begin(), tasks.end(), [&](const auto& t) { return t.id == id; })) return;
         closePopups();
         if (editingTask_) editingTask_->field->endEditing(true);
-        Reorder state{id, local->y - slotY(int(it - tasks.begin())), int(it - tasks.begin()), {}};
-        for (const auto& task : document().tasks) state.order.push_back(task.id);
-        reorder_ = std::move(state);
-        card->layer().setZPosition(10);
-        d::motion::animate(card->layer(), Channel::scaleX, 1.015, d::duration::hover, clock());
-        d::motion::animate(card->layer(), Channel::scaleY, 1.015, d::duration::hover, clock());
+        std::vector<std::string> order;
+        for (const auto& task : document().tasks) order.push_back(task.id);
+        reorder_ = d::ListReorder::lift(id, std::move(order), card->layer(), local->y, slotY(0), rowPitch, clock());
+        if (!reorder_) return;
         if (context().onLockParallax) context().onLockParallax();
         break;
     }
-    case d::DragGrip::Phase::moved: {
-        auto* card = taskCard(id);
-        if (!reorder_ || reorder_->id != id || !card) return;
-        auto& state = *reorder_;
-        // Past the list's edges the list scrolls under the card.
-        const double visible = list.layer().bounds().height;
-        const auto edgePoint = d::convert(point, root(), list.layer());
-        const double edge = edgePoint ? edgePoint->y : 0;
-        if (edge < 0) { list.setOffset(std::max(0.0, list.offset() + edge * .5)); list.noteScroll(); }
-        else if (edge > visible) { list.setOffset(std::min(list.maximumOffset(), list.offset() + (edge - visible) * .5)); list.noteScroll(); }
-        const double y = std::clamp(local->y - state.grab, slotY(0), slotY(int(state.order.size()) - 1));
-        card->layer().setValue(Channel::translateY, y - slotY(builtSlot(id)));
-        const int target = std::clamp(int(std::round((y - 4) / rowPitch)), 0, int(state.order.size()) - 1);
-        if (target == state.index) return;
-        state.order.erase(state.order.begin() + state.index);
-        state.order.insert(state.order.begin() + target, id);
-        state.index = target;
-        for (std::size_t slot = 0; slot < state.order.size(); ++slot) {
-            const auto& other = state.order[slot];
-            if (other == id) continue;
-            if (auto* otherCard = taskCard(other)) d::motion::animate(otherCard->layer(), Channel::translateY, slotY(int(slot)) - slotY(builtSlot(other)), .18, clock());
-        }
+    case d::DragGrip::Phase::moved:
+        if (!reorder_ || reorder_->id() != id) return;
+        reorder_->move(point, list, root(), reorderRows(), clock());
         break;
-    }
     case d::DragGrip::Phase::ended: {
-        if (!reorder_ || reorder_->id != id) return;
-        const Reorder state = std::move(*reorder_);
+        if (!reorder_ || reorder_->id() != id) return;
+        const d::ListReorder state = std::move(*reorder_);
         reorder_.reset();
-        if (auto* card = taskCard(id)) {
-            d::motion::animate(card->layer(), Channel::translateY, slotY(state.index) - slotY(builtSlot(id)), .18, clock());
-            d::motion::animate(card->layer(), Channel::scaleX, 1, .18, clock());
-            d::motion::animate(card->layer(), Channel::scaleY, 1, .18, clock());
-            card->layer().setZPosition(0);
-        }
+        auto* card = taskCard(id);
+        state.drop(card ? &card->layer() : nullptr, clock());
         std::vector<std::string> current;
         for (const auto& task : document().tasks) current.push_back(task.id);
-        if (state.order == current) return;
+        if (state.order() == current) return;
         save([&](Document& doc) {
             std::vector<ehud::data::NotesCentreTask> moved;
-            for (const auto& taskID : state.order)
+            for (const auto& taskID : state.order())
                 for (const auto& task : doc.tasks) if (task.id == taskID) { moved.push_back(task); break; }
             if (moved.size() == doc.tasks.size()) doc.tasks = std::move(moved);
         });
         // The page order (accessibility) follows once the card has landed.
-        after(env().reduceMotion ? 0 : .2, timers_, [this] {
+        after(d::ListReorder::landingDelay(env().reduceMotion), timers_, [this] {
             if (isActive() && !reorder_ && document().tab == Document::Tab::todo) rerender();
         });
         break;
@@ -434,21 +406,17 @@ void NotesCanvas::dragTask(const std::string& id, int toSlot) {
     if (!start) return;
     const auto& tasks = document().tasks;
     const auto it = std::find_if(tasks.begin(), tasks.end(), [&](const auto& t) { return t.id == id; });
-    const double distance = double(toSlot - (it == tasks.end() ? 0 : int(it - tasks.begin()))) * rowPitch;
-    dragTask(id, d::DragGrip::Phase::began, *start);
-    dragTask(id, d::DragGrip::Phase::moved, {start->x, start->y + distance});
-    dragTask(id, d::DragGrip::Phase::ended, {start->x, start->y + distance});
+    d::ListReorder::simulate(*start, toSlot - (it == tasks.end() ? 0 : int(it - tasks.begin())), rowPitch,
+        [this, &id](d::DragGrip::Phase phase, Point point) { dragTask(id, phase, point); });
 }
 // A lifted card returns to its slot (the module was left mid-drag).
 void NotesCanvas::cancelReorder() {
     if (!reorder_) return;
+    const d::ListReorder state = std::move(*reorder_);
     reorder_.reset();
-    for (const auto& [id, card] : cards_) {
-        d::Layer& l = card->layer();
-        l.setValue(Channel::translateY, 0);
-        l.setValue(Channel::scaleX, 1); l.setValue(Channel::scaleY, 1);
-        l.setZPosition(0);
-    }
+    std::vector<std::string> saved;
+    for (const auto& task : document().tasks) saved.push_back(task.id);
+    state.cancel(saved, reorderRows());
 }
 
 // --- TEXT (:499-615) ------------------------------------------------------------------------

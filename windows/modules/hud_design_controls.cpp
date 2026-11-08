@@ -28,6 +28,7 @@
 //    no colour, border from CALayer's default black); every other component
 //    renders its initial state without animation, as the Mac does.
 #include "modules/hud_design_controls.hpp"
+#include "modules/hud_design_scroll.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -663,6 +664,64 @@ void DragGrip::clearInteractionState() {
 }
 std::optional<AccessibilityRole> DragGrip::accessibilityRole() const {
     return label.empty() ? std::nullopt : std::optional<AccessibilityRole>(AccessibilityRole::button);
+}
+
+// ---------------------------------------------------------------------------
+// HUDListReorder (HUDDesignButtons.swift, Mac 3c7088a)
+// ---------------------------------------------------------------------------
+std::optional<ListReorder> ListReorder::lift(const std::string& id, std::vector<std::string> order, Layer& layer, double grabY,
+    double top, double pitch, const motion::Clock& clock) {
+    const auto found = std::find(order.begin(), order.end(), id);
+    if (found == order.end()) return std::nullopt;
+    const int slot = int(found - order.begin());
+    ListReorder lifted(id, std::move(order), slot, grabY - (top + double(slot) * pitch), top, pitch);
+    layer.setZPosition(10);
+    motion::animate(layer, Channel::scaleX, 1.015, duration::hover, clock);
+    motion::animate(layer, Channel::scaleY, 1.015, duration::hover, clock);
+    return lifted;
+}
+void ListReorder::move(Point rootPoint, ScrollArea& list, const Layer& root, const Rows& rows, const motion::Clock& clock) {
+    const auto local = convert(rootPoint, root, list.content());
+    Layer* lifted = rows(id_);
+    if (!local || !lifted) return;
+    // Past the list's edges the list scrolls under the row.
+    const double visible = list.layer().bounds().height;
+    const auto edgePoint = convert(rootPoint, root, list.layer());
+    const double edge = edgePoint ? edgePoint->y : 0;
+    if (edge < 0) { list.setOffset(std::max(0.0, list.offset() + edge * .5)); list.noteScroll(); }
+    else if (edge > visible) { list.setOffset(std::min(list.maximumOffset(), list.offset() + (edge - visible) * .5)); list.noteScroll(); }
+    const int last = int(order_.size()) - 1;
+    const double y = std::clamp(local->y - grab_, slotY(0), slotY(last));
+    lifted->setValue(Channel::translateY, y - lifted->frame().y);
+    const int target = std::clamp(int(std::round((y - top_) / pitch_)), 0, last);
+    if (target == index_) return;
+    order_.erase(order_.begin() + index_);
+    order_.insert(order_.begin() + target, id_);
+    index_ = target;
+    for (std::size_t slot = 0; slot < order_.size(); ++slot) {
+        if (order_[slot] == id_) continue;
+        if (Layer* other = rows(order_[slot])) motion::animate(*other, Channel::translateY, slotY(int(slot)) - other->frame().y, glide, clock);
+    }
+}
+void ListReorder::drop(Layer* layer, const motion::Clock& clock) const {
+    if (!layer) return;
+    motion::animate(*layer, Channel::translateY, slotY(index_) - layer->frame().y, glide, clock);
+    motion::animate(*layer, Channel::scaleX, 1, glide, clock);
+    motion::animate(*layer, Channel::scaleY, 1, glide, clock);
+    layer->setZPosition(0);
+}
+void ListReorder::cancel(std::span<const std::string> saved, const Rows& rows) const {
+    for (std::size_t slot = 0; slot < saved.size(); ++slot) {
+        Layer* layer = rows(saved[slot]);
+        if (!layer) continue;
+        layer->setValue(Channel::translateY, slotY(int(slot)) - layer->frame().y);
+        layer->setValue(Channel::scaleX, 1); layer->setValue(Channel::scaleY, 1);
+        layer->setZPosition(0);
+    }
+}
+void ListReorder::simulate(Point start, int slots, double pitch, const std::function<void(DragGrip::Phase, Point)>& drag) {
+    const Point end{start.x, start.y + double(slots) * pitch};
+    drag(DragGrip::Phase::began, start); drag(DragGrip::Phase::moved, end); drag(DragGrip::Phase::ended, end);
 }
 
 // ---------------------------------------------------------------------------

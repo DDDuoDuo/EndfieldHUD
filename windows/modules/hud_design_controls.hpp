@@ -215,6 +215,49 @@ private:
     Layer* dots_; std::optional<Point> pressPoint_; bool dragging_{};
 };
 
+// HUDListReorder: a row lifted by its DragGrip in a scrolling list (the Notes
+// TODO cards, the App Shortcut rows). Lift: the row rises over the others (z
+// 10, scale 1.015 over the hover duration). Drag: it follows the pointer, the
+// list scrolls under it past its edges (half the distance past the edge per
+// event) and the others glide to their new slots (.18 s). Drop: it settles
+// into its slot (.18 s) and the owner saves order(); the owner re-renders
+// after landingDelay so the page order follows. Row `slot` sits at
+// `top + slot * pitch` in the list content; each row moves by its translateY
+// from the frame it was built at. Points are in the canvas root. Everything
+// happens on pointer events; nothing runs between them.
+class ScrollArea;
+class ListReorder final {
+public:
+    using Rows = std::function<Layer*(const std::string& id)>;
+    static constexpr double glide = .18, landing = .2;
+    // Lifts `id` (nullopt when it is not in `order`), grabbed at `grabY` in
+    // the list content (converted when the press began).
+    static std::optional<ListReorder> lift(const std::string& id, std::vector<std::string> order, Layer&, double grabY,
+        double top, double pitch, const motion::Clock&);
+    const std::string& id() const noexcept { return id_; }
+    int index() const noexcept { return index_; }
+    const std::vector<std::string>& order() const noexcept { return order_; }
+    double slotY(int slot) const noexcept { return top_ + double(slot) * pitch_; }
+    // The lifted row follows `rootPoint`; the others reflow when its slot changes.
+    void move(Point rootPoint, ScrollArea& list, const Layer& root, const Rows&, const motion::Clock&);
+    // The lifted row settles into its slot; the owner then saves order().
+    void drop(Layer*, const motion::Clock&) const;
+    // Every row returns at once to its slot in `saved` (the module was left
+    // mid-drag, or the order could not be saved).
+    void cancel(std::span<const std::string> saved, const Rows&) const;
+    // HUDListReorder.afterLanding: the delay before the owner re-renders.
+    static double landingDelay(bool reduceMotion) noexcept { return reduceMotion ? 0 : landing; }
+    // A whole grip drag from `start` by `slots` rows (verification).
+    static void simulate(Point start, int slots, double pitch, const std::function<void(DragGrip::Phase, Point)>& drag);
+private:
+    ListReorder(std::string id, std::vector<std::string> order, int index, double grab, double top, double pitch)
+        : id_(std::move(id)), order_(std::move(order)), index_(index), grab_(grab), top_(top), pitch_(pitch) {}
+    std::string id_;
+    std::vector<std::string> order_;
+    int index_;
+    double grab_, top_, pitch_;
+};
+
 // HUDSlider (LIB-56): height 30; readout column 58 (+8) unless hidden; track
 // max(40, w - 66); dark variant only in dark theme (`dark && !light`); fill
 // yellowLow -> yellow from 0 or from `zero`; 11 ticks; thumb 9 x 17 with a

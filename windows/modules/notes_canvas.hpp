@@ -118,14 +118,12 @@ public:
     bool editingOtherText() const override;
     void endOtherEditing(bool commit) override;
 private:
-    struct Reorder { std::string id; double grab{}; int index{}; std::vector<std::string> order; };
     struct EditingTask { std::string id; design::TextField* field{}; };
     ehud::data::NotesCentreStore* store_;
     NotesCanvasOptions options_;
     design::Tabs* tabs_{};
     NotesFormatBar* formatBar_{};
     std::vector<std::pair<std::string, design::TaskCard*>> cards_;   // document order
-    std::vector<std::pair<std::string, int>> builtSlots_;            // the slot each card was built at
     design::ScrollArea* taskList_{};
     design::Layer *body_{}, *bodyContent_{}, *addBar_{};
     design::Control* mediaButton_{};
@@ -137,7 +135,7 @@ private:
     bool noteEdited_{};
     std::optional<EditingTask> editingTask_;
     std::map<std::string, design::TextField*, std::less<>> editFields_; // canvas-owned, one per edited task
-    std::optional<Reorder> reorder_;
+    std::optional<design::ListReorder> reorder_;
     double expandedBodyHeight_{};
     std::optional<std::string> reportedStatus_;
     bool reportedLoadProblem_{};
@@ -159,6 +157,7 @@ private:
     void placeTaskField(design::TextField&, design::TaskCard&);
     void finishTaskEdit(const std::string& id, std::optional<std::string> text);
     void dragTask(const std::string& id, design::DragGrip::Phase, design::Point rootPoint);
+    design::ListReorder::Rows reorderRows() const;
     void cancelReorder();
     void setTask(const std::string& id, bool done);
     void deleteTask(const std::string& id);
@@ -169,6 +168,5 @@ private:
     void loadNote(ArchiveBodyArea&);
     void attachNote();
     std::optional<std::string> taskID(design::Point) const;
-    int builtSlot(const std::string& id) const;
 };
 } // namespace endfield::modules
