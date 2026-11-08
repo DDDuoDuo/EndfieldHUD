@@ -179,6 +179,15 @@ void typeScale() {
     check(bezier(d::easing::standard, .2, .8, .2, 1) && bezier(d::easing::snap, .2, .9, .1, 1) && bezier(d::easing::ease, .25, .1, .25, 1), "E, SNAP, ease");
     check(bezier(d::easing::easeIn, .42, 0, 1, 1) && bezier(d::easing::easeOut, 0, 0, .58, 1) && bezier(d::easing::easeInOut, .42, 0, .58, 1) && bezier(d::easing::linear, 0, 0, 1, 1), "easeIn/Out/InOut, linear");
     check(bezier(d::easing::listSlide, .20, .75, .30, 1) && d::duration::listSlide == .18, "The list slide: .18 s on (.20, .75, .30, 1) (HUDEasing.listSlide, HUDDuration.listSlide)");
+    // The slide curve through CubicTiming::value (HUDSourceScalarCurve.ease's
+    // bezier solve): reference values from an independent Newton solve of the
+    // cubic's x clock.
+    {
+        const std::pair<double, double> samples[]{{.1, .3505137793865967}, {.25, .6974474911149158}, {.5, .9199657698817058}, {.75, .9860301694232948}, {.9, .9981171292189267}};
+        for (const auto& [time, eased] : samples)
+            check(std::abs(d::easing::listSlide.value(time) - eased) < 1e-9, "The list slide's curve at t = " + std::to_string(time));
+        check(d::easing::listSlide.value(0) == 0 && d::easing::listSlide.value(1) == 1 && d::easing::listSlide.value(-1) == 0 && d::easing::listSlide.value(2) == 1, "The list slide's curve starts at 0 and ends at 1");
+    }
     // HUDDuration (:351-388).
     namespace t = d::duration;
     const double durations[]{t::hover, t::press, t::sheen, t::entrance, t::staggerStep, t::staggerBase, t::leave, t::titleWipe, t::ruleWipe, t::ruleDelay, t::menuWipe, t::tabOn,
