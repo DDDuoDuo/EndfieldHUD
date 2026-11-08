@@ -10,20 +10,21 @@ battery monitor, and reads no power source, user data, clipboard or account."""
 import hashlib, json, pathlib, sys
 
 PINS = {
-    'Sources/ChargeIndicatorView.swift': '11690888dae78a7b12f5fd728291cba61fde3f3ec4ba16254e334c0ccd7f6717',
+    'Sources/ChargeIndicatorView.swift': '31d772b26d6b3c9f9a7794a5c9a551cb0f90b4b3395a4e1f4ae487a0fc5cff96',
     'Sources/HUDChargeBadge.swift': '255bf189221a71518e6897878028bd82933cff4de0ca32f4860e22d1b763105f',
     'Sources/HUDChargeMetric.swift': 'd109b0d207a3683640b303c086197c547de1c61cf287c6fd652b903d3b1c361b',
     'Sources/DisplayPolicy.swift': 'aa63099edba5da95dcfd77f31d9b3eef604d3434b609742f7233b32caf7c27eb',
-    'Sources/OverlayGeometry.swift': '92061517d4f3c8571966de77f59c4a2fb241b2cd6b367823fec9fea63c404d60',
+    'Sources/OverlayGeometry.swift': '7ab3b71b7a78f891c239b01277e763d14775768640c168657373c07188493880',
     'Sources/DeviceBatteryProvider.swift': '0514115fcb7947d8f4bfa32ca905ba260bf2ea9b1876364ec64e691c5c8bbfe4',
     'Sources/SystemEventRecorder.swift': '4d5851f6767c463a5eda7ed1b44d29a6793e05313a7149a45230bc020f77b672',
-    'Sources/AppDelegate.swift': '26f9ac4af413cda86ec879d7d8fc0d19243693121a98b78336346cc45449b0d3',
-    'Sources/Models.swift': '19a91c019c71f30299a2c16d15f86d6a07cdb1c06888958be7bb230c6c14431f',
+    'Sources/AppDelegate.swift': 'ec0b2f1ece7bcf7b47e55a39720afe19e80f1baf9cd83d6ccf51d442ab115774',
+    'Sources/Models.swift': '38e1f2f9724d7f615b327bfc44c842a0de70249987f4c80ce897aa4dc7906d0a',
     'Sources/HUDDeploymentFlicker.swift': 'e70a01035068f06ed4b82baf814e86450d49d8db8073cfef5a03532ac010f0b2',
     'Sources/BatteryMonitor.swift': '14780312feeaf1e979234063c26a11f975a03153c922c22206f23a087a06793d',
     'Sources/BatteryCapacity.swift': 'c3721960e2f2178d94d23f019866a4358f6a7e27a3199c0ce7b2094b030ec9e4',
-    'Sources/OverlayController.swift': '6f4f88257db083c5de7e65ff809c68f80ce67bc7b1789dc9f05608ad9dc5b6c8',
-    'Sources/SystemHUDView.swift': 'ae0529781e46d45c05f62db064abe6d5dff87993d851360b284c882f8067f805',
+    'Sources/OverlayController.swift': '0a8c92891f4f05878a3baeeca9e6301ae035a59e1e775fa466b1f2d58c9185ca',
+    'Sources/SystemHUDView.swift': '28ee1c0d6c56ecfc94efac79cd022877a60e7b96d732ce5c7b2b38c5405f6fdc',
+    'Sources/HUDPlacementEditor.swift': '73ac4a52ff2f5038b81a83dbfd7f929196e597c528d299f30219ba7ecd9a9031',
 }
 
 
@@ -91,6 +92,8 @@ def extract(root, out):
     badge = (root / 'Sources/HUDChargeBadge.swift').read_text()
     overlay = (root / 'Sources/OverlayController.swift').read_text()
     hud = (root / 'Sources/SystemHUDView.swift').read_text()
+    geometry = (root / 'Sources/OverlayGeometry.swift').read_text()
+    editor = (root / 'Sources/HUDPlacementEditor.swift').read_text()
 
     normalization = between(models, '        let raw = accentHex.trimmingCharacters', '        result.hudScale = Self.clamp(')
     fixture = '''import AppKit
@@ -107,13 +110,19 @@ struct AppConfiguration: Equatable {
     var scale: Double = 1
     var placement: OverlayPlacement = .topCenter
     var customPosition: OverlayPosition = OverlayPosition()
+    var chargeBarLength: Double? = nil
     var batteryAlertsEnabled = true
     var alertMetric: HUDChargeMetric = .battery
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts, displayDuration: 3, accentHex: "FAD41F")
     var normalized: AppConfiguration {
 ''' + normalization + '''        return result
     }
-''' + block(models, '    var accentColor: NSColor') + '''
+''' + block(models, '    static func clamp<Value: BinaryFloatingPoint>') + '\n' + block(models, '    var accentColor: NSColor') + '''
+}
+// OverlayGeometry.editorStripSize reads the strip's bubble clearance; the
+// strip itself (the design library) is not compiled here.
+enum HUDPlacementEditor {
+    ''' + line(editor, 'static let bubbleClearance: CGFloat') + '''
 }
 enum RecorderKind: String { case powerConnected, powerDisconnected, batteryStateChanged }
 final class RecorderLog { var rows: [[String: Any]] = []
@@ -182,10 +191,12 @@ final class AppDelegateBatteryFixture {
         'badgeExitFlicker': line(badge, 'duration: 0.11, delay: 0.07, reducedMotion: HUDRuntimeAppearance.reduceMotion)'),
         'badgeHoverInset': line(badge, 'let rect = isHovered ? Self.compactHitRect.insetBy(dx: -2.5, dy: -2.5) : hitRect'),
         'chargeSourceOffset': line(hud, 'private var chargeSourceOffset: CGFloat { usesSourceShell ? 38 : 0 }'),
-        'positionEditorLayout': between(overlay, '        let height = isEditingPosition ? max(canvasHeight, 66 * scale + 34) : canvasHeight',
-                                        '    private var isDark: Bool'),
-        'positionButtonDraw': block(overlay, '    override func draw(_ dirtyRect: NSRect)'),
-        'positionKeys': line(overlay, 'if event.keyCode == 53 { onCancel?() }') + ' ' + line(overlay, 'else if event.keyCode == 36 || event.keyCode == 76 { onConfirm?() }'),
+        'positionEditor': block(overlay, '    private func installPositionEditor()'),
+        'positionEditorLayout': block(overlay, '    private func layout(anchor: NSPoint, screen: NSRect)'),
+        'positionEditorChanged': block(overlay, '    private func editorChanged(_ id: String, value: Double, final: Bool)'),
+        'positionConfirm': block(overlay, '    private func confirmPosition()'),
+        'positionKeys': line(overlay, 'root.onKey = { [weak self] keyCode in self?.root.editor?.key(keyCode) ?? false }'),
+        'editorStripScale': line(geometry, 'static let editorStripScale: CGFloat'),
         'dismissalClamp': line(overlay, 'requestedDuration = duration.isFinite ? min(60, max(1, duration)) : 5'),
         'panelLevel': line(overlay, 'panel.level = .statusBar'),
         'panelBehavior': line(overlay, 'panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]'),

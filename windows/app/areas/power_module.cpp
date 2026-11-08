@@ -17,7 +17,9 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <optional>
 #include <utility>
+#include <vector>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -108,7 +110,7 @@ public:
         tools::PowerOwnerCallbacks callbacks;
         callbacks.recordEvent = [this](m::EventKind kind, const m::EventMetadata& metadata) { recordEvent(kind, metadata); };
         callbacks.readingChanged = [this](const m::BatteryReading& reading) { readingChanged(reading); };
-        callbacks.savePosition = [this](const m::ChargePosition& position) { savePosition(position); };
+        callbacks.saveBarLayout = [this](const m::ChargeBarLayout& layout) { saveBarLayout(layout); };
         callbacks.positionEditFinished = [this] { positionEditFinished(); };
         gpu::PowerService::Reader reader; // shared provider: the battery-class devices
         if (source_ != Source::shared) reader = [] { return syntheticDevices(); };
@@ -578,14 +580,20 @@ private:
         // area counts its transitions (coverage) instead of duplicating them.
         ++recordedEvents_;
     }
-    void savePosition(const m::ChargePosition& position) {
-        // onPositionEditFinished: placement = custom + customPosition through
-        // the committed preference record (normalized, persisted, applied).
+    void saveBarLayout(const m::ChargeBarLayout& layout) {
+        // onPositionEditFinished: through the committed preference record
+        // (normalized, persisted, applied) the bar's Size and Length (the key
+        // removed when none, ConfigurationStore.update), and only when the
+        // bar was dragged placement = custom with its customPosition.
         (void)host_.updateSettings([&](ehud::data::Settings& s) {
-            s.set("placement", Json("custom"));
-            s.set("customScreenID", position.screenID ? Json(static_cast<std::int64_t>(*position.screenID)) : Json(nullptr));
-            s.set("customPositionX", Json(position.x));
-            s.set("customPositionY", Json(position.y));
+            if (const auto& position = layout.position) {
+                s.set("placement", Json("custom"));
+                s.set("customScreenID", position->screenID ? Json(static_cast<std::int64_t>(*position->screenID)) : Json(nullptr));
+                s.set("customPositionX", Json(position->x));
+                s.set("customPositionY", Json(position->y));
+            }
+            s.set("scale", Json(layout.scale));
+            s.setChargeBarLength(layout.length);
         });
     }
     void positionEditFinished() {
@@ -877,9 +885,12 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
 
     // --- Settings: always mode through the committed preference record --------
     const auto original = host_.settings();
-    const std::array<const char*, 5> keys{"displayMode", "placement", "customScreenID", "customPositionX", "customPositionY"};
+    const std::array<const char*, 6> keys{"displayMode", "placement", "customScreenID", "customPositionX", "customPositionY", "scale"};
     const auto restore = [&] {
-        check(host_.updateSettings([&](ehud::data::Settings& s) { for (const auto* k : keys) s.set(k, original.fields[k]); }),
+        check(host_.updateSettings([&](ehud::data::Settings& s) {
+                  for (const auto* k : keys) s.set(k, original.fields[k]);
+                  s.setChargeBarLength(original.chargeBarLength());
+              }),
               "Power area: the preference record restores");
         step.drain();
         present(t + .02);
@@ -927,13 +938,17 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
               !power_->panel().resident(), "Power area: leaving Don't display re-baselines silently");
     }
 
-    // --- Position editing (Settings > Edit position, after the HUD closed) ------
+    // --- The bar editor (Display > Battery alert > Edit position and size, after the HUD closed)
     check(editPosition(t) && pendingEdit_ && !editingPosition(), "Power area: an edit request waits for the HUD to close");
     (void)hostEvent({Kind::overlayConcealed, 0}, t);
-    check(editingPosition() && editing_ && alert.windowVisible() && rendered(), "Power area: concealment begins the queued position edit");
+    check(editingPosition() && editing_ && alert.windowVisible() && rendered() && power_->panel().editor() && power_->panel().stripRect(),
+          "Power area: concealment begins the queued edit with its place-and-confirm strip");
     if (shaderAvailable_) alertAutomation(step, true);
+    else check(power_->panel().editor()->sliders().size() == 2, "Power area: the strip holds the Size and Length sliders");
+    // The bar's canvas is the top of the window (the strip sits below it):
+    // a press there drags the bar.
     const auto from = power_->panel().windowRect();
-    const core::Point grab{from.x + from.width / 2, from.y + from.height * .3};
+    const core::Point grab{from.x + from.width / 2, from.y + 4};
     check(power_->panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::down, grab, t) &&
           power_->panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::move, {grab.x, grab.y + 400}, t) &&
           power_->panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::up, {grab.x, grab.y + 400}, t), "Power area: the editor drags the alert");
@@ -948,7 +963,9 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
         check(saved.string("placement") == "custom" && saved.fields["customScreenID"].isNumber() && saved.fields["customScreenID"].integer() == 11 &&
               applied_ && applied_->settings.customPlacement && applied_->settings.customScreenID == 11u &&
               std::abs(applied_->settings.customY - power_->coordinator().settings().customY) < 1e-9,
-              "Power area: the confirmed position persists through the preference record");
+              "Power area: the dragged bar's position persists through the preference record");
+        check(saved.number("scale") == 1 && saved.chargeBarLength() == (shaderAvailable_ ? std::optional<double>(0.5) : std::nullopt) &&
+              applied_->settings.length == saved.chargeBarLength(), "Power area: Size and Length persist with it (the key absent for a classic bar)");
     }
     // The private notice runs the deferred reopen (the coverage HUD is open).
     check(step.message(noticeMessage_, 0, 0) && !openDisplayPending_, "Power area: the private notice runs the deferred Display reopen");
@@ -1000,12 +1017,13 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(!badge_->entries().empty() && badge_->state().phase() != m::ChargeBadgeState::Phase::hidden, "Power area: the badge redeploys with the HUD");
 }
 
-// The alert window's own UI Automation root while the position editor is
-// open (Mac: the indicator's static text, then the Discard and Confirm
-// buttons with their labels and tool tips). `inspect` false: a client
-// presses Discard, which the alert window's procedure runs from its posted
-// message (dispatched here for that window and message only; the panel keeps
-// its own coverage clock).
+// The alert window's own UI Automation root while the bar editor is open
+// (Mac: the indicator's static text, then the strip's stand-ins: the Size and
+// Length sliders and the Cancel and Confirm pills). `inspect` true: a client
+// sets Length to 50 % (RangeValue); false: a client presses Cancel. Both run
+// from the alert window's procedure through its posted message (dispatched
+// here for that window and message only; the panel keeps its own coverage
+// clock).
 void PowerArea::alertAutomation(app::ModuleCoverage& step, bool inspect) {
     using Microsoft::WRL::ComPtr;
     const auto& check = step.check;
@@ -1024,43 +1042,53 @@ void PowerArea::alertAutomation(app::ModuleCoverage& step, bool inspect) {
         VariantClear(&v);
         return value;
     };
+    const auto pump = [&] {
+        MSG msg;
+        unsigned dispatched{};
+        const auto window = static_cast<HWND>(panel.window());
+        const auto id = gpu::ChargeIndicatorPanel::automationInvokeMessage();
+        while (window && PeekMessageW(&msg, window, id, id, PM_REMOVE)) { DispatchMessageW(&msg); ++dispatched; }
+        return dispatched;
+    };
     ComPtr<IRawElementProviderFragmentRoot> root;
-    ComPtr<IRawElementProviderFragment> fragment, indicator, discard, confirm;
-    check(panel.automationRoot(&root) == S_OK && root && SUCCEEDED(root.As(&fragment)) && panel.automationChildren() == 3 &&
-          SUCCEEDED(fragment->Navigate(NavigateDirection_FirstChild, &indicator)) && indicator &&
-          SUCCEEDED(indicator->Navigate(NavigateDirection_NextSibling, &discard)) && discard &&
-          SUCCEEDED(discard->Navigate(NavigateDirection_NextSibling, &confirm)) && confirm,
-          "Power area: the alert window's UI Automation root lists the indicator, Discard and Confirm while editing");
+    ComPtr<IRawElementProviderFragment> fragment;
+    std::vector<ComPtr<IRawElementProviderFragment>> children(1);
+    bool listed = panel.automationRoot(&root) == S_OK && root && SUCCEEDED(root.As(&fragment)) && panel.automationChildren() == 5 &&
+                  SUCCEEDED(fragment->Navigate(NavigateDirection_FirstChild, &children[0])) && children[0];
+    while (listed && children.size() < 5) {
+        ComPtr<IRawElementProviderFragment> next;
+        listed = SUCCEEDED(children.back()->Navigate(NavigateDirection_NextSibling, &next)) && next;
+        children.push_back(next);
+    }
+    check(listed, "Power area: the alert window's UI Automation root lists the indicator, Size, Length, Cancel and Confirm while editing");
+    if (!listed) return;
     if (inspect) {
-        check(property(indicator.Get(), UIA_NamePropertyId) == panel.accessibilityLabel() &&
-              property(discard.Get(), UIA_NamePropertyId) == m::chargePositionButtonLabel(false, language) &&
-              property(discard.Get(), UIA_HelpTextPropertyId) == m::chargePositionButtonTooltip(false, language) &&
-              property(confirm.Get(), UIA_NamePropertyId) == m::chargePositionButtonLabel(true, language) &&
-              property(confirm.Get(), UIA_HelpTextPropertyId) == m::chargePositionButtonTooltip(true, language),
-              "Power area: the editor's indicator label, button labels and tool-tip help follow the Mac texts");
-        UiaRect bounds{};
+        check(property(children[0].Get(), UIA_NamePropertyId) == panel.accessibilityLabel() &&
+              property(children[1].Get(), UIA_NamePropertyId) == core::localized("Size", "大小", language) &&
+              property(children[2].Get(), UIA_NamePropertyId) == core::localized("Length", "长度", language) &&
+              property(children[3].Get(), UIA_NamePropertyId) == core::localized("Cancel", "取消", language) &&
+              property(children[4].Get(), UIA_NamePropertyId) == core::localized("Confirm", "确认", language),
+              "Power area: the indicator label and the strip's slider and pill names follow the Mac texts");
+        // The coverage window is never shown, so its peers are offscreen; the
+        // panel reports their frames in screen pixels.
+        const auto nodes = panel.automationNodes();
         const auto r = panel.windowRect();
-        ComPtr<IRawElementProviderFragment> hit;
-        check(SUCCEEDED(confirm->get_BoundingRectangle(&bounds)) && bounds.width > 0 && bounds.left > r.x && bounds.top > r.y &&
-              SUCCEEDED(root->ElementProviderFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, &hit)) && hit,
-              "Power area: the Confirm button is framed inside the editor and hit-tested by the root");
-        const auto tips = panel.toolTips();
-        check(panel.toolTipsActive() && tips.size() == 2 && tips[0].text == m::chargePositionButtonTooltip(false, language) &&
-              tips[1].text == m::chargePositionButtonTooltip(true, language) && tips[1].client.width > 0,
-              "Power area: the editor buttons carry their system tool tips");
+        check(nodes.size() == 5 && nodes[4].rect.width > 0 && nodes[4].rect.x >= r.x && nodes[4].rect.y > r.y &&
+              nodes[4].rect.x + nodes[4].rect.width <= r.x + r.width + 1e-9 && nodes[4].rect.y + nodes[4].rect.height <= r.y + r.height + 1e-9,
+              "Power area: the Confirm pill is framed inside the editor window");
+        ComPtr<IRangeValueProvider> length;
+        check(SUCCEEDED(children[2].As(&length)) && length->SetValue(50) == S_OK && panel.state().barSettings().length == std::nullopt,
+              "Power area: a UI Automation Length value is queued outside the provider call");
+        check(pump() == 1 && panel.editor() && panel.editor()->value("chargeBar.length") == 50 && panel.state().barSettings().length == 0.5,
+              "Power area: the alert window applies the Length value as a draft");
         return;
     }
     ComPtr<IInvokeProvider> invoke;
-    check(SUCCEEDED(discard.As(&invoke)) && invoke->Invoke() == S_OK && panel.state().editingPosition(),
-          "Power area: a UI Automation press on Discard is queued outside the provider call");
-    MSG msg;
-    unsigned dispatched{};
-    const auto window = static_cast<HWND>(panel.window());
-    const auto id = gpu::ChargeIndicatorPanel::automationInvokeMessage();
-    while (window && PeekMessageW(&msg, window, id, id, PM_REMOVE)) { DispatchMessageW(&msg); ++dispatched; }
-    check(dispatched == 1 && !panel.state().editingPosition() && panel.automationChildren() == 1 && !panel.toolTipsActive() &&
+    check(SUCCEEDED(children[3].As(&invoke)) && invoke->Invoke() == S_OK && panel.state().editingPosition(),
+          "Power area: a UI Automation press on Cancel is queued outside the provider call");
+    check(pump() == 1 && !panel.state().editingPosition() && panel.automationChildren() == 1 && !panel.editor() &&
           invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
-          "Power area: the alert window runs the press, withdraws the buttons and deactivates their tool tips");
+          "Power area: the alert window runs the press and withdraws the strip");
 }
 
 std::unique_ptr<app::ModuleOwner> powerModule(const app::ApplicationModuleContext& context) {

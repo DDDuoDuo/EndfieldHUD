@@ -1,6 +1,8 @@
 // Hidden WARP fixture for the floating charge alert panel: injected screens,
 // synthetic reading, offscreen target; the window is never shown and no
-// setting is written (the position callback is captured in memory).
+// setting is written (the bar editor's callback is captured in memory). No
+// input is injected into the system: the panel's pointer and key entry points
+// are called directly.
 #ifdef _WIN32
 #include "native/charge_indicator_panel.hpp"
 #include <objbase.h>
@@ -72,8 +74,8 @@ std::array<int, 4> pixel(const gpu::Readback& image, double x, double y) {
 
 void run(const std::filesystem::path& shader) {
     gpu::LayerRasterizer raster;
-    std::vector<std::optional<m::ChargePosition>> finished;
-    gpu::ChargeIndicatorPanel panel(raster, {shader, true}, [&](std::optional<m::ChargePosition> p) { finished.push_back(p); });
+    std::vector<std::optional<m::ChargeBarLayout>> finished;
+    gpu::ChargeIndicatorPanel panel(raster, {shader, true}, [&](std::optional<m::ChargeBarLayout> layout) { finished.push_back(layout); });
     const std::vector<m::ChargeWorkArea> screens{{11, {0, 0, 1440, 900}, 1}, {22, {1440, 0, 1920, 1040}, 2}};
     panel.setScreens(screens, 0);
     m::ChargeIndicatorAppearance appearance;
@@ -115,80 +117,146 @@ void run(const std::filesystem::path& shader) {
           "Custom position on a 200% display at alert scale 1.25");
     state.hide(false, 8);
     panel.advance(8);
-    // Position editing: drag, buttons and keys.
+    // The bar editor: the place-and-confirm strip (Size, Length, Cancel,
+    // Confirm) at 0.7 beside the bar; drag, keys, pills and drafts.
     settings.customPlacement = false;
     settings.scale = 1;
     state.setSettings(settings);
-    check(panel.beginPositionEditing(m::chargeDemoReading(), 10) && state.editingPosition(), "Editor opens");
-    const auto editor = panel.windowRect();
-    check(editor.width == 300 && editor.height == 100 && editor.x == 570 && editor.y == -12, "Editor keeps the indicator centred with controls below");
-    image = panel.readbackForTests();
-    check(pixel(image, 150 + 20, 66 + 14)[3] > 200 && pixel(image, 150 - 20, 66 + 14)[3] > 200, "Confirm and cancel buttons are painted");
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 10) && state.editingPosition() && panel.editor(), "Editor opens with its strip");
+    {
+        const auto* strip = panel.editor();
+        check(strip->sliders().size() == 2 && strip->sliders()[0]->id() == "chargeBar.size" && strip->sliders()[1]->id() == "chargeBar.length" &&
+              *strip->value("chargeBar.size") == 100 && *strip->value("chargeBar.length") == 18 && strip->sliders()[1]->range().minimum == 14 &&
+              strip->sliders()[0]->range().minimum == 65 && strip->sliders()[0]->range().maximum == 160,
+              "Size 65 to 160 % at 100 %, and the classic bar's 18 % Length (14 to 100 %) on a 1440-point display");
+        const auto stripRect = *panel.stripRect();
+        const auto size = strip->size();
+        check(std::abs(stripRect.width - size.width * .7) < 1e-9 && std::abs(stripRect.height - (size.height + 8) * .7) < 1e-9 &&
+              std::abs(stripRect.y - (48 + 19 * 1.6 + 10)) < 1e-9 && std::abs(stripRect.x + stripRect.width / 2 - 720) < 1e-9,
+              "The strip is drawn at 0.7 with its bubble room, 10 points below the reach of the largest Size, centred on the bar");
+        const auto editor = panel.windowRect();
+        check(editor.y == -12 && std::abs(editor.x - stripRect.x) < 1e-9 && std::abs(editor.y + editor.height - (stripRect.y + stripRect.height)) < 1e-9,
+              "The window holds the bar's canvas and the strip (no room reserved below the bar)");
+        // The confirm bar's entrance: the band wipes open, the rows and pills slide in.
+        check(panel.requiresFrames(10.1), "The strip's entrance asks for frames");
+        for (double t = 10; t < 10.8; t += 1.0 / 60) panel.advance(t);
+        check(!panel.requiresFrames(10.8), "The settled strip asks for no frames");
+        image = panel.readbackForTests();
+        const auto at = [&](c::Point local) { const auto p = *panel.stripToScreen(local); return pixel(image, p.x - editor.x, p.y - editor.y); };
+        const auto confirmFrame = strip->confirm().layer().frame();
+        check(at({size.width / 2, 4})[3] > 200 && at({confirmFrame.x + confirmFrame.width / 2, confirmFrame.y + confirmFrame.height / 2})[3] > 200 &&
+              pixel(image, 720 - editor.x, 30 - editor.y)[3] > 200, "The band, the Confirm pill and the bar are painted");
+    }
     // Accessibility of the editor (OverlayController: ChargeIndicatorView is a
-    // static text; the PositionActionButtons carry labels and tool tips).
-    ComPtr<IRawElementProviderFragment> indicator, discardButton, confirmButton;
+    // static text; HUDAccessibilityStandIns list the strip's sliders and pills).
+    ComPtr<IRawElementProviderFragment> indicator, lengthPeer, cancelPeer, confirmPeer;
     {
         ComPtr<IRawElementProviderFragmentRoot> root;
-        ComPtr<IRawElementProviderFragment> fragment, last, end, parent, hit;
+        ComPtr<IRawElementProviderFragment> fragment, sizePeer, last, end, parent;
         ComPtr<IRawElementProviderSimple> simple, host;
-        check(panel.automationRoot(&root) == S_OK && root && SUCCEEDED(root.As(&fragment)) && SUCCEEDED(root.As(&simple)) && panel.automationChildren() == 3,
-              "The editor's UI Automation root lists the indicator and both buttons");
+        check(panel.automationRoot(&root) == S_OK && root && SUCCEEDED(root.As(&fragment)) && SUCCEEDED(root.As(&simple)) && panel.automationChildren() == 5,
+              "The editor's UI Automation root lists the indicator and the strip's sliders and pills");
         check(SUCCEEDED(simple->get_HostRawElementProvider(&host)) && host && textProperty(root, UIA_AutomationIdPropertyId) == L"chargeAlert",
               "The root is hosted by the alert window");
         check(SUCCEEDED(fragment->Navigate(NavigateDirection_FirstChild, &indicator)) && indicator &&
-              SUCCEEDED(indicator->Navigate(NavigateDirection_NextSibling, &discardButton)) && discardButton &&
-              SUCCEEDED(discardButton->Navigate(NavigateDirection_NextSibling, &confirmButton)) && confirmButton &&
-              SUCCEEDED(confirmButton->Navigate(NavigateDirection_NextSibling, &end)) && !end &&
-              SUCCEEDED(fragment->Navigate(NavigateDirection_LastChild, &last)) && sameElement(last.Get(), confirmButton.Get()) &&
-              SUCCEEDED(confirmButton->Navigate(NavigateDirection_Parent, &parent)) && sameElement(parent.Get(), root.Get()),
-              "Children follow the panel's subview order: indicator, cancel, confirm");
+              SUCCEEDED(indicator->Navigate(NavigateDirection_NextSibling, &sizePeer)) && sizePeer &&
+              SUCCEEDED(sizePeer->Navigate(NavigateDirection_NextSibling, &lengthPeer)) && lengthPeer &&
+              SUCCEEDED(lengthPeer->Navigate(NavigateDirection_NextSibling, &cancelPeer)) && cancelPeer &&
+              SUCCEEDED(cancelPeer->Navigate(NavigateDirection_NextSibling, &confirmPeer)) && confirmPeer &&
+              SUCCEEDED(confirmPeer->Navigate(NavigateDirection_NextSibling, &end)) && !end &&
+              SUCCEEDED(fragment->Navigate(NavigateDirection_LastChild, &last)) && sameElement(last.Get(), confirmPeer.Get()) &&
+              SUCCEEDED(confirmPeer->Navigate(NavigateDirection_Parent, &parent)) && sameElement(parent.Get(), root.Get()),
+              "Children: the indicator, then Size, Length, Cancel and Confirm");
         check(textProperty(indicator, UIA_NamePropertyId) == wideText(panel.accessibilityLabel()) && !panel.accessibilityLabel().empty() &&
               integerProperty(indicator, UIA_ControlTypePropertyId) == UIA_TextControlTypeId && textProperty(indicator, UIA_AutomationIdPropertyId) == L"chargeAlert:indicator",
               "The indicator is a static text carrying its accessibility label");
-        check(textProperty(discardButton, UIA_NamePropertyId) == L"Discard position" && textProperty(discardButton, UIA_HelpTextPropertyId) == L"Discard (Esc)" &&
-              textProperty(confirmButton, UIA_NamePropertyId) == L"Confirm position" && textProperty(confirmButton, UIA_HelpTextPropertyId) == L"Confirm (Return)" &&
-              integerProperty(discardButton, UIA_ControlTypePropertyId) == UIA_ButtonControlTypeId && integerProperty(confirmButton, UIA_IsEnabledPropertyId) == 1 &&
-              integerProperty(confirmButton, UIA_IsKeyboardFocusablePropertyId) == 0 && integerProperty(confirmButton, UIA_IsOffscreenPropertyId) == 1,
-              "The buttons carry the Mac accessibility labels and tool tips (offscreen: the test window is never shown)");
-        UiaRect r{};
-        check(SUCCEEDED(indicator->get_BoundingRectangle(&r)) && rectEquals(r, 570, -12, 300, 84) &&
-              SUCCEEDED(discardButton->get_BoundingRectangle(&r)) && rectEquals(r, 570 + 150 - 34, -12 + 66, 28, 28) &&
-              SUCCEEDED(confirmButton->get_BoundingRectangle(&r)) && rectEquals(r, 570 + 150 + 6, -12 + 66, 28, 28),
-              "Frames are the indicator view and the 28-point buttons in screen pixels");
-        check(SUCCEEDED(root->ElementProviderFromPoint(570 + 150 + 20, -12 + 80, &hit)) && sameElement(hit.Get(), confirmButton.Get()), "The hit test reaches Confirm above the indicator");
-        hit.Reset();
-        check(SUCCEEDED(root->ElementProviderFromPoint(600, 10, &hit)) && sameElement(hit.Get(), indicator.Get()), "The hit test reaches the indicator");
-        hit.Reset();
-        check(SUCCEEDED(root->ElementProviderFromPoint(10, 500, &hit)) && !hit, "Outside the window nothing answers");
-        const auto tips = panel.toolTips();
-        check(tips.size() == 2 && panel.toolTipsActive() && tips[0].text == "Discard (Esc)" && tips[1].text == "Confirm (Return)" &&
-              tips[0].client.x == 116 && tips[0].client.y == 66 && tips[0].client.width == 28 && tips[0].client.height == 28 &&
-              tips[1].client.x == 156 && tips[1].client.y == 66, "The editor buttons show the system tool tips over their 28-point frames");
+        check(textProperty(sizePeer, UIA_NamePropertyId) == L"Size" && textProperty(lengthPeer, UIA_NamePropertyId) == L"Length" &&
+              integerProperty(sizePeer, UIA_ControlTypePropertyId) == UIA_SliderControlTypeId &&
+              textProperty(cancelPeer, UIA_NamePropertyId) == L"Cancel" && textProperty(confirmPeer, UIA_NamePropertyId) == L"Confirm" &&
+              integerProperty(confirmPeer, UIA_ControlTypePropertyId) == UIA_ButtonControlTypeId && integerProperty(confirmPeer, UIA_IsEnabledPropertyId) == 1 &&
+              textProperty(confirmPeer, UIA_HelpTextPropertyId).empty() && integerProperty(confirmPeer, UIA_IsOffscreenPropertyId) == 1,
+              "The strip's sliders and pills carry the Mac names, no tool tips (offscreen: the test window is never shown)");
+        const auto nodes = panel.automationNodes();
+        const auto stripRect = *panel.stripRect();
+        const auto pill = panel.editor()->confirm().layer().frame();
+        const auto corner = *panel.stripToScreen({pill.x, pill.y});
+        check(nodes.size() == 5 && nodes[0].rect == c::Rect{570, -12, 300, 84} && std::abs(nodes[4].rect.x - corner.x) < 1e-9 &&
+              std::abs(nodes[4].rect.y - corner.y) < 1e-9 && std::abs(nodes[4].rect.width - pill.width * .7) < 1e-9 &&
+              nodes[4].rect.x >= stripRect.x && nodes[4].rect.y >= stripRect.y, "Frames: the indicator view and the strip's pills scaled by 0.7 in screen pixels");
+        // Length through RangeValue, run from the window procedure.
+        ComPtr<IRangeValueProvider> range;
+        check(SUCCEEDED(lengthPeer.As(&range)) && range->SetValue(50) == S_OK && !state.barSettings().length, "The value waits for the window procedure");
+        check(pumpInvokes(panel) == 1 && *panel.editor()->value("chargeBar.length") == 50 && state.barSettings().length == 0.5 &&
+              panel.windowRect().x == 720 - (720 + 36) / 2.0 && panel.windowRect().width == 720 + 36, "The Length value applies as a draft: the bar stretches");
     }
-    check(panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::down, {720, 30}, 11), "Drag begins on the indicator");
+    // Hover lights the strip's controls only.
+    {
+        const auto pill = panel.editor()->confirm().layer().frame();
+        const auto centre = *panel.stripToScreen({pill.x + pill.width / 2, pill.y + pill.height / 2});
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::move, centre, 10.5);
+        check(panel.editor()->confirm().hovered() && !panel.editor()->cancel().hovered(), "Hover lights the Confirm pill");
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::move, {720, 30}, 10.6);
+        check(!panel.editor()->confirm().hovered(), "Hover leaves it over the bar");
+    }
+    check(panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::down, {720, 30}, 11) && panel.editor()->dragging(), "Drag begins on the bar");
     panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::move, {820, 230}, 11);
     panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::up, {820, 230}, 11);
-    check(panel.windowRect().x == 670 && panel.windowRect().y == 188, "Window follows the dragged anchor");
-    check(panel.key(VK_RETURN, 12) && finished.size() == 1 && finished[0] && finished[0]->screenID == 11u &&
-          std::abs(finished[0]->x - 820.0 / 1440) < 1e-12 && std::abs(finished[0]->y - 670.0 / 900) < 1e-12,
-          "Return confirms the normalized position");
-    check(!state.editingPosition() && !state.windowVisible(), "Confirm closes the editor");
-    check(panel.automationChildren() == 1 && !panel.toolTipsActive() && integerProperty(confirmButton, UIA_NamePropertyId) == -1 &&
-          textProperty(indicator, UIA_NamePropertyId) == wideText(panel.accessibilityLabel()),
-          "Closing the editor withdraws the buttons and deactivates their tool tips");
-    check(panel.beginPositionEditing(m::chargeDemoReading(), 13), "Editor reopens");
-    check(panel.key(VK_ESCAPE, 14) && finished.size() == 2 && !finished[1], "Escape discards");
+    check(panel.windowRect().x == 820 - 378 && panel.windowRect().y == 188 && state.draftMoved(), "Window follows the dragged anchor");
+    check(panel.key(VK_RETURN, 12) && finished.size() == 1 && finished[0] && finished[0]->position && finished[0]->position->screenID == 11u &&
+          std::abs(finished[0]->position->x - 820.0 / 1440) < 1e-12 && std::abs(finished[0]->position->y - 670.0 / 900) < 1e-12 &&
+          finished[0]->scale == 1 && finished[0]->length == 0.5, "Return confirms the dragged position with Size and Length");
+    check(!state.editingPosition() && !state.windowVisible() && !panel.editor(), "Confirm closes the editor and its strip");
+    check(panel.automationChildren() == 1, "Closing the editor withdraws the strip's peers (" + std::to_string(panel.automationChildren()) + " listed)");
+    check(textProperty(confirmPeer, UIA_NamePropertyId).empty() && textProperty(indicator, UIA_NamePropertyId) == wideText(panel.accessibilityLabel()),
+          "A withdrawn peer answers nothing; the indicator keeps its label");
+    // Confirm without a drag keeps the placement (Top centre) and saves only Size and Length.
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 13) && !panel.editor()->sliders().empty(), "Editor reopens");
+    check(panel.key(VK_RETURN, 13.1) && finished.size() == 2 && finished[1] && !finished[1]->position && finished[1]->scale == 1 && !finished[1]->length,
+          "Confirm without a drag keeps Top centre and the classic bar");
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 13.2), "Editor reopens");
+    check(panel.key(VK_ESCAPE, 14) && finished.size() == 3 && !finished[2], "Escape discards");
     check(panel.beginPositionEditing(m::chargeDemoReading(), 15), "Editor reopens again");
-    const auto r = panel.windowRect();
-    const c::Point cancel{r.x + 150 - 34 + 14, r.y + 66 + 14};
-    panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::down, cancel, 16);
-    check(finished.size() == 2, "Button press waits for release");
-    panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::up, cancel, 16);
-    check(finished.size() == 3 && !finished[2] && !state.editingPosition(), "Cancel button discards");
+    {
+        const auto pill = panel.editor()->cancel().layer().frame();
+        const auto cancel = *panel.stripToScreen({pill.x + pill.width / 2, pill.y + pill.height / 2});
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::down, cancel, 16);
+        check(finished.size() == 3 && !panel.editor()->dragging(), "A press on the Cancel pill waits for release and drags nothing");
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::up, cancel, 16);
+        check(finished.size() == 4 && !finished[3] && !state.editingPosition(), "The Cancel pill discards");
+    }
     check(!panel.key(VK_ESCAPE, 17), "Keys are ignored outside editing");
-    // A UI Automation press runs the button's action from the window procedure,
+    // A host cancellation on the state (a summon, Projection, sleep) takes the
+    // strip with it on the next frame, without a callback.
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 17.2) && panel.editor(), "Editor opens for a host cancellation");
+    state.discardPosition(17.3);
+    panel.advance(17.3);
+    check(!panel.editor() && finished.size() == 4 && panel.automationChildren() == 1 && !panel.key(VK_RETURN, 17.4),
+          "A host cancellation withdraws the strip without a callback");
+    // A Size slider press: the bar follows the draft while the strip holds
+    // still, then settles; a pushed configuration keeps the drafts.
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 17.5), "Editor opens for Size");
+    {
+        const auto before = *panel.stripRect();
+        const auto& slider = panel.editor()->sliders()[0]->layer();
+        const auto left = *panel.stripToScreen({slider.frame().x + 1, slider.frame().y + 15});
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::down, left, 17.6);
+        check(state.stripAdjusting() && state.barSettings().scale < 0.7 && *panel.stripRect() == before && panel.windowRect().width == before.width,
+              "Pressing Size shrinks the bar under a still strip");
+        panel.pointer(gpu::ChargeIndicatorPanel::PointerKind::up, left, 17.7);
+        check(!state.stripAdjusting() && state.barSettings().scale < 0.7, "Release keeps the draft and settles the strip");
+        auto pushed = state.settings();
+        pushed.scale = 1.5; pushed.length = 0.9;
+        state.setSettings(pushed);
+        panel.advance(17.8);
+        check(state.barSettings().scale < 0.7 && !state.barSettings().length && *panel.editor()->value("chargeBar.size") < 70,
+              "A configuration pushed during editing does not overwrite the drafts");
+        pushed.scale = 1; pushed.length.reset();
+        state.setSettings(pushed);
+        check(panel.key(VK_ESCAPE, 17.9) && finished.size() == 5 && !finished[4], "Escape drops the drafts");
+    }
+    // A UI Automation press runs the pill's action from the window procedure,
     // in the current language; a press queued for a finished edit is dropped.
-    check(panel.beginPositionEditing(m::chargeDemoReading(), 18) && panel.automationChildren() == 3 && panel.toolTipsActive(), "The editor relists its buttons");
+    check(panel.beginPositionEditing(m::chargeDemoReading(), 18) && panel.automationChildren() == 5, "The editor relists its strip");
     auto chinese = appearance;
     chinese.language = c::Language::simplifiedChinese;
     panel.setAppearance(chinese);
@@ -198,29 +266,28 @@ void run(const std::filesystem::path& shader) {
         ComPtr<IRawElementProviderFragment> fragment, last;
         ComPtr<IInvokeProvider> invoke;
         check(panel.automationRoot(&root) == S_OK && SUCCEEDED(root.As(&fragment)) && SUCCEEDED(fragment->Navigate(NavigateDirection_LastChild, &last)) &&
-              textProperty(last, UIA_NamePropertyId) == L"确认位置" && textProperty(last, UIA_HelpTextPropertyId) == L"确认（回车）" && SUCCEEDED(last.As(&invoke)),
-              "The buttons follow the language");
-        const auto tips = panel.toolTips();
-        check(tips.size() == 2 && tips[0].text == "取消（Esc）" && tips[1].text == "确认（回车）", "The tool tips follow the language");
-        check(invoke->Invoke() == S_OK && finished.size() == 3 && state.editingPosition(), "The press waits for the window procedure");
-        check(pumpInvokes(panel) == 1 && finished.size() == 4 && finished[3] && !state.editingPosition() && panel.automationChildren() == 1,
-              "The posted press confirms like the button");
-        check(invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE), "The withdrawn button refuses presses");
+              textProperty(last, UIA_NamePropertyId) == L"确认" && SUCCEEDED(last.As(&invoke)) && panel.editor()->sliders()[1]->label == "长度",
+              "The strip follows the language");
+        check(invoke->Invoke() == S_OK && finished.size() == 5 && state.editingPosition(), "The press waits for the window procedure");
+        check(pumpInvokes(panel) == 1 && finished.size() == 6 && finished[5] && !state.editingPosition() && panel.automationChildren() == 1,
+              "The posted press confirms like the pill");
+        check(invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE), "The withdrawn pill refuses presses");
         check(panel.beginPositionEditing(m::chargeDemoReading(), 19), "Editor opens for a stale press");
-        ComPtr<IRawElementProviderFragment> first, discardPeer;
-        ComPtr<IInvokeProvider> discard;
-        check(SUCCEEDED(fragment->Navigate(NavigateDirection_FirstChild, &first)) && SUCCEEDED(first->Navigate(NavigateDirection_NextSibling, &discardPeer)) &&
-              SUCCEEDED(discardPeer.As(&discard)) && discard->Invoke() == S_OK, "Discard is pressed");
-        check(panel.key(VK_ESCAPE, 19.1) && finished.size() == 5 && !finished[4], "Escape finishes the edit before the press runs");
-        check(panel.beginPositionEditing(m::chargeDemoReading(), 19.2) && pumpInvokes(panel) == 1 && state.editingPosition() && finished.size() == 5,
+        ComPtr<IRawElementProviderFragment> cancelNode;
+        ComPtr<IInvokeProvider> cancel;
+        check(SUCCEEDED(fragment->Navigate(NavigateDirection_LastChild, &last)) && SUCCEEDED(last->Navigate(NavigateDirection_PreviousSibling, &cancelNode)) &&
+              SUCCEEDED(cancelNode.As(&cancel)) && cancel->Invoke() == S_OK, "Cancel is pressed");
+        check(panel.key(VK_ESCAPE, 19.1) && finished.size() == 7 && !finished[6], "Escape finishes the edit before the press runs");
+        check(panel.beginPositionEditing(m::chargeDemoReading(), 19.2) && pumpInvokes(panel) == 1 && state.editingPosition() && finished.size() == 7,
               "The stale press does not touch the next edit");
-        check(panel.key(VK_ESCAPE, 19.3) && finished.size() == 6, "Escape discards the next edit");
+        check(panel.key(VK_ESCAPE, 19.3) && finished.size() == 8, "Escape discards the next edit");
     }
+    check(panel.residency().recoveries == 0, "No editor frame needed a device recovery");
     panel.setAppearance(appearance);
     ComPtr<IRawElementProviderFragmentRoot> before;
     check(panel.automationRoot(&before) == S_OK, "The root exists before shutdown");
     panel.shutdown();
-    check(!panel.window() && panel.automationChildren() == 0 && panel.toolTips().empty(), "Shutdown releases the window, device, tool tips and UI Automation");
+    check(!panel.window() && panel.automationChildren() == 0 && !panel.editor(), "Shutdown releases the window, device and UI Automation");
     ComPtr<IRawElementProviderFragment> orphan;
     check(before->ElementProviderFromPoint(600, 10, &orphan) == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE) && !orphan &&
           panel.automationRoot(&before) == E_FAIL, "The disconnected root answers no more");
@@ -265,7 +332,7 @@ void residency(const std::filesystem::path& shader) {
           "The alert creates its window and device on demand");
     check(!gpu::Renderer::shadersEmbedded() || r.embeddedShaders, "The device's programs come from the build-time hud.hlsl bytecode");
     check(r.gpuBytes > 0 && r.cpuBytes < 64 * 1024 && r.targetBytes == std::size_t{600} * 168 * (4 + 8),
-          "The artwork is installed on the GPU; only the small button rasters stay on the CPU");
+          "The artwork is installed on the GPU; little stays on the CPU");
     std::cout << "alert at 2x: " << r.lastCreationMilliseconds << " ms window+device, " << r.gpuBytes << " GPU resource bytes, " << r.targetBytes
               << " target bytes, " << r.cpuBytes << " CPU bytes\n";
     const auto compact = panel.readbackForTests();
