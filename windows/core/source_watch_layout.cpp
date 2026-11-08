@@ -1,4 +1,5 @@
 #include "core/source_watch_layout.hpp"
+#include "core/motion.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -344,4 +345,92 @@ std::optional<std::size_t> WatchLayout::scrollResolutionNodeCount(std::string_vi
 std::span<const std::string> WatchLayout::slantRootIDs() const noexcept{return impl_->slantRoots;}
 std::uint64_t WatchLayout::initialRebuiltNodeCount() const noexcept{return impl_->initialResolver.rebuiltNodeCount();}
 std::uint64_t WatchLayout::slantRebuiltNodeCount() const noexcept{return impl_->slantResolver.rebuiltNodeCount();}
+// HUDSourceDesktopNavigationLayout.positions(binding:): firstRow <= row while
+// the offset is under (row + 2) rows; the last pool row reaches it from an
+// offset of (row - poolRows + 2) rows. The margin keeps rounding on the way
+// back to a position inside.
+std::optional<std::pair<double,double>> DesktopNavigationLayout::positions(std::size_t index) const {
+    if(index>=entryCount_)return std::nullopt;
+    const auto count=static_cast<double>(entryCount_/columns_+(entryCount_%columns_?1:0));
+    const auto hidden=std::max(0.,sample(1).contentHeight-viewportHeight_);const auto unit=rowStep_*rowScale_;
+    if(!(hidden>0)||!(unit>0))return std::pair{0.,1.};
+    const auto row=static_cast<double>(index/columns_),poolRows=static_cast<double>(rows_.size());constexpr double margin=1e-6;
+    const auto highest=row>=count-poolRows?hidden:(row+2-margin)*unit;
+    const auto lowest=row-poolRows+1<=0?0:(row-poolRows+2+margin)*unit;
+    const auto top=1-std::max(0.,std::min(hidden,lowest))/hidden,bottom=1-std::max(0.,std::min(hidden,highest))/hidden;
+    return std::pair{std::min(top,bottom),std::max(top,bottom)};
+}
+std::optional<Vec2> DesktopTiles::planePoint(Vec2 local,const Matrix4&world,const Matrix4&plane){
+    const auto inverted=inverse(plane);if(!inverted)return std::nullopt;
+    const auto point=transform(*inverted,transform(world,{local[0],local[1],0,1}));
+    if(point[3]==0||!std::isfinite(point[0])||!std::isfinite(point[1]))return std::nullopt;
+    return Vec2{point[0]/point[3],point[1]/point[3]};
+}
+std::optional<Vec2> DesktopTiles::center(const Matrix4&world,const SourceRect&rect,const Matrix4&plane){
+    return planePoint({rect.origin[0]+rect.size[0]/2,rect.origin[1]+rect.size[1]/2},world,plane);
+}
+std::optional<Vec3> DesktopTiles::translation(const DesktopTilePlacement&placement,const Matrix4&world,const SourceRect&rect,const Matrix4&plane){
+    Vec2 delta=placement.value;
+    if(placement.kind==DesktopTilePlacement::Kind::center){const auto rest=center(world,rect,plane);if(!rest)return std::nullopt;delta={placement.value[0]-(*rest)[0],placement.value[1]-(*rest)[1]};}
+    const auto moved=transform(plane,{delta[0],delta[1],0,0});
+    if(!std::isfinite(moved[0])||!std::isfinite(moved[1])||!std::isfinite(moved[2]))return std::nullopt;
+    return Vec3{moved[0],moved[1],moved[2]};
+}
+ResolvedNode DesktopTiles::translated(const ResolvedNode&node,Vec3 t){
+    auto moved=node;moved.worldMatrix=Matrix4::translation(t[0],t[1],t[2])*node.worldMatrix;return moved;
+}
+std::size_t DesktopTiles::moveNodes(std::span<ResolvedNode> nodes,const std::map<std::size_t,Vec3>&translations,const SourceLayout&layout){
+    if(translations.empty())return 0;
+    std::vector<std::optional<Vec3>> inherited(nodes.size());std::size_t moved=0;
+    for(const auto index:layout.traversalIndices()){
+        if(index>=nodes.size())continue;std::optional<Vec3> t;
+        if(const auto own=translations.find(index);own!=translations.end())t=own->second;
+        else if(const auto parent=layout.parentIndex(index);parent&&*parent<inherited.size())t=inherited[*parent];
+        if(!t)continue;inherited[index]=t;nodes[index]=translated(nodes[index],*t);++moved;
+    }
+    return moved;
+}
+Matrix4 DesktopTiles::restWorld(const Matrix4&world,Vec3 t,const Matrix4&worldRoot){
+    auto rest=world;
+    for(unsigned column=0;column<4;++column){const auto w=world.values[column*4+3];if(w==0)continue;
+        const auto shift=transform(worldRoot,{t[0]*w,t[1]*w,t[2]*w,0});for(unsigned row=0;row<4;++row)rest.values[column*4+row]-=shift[row];}
+    return rest;
+}
+void DesktopArrangeMotion::lift(std::uint64_t target,Vec2 shown,Vec2 pointer){
+    lifted_=target;raised_=target;slides_.erase(target);grab_={pointer[0]-shown[0],pointer[1]-shown[1]};liftedCenter_=shown;
+}
+void DesktopArrangeMotion::move(Vec2 pointer,std::optional<std::pair<Vec2,Vec2>> bounds){
+    if(!lifted_||!std::isfinite(pointer[0])||!std::isfinite(pointer[1]))return;
+    Vec2 center{pointer[0]-grab_[0],pointer[1]-grab_[1]};
+    if(bounds)for(unsigned axis=0;axis<2;++axis){const auto low=std::min(bounds->first[axis],bounds->second[axis]),high=std::max(bounds->first[axis],bounds->second[axis]);center[axis]=std::clamp(center[axis],low,high);}
+    liftedCenter_=center;
+}
+void DesktopArrangeMotion::drop(std::optional<Vec2> slot,double time,bool reduceMotion){
+    if(!lifted_)return;const auto target=*lifted_;const auto shown=liftedCenter_;lifted_.reset();liftedCenter_.reset();
+    if(!reduceMotion&&shown&&slot)start(target,{(*shown)[0]-(*slot)[0],(*shown)[1]-(*slot)[1]},time);
+    if(!slides_.contains(target)&&raised_==target)raised_.reset();
+}
+void DesktopArrangeMotion::retarget(std::uint64_t target,Vec2 shown,Vec2 slot,double time,bool reduceMotion){
+    if(lifted_==target)return;
+    if(reduceMotion)slides_.erase(target);else start(target,{shown[0]-slot[0],shown[1]-slot[1]},time);
+    if(!slides_.contains(target)&&raised_==target)raised_.reset();
+}
+std::optional<Vec2> DesktopArrangeMotion::offset(std::uint64_t target,double time,bool reduceMotion)const{
+    if(reduceMotion)return std::nullopt;const auto slide=slides_.find(target);if(slide==slides_.end())return std::nullopt;
+    const auto progress=std::max(0.,time-slide->second.start)/DesignMotion::listSlide;if(!(progress<1))return std::nullopt;
+    const auto remaining=1-DesignEasing::listSlide.value(progress);
+    return Vec2{slide->second.from[0]*remaining,slide->second.from[1]*remaining};
+}
+Vec2 DesktopArrangeMotion::shown(std::uint64_t target,Vec2 slot,double time,bool reduceMotion)const{
+    if(lifted_==target&&liftedCenter_)return *liftedCenter_;
+    const auto o=offset(target,time,reduceMotion);return o?Vec2{slot[0]+(*o)[0],slot[1]+(*o)[1]}:slot;
+}
+void DesktopArrangeMotion::prune(double time,bool reduceMotion){
+    if(reduceMotion)slides_.clear();else std::erase_if(slides_,[&](const auto&entry){return !(time-entry.second.start<DesignMotion::listSlide);});
+    if(raised_&&raised_!=lifted_&&!slides_.contains(*raised_))raised_.reset();
+}
+void DesktopArrangeMotion::start(std::uint64_t target,Vec2 from,double time){
+    if(std::isfinite(from[0])&&std::isfinite(from[1])&&std::hypot(from[0],from[1])>1e-6&&std::isfinite(time))slides_[target]=Slide{from,time};
+    else slides_.erase(target);
+}
 } // namespace endfield::core::source
