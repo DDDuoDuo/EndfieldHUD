@@ -34,15 +34,15 @@ if(TARGET hud_shortcuts)
   endif()
 endif()
 
-# The Mac import ledger rows of App shortcuts (Migration/relink.json,
-# WINDOWS-MIGRATION.md section 7): reconciled by the one transaction owner
+# The relink ledger rows of App shortcuts imported from a Mac
+# (Migration/relink.json): reconciled by the one transaction owner
 # (hud_app_shortcut_tasks) after its load and each committed save/remove.
-# hud_mac_import is declared by cmake/modules/import.cmake (read later; link
+# hud_relink_ledger is declared by cmake/modules/relink.cmake (read later; link
 # names resolve when the build is generated). Synthetic temporary roots only.
 if(TARGET hud_shortcuts)
   add_library(hud_app_shortcut_relink STATIC modules/app_shortcut_relink.cpp)
   target_include_directories(hud_app_shortcut_relink PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(hud_app_shortcut_relink PUBLIC hud_shortcuts PRIVATE hud_mac_import)
+  target_link_libraries(hud_app_shortcut_relink PUBLIC hud_shortcuts PRIVATE hud_relink_ledger)
   if(MSVC)
     target_compile_options(hud_app_shortcut_relink PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -51,10 +51,10 @@ if(TARGET hud_shortcuts)
   endif()
   if(BUILD_TESTING)
     add_executable(app_shortcut_relink_tests tests/app_shortcut_relink_tests.cpp)
-    target_link_libraries(app_shortcut_relink_tests PRIVATE hud_app_shortcut_relink hud_mac_import)
+    target_link_libraries(app_shortcut_relink_tests PRIVATE hud_app_shortcut_relink hud_relink_ledger)
     add_test(NAME app_shortcut_relink_contracts COMMAND app_shortcut_relink_tests)
     if(TARGET app_shortcut_tasks_tests)
-      target_link_libraries(app_shortcut_tasks_tests PRIVATE hud_mac_import)
+      target_link_libraries(app_shortcut_tasks_tests PRIVATE hud_relink_ledger)
     endif()
   endif()
 endif()
@@ -91,7 +91,7 @@ if(WIN32 AND TARGET hud_app_shortcut_canvas AND TARGET hud_app_shortcut_tasks AN
   target_include_directories(hud_app_shortcut_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_app_shortcut_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_app_shortcut_area PUBLIC hud_module_registry hud_utility hud_app_shortcut_canvas hud_design_native hud_app_shortcut_tasks hud_app_shortcut_icons hud_data hud_localization
-    PRIVATE hud_mac_import hud_mac_import_native user32 ole32 oleaut32 uiautomationcore)
+    PRIVATE hud_relink_ledger hud_mac_import_native user32 ole32 oleaut32 uiautomationcore)
   if(MSVC)
     target_compile_options(hud_app_shortcut_area PRIVATE /W4 /permissive- /EHsc)
   endif()

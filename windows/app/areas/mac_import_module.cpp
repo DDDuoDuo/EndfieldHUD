@@ -1028,7 +1028,7 @@ struct MacImportArea::Driver {
     }
 };
 
-// The relink ledger's owner API (core/migration/mac_import_relink.hpp) as the
+// The relink ledger's owner API (core/migration/relink_ledger.hpp) as the
 // module owners call it after their own relinks, removals and loads - by
 // store and record id - over the imported synthetic root's ledger. The
 // targets are explicit synthetic Windows paths below the coverage root

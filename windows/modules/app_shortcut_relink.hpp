@@ -1,6 +1,6 @@
 #pragma once
 // App shortcuts' rows of the offline Mac import ledger (WINDOWS-MIGRATION.md
-// section 7, core/migration/mac_import_relink.hpp). An imported Mac shortcut
+// section 7, core/migration/relink_ledger.hpp). An imported Mac shortcut
 // keeps its opaque bookmark until the user edits it and chooses a Windows
 // application; Migration/relink.json lists it ("appShortcuts.app") until then.
 // The ledger follows the committed shortcuts.json on the repository's own

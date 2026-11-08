@@ -26,7 +26,6 @@ endif()
 # gated exactly like the existing hud_archive/hud_shortcuts targets.
 
 add_library(hud_mac_import_codec
-  core/migration/mac_import_sha256.cpp
   core/migration/plist.cpp
   core/migration/mac_import_settings.cpp
   core/migration/mac_import_codecs.cpp)
@@ -35,12 +34,11 @@ target_link_libraries(hud_mac_import_codec PUBLIC hud_data)
 
 add_library(hud_mac_import
   core/migration/mac_import_files.cpp
-  core/migration/mac_import_relink.cpp
   core/migration/mac_import.cpp
   core/migration/mac_import_outcome.cpp
   core/migration/mac_import_work.cpp)
 target_include_directories(hud_mac_import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_data hud_reader hud_calendar hud_event_log hud_map_store hud_notes_centre)
+target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_relink_ledger hud_data hud_reader hud_calendar hud_event_log hud_map_store hud_notes_centre)
 if(WIN32)
   target_link_libraries(hud_mac_import PRIVATE winsqlite3)
 else()
@@ -139,22 +137,6 @@ if(BUILD_TESTING)
     target_compile_options(mac_import_work_tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME mac_import_work_contracts COMMAND mac_import_work_tests)
-  # The relink ledger's owner API (resolve/dismiss/reconcile by store and
-  # record id) over synthetic ledgers, including concurrent writers.
-  add_executable(mac_import_relink_tests tests/mac_import_relink_tests.cpp)
-  target_link_libraries(mac_import_relink_tests PRIVATE hud_mac_import Threads::Threads)
-  if(WIN32)
-    target_compile_definitions(mac_import_relink_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_link_libraries(mac_import_relink_tests PRIVATE winsqlite3)
-  else()
-    target_link_libraries(mac_import_relink_tests PRIVATE SQLite::SQLite3)
-  endif()
-  if(MSVC)
-    target_compile_options(mac_import_relink_tests PRIVATE /W4 /permissive- /EHsc)
-  else()
-    target_compile_options(mac_import_relink_tests PRIVATE -Wall -Wextra -Wpedantic)
-  endif()
-  add_test(NAME mac_import_relink_contracts COMMAND mac_import_relink_tests)
   # The import flow, card and restart-handoff outcome over synthetic exports.
   add_executable(mac_import_flow_tests tests/mac_import_flow_tests.cpp)
   target_link_libraries(mac_import_flow_tests PRIVATE hud_mac_import_flow hud_mac_import_service)

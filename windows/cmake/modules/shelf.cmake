@@ -32,11 +32,11 @@ if(WIN32)
 
   # The service and its owner: Ctrl+V paste (OleGetClipboard), the properties
   # reads (native/shelf_properties.cpp) on the shared utility worker, the
-  # relink of Mac-imported items through the import ledger (core/migration).
+  # relink of Mac-imported items through the relink ledger (core/migration).
   add_library(hud_shelf_owner tools/shelf_owner.cpp native/shelf_properties.cpp)
   target_compile_definitions(hud_shelf_owner PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_shelf_owner PUBLIC hud_file_shelf hud_design_native hud_native hud_shelf_icons hud_shelf_transfer hud_shelf_files
-    PRIVATE hud_utility hud_mac_import ole32 shell32)
+    PRIVATE hud_utility hud_relink_ledger ole32 shell32)
   if(MSVC)
     target_compile_options(hud_shelf_owner PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -47,7 +47,7 @@ if(WIN32)
   add_library(hud_shelf_area STATIC app/areas/shelf_module.cpp)
   target_include_directories(hud_shelf_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_shelf_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_shelf_area PUBLIC hud_module_registry hud_shelf_owner hud_shelf_files hud_data PRIVATE hud_mac_import uiautomationcore oleaut32 user32)
+  target_link_libraries(hud_shelf_area PUBLIC hud_module_registry hud_shelf_owner hud_shelf_files hud_data PRIVATE hud_relink_ledger uiautomationcore oleaut32 user32)
   if(MSVC)
     target_compile_options(hud_shelf_area PRIVATE /W4 /permissive- /EHsc)
   endif()
@@ -60,12 +60,12 @@ if(WIN32)
     # renewal saved by refresh, the properties card's reads (private and
     # shared utility executors), virtual-file drops, the drop routes, the
     # localized platform text and error descriptions, the UI Automation tree,
-    # the relink of Mac-imported items through the import ledger API, the drag
+    # the relink of Mac-imported items through the relink ledger API, the drag
     # payload, and what the Shelf keeps resident (icon worker only while
     # shown, no artwork once the HUD closed on another module).
     add_executable(shelf_services_tests tests/shelf_services_tests.cpp)
     target_compile_definitions(shelf_services_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_owner hud_shelf_files hud_mac_import hud_utility ole32 shell32 uiautomationcore oleaut32 psapi)
+    target_link_libraries(shelf_services_tests PRIVATE hud_shelf_owner hud_shelf_files hud_relink_ledger hud_utility ole32 shell32 uiautomationcore oleaut32 psapi)
     if(MSVC)
       target_compile_options(shelf_services_tests PRIVATE /W4 /permissive- /EHsc)
     endif()

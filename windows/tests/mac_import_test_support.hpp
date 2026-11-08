@@ -8,7 +8,7 @@
 #include "core/migration/mac_import.hpp"
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_service.hpp"
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include "core/migration/plist.hpp"
 #include "modules/reader_repository.hpp"
 #include <algorithm>
@@ -55,7 +55,7 @@ inline std::map<std::string, std::string> tree(const fs::path& root) {
     if (!fs::exists(root)) return out;
     for (const auto& entry : fs::recursive_directory_iterator(root)) {
         const auto key = fs::relative(entry.path(), root).generic_string();
-        out[key] = entry.is_directory() ? std::string("<dir>") : m::Sha256::hex(read(entry.path()));
+        out[key] = entry.is_directory() ? std::string("<dir>") : ehud::data::Sha256::hex(read(entry.path()));
     }
     return out;
 }
@@ -87,7 +87,7 @@ struct Export {
         J::Array rows;
         for (const auto& [path, bytes] : files) {
             mac_import_test::write(root / path, bytes);
-            rows.push_back(J::Object{{"path", path}, {"bytes", static_cast<std::int64_t>(bytes.size())}, {"sha256", m::Sha256::hex(bytes)}});
+            rows.push_back(J::Object{{"path", path}, {"bytes", static_cast<std::int64_t>(bytes.size())}, {"sha256", ehud::data::Sha256::hex(bytes)}});
         }
         J::Object databases;
         for (const auto& [path, version] : sqlite) databases[path] = J::Object{{"userVersion", version}};

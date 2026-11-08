@@ -1,6 +1,6 @@
 #include "core/migration/mac_import_files.hpp"
 #include "core/migration/mac_import_codecs.hpp"
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <system_error>
@@ -128,7 +128,7 @@ struct StreamCopy::Impl {
     std::uint64_t maximum{};
     std::optional<Expected> expected;
     Handle input, output;
-    Sha256 hash;
+    data::Sha256 hash;
     std::vector<char> buffer;
     std::uint64_t total{};
     bool opened{}, created{}, finished{};

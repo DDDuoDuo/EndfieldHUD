@@ -14,7 +14,7 @@
 #include <CommonCrypto/CommonKeyDerivation.h>
 #include <CommonCrypto/CommonRandom.h>
 #else
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include <cstring>
 #include <sys/random.h>
 #endif
@@ -38,11 +38,11 @@ bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 void wipeBytes(void*bytes,std::size_t count)noexcept{volatile auto*p=static_cast<unsigned char*>(bytes);for(std::size_t i=0;i<count;++i)p[i]=0;}
 // RFC 8018 PBKDF2-HMAC-SHA256 for the portable build (Linux CI), where
 // neither CommonCrypto nor BCrypt exists: the shared FIPS 180-4 SHA-256
-// (core/migration/mac_import_sha256), keyed inner/outer states computed once
+// (core/data/sha256), keyed inner/outer states computed once
 // and copied per round, every intermediate wiped. Same bytes as the platform
 // derivations (archive-classification-source.json Mac records).
 std::optional<std::string>portablePBKDF2(std::string_view password,std::string_view salt,std::uint32_t iterations,std::size_t length){
-    using ehud::migration::Sha256;std::uint8_t key[64]{},pad[64];
+    using ehud::data::Sha256;std::uint8_t key[64]{},pad[64];
     if(password.size()>sizeof key){Sha256 h;h.update(password);auto digest=h.finish();std::memcpy(key,digest.data(),digest.size());wipeBytes(digest.data(),digest.size());wipeBytes(&h,sizeof h);}
     else if(!password.empty())std::memcpy(key,password.data(),password.size());
     Sha256 inner,outer;for(int i=0;i<64;++i)pad[i]=key[i]^0x36;inner.update(pad,64);for(int i=0;i<64;++i)pad[i]=key[i]^0x5c;outer.update(pad,64);wipeBytes(key,sizeof key);wipeBytes(pad,sizeof pad);

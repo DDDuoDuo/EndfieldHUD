@@ -4,7 +4,7 @@
 #include "core/data/map_store.hpp"
 #include "core/data/notes_centre_store.hpp"
 #include "core/migration/mac_import_files.hpp"
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include "core/migration/mac_import_work.hpp"
 #include "modules/calendar_repository.hpp"
 #include "modules/reader_repository.hpp"

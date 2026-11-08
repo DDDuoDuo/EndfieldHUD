@@ -70,7 +70,7 @@ void fullImport() {
         check(read(destination / "Migration" / "mac-preferences.plist") == e.files["Preferences/io.github.endfieldcharge.EndfieldCharge.plist"], "Original preferences archived byte-for-byte");
     }
     const auto report = J::parse(read(destination / "Migration" / "import.json"));
-    check(report["version"].integer() == 1 && report["manifestSHA256"].string() == m::Sha256::hex(read(e.root / "manifest.json")) && report["backup"].isNull() &&
+    check(report["version"].integer() == 1 && report["manifestSHA256"].string() == ehud::data::Sha256::hex(read(e.root / "manifest.json")) && report["backup"].isNull() &&
           report["ignoredFiles"].array().size() == 1 && report["profileSyncLocked"].boolean(), "Import report records manifest digest, ignored files and intents");
     check(m::macImportCompleted(destination), "The completed import is detectable");
     // Relink ledger survives and supports explicit user decisions only.
@@ -342,19 +342,19 @@ void streamCopy() {
     for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<char>(i * 7 + 3);
     write(t.root / "a.bin", bytes);
     {
-        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "a.bin", bytes.size(), m::files::StreamCopy::Expected{bytes.size(), m::Sha256::hex(bytes)});
+        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "a.bin", bytes.size(), m::files::StreamCopy::Expected{bytes.size(), ehud::data::Sha256::hex(bytes)});
         std::size_t steps{};
         while (!copy.done()) { check(copy.advance(1000) <= 1000, "A copy step never exceeds its budget"); ++steps; }
         check(steps == 3 && copy.processed() == bytes.size() && read(t.root / "out" / "a.bin") == bytes, "Chunked verified copy is exact and ends with its last full chunk");
     }
     {
-        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "b.bin", bytes.size(), m::files::StreamCopy::Expected{bytes.size(), m::Sha256::hex("other")});
+        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "b.bin", bytes.size(), m::files::StreamCopy::Expected{bytes.size(), ehud::data::Sha256::hex("other")});
         try { while (!copy.done()) copy.advance(1000); check(false, "Digest mismatch must fail"); }
         catch (const m::MacImportError& error) { check(error.code() == m::MacImportErrorCode::corrupt, "A digest mismatch is corruption"); }
         check(!fs::exists(t.root / "out" / "b.bin"), "A mismatching copy leaves no file");
     }
     {
-        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "c.bin", 2999, m::files::StreamCopy::Expected{2999, m::Sha256::hex(bytes.substr(0, 2999))});
+        m::files::StreamCopy copy(t.root / "a.bin", t.root / "out" / "c.bin", 2999, m::files::StreamCopy::Expected{2999, ehud::data::Sha256::hex(bytes.substr(0, 2999))});
         rejects([&] { while (!copy.done()) copy.advance(4096); }, "A file longer than its manifest entry fails");
         check(!fs::exists(t.root / "out" / "c.bin"), "Longer source leaves no file");
     }
@@ -363,7 +363,7 @@ void streamCopy() {
         check(!fs::exists(t.root / "out" / "d.bin"), "An abandoned copy removes its partial file");
     }
     {
-        m::files::StreamCopy verifyOnly(t.root / "a.bin", {}, bytes.size(), m::files::StreamCopy::Expected{bytes.size(), m::Sha256::hex(bytes)});
+        m::files::StreamCopy verifyOnly(t.root / "a.bin", {}, bytes.size(), m::files::StreamCopy::Expected{bytes.size(), ehud::data::Sha256::hex(bytes)});
         while (!verifyOnly.done()) verifyOnly.advance(512);
         m::files::StreamCopy limited(t.root / "a.bin", t.root / "out" / "e.bin", 2000);
         try { while (!limited.done()) limited.advance(4096); check(false, "Limit must apply"); }
@@ -372,7 +372,7 @@ void streamCopy() {
     }
     {
         write(t.root / "empty.bin", "");
-        m::files::StreamCopy copy(t.root / "empty.bin", t.root / "out" / "empty.bin", 0, m::files::StreamCopy::Expected{0, m::Sha256::hex("")});
+        m::files::StreamCopy copy(t.root / "empty.bin", t.root / "out" / "empty.bin", 0, m::files::StreamCopy::Expected{0, ehud::data::Sha256::hex("")});
         copy.advance(1);
         check(copy.done() && fs::exists(t.root / "out" / "empty.bin"), "Empty files complete in one step");
     }

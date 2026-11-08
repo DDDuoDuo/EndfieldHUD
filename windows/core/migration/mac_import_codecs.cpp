@@ -1,5 +1,5 @@
 #include "core/migration/mac_import_codecs.hpp"
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include "core/migration/mac_import_settings.hpp"
 #include "core/migration/plist.hpp"
 #include <algorithm>
@@ -318,7 +318,7 @@ MacExportManifest decodeMacExportManifest(std::string_view bytes) {
         need(folded.insert(key).second, "Export lists the same path twice (case-insensitively): " + file.path);
         file.bytes = integer<std::uint64_t>(required(row, "bytes", "files[]"), "files[].bytes");
         file.sha256 = text(required(row, "sha256", "files[]"), "files[].sha256");
-        need(validSha256Hex(file.sha256), "Invalid SHA-256 for " + file.path);
+        need(data::validSha256Hex(file.sha256), "Invalid SHA-256 for " + file.path);
         manifest.files.push_back(std::move(file));
     }
     if (present(document, "sqlite")) {
@@ -332,7 +332,7 @@ MacExportManifest decodeMacExportManifest(std::string_view bytes) {
         manifest.preferences = text(document["preferences"], "manifest.preferences");
         need(manifest.find(*manifest.preferences) != nullptr && manifest.preferences->starts_with("Preferences/"), "Preferences entry names an unlisted file");
     }
-    manifest.sha256 = Sha256::hex(bytes);
+    manifest.sha256 = data::Sha256::hex(bytes);
     return manifest;
 }
 }

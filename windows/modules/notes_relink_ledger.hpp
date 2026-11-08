@@ -2,7 +2,7 @@
 // Upkeep of the Mac import relink ledger (<app root>/Migration/relink.json)
 // for Notes media notes ("notes.media") and Archive media attachments
 // ("archive.media"), through the import ledger's owner API
-// (core/migration/mac_import_relink.hpp). The owner's own record write
+// (core/migration/relink_ledger.hpp). The owner's own record write
 // commits first; these calls follow it. Each reads the ledger afresh and
 // writes it at most once, atomically; without a ledger (no Mac import) or
 // without a matching unresolved row nothing is created or written, so owners

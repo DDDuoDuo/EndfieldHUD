@@ -1,10 +1,10 @@
-// The relink ledger's owner API (core/migration/mac_import_relink.hpp): the
+// The relink ledger's owner API (core/migration/relink_ledger.hpp): the
 // calls Notes, Archive, Reader, App shortcuts and the File Shelf make after
 // their own relinks, removals and loads, addressed by store and record id.
 // Synthetic ledgers below a fresh temporary directory only; no picker, store
 // or user file is touched.
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <filesystem>

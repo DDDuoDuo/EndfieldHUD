@@ -5,9 +5,9 @@
 #include <string>
 #include <string_view>
 
-namespace ehud::migration {
-// FIPS 180-4 SHA-256 for export manifests. Streaming, allocation-free and
-// portable, so the same digest code verifies exports on macOS and Windows.
+namespace ehud::data {
+// FIPS 180-4 SHA-256. Streaming, allocation-free and portable: the Archive's
+// classified-document PBKDF2 on builds without CommonCrypto or BCrypt.
 class Sha256 final {
 public:
     Sha256() noexcept;

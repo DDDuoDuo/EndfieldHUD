@@ -42,12 +42,12 @@ endif()
 # --- Reader relink of imported Mac books ---------------------------------------
 # The Library's "Relink…" (modules/reader_state relink) keeps the book's id,
 # progress and bookmarks; the native owner resolves, dismisses and reconciles
-# its Migration/relink.json rows through the import ledger API
-# (core/migration/mac_import_relink.hpp, declared by import.cmake).
+# its Migration/relink.json rows through the relink ledger API
+# (core/migration/relink_ledger.hpp, declared by relink.cmake).
 if(TARGET hud_reader_import)
-  target_link_libraries(hud_reader_import PRIVATE hud_mac_import)
+  target_link_libraries(hud_reader_import PRIVATE hud_relink_ledger)
   if(BUILD_TESTING AND TARGET reader_owner_tests)
-    target_link_libraries(reader_owner_tests PRIVATE hud_mac_import)
+    target_link_libraries(reader_owner_tests PRIVATE hud_relink_ledger)
   endif()
 endif()
 

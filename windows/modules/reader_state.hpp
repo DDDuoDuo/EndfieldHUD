@@ -49,7 +49,7 @@ public:
 };
 struct ReaderDetail {ReaderImageView view;ReaderPage page;};
 // Migration/relink.json bookkeeping of imported Mac books (core/migration/
-// mac_import_relink.hpp, store "reader.book"), injected by the native owner;
+// relink_ledger.hpp, store "reader.book"), injected by the native owner;
 // unset in previews and portable tests. Each hook runs on the FIFO executor
 // inside the job that made the change durable, after the library itself:
 // reconcile after the library load, resolved after the confirmed write that

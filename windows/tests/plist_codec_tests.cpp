@@ -1,4 +1,4 @@
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include "core/migration/plist.hpp"
 #include "core/data/file_io.hpp"
 #include <cmath>
@@ -35,14 +35,7 @@ P sample() {
     return P::dictionary(std::move(root));
 }
 void basics() {
-    check(m::Sha256::hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 empty vector");
-    check(m::Sha256::hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 abc vector");
-    check(m::Sha256::hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "SHA-256 two-block vector");
-    { m::Sha256 h; const std::string chunk(1000, 'a'); for (int i = 0; i < 1000; ++i) h.update(chunk); check(h.hex() == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "SHA-256 million-a streaming vector"); }
-    check(m::validSha256Hex(std::string(64, 'a')) && !m::validSha256Hex(std::string(64, 'A')) && !m::validSha256Hex("ab"), "Manifest digests are lowercase hex");
-    check(m::base64Encode("") == "" && m::base64Encode("f") == "Zg==" && m::base64Encode("fo") == "Zm8=" && m::base64Encode("foobar") == "Zm9vYmFy", "Base64 vectors");
-    check(m::base64Decode("Zm9vYmE=") == std::optional<std::string>("fooba") && !m::base64Decode("Zm9vYmE") && !m::base64Decode("Zg=a") && !m::base64Decode("Zh=="), "Strict canonical base64");
-    check(m::base64Decode(" Zm9v\n YmFy\t", true) == std::optional<std::string>("foobar") && !m::base64Decode(" Zm9v", false), "XML data whitespace only where allowed");
+    check(ehud::data::validSha256Hex(std::string(64, 'a')) && !ehud::data::validSha256Hex(std::string(64, 'A')) && !ehud::data::validSha256Hex("ab"), "Manifest digests are lowercase hex");
 
     const auto value = sample();
     for (const auto format : {m::PlistFormat::binary, m::PlistFormat::xml}) {

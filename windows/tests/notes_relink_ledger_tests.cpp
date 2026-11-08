@@ -4,7 +4,7 @@
 // or user file is touched.
 #include "modules/notes_relink_ledger.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
