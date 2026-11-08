@@ -111,7 +111,15 @@ void appsFolder(){
     check(!n::nowPlayingAppsFolderExecutable("EndfieldHUD.Invented.Player.7f3a")&&!n::nowPlayingAppsFolderExecutable("msedge.exe")&&!n::nowPlayingAppsFolderExecutable("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")&&!n::nowPlayingAppsFolderExecutable(""),"An invented, Win32 or packaged identity resolves to nothing");
 }
 #endif
-int main(){try{lifecycle();failureAndCapacity();teardown();publicationAndCommands();timeout();timeline();launchTargets();
+// A player's cover between 8 MiB and the embedded bound is published; a larger
+// one loses only its art, never the track (Mac 1.3.1 f791b54, 440cfd2).
+void oversizeArtwork(){Executor q([]{});auto p=std::make_shared<Provider>();n::NativeNowPlayingService service(q,[&]{return p;},[]{},[]{return 0.;});service.setActive(true);flush(q,service);p->started({});flush(q,service);
+    auto nine=media();nine.value.artwork=std::make_shared<const std::vector<std::uint8_t>>(9u*1024*1024,std::uint8_t(1));nine.value.track->artworkRevision="1";p->reading(std::move(nine));flush(q,service);
+    check(service.snapshot().fresh&&service.snapshot().failure==n::NowPlayingServiceFailure::none&&service.snapshot().media.artwork&&service.snapshot().media.artwork->size()==9u*1024*1024,"A 9 MiB player cover is published with its track");
+    service.refresh();flush(q,service);auto huge=media(1,"Larger");huge.value.artwork=std::make_shared<const std::vector<std::uint8_t>>(m::nowPlayingMaximumEmbeddedArtworkBytes+1,std::uint8_t(1));huge.value.track->artworkRevision="2";p->reading(std::move(huge));flush(q,service);
+    check(service.snapshot().fresh&&service.snapshot().failure==n::NowPlayingServiceFailure::none&&service.snapshot().media.track->title=="Larger"&&!service.snapshot().media.artwork&&!service.snapshot().media.track->artworkRevision,
+          "A cover over the embedded bound drops only its art: the track still updates");}
+int main(){try{lifecycle();failureAndCapacity();teardown();publicationAndCommands();timeout();timeline();launchTargets();oversizeArtwork();
 #ifdef _WIN32
     appsFolder();
 #endif

@@ -85,7 +85,10 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
         for(std::size_t n=0;n<value.sessions.size();++n){const auto&s=value.sessions[n];need(s.token&&s.appUserModelID.size()<=4096&&s.displayName.size()<=4096&&ehud::data::Json::validUtf8(s.appUserModelID)&&ehud::data::Json::validUtf8(s.displayName)&&s.executablePath.size()<=32767*3&&ehud::data::Json::validUtf8(s.executablePath)&&s.executablePath.find('\0')==std::string::npos&&(!s.executableIdentity||!s.executablePath.empty()),"Invalid Now Playing session identity");for(std::size_t prior=0;prior<n;++prior)need(value.sessions[prior].token!=s.token,"Duplicate Now Playing session token");}
         if(value.session){need(value.session->token!=0,"Now Playing session requires native identity");need(std::find(value.sessions.begin(),value.sessions.end(),*value.session)!=value.sessions.end(),"Selected Now Playing session must be in the same snapshot");}
         else need(!value.track&&!value.artwork&&!value.progress&&!value.artworkURL,"Media needs its selected session");
-        if(value.artwork)need(value.artwork->size()<=modules::nowPlayingMaximumArtworkBytes,"Now Playing artwork exceeds source byte limit");
+        // A cover over the embedded bound loses only its art, never the track
+        // or the read (Mac 1.3.1 440cfd2, decision AW-D4); the GSMTC read
+        // already skips such a thumbnail.
+        if(value.artwork&&value.artwork->size()>modules::nowPlayingMaximumEmbeddedArtworkBytes){value.artwork.reset();if(value.track)value.track->artworkRevision.reset();}
         if(value.progress)need(std::isfinite(value.progress->fraction)&&value.progress->fraction>=0&&value.progress->fraction<=1&&std::isfinite(value.progress->played)&&value.progress->played>=0,"Invalid player progress");
         if(value.artworkURL)need(value.artworkURL->size()<=2048&&ehud::data::Json::validUtf8(*value.artworkURL),"Invalid player cover address");
         if(value.track)value.track=modules::NowPlayingTrack::bounded(std::move(*value.track));
