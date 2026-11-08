@@ -275,7 +275,7 @@ struct Oracle {
         Json::Array rows = (*r)["accessibility"].array();
         for (auto& item : rows) if (item["id"].string().ends_with(":name") && item["role"].string() == "button") item["role"] = "edit";
         std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
-        compareAccessibility(label, Json(std::move(rows)), items, failures);
+        compareAccessibility(label, Json(std::move(rows)), items, failures, canvas.page().controls());
         if ((*r)["top"].isObject()) compare(label + "/top", Json::Object{{"layer", (*r)["top"]}}, canvas.top(), canvas.root(), {}, failures);
         if (canvas.header().counterText() != (*r)["header"]["counter"].string()) failures.push_back(label + ": counter " + canvas.header().counterText());
         if (canvas.dropTarget() != (*r)["dropTarget"].boolean() || canvas.inputLocked() != (*r)["inputLocked"].boolean()) failures.push_back(label + ": drop target / input lock");

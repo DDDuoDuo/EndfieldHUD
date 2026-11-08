@@ -610,7 +610,7 @@ struct Oracle {
         std::vector<d::AccessibilityItem> items; c.accessibilityItems(items);
         windowsBody(label, expected, items);
         o::compare(label, expected, c.root(), c.root(), c.page().controls(), failures);
-        o::compareAccessibility(label, static_cast<const J&>(expected)["accessibility"], items, failures);
+        o::compareAccessibility(label, static_cast<const J&>(expected)["accessibility"], items, failures, c.page().controls());
         if (expected["top"].isObject()) o::compare(label + "/top", J::Object{{"layer", expected["top"]}}, c.top(), c.root(), {}, failures);
         const auto& header = (*r)["header"];
         if (c.header().counterText() != header["counter"].string()) failures.push_back(label + ": counter " + c.header().counterText());
