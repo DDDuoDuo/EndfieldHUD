@@ -52,10 +52,16 @@ struct Owner {
     std::vector<int> portraitSteps;
     unsigned chooses{}, colors{}, dismissals{}; std::vector<std::string> imports;
     bool refuseCommit{};
+    // A synthetic Windows account (issue #17); never the real one. The source answers at once.
+    std::optional<ehud::data::SystemAccount> account;
     std::unique_ptr<m::ProfileState> store(m::PersonalProfile p) {
         m::ProfilePersistence io;
         io.commit = [this](const m::PersonalProfile& v) { if (refuseCommit) throw m::ProfileError(m::ProfileFailure::persistence, "synthetic"); commits.push_back(v); return v; };
-        return std::make_unique<m::ProfileState>(std::move(p), text, dates, std::move(io));
+        m::ProfileAccountSource source;
+        if (account) source.read = [this](m::ProfileAccountSource::Done done) { done(*account); };
+        auto state = std::make_unique<m::ProfileState>(std::move(p), text, dates, std::move(io), std::move(source));
+        state->refreshSystemAccount(0);
+        return state;
     }
     m::ProfileCanvasServices services() {
         m::ProfileCanvasServices s;
@@ -503,19 +509,22 @@ void reopenEditors() {
     // Committing the shown value, or one the record normalizes to it, saves nothing and re-renders nothing.
     enter(open("profile:name", m::ProfileField::name, "again"), "Endministrator");
     enter(open("profile:name", m::ProfileField::name, "after an unchanged commit"), "Endministrator ");
-    check(store->profile().name == "Endministrator" && o.commits.empty(), "A trailing space saves nothing");
+    // Mac 1.3.1 (caf78b3): the text differs from the shown name, so it is a
+    // typed name: the same name is stored with autoName off (issue #17).
+    check(store->profile().name == "Endministrator" && !store->profile().autoName && o.commits.size() == 1, "A trailing space is a typed name: it stops following the account");
+    const auto typed = o.commits.size();
     enter(open("profile:name", m::ProfileField::name, "after a normalized-equal commit"), "");
     check(store->profile().name == "Endministrator", "An empty name is discarded");
     escape(open("profile:name", m::ProfileField::name, "after an invalid value"));
     enter(open("profile:explorationLevel", m::ProfileField::explorationLevel, "the first time"), "05");
-    check(store->profile().explorationLevel == 5 && o.commits.empty(), "'05' saves nothing");
+    check(store->profile().explorationLevel == 5 && o.commits.size() == typed, "'05' saves nothing");
     escape(open("profile:explorationLevel", m::ProfileField::explorationLevel, "after '05'"));
     enter(open("profile:introduction", m::ProfileField::introduction, "again"), "Talos-II field engineer. Prefers tea.  ");
     escape(open("profile:introduction", m::ProfileField::introduction, "after a normalized-equal bio"));
     // The ⋯ menu's Edit # and Edit name (# with its sign is the same tag).
     canvas.perform("profile:menu", w.now);
     enter(open("profile.more:tag", m::ProfileField::tag, "from the menu"), "#1018");
-    check(store->profile().tag == "1018" && o.commits.empty(), "'#1018' saves nothing");
+    check(store->profile().tag == "1018" && o.commits.size() == typed, "'#1018' saves nothing");
     canvas.perform("profile:menu", w.now);
     escape(open("profile.more:tag", m::ProfileField::tag, "from the menu again"));
     canvas.perform("profile:menu", w.now);
@@ -660,13 +669,40 @@ void reopenKeepsPage() {
 }
 }
 
+// Issue #17 (PersonalProfileCanvas caf78b3): the name shown and edited is the
+// Windows account's while the card follows it; an unchanged Return stores
+// nothing and keeps following, a typed name is stored and stops following.
+void systemAccountName() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; o.account = ehud::data::SystemAccount{"Ada Lovelace", "1001", std::nullopt};
+    auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    check(control(canvas, "profile:name")->label == "Edit name, Ada Lovelace #1018", "The name control reads the account's name");
+    check(canvas.displayed().displayedUID() == "1001", "The UID line shows the account's UID");
+    const auto press = [&](std::uint32_t key) { d::KeyInput k; k.virtualKey = key; check(host.request && host.request->field->handleEditingKey(k), "The editor takes the key"); };
+    canvas.perform("profile:name", w.now);
+    check(host.request && host.request->text == "Ada Lovelace", "The name editor starts from the shown name");
+    press(d::key::enter);
+    check(o.commits.empty() && store->profile().autoName && store->profile().name == "Endministrator", "An unchanged Return stores nothing and keeps following the account");
+    canvas.perform("profile:name", w.now);
+    host.value = "Endministrator"; press(d::key::enter);
+    check(o.commits.size() == 1 && !store->profile().autoName && store->profile().name == "Endministrator" && canvas.displayed().displayedName() == "Endministrator",
+          "Typing the default name stores it and stops following");
+    canvas.perform("profile:name", w.now);
+    host.value = "Kal'tsit"; press(d::key::enter);
+    check(store->profile().name == "Kal'tsit" && !store->profile().autoName && control(canvas, "profile:name")->label == "Edit name, Kal'tsit #1018", "A typed name is stored and shown");
+    canvas.setActive(false, w.now);
+}
+
 int main(int argc, char** argv) {
     try {
         std::optional<Json> data;
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour(); hiddenScaleChange(); decodeBeforeFirstShow();
-        partsKept(); reopenEditors(); reopenKeepsPage();
+        partsKept(); reopenEditors(); reopenKeepsPage(); systemAccountName();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);

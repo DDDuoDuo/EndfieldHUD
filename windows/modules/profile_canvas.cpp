@@ -341,7 +341,7 @@ void ProfileCanvas::revertPreview(bool animated) {
 // Mac rebuilt it at once at the new scale; its portrait for that scale is
 // asked now, so the owner's worker has it ready by then.
 void ProfileCanvas::renderScaleChanged() {
-    if (!isShown() && renderedLanguage() && services_.portrait && displayed().avatarFilename) (void)services_.portrait(portraitStep());
+    if (!isShown() && renderedLanguage() && services_.portrait && displayed().avatarKey()) (void)services_.portrait(portraitStep());
     Canvas::renderScaleChanged();
 }
 void ProfileCanvas::recordingModeChanged() {
@@ -407,8 +407,9 @@ void ProfileCanvas::storeChanged() {
     const auto& next = displayed();
     std::vector<ProfileField> changed;
     for (const auto field : shown) if (value(field, old) != value(field, next)) changed.push_back(field);
+    // avatarKey also changes when the Windows account's picture arrives or changes.
     const bool structural = !changed.empty() || old.showsBirthday != next.showsBirthday
-        || old.avatarFilename != next.avatarFilename || old.backgroundFilename != next.backgroundFilename;
+        || old.avatarKey() != next.avatarKey() || old.backgroundFilename != next.backgroundFilename;
     if (structural) {
         if (editing_) { needsRerender_ = true; return; }
         rerender();
@@ -429,12 +430,12 @@ void ProfileCanvas::imagesChanged() {
     // landed, so its portrait is asked now and the owner's worker has it
     // ready for the first build, as the Mac builds it synchronously, instead
     // of landing after the entrance and rebuilding the page.
-    if (!renderedLanguage()) { if (services_.portrait && displayed().avatarFilename) (void)services_.portrait(portraitStep()); return; }
+    if (!renderedLanguage()) { if (services_.portrait && displayed().avatarKey()) (void)services_.portrait(portraitStep()); return; }
     // A decode landed: the art or the portrait appears (the Mac had it at
     // build time); a prepared zoom step re-lays the portrait in place.
     const bool art = services_.backgroundReady && services_.backgroundReady() && displayed().backgroundFilename;
     const auto portrait = services_.portrait ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
-    const bool wantsPortrait = displayed().avatarFilename && portrait.image;
+    const bool wantsPortrait = displayed().avatarKey() && portrait.image;
     if (art != (refs_.artHost != nullptr) || wantsPortrait != (refs_.portrait != nullptr) || (!portrait.pending && !portrait.image) != (refs_.silhouette != nullptr)) rerenderWhenIdle();
     else layoutPortrait(true);
 }
@@ -534,7 +535,7 @@ void ProfileCanvas::buildIdentity(d::Page& page, Layer& main, std::vector<d::Con
     frame.setFrame(avatarFrame);
     for (Layer* l : {&titleText, &subtitle, &well, &frame}) main.add(*l);
     refs_.frame = &frame; refs_.well = &well;
-    const auto portrait = services_.portrait && p.avatarFilename ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
+    const auto portrait = services_.portrait && p.avatarKey() ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
     if (portrait.image) {
         Layer& picture = page.makeLayer("profile.portrait");
         picture.setAnimatable(); picture.setPosition({wellFrame.width / 2, wellFrame.height / 2});
@@ -548,14 +549,14 @@ void ProfileCanvas::buildIdentity(d::Page& page, Layer& main, std::vector<d::Con
     }
     // Name + #tag (max-width 300, padding 0 4).
     auto& name = editable(page, ProfileField::name, main, controls);
-    Layer& nameText = d::makeText(page.builder(), "profile.name.text", p.name, style::name, {});
+    Layer& nameText = d::makeText(page.builder(), "profile.name.text", p.displayedName(), style::name, {});
     Layer& tagText = d::makeText(page.builder(), "profile.tag.text", "#" + p.tag, style::tag, {});
     const double tagWidth = std::ceil(d::preferredWidth(d::textOf(tagText), env().text));
     const double nameWidth = std::min(std::ceil(d::preferredWidth(d::textOf(nameText), env().text)), 292 - 2 - tagWidth);
     d::setLine(nameText, {4, 0, nameWidth + 1, 30});
     d::setLine(tagText, {4 + nameWidth + 2, 0, tagWidth + 1, 30});
     name.setFrame({132, 50, 4 + nameWidth + 2 + tagWidth + 4, 30}, {&nameText, &tagText});
-    name.label = text("Edit name", "修改名称") + ", " + p.name + " #" + p.tag;
+    name.label = text("Edit name", "修改名称") + ", " + p.displayedName() + " #" + p.tag;
     refs_.values[ProfileField::tag] = &name.layer();
     // Registration mark.
     Layer& mark = page.makeLayer("profile.registration");
@@ -993,7 +994,7 @@ bool ProfileCanvas::isValid(ProfileField field, std::string_view raw, const Prof
         return n && *n >= lo && *n <= hi;
     };
     switch (field) {
-    case ProfileField::name: return !value.empty() && text_.characters(value) <= 20 && !text_.hasControl(value);
+    case ProfileField::name: return !value.empty() && text_.characters(value) <= ehud::data::Profile::nameLimit && !text_.hasControl(value);
     case ProfileField::tag: {
         const std::string_view tagDigits = value.starts_with('#') ? std::string_view(value).substr(1) : std::string_view(value);
         return !tagDigits.empty() && tagDigits.size() <= 10 && digits(tagDigits);
@@ -1018,7 +1019,7 @@ void ProfileCanvas::commit(ProfileField field, const std::string& raw) {
         store_->update([&](PersonalProfile& p) {
             switch (field) {
             case ProfileField::playerID: p.playerIDOverride = input; break;
-            case ProfileField::name: p.name = input; break;
+            case ProfileField::name: p.name = input; p.autoName = false; break; // a typed name stops following the account
             case ProfileField::tag: p.tag = input.starts_with('#') ? input.substr(1) : input; break;
             case ProfileField::introduction: p.introduction = input; break;
             case ProfileField::awakeningDate:

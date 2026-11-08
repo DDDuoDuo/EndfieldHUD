@@ -29,6 +29,11 @@ int main(int argc,char**argv){
         check(card.captions()[3].rightAligned&&card.captions()[4].rightAligned&&!card.captions()[0].rightAligned,"Authority/MAX right aligned");
         const auto before=measured;check(!card.update(input)&&measured==before,"Identical profile key performs no measurement or upload");
         p.accumulatedWorkSeconds=7200;p.introduction="changed";check(!card.update(input),"Work hours and page-only fields never touch the card");
+        // Issue #17: the Windows account's name and UID until one is chosen or synced.
+        p.systemAccount.value=ehud::data::SystemAccount{"Ada Lovelace","1001",std::nullopt};
+        check(card.update(input)&&card.captions()[0].text=="Ada Lovelace"&&card.captions()[1].text=="UID: 1001","The default card shows the account's name and UID");
+        p.autoName=false;check(card.update(input)&&card.captions()[0].text=="Endministrator","A chosen default name is shown as stored");
+        p.autoName=true;p.systemAccount.value.reset();check(card.update(input)&&card.captions()[0].text=="Endministrator"&&card.captions()[1].text=="UID: 1000000000","Without an account (or hidden): the stored defaults");
         p.name=std::string(30,'W');check(card.update(input)&&card.captions()[0].fontSize==13.5,"Font steps down 0.5 pt until it fits the authored width");
         p.name=std::string(80,'W');card.update(input);check(card.captions()[0].fontSize==10,"Never below 10 pt; the leaf truncates");
         p.gamePlayerID="1234567890123456789";card.update(input);check(card.captions()[1].text=="UID: 1234567890123456789","Synced game UID displays immediately");
