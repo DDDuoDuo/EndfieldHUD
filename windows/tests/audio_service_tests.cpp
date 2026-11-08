@@ -471,6 +471,36 @@ void failedRestore(){
     check(std::abs(sessionVolume(*h.world,usb,"{session-player-usb}")-.2f)<1e-6f,"The new output's session follows the route");
     volume.close();s.stop();
 }
+// Source PerAppAudioController.setGain returns false and leaves statusMessage
+// alone for a gain it cannot take: one queued as Volume closes, or one on a
+// route that already failed. Neither reaches the App volume status line.
+void gainStatus(){
+    Harness h;auto&s=*h.service;const auto player=std::string("4242:100");
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown");
+    h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2&&x.volume;},"Sessions listed");
+    {std::unique_lock l(h.world->m);h.world->holdRead=true;}
+    h.wake(&World::volumeWake);
+    {std::unique_lock l(h.world->m);h.world->cv.wait(l,[&]{return h.world->inRead;});}
+    check(s.setApplicationGain(speaker,player,.5f),"A slider sample queued while the worker is busy");
+    check(s.vote(n::AudioVoter::volume,false)==0,"Volume closes in the same wake");
+    {std::lock_guard l(h.world->m);h.world->holdRead=false;}h.world->cv.notify_all();
+    h.until([](const auto&x){return x.applicationsPaused;},"Sessions paused");
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown again");
+    h.until([](const auto&x){return !x.applicationsPaused&&x.applicationsSupported&&x.applications.size()==2;},"Sessions listed again");
+    {const auto&x=s.snapshot();const auto*a=app(x,player);check(!x.routeError&&!x.applicationError&&a&&a->state==n::AudioApplicationRouteState::direct,"The dropped sample leaves no status line and no route");}
+    {std::lock_guard l(h.world->m);h.world->failSessionWrites=true;}
+    check(s.setApplicationGain(speaker,player,.5f),"Gain accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::failed&&x.routeError<0;},"A failed start is the status line");
+    const auto failure=s.snapshot().routeError;
+    {std::lock_guard l(h.world->m);h.world->failSessionWrites=false;}
+    check(s.setApplicationGain(speaker,player,.3f),"A gain on the failed route is accepted for worker validation");
+    check(s.setVolume(speaker,.3f),"A later command marks the gain's wake as done");
+    h.until([](const auto&x){return x.volume&&std::abs(*x.volume-.3f)<1e-6f;},"Both commands ran");
+    {const auto&x=s.snapshot();const auto*a=app(x,player);check(x.routeError==failure&&a->state==n::AudioApplicationRouteState::failed,"The refused gain leaves the status line as it was");}
+    check(s.setApplicationGain(speaker,player,1.f),"Full volume ends the failed route");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::direct&&!x.routeError;},"Its stop clears the status line");
+    s.stop();
+}
 // Source 7fa4733 offers paused apps after the output changes. Windows lists
 // the new default output's sessions afresh: a paused (Inactive) session there
 // is listed and adjustable at once, as the laptop probe found a paused
@@ -731,7 +761,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();silentApp();silentAppMoved();processExit();hiddenOutputChange();failedRestore();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();silentApp();silentAppMoved();processExit();hiddenOutputChange();failedRestore();gainStatus();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif

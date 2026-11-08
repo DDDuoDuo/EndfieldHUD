@@ -433,8 +433,15 @@ public:
                 // The same guard as the endpoint writes: the process key is the
                 // same on every output, so a stale gain would land on the next.
                 if(c.endpoint!=state.defaultOutputID||(sessions&&!sessions->endpoint().empty()&&sessions->endpoint()!=c.endpoint)){state.commandError=deviceChanged;return;}
-                if(!sessions||!resumed||!state.applicationsSupported){state.routeError=pending;return;}
-                state.routeError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
+                // Source setGain returns false and leaves statusMessage alone
+                // for a gain it cannot take: sessions not resumed yet (a vote
+                // withdrawn in the same wake) or a route that already failed.
+                // Only a start or write outcome is the status.
+                if(!sessions||!resumed||!state.applicationsSupported)return;
+                const auto&apps=routes.applications();
+                const bool failed=c.value!=1&&std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==c.id&&a.state==AudioApplicationRouteState::failed;});
+                const auto hr=call([&]{return routes.setGain(c.id,c.value,*sessions);});
+                if(!failed)state.routeError=hr;
             }else if(c.kind==K::stopApplication){
                 state.routeError=sessions?call([&]{return routes.stop(c.id,*sessions);}):0;
             }else{
