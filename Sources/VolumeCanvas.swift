@@ -85,12 +85,7 @@ final class VolumeCanvas: HUDDesignCanvas {
     /// while its app is silent and absent from the active-process list.
     var listedApplications: [AudioApplicationInfo] {
         guard snapshot.applicationActivitySupported else { return [] }
-        var apps = snapshot.availableApplications.isEmpty ? snapshot.activeApplications : snapshot.availableApplications
-        for session in perAppAudio.sessions where !apps.contains(where: { $0.id == session.processID }) {
-            apps.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
-                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
-        }
-        return apps.filter { app in
+        return perAppAudio.candidates(in: snapshot).filter { app in
             session(app.id) != nil || currentOutput.map { perAppAudio.availability(application: app, output: $0) == nil } ?? false
         }
     }

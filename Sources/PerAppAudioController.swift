@@ -94,6 +94,18 @@ final class PerAppAudioController {
         return nil
     }
 
+    /// The processes a route can be offered for: those with a known output
+    /// route (else every active one), plus each route's own process even
+    /// while it is silent and gone from the process list.
+    func candidates(in snapshot: AudioDeviceSnapshot) -> [AudioApplicationInfo] {
+        var apps = snapshot.availableApplications.isEmpty ? snapshot.activeApplications : snapshot.availableApplications
+        for session in sessions where !apps.contains(where: { $0.id == session.processID }) {
+            apps.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
+                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
+        }
+        return apps
+    }
+
     @discardableResult func start(application: AudioApplicationInfo, output: AudioDeviceInfo, initialGain: Double = 1) -> Bool {
         requireMain()
         guard initialGain.isFinite else {

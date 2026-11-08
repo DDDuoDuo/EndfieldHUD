@@ -455,18 +455,19 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private var currentOutput: AudioDeviceInfo? { audio.snapshot.outputs.first { $0.id == audio.snapshot.defaultOutputID } }
 
-    /// The audio process of the playing app: only an unambiguous match, never
-    /// an unrelated process or one of several helpers (the Volume module
-    /// lists those individually).
+    /// The audio process of the playing app, its own or a helper inside its
+    /// bundle (a browser plays through one): the one with a route, else the
+    /// one playing, else the only one. Never an unrelated process, nor a
+    /// guess between several (the Volume module lists those individually).
     private var audioApplication: AudioApplicationInfo? {
         guard let app = controller.snapshot.application else { return nil }
-        var candidates = audio.snapshot.availableApplications.isEmpty ? audio.snapshot.activeApplications : audio.snapshot.availableApplications
-        for session in perAppAudio.sessions where !candidates.contains(where: { $0.id == session.processID }) {
-            candidates.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
-                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
+        let matches = perAppAudio.candidates(in: audio.snapshot).filter {
+            $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL
         }
-        let matches = candidates.filter { $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL }
-        return matches.count == 1 ? matches[0] : nil
+        let routed = matches.filter { match in perAppAudio.sessions.contains { $0.processID == match.id } }
+        let playing = matches.filter(\.isRunningOutput)
+        let preferred = !routed.isEmpty ? routed : !playing.isEmpty ? playing : matches
+        return preferred.count == 1 ? preferred[0] : nil
     }
 
     private var currentSession: PerAppAudioSession? {
