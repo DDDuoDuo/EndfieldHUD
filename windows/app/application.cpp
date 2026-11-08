@@ -2082,8 +2082,9 @@ void Application::Impl::close(double time){
     // The clock's hover plate stays until the first move or the hide (48584b5
     // defers clearControlHighlights: onPointer, concealed()).
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();
-    // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
-    clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
+    // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition();
+    // a press on the industry logo or a scroll arrow does nothing more.
+    clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();logoPressed=false;scrollIndicatorPressed.reset();
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"close",[&]{audio->volume().setVisible(false);});automationChanged();
     time=hostTime(time);
     // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).

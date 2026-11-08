@@ -3122,6 +3122,33 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // The HUD close's shell (Mac 5b2a9d3, 48584b5): input stops at its start, and
+                // every native layer (they all sample canvasOpacity) fades on the opening's
+                // .24 s fade reversed with an ease-in, ending with the Watch exit clip; the
+                // last presented frame is not near 0 (at 60 Hz it is about .11). Nothing of
+                // the shell is composed or asks for frames once the HUD is hidden.
+                {
+                    const auto closeCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    perform(lifecycle.toggle(),t);
+                    closeCheck(closing&&!session->inputEnabled()&&!moduleInputAllowed()&&!clockAcceptsInput()&&!logoPressed&&!scrollIndicatorPressed&&
+                        !registry.any([](ModuleOwner&o){return o.capturesPointer()||o.capturesKeys();},"close check"),
+                        "Input stops at the close's start: nothing captures the pointer or the keys");
+                    const double exitLength=chromePlan?chromePlan->exitSeconds():0.;
+                    const auto fade=core::DesignMotion::closingFade(exitLength,source::DesktopChromeTiming::openingDuration);
+                    double previous=canvasCapturedOpacity,last=-1;bool onCurve=true,falling=true;unsigned closingFrames=0;
+                    for(unsigned n=1;n<=90&&session->phase()!=core::VisibilityPhase::concealed;++n){const double frameAt=t+double(n)/60;
+                        const double opacity=canvasOpacity(frameAt);
+                        const double expected=fade.duration>0?canvasCapturedOpacity*(1-core::DesignEasing::easeIn.value((frameAt-canvasClosedAt-fade.delay)/fade.duration)):0.;
+                        onCurve=onCurve&&std::abs(opacity-expected)<1e-9;falling=falling&&opacity<=previous+1e-12;previous=opacity;
+                        if(const auto wake=designOverlay->nextWakeTime(frameAt);wake&&*wake<=frameAt)(void)registry.guard(*designOverlay,[&]{(void)designOverlay->deadline(hostTime(frameAt));},"deadline");
+                        present(frameAt,true);if(session->phase()!=core::VisibilityPhase::concealed){last=opacity;++closingFrames;}settle(frameAt);}
+                    closeCheck(exitLength>.3&&fade.duration==source::DesktopChromeTiming::openingDuration&&closingFrames>=10&&onCurve&&falling&&last>0&&last<canvasCapturedOpacity,
+                        ("Every closing frame's canvas opacity follows the reversed fade ending with the exit ("+std::to_string(closingFrames)+" frames, last "+std::to_string(last)+")").c_str());
+                    t=run(t+1.6,.4);
+                    closeCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&!chromeContent.clockHovered&&(!facilityOwner||(facilityOwner->planeEntries().empty()&&facilityOwner->modalEntries().empty()&&!facilityOwner->requiresFrames(t)))&&
+                        (!hudElements||hudElements->topEntries().empty()),"Hidden: the shell composes nothing and asks for no frame");
+                    perform(lifecycle.reopen(),t);t=run(t,1.2);closeCheck(lifecycle.phase()==core::SystemOverlayPhase::open,"The HUD reopens after the checked close");
+                }
                 // Hand-offs to other applications (OverlayController afterSystemClose,
                 // openStorageAfterClose): requested while the HUD is open they close
                 // it with the normal animation and open only once it is hidden, so
