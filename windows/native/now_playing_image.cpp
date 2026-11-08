@@ -83,7 +83,7 @@ NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::fun
 NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,SizedDecoder d):impl_(std::make_shared<Impl>(q,std::move(c),std::move(d))){}
 NativeNowPlayingArtwork::~NativeNowPlayingArtwork(){auto i=impl_;i->check();i->alive=false;i->changed={};i->desired.reset();i->pending=false;i->queue.invalidate(i->route);}
 bool NativeNowPlayingArtwork::request(Bytes bytes){auto i=impl_;i->check();if(bytes&&bytes->empty())bytes.reset();if(i->desired==bytes)return false;++i->generation;i->desired=std::move(bytes);i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;
- if(!i->desired)return true;if(i->desired->size()>modules::nowPlayingMaximumArtworkBytes){i->value.failure=NowPlayingImageFailure::invalidPayload;return true;}
+ if(!i->desired)return true;if(i->desired->size()>modules::nowPlayingMaximumEmbeddedArtworkBytes){i->value.failure=NowPlayingImageFailure::invalidPayload;return true;}
  for(std::size_t n=0;n<i->cache.size();++n)if(i->cache[n].bytes.lock()==i->desired&&i->fits(i->cache[n])){i->value=i->cache[n].value;if(n)std::swap(i->cache[0],i->cache[n]);++i->counts.cacheHits;return true;}
  i->pending=true;i->submit();return true;
 }
@@ -155,7 +155,7 @@ NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,const std::function
 #endif
 namespace endfield::native {
 namespace {
-NowPlayingImageResult decode(std::span<const std::uint8_t>bytes,const std::function<unsigned(unsigned,unsigned)>&bound){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
+NowPlayingImageResult decode(std::span<const std::uint8_t>bytes,const std::function<unsigned(unsigned,unsigned)>&bound){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumEmbeddedArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
 #ifdef _WIN32
  try{return wic(bytes,bound);}catch(const Error&e){return {{},e.kind,static_cast<std::int32_t>(e.code)};}
 #else

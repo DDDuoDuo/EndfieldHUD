@@ -18,6 +18,7 @@ using NowPlayingCover=std::shared_ptr<const native::NotesImageFrame>;
 struct NowPlayingCoverArt {NowPlayingCover image,backdrop;unsigned width{},height{};};
 inline constexpr double nowPlayingMaximumSeconds=604800;
 inline constexpr std::size_t nowPlayingMaximumLyricsBytes=512*1024;
+// Downloads (catalog covers) and other fetched art (NowPlayingArtworkLoader.maximumBytes).
 inline constexpr std::size_t nowPlayingMaximumArtworkBytes=8*1024*1024;
 inline constexpr std::uint64_t nowPlayingMaximumArtworkPixels=32000000;
 inline constexpr unsigned nowPlayingArtworkThumbnailSize=512;
@@ -30,6 +31,12 @@ inline constexpr unsigned nowPlayingDefaultCoverPixels=720,nowPlayingMinimumCove
 // pixelSize(points:scale:): ceil(points x scale - 1e-6) within the bounds;
 // a non-finite or non-positive product gives the default.
 unsigned nowPlayingCoverPixelSize(double points,double scale)noexcept;
+// NowPlayingArtworkLoader.maximumEmbeddedBytes (Mac 1.3.1, f791b54): cover
+// bytes a player hands over directly (the GSMTC thumbnail) are bounded by
+// their pixels (nowPlayingMaximumArtworkPixels, checked from the header) and
+// by an uncompressed RGBA cover of the largest decode size plus 1 MiB, so a
+// browser's uncompressed cover of up to 2048 px still shows.
+inline constexpr std::size_t nowPlayingMaximumEmbeddedArtworkBytes=std::size_t(nowPlayingMaximumCoverPixels)*nowPlayingMaximumCoverPixels*4+1024*1024;
 // NowPlayingArtworkLoader (Mac 1.3.1, 45f75dc): a cover that filling its slot
 // would enlarge more than fillLimit is small: drawn whole at its own pixels,
 // enlarged (Lanczos) at most maximumEnlargement times, over a backdrop, a

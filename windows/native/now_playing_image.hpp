@@ -13,7 +13,7 @@ struct NowPlayingImageResult {
     NowPlayingImageFailure failure{NowPlayingImageFailure::none};std::int32_t nativeError{};
     std::shared_ptr<const NotesImageFrame>backdrop;unsigned nativeWidth{},nativeHeight{};
 };
-// In-memory first-frame WIC decode only. Original source limits:8MiB encoded,
+// In-memory first-frame WIC decode only. Source limits: nowPlayingMaximumEmbeddedArtworkBytes encoded,
 // 8192 per dimension/32M pixels, transformed sRGB straightRGBA thumbnail<=512.
 // Called only on the existing utility queue; no file/network/service/thread.
 // WIC codec/filter/color differences from ImageIO are explicit platform limits.

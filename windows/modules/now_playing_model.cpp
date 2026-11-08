@@ -140,7 +140,7 @@ NowPlayingCoverLayout nowPlayingCoverLayout(unsigned width,unsigned height,NowPl
 bool nowPlayingAcknowledgesSeek(const NowPlayingTrack&track,double requested,double sampledAt)noexcept{
     if(!track.position||!std::isfinite(requested)||!std::isfinite(sampledAt))return false;const auto advance=track.isPlaying?std::min(3.,std::max(0.,track.sampledAt-sampledAt)):0.;return std::abs(*track.position-std::min(track.duration.value_or(nowPlayingMaximumSeconds),requested+advance))<=1.25;
 }
-bool nowPlayingArtworkMetadata(unsigned width,unsigned height,std::size_t bytes)noexcept{return bytes>0&&bytes<=nowPlayingMaximumArtworkBytes&&width>0&&height>0&&width<=8192&&height<=8192&&std::uint64_t(width)*height<=nowPlayingMaximumArtworkPixels;}
+bool nowPlayingArtworkMetadata(unsigned width,unsigned height,std::size_t bytes)noexcept{return bytes>0&&bytes<=nowPlayingMaximumEmbeddedArtworkBytes&&width>0&&height>0&&width<=8192&&height<=8192&&std::uint64_t(width)*height<=nowPlayingMaximumArtworkPixels;}
 std::optional<NowPlayingCommand>nowPlayingCommand(const NowPlayingTrack&track,const NowPlayingCapabilities&controls,NowPlayingCommand command)noexcept{
     switch(command.kind){case NowPlayingCommandKind::playPause:if(!(controls.toggle||(track.isPlaying?controls.pause:controls.play)))return {};break;
     case NowPlayingCommandKind::previous:if(!controls.previous)return {};break;case NowPlayingCommandKind::next:if(!controls.next)return {};break;
