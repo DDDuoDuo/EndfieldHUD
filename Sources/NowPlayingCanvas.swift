@@ -125,7 +125,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         } else {
             stopClock(); closeVolume(); seek?.cancelDrag()
             requestedEndRefresh = false
-            // Nothing keeps running on the hidden page (bar runs, lyric slides, fades).
+            // Nothing keeps running on the hidden page (bar runs, lyric slides,
+            // fades); a finite entrance finishes under the module's leave.
             Self.removeAnimations(in: page.layer)
             controller.deactivate(); audio.stop()
         }
@@ -138,7 +139,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     override func closePopups() { super.closePopups(); closeVolume() }
 
     private static func removeAnimations(in layer: CALayer) {
-        layer.removeAllAnimations(); layer.sublayers?.forEach(removeAnimations)
+        for key in layer.animationKeys() ?? [] where !HUDMotion.entranceKeys.contains(key) { layer.removeAnimation(forKey: key) }
+        layer.sublayers?.forEach(removeAnimations)
     }
 
     private var structure: Structure { Structure(language: L10n.resolvedLanguage, playing: controller.snapshot.track != nil) }
