@@ -79,6 +79,7 @@ struct VolumeProviderBinding::State {
         else if(failed(s.inputError))next.status=message(volumeProviderFailure(s.inputError));
         else if(failed(s.commandError))next.status=message(volumeProviderFailure(s.commandError));
         if(failed(s.applicationError))next.applicationMessage=message(volumeProviderFailure(s.applicationError));
+        if(failed(s.routeError))next.perAppStatus=message(volumeProviderFailure(s.routeError));
         if(live)shown=next;
         if(failure)next.status=message(*failure);
         if(snapshot==next)return false;

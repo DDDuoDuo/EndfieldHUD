@@ -350,9 +350,9 @@ public:
             if(!sessions->endpoint().empty()){
                 if(owned()){
                     // Another output took over: the routes end quietly, like an
-                    // explicit stop (source 730f4bb).
-                    const auto hr=call([&]{return routes.stopAll(*sessions);});
-                    if(hr<0)state.applicationError=hr;
+                    // explicit stop (source 730f4bb), reporting only a failed
+                    // restore. routeError outlives the new endpoint's open.
+                    state.routeError=call([&]{return routes.stopAll(*sessions);});
                 }
                 if(journal)journal->demote(sessions->endpoint());
                 touched();
@@ -400,17 +400,20 @@ public:
         }
         void applicationCommand(const Command&c){
             using K=Command::Kind;
+            // Each command's outcome is the per-app status (source
+            // PerAppAudioController.statusMessage): a start that fails or a
+            // cleanup error is shown, a command that succeeds clears it.
             if(c.kind==K::gain){
-                if(!sessions||!resumed||!state.applicationsSupported){state.applicationError=pending;return;}
-                state.applicationError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
+                if(!sessions||!resumed||!state.applicationsSupported){state.routeError=pending;return;}
+                state.routeError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
             }else if(c.kind==K::stopApplication){
-                if(!sessions)return;state.applicationError=call([&]{return routes.stop(c.id,*sessions);});
+                state.routeError=sessions?call([&]{return routes.stop(c.id,*sessions);}):0;
             }else{
                 // stopApplications is the Output menu's quiet stop before it
                 // switches to another device (source VolumeCanvas.openDeviceMenu:
-                // stopAll(), with no status of its own since 730f4bb).
-                if(!sessions)return;const auto hr=call([&]{return routes.stopAll(*sessions);});
-                state.applicationError=hr;
+                // stopAll(), with no status of its own since 730f4bb), and
+                // sleep's stop: only a failed restore is reported.
+                state.routeError=sessions?call([&]{return routes.stopAll(*sessions);}):0;
             }
             touched();
         }
@@ -442,8 +445,7 @@ public:
             for(const auto&c:commands)if(c.kind==K::resume)topology=true;
             if(topology&&endpointsOpen)refreshTopology();
             if(sessions&&!(demand&tierApplications)&&!sessions->endpoint().empty()&&sessions->endpoint()!=state.defaultOutputID&&owned()){
-                const auto hr=call([&]{return routes.stopAll(*sessions);});
-                if(hr<0)state.applicationError=hr;
+                state.routeError=call([&]{return routes.stopAll(*sessions);});
                 touched(); // Failed restores stay owned here and remain retryable.
             }
             syncVolume((demand&tierEndpoints)!=0);

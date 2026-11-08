@@ -45,6 +45,12 @@ struct AudioEndpointSnapshot {
     bool applicationsSupported{},applicationsPaused{true};
     std::vector<AudioApplicationRoute>applications;
     std::int32_t applicationError{};
+    // Source PerAppAudioController.statusMessage, HRESULT-shaped: the outcome
+    // of the last per-app command (a gain, a Stop, the Output menu's stop,
+    // sleep) or of the quiet stop when another output takes over (730f4bb),
+    // so a failed restore is reported. 0 clears it. Kept across the session
+    // switch to the new output, unlike applicationError.
+    std::int32_t routeError{};
     // Topology tier. A failed/incomplete enumeration keeps the previous list:
     // a read error is never reported as a disconnection. The generation
     // advances on the first complete read after the listener opens (the

@@ -40,7 +40,8 @@ struct VolumeSnapshot {
     // the original source list order. No process/route inference is performed.
     std::vector<VolumeApplication>applications;
     // status: AudioDeviceController.statusMessage; applicationMessage:
-    // applicationActivityMessage; perAppStatus: PerAppAudioController.statusMessage.
+    // applicationActivityMessage; perAppStatus: PerAppAudioController.statusMessage
+    // (the provider's text for AudioEndpointSnapshot::routeError).
     std::optional<std::string>status,applicationMessage,perAppStatus;
     bool operator==(const VolumeSnapshot&)const=default;
 };

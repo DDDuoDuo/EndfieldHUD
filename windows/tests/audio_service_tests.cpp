@@ -375,6 +375,31 @@ void hiddenOutputChange(){
     {std::lock_guard l(h.world->m);check(h.world->sessionOpens==1&&!h.world->sessionWake&&!h.world->violation,"No session manager opened on the new output while hidden");}
     s.stop();
 }
+// A restore that fails when another output takes over is reported as the
+// per-app status line (source PerAppAudioController.stopAll: errors.first)
+// and survives the switch to the new output; the next per-app command that
+// succeeds clears it.
+void failedRestore(){
+    Harness h;auto&s=*h.service;
+    n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeSnapshot delivered=volume.snapshot();
+    volume.setReceiver([&](const auto&v){delivered=v;});
+    const auto pump=[&](auto&&p,const char*what){h.until([&](const auto&){return volume.receive(),p();},what);};
+    const auto active=[&](double gain){const auto&a=delivered.applications;return std::any_of(a.begin(),a.end(),[&](const auto&x){return x.id=="4242:100"&&x.state==n::VolumeAppState::active&&x.gain==gain;});};
+    volume.setVisible(true);callbacks.setActive(true);
+    pump([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==2;},"App rows");
+    check(callbacks.setAppGain("4242:100",.5),"An app route");
+    pump([&]{return active(.5)&&!delivered.perAppStatus;},"The route is active with no status line");
+    {std::lock_guard l(h.world->m);h.world->failSessionWrites=true;h.world->defaultOutput=usb;}
+    h.wake(&World::topologyWake);
+    pump([&]{return delivered.outputID=="{0.0.0.00000000}.{usb}"&&delivered.applicationActivitySupported&&delivered.perAppStatus;},"The new output is listed with the per-app status");
+    check(s.snapshot().routeError==-97&&!s.snapshot().applicationError&&s.snapshot().applicationsSupported,"The failed restore outlives the new output's session open");
+    check(delivered.perAppStatus->find("(-97)")!=std::string::npos&&!delivered.status&&!delivered.applicationMessage,"It is shown as the status line only");
+    {std::lock_guard l(h.world->m);h.world->failSessionWrites=false;}
+    check(callbacks.setAppGain("4242:100",.25),"A route on the new output");
+    pump([&]{return active(.25)&&!delivered.perAppStatus;},"A per-app command that succeeds clears the status line");
+    check(std::abs(sessionVolume(*h.world,usb,"{session-player-usb}")-.2f)<1e-6f,"The new output's session follows the route");
+    volume.close();s.stop();
+}
 // Now Playing reads AudioApplicationRoute::rendering for window-title
 // players (NetEase keeps the song in its title while paused). A session
 // state event republishes it without repainting Volume; hiding per-app audio
@@ -586,7 +611,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();processExit();hiddenOutputChange();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();processExit();hiddenOutputChange();failedRestore();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif
