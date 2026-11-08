@@ -9,7 +9,12 @@ toggle/close/quit/finish functions are extracted verbatim from the pinned
 sources and compiled against inert stubs (no AppKit window, defaults domain,
 shortcut, battery or timer). Only the two AppKit-heavy bodies (view creation
 and teardown) are modelled, and the model is built from source lines that this
-script asserts are present unchanged. The result is
+script asserts are present unchanged. The opening module
+(HUDOverlayLayout.initialModule), "Last opened" across relaunches
+(lastSystemModule read and saved through HUDOverlayLayout.lastModule /
+saveLastModule, never in a diagnostic run), HUDModuleLayout's hidden-module
+swap, and the explicit requests of a failed app launch and of the return
+from Projection are extracted verbatim too. The result is
 windows/tests/fixtures/system_overlay_state_source.json.
 """
 import hashlib
@@ -20,7 +25,7 @@ import re
 import subprocess
 import sys
 
-PIN = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
+PIN = '2c047e0024aa337b11ab7d1e2577f7a918bace78'
 root = pathlib.Path(__file__).resolve().parents[2]
 if len(sys.argv) != 2:
     raise SystemExit(__doc__)
@@ -29,7 +34,8 @@ if out.exists():
     raise SystemExit('Refusing to reuse an existing output directory')
 out.mkdir(parents=True)
 sources = ['Sources/SystemOverlayState.swift', 'Sources/OverlayController.swift', 'Sources/AppDelegate.swift',
-           'Sources/HUDModule.swift', 'Sources/SystemHUDView.swift']
+           'Sources/HUDModule.swift', 'Sources/SystemHUDView.swift', 'Sources/HUDOverlayLayout.swift',
+           'Sources/HUDNavigationTarget.swift']
 subprocess.run(['git', 'diff', '--quiet', PIN, '--'] + sources, cwd=root, check=True)
 text = {name: (root / name).read_text() for name in sources}
 
@@ -70,7 +76,8 @@ modules = [m.strip() for line in cases for m in line[5:].split(',')]
 entrance = re.search(r'static let entranceDuration: TimeInterval = ([0-9.]+)', text['Sources/SystemHUDView.swift']).group(0)
 
 # Lines that the model of performSystemAction/tearDownSystemPresentation uses.
-open_expr = require('Sources/OverlayController.swift', 'initialModule: initialModuleRequest ?? lastSystemModule)')
+opening_line = require('Sources/OverlayController.swift', 'let opening = HUDOverlayLayout.initialModule(request: initialModuleRequest, configuration: configuration, last: lastSystemModule)')
+require('Sources/OverlayController.swift', 'initialModule: opening)')
 perform = declaration('Sources/OverlayController.swift', 'private func performSystemAction(')
 if '            initialModuleRequest = nil\n' not in perform:
     raise SystemExit('Initial request consumption changed')
@@ -85,7 +92,44 @@ for line in ['guard isSystemOverlayActive else { return }', 'systemState.forceCl
              'tearDownSystemPresentation(restoreFocus: false, notify: false)']:
     if line not in force:
         raise SystemExit('Forced close changed: ' + line)
-default_line = require('Sources/OverlayController.swift', 'private var lastSystemModule: HUDModule = .map')
+# lastSystemModule: read at init and saved on every change, both through the
+# user's defaults except in a diagnostic run (isDiagnosticRun is a launch
+# argument test, modelled as a variable the script sets).
+last_property = declaration('Sources/OverlayController.swift', 'private var lastSystemModule: HUDModule =')
+last_defaults = require('Sources/OverlayController.swift', 'private static var lastModuleDefaults: UserDefaults? { isDiagnosticRun ? nil : .standard }')
+require('Sources/OverlayController.swift', 'static let isDiagnosticRun = CommandLine.arguments.contains {')
+layout_parts = [declaration('Sources/HUDOverlayLayout.swift', marker) for marker in [
+    'static func initialModule(request:', 'static func lastModule(in defaults:', 'static func saveLastModule(']]
+layout_parts += [require('Sources/HUDOverlayLayout.swift', line) for line in [
+    'static let lastModuleKey = "hudLastOpenedModule"', 'static let firstModule: HUDModule = .map']]
+# HUDModuleLayout's order, hidden set and restore rule (Display > Modules).
+navigation = text['Sources/HUDNavigationTarget.swift']
+right_marker = '    static let rightModules: [HUDModule] = ['
+right_start = navigation.index(right_marker)
+if navigation.find(right_marker, right_start + 1) != -1:
+    raise SystemExit('Ambiguous declaration: ' + right_marker)
+right_modules = navigation[right_start:navigation.index(']', right_start + len(right_marker)) + 1]
+module_layout_parts = [require('Sources/HUDNavigationTarget.swift', line) for line in [
+    'static let configurable = HUDDesktopWatchNavigation.rightModules.filter { $0 != .addApp }',
+    'private(set) var order: [HUDModule]', 'private(set) var hidden: Set<HUDModule>',
+    'var visible: [HUDModule] { order.filter { !hidden.contains($0) } }',
+    'func restorable(_ module: HUDModule) -> HUDModule { hidden.contains(module) ? visible[0] : module }']]
+module_layout_parts += [declaration('Sources/HUDNavigationTarget.swift', marker) for marker in [
+    'init(order: [HUDModule] = configurable,', 'func canSetHidden(_ module: HUDModule, _ value: Bool) -> Bool {',
+    '@discardableResult mutating func setHidden(']]
+# The explicit requests: a failed app launch reopening on Add App
+# (requestAppShortcutLaunch's completion) and the return from Projection.
+launch_failure = require('Sources/OverlayController.swift', '''                guard self.systemState.phase == .closed else { return }
+                // An explicit request: a chosen Open on module cannot replace it.
+                self.initialModuleRequest = .addApp
+                self.hide(animated: false)
+                self.performSystemAction(self.systemState.toggle())
+''')
+projection_return = require('Sources/OverlayController.swift', '''            self.projectionHandoff = false
+            // A return to where the HUD was: a chosen Open on module cannot replace it.
+            self.initialModuleRequest = self.configuration.moduleLayout.restorable(self.lastSystemModule)
+            self.performSystemAction(self.systemState.toggle(), snapshot: self.latestBatterySnapshot)
+''')
 
 overlay_parts = [public(declaration('Sources/OverlayController.swift', marker)) for marker in [
     '@discardableResult func toggleSystemOverlay(', 'private func requestQuit()', 'func closeSystemOverlay()',
@@ -136,6 +180,26 @@ scripts = [
 ]
 for name in M:
     scripts.append(['launch:--login', 'hotkey', 'opened', 'select:' + name, 'close', 'closed', 'hotkey', 'opened'])
+# Open on, Last opened across relaunches, hidden modules and the explicit
+# requests. "restart" relaunches with the same defaults and configuration;
+# "diagnostic" relaunches as a diagnostic run; "saved:<name>" stores a raw
+# hudLastOpenedModule value as an earlier run (or a damaged file) left it.
+scripts += [
+    ['launch:--login', 'hotkey', 'opened', 'select:calendar', 'close', 'closed', 'restart', 'launch:--login', 'hotkey', 'opened', 'close', 'closed', 'hotkey'],
+    ['launch:', 'opened', 'close', 'closed', 'hotkey', 'opened', 'close', 'closed', 'restart', 'launched', 'launch:', 'hotkey', 'opened'],
+    ['launch:--login', 'choose:hotkeys', 'hotkey', 'opened', 'select:reader', 'close', 'closed', 'hotkey', 'opened', 'choose:last', 'close', 'closed', 'hotkey'],
+    ['launch:--login', 'choose:archive', 'restart', 'launch:--login', 'hotkey', 'opened', 'close', 'closed', 'choose:last', 'restart', 'launch:--login', 'hotkey'],
+    ['launch:--login', 'choose:calendar', 'hide:calendar', 'hotkey', 'opened', 'close', 'closed', 'hide:notes', 'hotkey', 'opened', 'close', 'closed', 'choose:last', 'hotkey'],
+    ['launch:--login', 'hotkey', 'opened', 'select:map', 'close', 'closed', 'hide:map', 'hotkey', 'opened', 'select:volume', 'close', 'closed', 'show:map', 'hotkey'],
+    ['launch:--login', 'choose:storage', 'traySettings', 'opened', 'close', 'closed', 'trayAbout', 'opened', 'close', 'closed', 'hotkey'],
+    ['launch:--login', 'choose:hotkeys', 'hotkey', 'opened', 'close', 'closed', 'launchFailed', 'opened', 'close', 'closed', 'hotkey', 'opened', 'close', 'launchFailed', 'closed'],
+    ['launch:--login', 'choose:calendar', 'hotkey', 'opened', 'select:projection', 'close', 'closed', 'projectionReturn', 'opened', 'close', 'closed', 'hotkey'],
+    ['launch:--login', 'hotkey', 'opened', 'select:projection', 'close', 'closed', 'hide:projection', 'choose:display', 'projectionReturn', 'opened', 'close', 'closed', 'projectionReturn'],
+    ['saved:teleporter', 'restart', 'launch:--login', 'hotkey', 'opened', 'close', 'closed', 'saved:addApp', 'restart', 'launch:--login', 'hotkey'],
+    ['launch:--login', 'hotkey', 'opened', 'select:eventLog', 'force', 'restart', 'launch:--login', 'hotkey', 'opened', 'quit', 'closed'],
+    ['saved:workMode', 'diagnostic', 'launch:--login', 'hotkey', 'opened', 'select:clipboard', 'close', 'closed', 'hotkey', 'opened', 'close', 'closed', 'diagnostic', 'launch:--login', 'hotkey'],
+    ['launch:--login', 'hotkey', 'opened', 'select:archive', 'close', 'closed', 'diagnostic', 'launch:--login', 'hotkey', 'opened', 'close', 'closed', 'restart', 'launch:--login', 'hotkey'],
+]
 
 swift = '''import Foundation
 // Inert stubs. No AppKit, defaults domain, window, timer or shortcut exists.
@@ -144,7 +208,14 @@ enum HUDModule: String, CaseIterable {
 }
 enum SystemHUDView { ''' + entrance.replace('static let', 'static let') + ''' }
 struct BatterySnapshot { static let unavailable = BatterySnapshot() }
-struct AppConfiguration { var closeOnFocusLost = true }
+enum HUDDesktopWatchNavigation {
+''' + right_modules + '''
+}
+struct HUDModuleLayout: Equatable {
+''' + '\n'.join('    ' + part for part in module_layout_parts) + '''
+}
+struct OverlayLayoutStub { var openModule: HUDModule? }
+struct AppConfiguration { var closeOnFocusLost = true; var moduleLayout = HUDModuleLayout(); var overlayLayout = OverlayLayoutStub() }
 struct SettingsStub { var configuration = AppConfiguration() }
 final class NSApplication {}
 struct FakeTime { var seconds: Double; static func now() -> FakeTime { FakeTime(seconds: Clock.now) } }
@@ -155,8 +226,16 @@ struct FakeQueue {
     func async(execute body: @escaping () -> Void) { asyncAfter(deadline: FakeTime.now(), execute: body) }
 }
 enum DispatchQueue { static let main = FakeQueue() }
-final class Defaults { var values: [String: Bool] = [:]; func bool(forKey key: String) -> Bool { values[key] ?? false }; func set(_ value: Bool, forKey key: String) { values[key] = value } }
-enum UserDefaults { static var standard = Defaults() }
+final class UserDefaults {
+    static var standard = UserDefaults()
+    var values: [String: Any] = [:]; var writes: [String: Int] = [:]
+    func bool(forKey key: String) -> Bool { values[key] as? Bool ?? false }
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func set(_ value: Any, forKey key: String) { values[key] = value; writes[key, default: 0] += 1 }
+}
+enum HUDOverlayLayout {
+''' + '\n'.join('    ' + part for part in layout_parts) + '''
+}
 final class ViewStub {
     var selectedModule: HUDModule; var interactionEnabled = false; var isDraggingShelfItem = false; var isPreparingSourceBackdrop = false
     init(initialModule: HUDModule) { selectedModule = initialModule }
@@ -169,9 +248,14 @@ final class RevealStub { func close() {} }
 final class ShortcutStub { var stops = 0; func stop() { stops += 1 } }
 var effects: [String] = []
 
-final class OverlayModel {
+final class OverlayController {
+    static var isDiagnosticRun = false
+    ''' + public(last_property) + '''
+    ''' + public(last_defaults) + '''
     var systemState = SystemOverlayState()
-    ''' + public(default_line) + '''
+    var configuration = AppConfiguration()
+    var latestBatterySnapshot: BatterySnapshot?
+    var projectionHandoff = false
     var initialModuleRequest: HUDModule?
     var systemView: ViewStub?
     var quitRequested = false, quitAfterSystemClose = false, isEditingPosition = false, appLaunchInFlight = false
@@ -200,10 +284,10 @@ final class OverlayModel {
         switch action {
         case .none: return
         case .open(let token):
-            let initialModule = initialModuleRequest ?? lastSystemModule
-            systemView = ViewStub(initialModule: initialModule)
+            ''' + opening_line + '''
+            systemView = ViewStub(initialModule: opening)
             initialModuleRequest = nil
-            effects.append("open:\\(token):\\(initialModule.rawValue)")
+            effects.append("open:\\(token):\\(opening.rawValue)")
         case .close(let token):
             systemView?.interactionEnabled = false
             effects.append("close:\\(token)")
@@ -223,10 +307,15 @@ final class OverlayModel {
         systemView?.interactionEnabled = false
         tearDownSystemPresentation(restoreFocus: false, notify: false)
     }
+    // The two completion bodies, verbatim.
+    func appLaunchFailed() {
+''' + launch_failure + '''    }
+    func projectionReturned() {
+''' + projection_return + '''    }
 }
 
 final class AppModel {
-    let overlay = OverlayModel()
+    let overlay = OverlayController()
     let shortcut = ShortcutStub()
     var suspensionReasons = Set<Int>()
     var suspended: Bool { !suspensionReasons.isEmpty }
@@ -246,8 +335,9 @@ final class AppModel {
 }
 
 func run(_ script: [String]) -> [[String: Any]] {
-    Clock.now = 0; Clock.pending = []; Clock.serial = 0; UserDefaults.standard = Defaults(); effects = []
-    let app = AppModel()
+    Clock.now = 0; Clock.pending = []; Clock.serial = 0; UserDefaults.standard = UserDefaults(); effects = []
+    OverlayController.isDiagnosticRun = false
+    var app = AppModel()
     var rows: [[String: Any]] = []
     for event in script {
         effects = []
@@ -272,6 +362,17 @@ func run(_ script: [String]) -> [[String: Any]] {
         case "suspend": app.suspensionReasons.insert(1)
         case "resume": app.suspensionReasons.remove(1)
         case "editing": app.overlay.isEditingPosition = parts[1] == "on"
+        case "choose": app.overlay.configuration.overlayLayout.openModule = parts[1] == "last" ? nil : HUDModule(rawValue: parts[1])!
+        case "hide": app.overlay.configuration.moduleLayout.setHidden(HUDModule(rawValue: parts[1])!, true)
+        case "show": app.overlay.configuration.moduleLayout.setHidden(HUDModule(rawValue: parts[1])!, false)
+        case "saved": UserDefaults.standard.values[HUDOverlayLayout.lastModuleKey] = parts[1]
+        case "restart", "diagnostic":
+            // A relaunch: the defaults and the configuration outlive the process.
+            let configuration = app.overlay.configuration
+            OverlayController.isDiagnosticRun = parts[0] == "diagnostic"
+            app = AppModel(); app.overlay.configuration = configuration
+        case "launchFailed": app.overlay.appLaunchFailed()
+        case "projectionReturn": app.overlay.projectionReturned()
         case "advance":
             Clock.now += Double(parts[1])!
             while let next = Clock.pending.enumerated().filter({ $0.element.0 <= Clock.now }).min(by: { ($0.element.0, $0.element.1) < ($1.element.0, $1.element.1) }) {
@@ -285,6 +386,8 @@ func run(_ script: [String]) -> [[String: Any]] {
                      "last": o.lastSystemModule.rawValue, "request": o.initialModuleRequest?.rawValue as Any? ?? NSNull(),
                      "quitRequested": o.quitRequested, "terminating": app.terminating, "shortcutStops": app.shortcut.stops,
                      "hasLaunched": UserDefaults.standard.bool(forKey: "hasLaunched"),
+                     "saved": UserDefaults.standard.values[HUDOverlayLayout.lastModuleKey] ?? NSNull(),
+                     "savedWrites": UserDefaults.standard.writes[HUDOverlayLayout.lastModuleKey, default: 0],
                      "timers": Clock.pending.map { $0.0 - Clock.now }])
     }
     return rows
@@ -342,7 +445,11 @@ value['provenance'] = {'commit': PIN, 'sources': {name: hashlib.sha256((root / n
                                              'AppDelegate onQuitAccepted', 'OverlayController.toggleSystemOverlay',
                                              'OverlayController.requestQuit', 'OverlayController.closeSystemOverlay',
                                              'OverlayController.selectSystemModule', 'OverlayController.finishSystemOpening',
-                                             'OverlayController.finishSystemClosing', 'OverlayController.lastSystemModule default'],
+                                             'OverlayController.finishSystemClosing', 'OverlayController.lastSystemModule',
+                                             'OverlayController.lastModuleDefaults', 'OverlayController.requestAppShortcutLaunch failure',
+                                             'OverlayController.returnFromProjection completion', 'HUDOverlayLayout.initialModule',
+                                             'HUDOverlayLayout.lastModule', 'HUDOverlayLayout.saveLastModule',
+                                             'HUDDesktopWatchNavigation.rightModules', 'HUDModuleLayout order, hidden and restorable'],
                        'modelledFromAssertedLines': ['OverlayController.performSystemAction initial module', 'OverlayController.tearDownSystemPresentation',
                                                      'OverlayController.forceCloseSystemOverlay']}
 target.write_text(json.dumps(value, ensure_ascii=False, separators=(',', ':'), sort_keys=True) + '\n')

@@ -1,4 +1,5 @@
 #include "core/system_overlay_state.hpp"
+#include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include <cmath>
 #include <iostream>
@@ -66,7 +67,27 @@ std::string effectText(const core::SystemOverlayEffect& e) {
 void scripts(const Json& source) {
     std::size_t total{};
     for (const auto& script : source["scripts"].array()) {
+        // The app's wiring (Application::Impl): Display > Open on read from
+        // the configuration, Display > Modules' restore rule, and the module
+        // last opened restored from the settings envelope (SettingsStore::
+        // lastOpenedModule: Map when missing or not a module) on a normal run.
+        // rememberModule saves it as SettingsStore::saveLastOpenedModule does:
+        // only a name that differs from the saved one is written.
+        auto configuration = ehud::data::Settings::defaults();
+        ehud::data::ModuleLayout modules;
+        std::optional<std::string> saved;
+        std::int64_t writes{};
         core::SystemOverlayLifecycle life;
+        const auto relaunch = [&](bool diagnostic) {
+            life = core::SystemOverlayLifecycle{};
+            life.setModuleRestore([&](core::Module last) { return core::moduleNamed(modules.restorable(core::moduleIdentifier(last))).value_or(last); });
+            life.setOpenModule([&]() -> std::optional<core::Module> {
+                const auto chosen = configuration.overlayLayout().openModule;
+                return chosen ? core::moduleNamed(*chosen) : std::nullopt;
+            });
+            if (!diagnostic) life.restoreLastModule(core::moduleNamed(saved.value_or("map")).value_or(core::Module::map));
+        };
+        relaunch(false);
         bool defaults{};
         unsigned stops{};
         double now{};
@@ -115,12 +136,27 @@ void scripts(const Json& source) {
             else if (name == "resume") life.setSuspended(false);
             else if (name == "editing") life.setEditingPosition(argument == "on");
             else if (name == "advance") { now += std::stod(argument); effects = life.advance(now); }
+            else if (name == "choose") {
+                auto layout = configuration.overlayLayout();
+                layout.openModule = argument == "last" ? std::nullopt : std::optional(argument);
+                configuration.setOverlayLayout(layout);
+            }
+            else if (name == "hide" || name == "show") (void)modules.setHidden(argument, name == "hide");
+            else if (name == "saved") saved = argument;
+            else if (name == "restart" || name == "diagnostic") { relaunch(name == "diagnostic"); stops = 0; }
+            // AppShortcutArea::requestReopen: the failed launch's explicit Add App request.
+            else if (name == "launchFailed") effects = life.openSettingsModule(core::Module::addApp);
+            else if (name == "projectionReturn") effects = life.returnFromProjection();
             else throw std::runtime_error("Unknown scripted event " + event);
             const auto where = " after " + event + " (script event " + std::to_string(index) + ")";
             Json::Array texts;
             for (const auto& e : effects) {
                 if (e.kind == core::SystemOverlayEffect::Kind::markLaunched) defaults = true;
                 if (e.kind == core::SystemOverlayEffect::Kind::quitAccepted) ++stops;
+                if (e.kind == core::SystemOverlayEffect::Kind::rememberModule) {
+                    const auto module = std::string(core::moduleIdentifier(e.module));
+                    if (saved != module) { saved = module; ++writes; }
+                }
                 if (auto text = effectText(e); !text.empty()) texts.emplace_back(std::move(text));
             }
             const auto& expected = row["effects"].array();
@@ -138,6 +174,8 @@ void scripts(const Json& source) {
             check(life.terminating() == row["terminating"].boolean(), "terminating" + where);
             check(stops == row["shortcutStops"].integer(), "Shortcut stops" + where);
             check(defaults == row["hasLaunched"].boolean(), "hasLaunched marker" + where);
+            check(row["saved"].isNull() ? !saved : saved == row["saved"].string(), "Saved hudLastOpenedModule" + where);
+            check(writes == row["savedWrites"].integer(), "hudLastOpenedModule writes" + where);
             const auto& timers = row["timers"].array();
             check(life.pendingSelections() == timers.size(), "Pending delayed selections" + where);
             for (std::size_t n = 0; n < timers.size(); ++n)
@@ -145,7 +183,7 @@ void scripts(const Json& source) {
             ++total;
         }
     }
-    check(total > 300, "Scripted lifecycle coverage");
+    check(total > 450, "Scripted lifecycle coverage");
 }
 
 void contracts() {
