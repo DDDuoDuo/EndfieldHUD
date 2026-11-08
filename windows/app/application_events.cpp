@@ -68,9 +68,10 @@ ModuleCursor Application::Impl::cursorAt(core::Point p){
     if(arrangingModules&&arrangeDrag)return ModuleCursor::closedHand;
     chosen.reset();bool covered=false;
     (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);covered=!chosen&&o.covers(p);return chosen.has_value()||covered;},"cursor");
-    // The open hand over a module tile only where no owner answers or covers
-    // the point (a pinned note, a module's own drag or editor keeps its cursor).
-    if(!chosen&&!covered&&arrangeableModule(p))return ModuleCursor::openHand;
+    // The open hand over a module tile wherever a press would drag it
+    // (rightRowTarget: a pinned note or the charge capsule keeps its cursor)
+    // and no owner answers a cursor (a module's own drag or editor keeps its).
+    if(!chosen&&arrangeableModule(p))return ModuleCursor::openHand;
     return chosen.value_or(ModuleCursor::source);
 }
 

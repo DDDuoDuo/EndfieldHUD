@@ -202,7 +202,14 @@ std::optional<std::string_view> Application::Impl::rightRowTarget(core::Point p)
     using C = ModuleRegistry::Chain;
     if (!arrangingModules || !session || !allowsInputBesidePlacement()) return std::nullopt;
     if (registry.any([](ModuleOwner& o) { return o.capturesPointer(); }, "arrange")) return std::nullopt;
-    if (registry.first(C::pointer, [&](ModuleOwner& o, const ModuleRouting&) { return o.covers(p); }, "arrange")) return std::nullopt;
+    // A pinned note, the charge capsule, the gauge or the facility banner over
+    // a tile keeps its press. The shown module's own controls do not: on the
+    // Mac arranging comes before designControlContains, and only the
+    // canvas's open text editor (hitTest's textView) wins.
+    const auto* canvas = notes ? registry.presenter(notes->selected()) : nullptr;
+    if (registry.first(C::pointer, [&](ModuleOwner& o, const ModuleRouting&) {
+            return &o == canvas ? o.cursorAt(p) == std::optional(ModuleCursor::text) : o.covers(p);
+        }, "arrange")) return std::nullopt;
     // While a tile is dragged, the slots at rest decide where it goes, so the
     // tiles sliding to make room cannot flip the order back.
     const auto action = session->rowActionAt(p, arrangeDrag && arrangeDrag->lifted);
