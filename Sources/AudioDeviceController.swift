@@ -23,6 +23,9 @@ struct AudioApplicationInfo: Identifiable, Equatable {
     /// Current, or last confirmed while this exact process object/PID remains
     /// live, output device IDs. An empty list never invents a default route.
     var outputDeviceIDs: [UInt32] = []
+    /// True when outputDeviceIDs are the remembered ones of a process that is
+    /// playing to no device right now, so they need not match the output.
+    var outputDevicesRemembered = false
     /// Presentation only. A helper keeps its own HAL object/PID and bundle ID.
     var applicationURL: URL? = nil
     var icon: NSImage? = nil
@@ -829,7 +832,8 @@ private final class AudioDeviceStateEngine {
             let rememberedDevices = nextKnownProcesses[id]?.devices ?? []
             let app = AudioApplicationInfo(id: id, pid: pid, bundleIdentifier: bundle, name: name,
                 isRunningOutput: output, isRunningInput: input,
-                outputDeviceIDs: outputDevices.isEmpty ? rememberedDevices : outputDevices)
+                outputDeviceIDs: outputDevices.isEmpty ? rememberedDevices : outputDevices,
+                outputDevicesRemembered: outputDevices.isEmpty && !rememberedDevices.isEmpty)
             if output || input { next.activeApplications.append(app) }
             if !app.outputDeviceIDs.isEmpty, pid != ProcessInfo.processInfo.processIdentifier {
                 next.availableApplications.append(app)

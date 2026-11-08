@@ -88,7 +88,11 @@ final class PerAppAudioController {
             return L10n.text("Choose another process with active audio output", "请选择正在输出音频的其他进程")
         }
         if let refusal = outputAvailability(output) { return refusal }
-        if !application.outputDeviceIDs.isEmpty && Set(application.outputDeviceIDs) != Set([output.id]) {
+        // The engine's rule: a process playing to no device right now is
+        // accepted whatever it played to before (a paused app whose output
+        // has since changed); one playing elsewhere or to several is not.
+        if !application.outputDevicesRemembered, !application.outputDeviceIDs.isEmpty,
+           Set(application.outputDeviceIDs) != Set([output.id]) {
             return L10n.text("This app uses a different output route", "此应用使用其他输出路由")
         }
         return nil
