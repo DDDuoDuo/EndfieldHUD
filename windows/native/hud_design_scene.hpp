@@ -112,6 +112,9 @@ core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
 // inverse is `inverseBox`), as the scene clips a part outside a group.
 // Nullopt when the mask shows nothing (a singular world or empty bounds).
 std::optional<PlaneMask> designPlaneMask(const modules::design::PoseMask&, const core::Matrix4& inverseBox) noexcept;
+// A design colour (sRGB, straight alpha) as the renderer's linear multiply
+// (DrawObject::linearTint), as the scene tints its surfaces.
+std::array<float, 4> designLinearTint(const modules::design::Color&) noexcept;
 class NativeDesignScene final {
 public:
     // LayerRasterOptions::magnification: the tree is drawn under a transform

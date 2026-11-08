@@ -1,4 +1,6 @@
 #include "native/watch_presentation.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -77,7 +79,9 @@ void checkPlacement(const LayerScene& layers,const NativeLabelPlacement& expecte
         check(draw.masks[i].worldToLocal==expected.masks[i].worldToLocal&&draw.masks[i].bounds==expected.masks[i].bounds,"Native clip homography is neither dropped nor applied twice");
 }
 void alphaAt(const Readback& image,unsigned x,unsigned y,unsigned expected){
-    check(image.pixels.at(std::size_t(y)*image.rowBytes+x*4+3)==expected,"Owned rendered pixel obeys original projected clipping");
+    const unsigned actual=image.pixels.at(std::size_t(y)*image.rowBytes+x*4+3);
+    if(actual!=expected)throw std::runtime_error("Owned rendered pixel obeys original projected clipping: ("+std::to_string(x)+", "+std::to_string(y)+") alpha "+std::to_string(actual)+", expected "+std::to_string(expected));
+    ++checks;
 }
 void retainedLabels(const std::filesystem::path& shader){
     OwnedWindow window;Renderer renderer;
@@ -165,6 +169,30 @@ void retainedLabels(const std::filesystem::path& shader){
     check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owned label resources detach cleanly");
     check(!IsWindowVisible(window.get()),"Synthetic WARP fixture remains hidden and never captures desktop pixels");
 }
+// Display > Modules > Arrange on HUD: the marks' draws and the excluding
+// plane mask (the raised tile cut out of its neighbours) in the shader.
+void arrangeMarks(const std::filesystem::path& shader){
+    OwnedWindow window;Renderer renderer;renderer.initialize(window.get(),200,100,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
+    renderer.setCamera(layerViewportProjection(200,100));
+    LayerRasterizer raster;LayerScene local(raster);LayerRasterOptions options;local.load(Json::Object{{"bounds",Json::Array{0,0,200,100}},{"children",Json::Array{}}},options);local.upload(renderer);
+    WatchArrangeMarks marks(2);check(marks.draws().size()==12&&std::all_of(marks.draws().begin(),marks.draws().end(),[](const DrawObject&d){return d.opacity==0;}),"A fixed pool of six draws per mark, hidden at first");
+    check(marks.upload(renderer)&&!marks.upload(renderer),"The unit quad uploads once");
+    const std::array<Point,4> corners{{{0,0},{200,0},{200,100},{0,100}}};
+    NativeArrangeMark mark{"button",nativeProjectiveTextTransform(corners,{200,100}),{200,100},false,1,{NativeLabelMask{{},{0,0,200,100}},NativeLabelMask{{},{50,25,100,50},true}}};
+    const std::array<std::array<Rect,WatchArrangeMarks::rectangles>,1> rects{{{Rect{0,0,200,100},Rect{},Rect{},Rect{},Rect{},Rect{}}}};
+    check(marks.update(std::span(&mark,1),rects,{1,1,1,1})&&marks.shown()==1,"A mark set is drawn");
+    check(marks.draws()[0].opacity==1&&marks.draws()[1].opacity==0&&marks.draws()[6].opacity==0&&marks.draws()[0].masks.size()==2&&marks.draws()[0].masks[1].exclude,"Its rectangles carry the mark's masks; empty ones and unused sets stay hidden");
+    check(!marks.update(std::span(&mark,1),rects,{1,1,1,1}),"An unchanged mark changes no draw");
+    LayerComposition composition;const std::array entries{LayerCompositionEntry{&local,marks.draws()}};composition.setEntries(renderer,entries);
+    {NativeArrangeMark plain=mark;plain.masks.clear();(void)marks.update(std::span(&plain,1),rects,{1,1,1,1});composition.present(renderer);renderer.draw(false);
+     const auto pixels=renderer.readback();alphaAt(pixels,20,50,255);alphaAt(pixels,100,50,255);}
+    {NativeArrangeMark clipped=mark;clipped.masks.pop_back();(void)marks.update(std::span(&clipped,1),rects,{1,1,1,1});composition.present(renderer);renderer.draw(false);
+     const auto pixels=renderer.readback();alphaAt(pixels,20,50,255);alphaAt(pixels,100,50,255);}
+    (void)marks.update(std::span(&mark,1),rects,{1,1,1,1});composition.present(renderer);renderer.draw(false);
+    const auto pixels=renderer.readback();alphaAt(pixels,20,50,255);alphaAt(pixels,180,10,255);alphaAt(pixels,100,50,0);alphaAt(pixels,60,30,0);
+    check(marks.update({},{},{1,1,1,1})&&marks.shown()==0&&marks.draws()[0].opacity==0,"No marks: every draw hidden");
+    composition.detach(renderer);check(marks.releaseResources(renderer),"The quad is released");local.detach(renderer);
+}
 void accent(){
     const std::array<float,4> raw{.8f,.6f,.1f,.375f};
     const std::optional<std::array<float,3>> replacement=std::array<float,3>{.2f,.1f,.02f};
@@ -189,7 +217,7 @@ int wmain(int argc,wchar_t** argv){
     const HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     try{
         check(SUCCEEDED(initialized)&&argc==2,"Expected COM and one explicit hud.hlsl path");
-        accent();retainedLabels(std::filesystem::path(argv[1]));
+        accent();retainedLabels(std::filesystem::path(argv[1]));arrangeMarks(std::filesystem::path(argv[1]));
         CoUninitialize();std::cout<<"PASS "<<checks<<" source watch presentation checks\n";return 0;
     }catch(const std::exception& error){countAllocations=false;if(SUCCEEDED(initialized))CoUninitialize();
         std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

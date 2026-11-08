@@ -1,4 +1,6 @@
 #include "core/source_native_labels.hpp"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -131,7 +133,39 @@ void oracle(const Json& animation,const Json& frame){
     check(allocations==0&&plan.stats().contentBoundsChanges==before.contentBoundsChanges,"Actual shell pointer placement path allocates nothing and preserves raster bounds");
 }
 }
-int main(int argc,char**argv){try{synthetic();if(argc==2){const std::filesystem::path root=argv[1];const auto animation=read(root/"animation.json");
+// Display > Modules > Arrange on HUD: corner marks on the draggable tiles,
+// and the tile drawn above the others cut out of its neighbours' captions,
+// icons and marks (an excluding mask: the Mac's even-odd clip path).
+void arrangeCover(){
+    const auto node=[](std::string id,std::optional<std::string> parent,std::vector<std::string> children,Vec2 size){Node n;n.id=id;n.name=id;n.path=parent?*parent+"/"+id:id;n.parent=parent;n.children=std::move(children);n.rect=RectTransform{{0,0},{0,0},{0,0},size,{.5,.5}};return n;};
+    SceneDefinition scene("root",{node("root",{},{"a","b"},{2,2}),node("a","root",{"acap","aicon"},{1,1}),node("b","root",{"bcap","bicon"},{1,1}),
+        node("acap","a",{},{.8,.2}),node("aicon","a",{},{.4,.4}),node("bcap","b",{},{.8,.2}),node("bicon","b",{},{.4,.4})});
+    auto nodes=SourceLayout(scene).resolve();std::vector<double> alpha(nodes.size(),1);
+    NativeLabelPlan plan(scene,{{"a.text","acap","a",NativeLabelKind::caption,false,false},{"a.icon","aicon","a",NativeLabelKind::icon,false,true},
+        {"b.text","bcap","b",NativeLabelKind::caption,false,false},{"b.icon","bicon","b",NativeLabelKind::icon,false,true}});
+    CameraFrame camera;const Rect viewport{0,0,200,200};
+    std::array<NativeLabelButtonState,2> buttons{NativeLabelButtonState{true,true,false,{}},NativeLabelButtonState{true,true,false,{}}};
+    buttons[0].outline=NativeClipPlane{{{-1,-.5},{1,1}},{}};buttons[1].outline=NativeClipPlane{{{0,-.5},{1,1}},{}};
+    plan.update(nodes,alpha,buttons,camera,viewport);
+    check(plan.marks().empty()&&std::none_of(plan.placements().begin(),plan.placements().end(),[](const auto&p){return std::any_of(p.masks.begin(),p.masks.end(),[](const auto&m){return m.exclude;});}),"Not arranging: no marks and no cut");
+    buttons[0].arrangeMark=buttons[1].arrangeMark=true;check(plan.update(nodes,alpha,buttons,camera,viewport),"Arranging changes the marks");
+    check(plan.marks().size()==2&&plan.marks()[0].buttonID=="a"&&!plan.marks()[0].lifted&&std::abs(plan.marks()[0].size[0]-100)<1e-9&&std::abs(plan.marks()[0].size[1]-100)<1e-9,"Each draggable tile is marked, sized in points on the projected tile");
+    close(plan.marks()[0].world.values[12],0,1e-9,"The marks' box starts at the tile's projected top left");close(plan.marks()[0].world.values[13],50,1e-9,"Y converted once");
+    // b is dragged over a: lifted marks on b, and a's captions, icons and marks lose b's outline.
+    buttons[1].liftedMark=buttons[1].raised=true;buttons[1].outline=NativeClipPlane{{{-.6,-.5},{1,1}},{}};check(plan.update(nodes,alpha,buttons,camera,viewport),"Lifting changes the marks");
+    const auto excluded=[](std::span<const NativeLabelMask> masks){return std::count_if(masks.begin(),masks.end(),[](const auto&m){return m.exclude;});};
+    const auto p=plan.placements();check(excluded(p[0].masks)==1&&excluded(p[1].masks)==1&&excluded(p[2].masks)==0&&excluded(p[3].masks)==0,"The raised tile is cut out of its neighbour's caption and icon only");
+    check(plan.marks()[1].lifted&&excluded(plan.marks()[0].masks)==1&&excluded(plan.marks()[1].masks)==0,"The neighbour's marks lose the raised outline too; the raised tile's marks widen");
+    {const auto&hole=p[0].masks.back();check(hole.bounds==Rect{0,0,1,1},"The hole is the raised tile's projected outline");
+     const auto local=[&](double x,double y){const auto&m=hole.worldToLocal.values;const double w=m[3]*x+m[7]*y+m[15];return Point{(m[0]*x+m[4]*y+m[12])/w,(m[1]*x+m[5]*y+m[13])/w};};
+     const auto inside=local(100-.6*100+50,100);check(inside.x>0&&inside.x<1&&inside.y>0&&inside.y<1,"The raised tile's centre lies in the hole");
+     const auto outside=local(10,100);check(outside.x<0,"The neighbour's far side stays outside it");}
+    buttons[1].outline=NativeClipPlane{{{1.5,-.5},{1,1}},{}};plan.update(nodes,alpha,buttons,camera,viewport);
+    check(excluded(plan.placements()[0].masks)==0,"A raised tile outside the neighbour's clip cuts nothing");
+    const auto before=plan.stats();check(!plan.update(nodes,alpha,buttons,camera,viewport)&&plan.stats().unchangedUpdates==before.unchangedUpdates+1,"Unchanged marks and cover skip the projection");
+    buttons[0].arrangeMark=buttons[1].arrangeMark=buttons[1].liftedMark=buttons[1].raised=false;check(plan.update(nodes,alpha,buttons,camera,viewport)&&plan.marks().empty(),"Arranging off removes the marks");
+}
+int main(int argc,char**argv){try{synthetic();arrangeCover();if(argc==2){const std::filesystem::path root=argv[1];const auto animation=read(root/"animation.json");
     for(const auto name:{"desktop-shell-1280x800-top","desktop-shell-1280x800-bottom","desktop-shell-1920x1080-top","desktop-shell-1920x1080-bottom"})oracle(animation,read(root/"frame"/(std::string(name)+".json")));}
     else check(argc==1,"Pass at most one explicit owned Mac package root");
     std::cout<<"PASS "<<checks<<" source-native label projection checks\n";return 0;

@@ -106,14 +106,53 @@ bool WatchLabelPresentation::update(const core::source::SourceWatchFrame&frame,c
         const auto hit=std::find_if(frame.hits.begin(),frame.hits.end(),[&](const auto&h){return h.buttonID==id;});auto&m=masks_[i];m.clear();
         if(hit!=frame.hits.end()){need(hit->masks.size()<=core::source::NativeLabelPlan::maximumButtonMasks,"Source button has too many mask ancestors");for(const auto&mask:hit->masks)m.push_back({mask.rect,mask.world});}
         buttons_[i]={action!=availability.end()&&action->enabled,hit!=frame.hits.end(),action!=availability.end()&&action->expandFileShelfCaption,m};
+        // Arrange on HUD: the button's own hit (its graphic's, else its first) as drawn.
+        const auto own=std::find_if(frame.hits.begin(),frame.hits.end(),[&](const auto&h){return h.buttonID==id&&h.graphicID==id;});
+        const auto outline=own!=frame.hits.end()?own:hit;
+        buttons_[i].arrangeMark=action!=availability.end()&&action->arrangeMark;buttons_[i].liftedMark=action!=availability.end()&&action->liftedMark;
+        buttons_[i].raised=action!=availability.end()&&action->raised;
+        buttons_[i].outline=outline!=frame.hits.end()?std::optional<core::source::NativeClipPlane>(core::source::NativeClipPlane{outline->rect,outline->world}):std::nullopt;
     }
     changedBounds_.clear();const bool changed=plan_->update(frame.resolved,frame.inheritedAlpha,buttons_,camera,viewport);
     if(!changed&&initialized_)return false;
     const auto source=plan_->placements();
-    for(std::size_t i=0;i<source.size();++i){const auto&s=source[i];auto&p=placements_[i];auto&m=drawMasks_[i];m.clear();for(const auto&mask:s.masks)m.push_back({mask.worldToLocal,mask.bounds});p.world=s.world;p.opacity=s.opacity;p.masks=m;
+    for(std::size_t i=0;i<source.size();++i){const auto&s=source[i];auto&p=placements_[i];auto&m=drawMasks_[i];m.clear();for(const auto&mask:s.masks)m.push_back({mask.worldToLocal,mask.bounds,0,mask.exclude});p.world=s.world;p.opacity=s.opacity;p.masks=m;
         if(!initialized_||priorBounds_[i]!=s.contentBounds){priorBounds_[i]=s.contentBounds;changedBounds_.push_back(i);}
     }
     layers_->setPlacements(placements_);initialized_=true;return true;
 }
 void WatchLabelPresentation::present(Renderer&renderer){layers_->present(renderer);}
+namespace {
+constexpr std::array<Vertex,4> arrangeQuad{{{{0,0,0},{0,0}},{{1,0,0},{1,0}},{{1,1,0},{1,1}},{{0,1,0},{0,1}}}};
+constexpr std::array<std::uint32_t,6> arrangeIndices{0,1,2,0,2,3};
+constexpr const char* arrangeMesh="watch.arrange.quad";
+}
+WatchArrangeMarks::WatchArrangeMarks(std::size_t maximumMarks){
+    draws_.resize(maximumMarks*rectangles);
+    for(std::size_t n=0;n<draws_.size();++n){auto&d=draws_[n];d.sourceID="watch.arrange."+std::to_string(n);d.meshID=arrangeMesh;d.opacity=0;d.masks.reserve(8);}
+}
+bool WatchArrangeMarks::update(std::span<const core::source::NativeArrangeMark> marks,std::span<const std::array<core::Rect,rectangles>> rects,std::array<float,4> tint){
+    need(rects.size()==marks.size(),"Every arrange mark needs its rectangles");
+    bool changed=false;std::size_t n=0;
+    for(std::size_t k=0;k<marks.size()&&n+rectangles<=draws_.size();++k){const auto&mark=marks[k];
+        for(const auto&r:rects[k]){auto&d=draws_[n++];if(!(r.width>0&&r.height>0)){changed|=d.opacity!=0;d.opacity=0;continue;}
+            const auto world=mark.world*core::Matrix4::translation(r.x,r.y)*core::Matrix4::scale(r.width,r.height);
+            const float opacity=std::clamp(mark.opacity,0.f,1.f);
+            bool same=d.world==world&&d.opacity==opacity&&d.linearTint==tint&&d.masks.size()==mark.masks.size();
+            for(std::size_t m=0;same&&m<mark.masks.size();++m)same=d.masks[m].worldToLocal==mark.masks[m].worldToLocal&&d.masks[m].bounds==mark.masks[m].bounds&&d.masks[m].exclude==mark.masks[m].exclude;
+            if(same)continue;changed=true;d.world=world;d.opacity=opacity;d.linearTint=tint;
+            d.masks.clear();for(const auto&mask:mark.masks)d.masks.push_back({mask.worldToLocal,mask.bounds,0,mask.exclude});}
+    }
+    shown_=n/rectangles;
+    for(;n<draws_.size();++n){auto&d=draws_[n];if(d.opacity!=0){d.opacity=0;changed=true;}}
+    return changed;
+}
+bool WatchArrangeMarks::upload(Renderer&renderer){
+    need(!resourceOwner_||resourceOwner_==&renderer,"Arrange marks belong to another renderer");
+    if(resourceOwner_)return false;const bool uploaded=renderer.setMesh(arrangeMesh,1,{arrangeQuad,arrangeIndices});resourceOwner_=&renderer;return uploaded;
+}
+bool WatchArrangeMarks::releaseResources(Renderer&renderer){
+    need(!resourceOwner_||resourceOwner_==&renderer,"Arrange marks belong to another renderer");
+    if(!resourceOwner_)return true;if(!renderer.stats().initialized||renderer.removeMesh(arrangeMesh)){resourceOwner_=nullptr;return true;}return false;
+}
 } // namespace endfield::native

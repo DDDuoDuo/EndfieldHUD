@@ -24,7 +24,7 @@ Matrix matrix(const d::Affine& a) {
 float linear(double c) { c = std::clamp(c, 0., 1.); return float(c <= .04045 ? c / 12.92 : std::pow((c + .055) / 1.055, 2.4)); }
 std::array<float, 4> linearTint(const std::optional<d::Color>& c) {
     if (!c) return {1, 1, 1, 1};
-    return {linear(c->r), linear(c->g), linear(c->b), float(std::clamp(c->a, 0., 1.))};
+    return designLinearTint(*c);
 }
 // A lazy surface keeps no bitmap while it does not show (Mac: a layer at
 // opacity 0 keeps no backing store): its leaf holds one transparent point
@@ -715,6 +715,9 @@ void NativeDesignScene::setInsertion(const d::Layer* after, std::optional<LayerC
     i.refreshEntries();
 }
 core::Matrix4 designMatrix(const d::Affine& a) noexcept { return matrix(a); }
+std::array<float, 4> designLinearTint(const d::Color& c) noexcept {
+    return {linear(c.r), linear(c.g), linear(c.b), float(std::clamp(c.a, 0., 1.))};
+}
 std::optional<PlaneMask> designPlaneMask(const d::PoseMask& m, const core::Matrix4& inverseBox) noexcept {
     const auto inverse = m.world.inverse();
     if (!inverse || !(m.bounds.width > 0) || !(m.bounds.height > 0)) return std::nullopt;
