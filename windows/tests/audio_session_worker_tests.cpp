@@ -109,6 +109,27 @@ void silentProcess(){
         check(failed.applications().empty()&&g.calls.empty(),"A failed route is never kept for a silent app");
     }
 }
+// The native backend's watch of a process whose last session expired, with
+// a synthetic value standing in for its handle and exit wake: it lasts while
+// the routes ask after each read, is released (unwatched) a read after they
+// stop, and the table stays bounded.
+void idleProcesses(){
+    struct Watch{int id{};bool*released{};};
+    AudioIdleProcesses<Watch>idle(2);bool firstReleased{},secondReleased{},thirdReleased{};
+    const auto release=[](Watch&w){*w.released=true;};
+    check(idle.keep("42:100",{1,&firstReleased})&&idle.contains("42:100"),"A process kept when its last session expires");
+    check(!idle.keep("42:100",{9,&thirdReleased})&&idle.ask("42:100")->id==1,"The first watch of a process is kept");
+    idle.round(release);check(idle.contains("42:100")&&!firstReleased,"Kept through the read after it expired, even before any ask");
+    check(idle.ask("42:100")&&idle.ask("42:100")->id==1,"The routes ask after that read");
+    idle.round(release);check(idle.contains("42:100")&&!firstReleased,"Asked since the previous read: kept");
+    idle.round(release);check(!idle.contains("42:100")&&firstReleased,"Not asked since the previous read: unwatched and released");
+    check(!idle.ask("42:100"),"A released process is not running for the routes");
+    check(idle.keep("43:100",{2,&secondReleased})&&idle.keep("44:100",{3,&thirdReleased})&&!idle.keep("45:100",{4,&firstReleased})&&idle.size()==2,"The table is bounded");
+    int seen{};idle.each([&](Watch&w){seen+=w.id;});check(seen==5,"Pause and resume reach every kept watch");
+    idle.round(release);(void)idle.ask("44:100");idle.round(release);
+    check(!idle.contains("43:100")&&secondReleased&&idle.contains("44:100")&&!thirdReleased,"Only the process still asked about stays");
+    idle.clear();check(!idle.size(),"Close releases every watch");
+}
 void appearanceMetadata(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable e;e.path="C:\\explicit-synthetic\\app.exe";e.identity.objectID[0]=1;e.identity.volumeSerial=9;f.records[0].executable=e;routes.update(f.records,f);
     check(routes.applications()[0].executable==e&&f.calls.empty(),"Captured regular-file appearance metadata flows through existing process grouping without audio writes");
     f.records[1].executable=e;routes.update(f.records,f);check(routes.applications()[0].executable==e,"Matching process sessions share one exact icon source");
@@ -146,4 +167,4 @@ void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMut
     check(!worker.activate(L"fixture endpoint")&&!worker.setGain("42:100",.5f),"Closed worker rejects stale queued UI commands");
 }
 }
-int main(){try{transactions();pausedPlayer();exitedProcess();silentProcess();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{transactions();pausedPlayer();exitedProcess();silentProcess();idleProcesses();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -169,8 +169,8 @@ class NativeBackend final:public AudioSessionBackend {
     // runs on): its handle and exit wake stay while the routes keep asking
     // processRunning after each read (an owned route outlives its sessions,
     // source 74a7935). One not asked since the previous read is released.
-    struct Idle{std::unique_ptr<Handle>process;HANDLE exitWait{};bool asked{true};};
-    std::map<std::string,Idle,std::less<>>idle;
+    struct Idle{std::unique_ptr<Handle>process;HANDLE exitWait{};};
+    AudioIdleProcesses<Idle>idle{capacity};
     static void unwatch(Idle&i)noexcept{if(i.exitWait){UnregisterWaitEx(i.exitWait,INVALID_HANDLE_VALUE);i.exitWait=nullptr;}}
     void watch(Idle&i)noexcept{if(route&&!i.exitWait&&i.process&&i.process->value&&!RegisterWaitForSingleObject(&i.exitWait,i.process->value,processExited,route.get(),INFINITE,WT_EXECUTEONLYONCE|WT_EXECUTEINWAITTHREAD))i.exitWait=nullptr;}
     // A handle without SYNCHRONIZE cannot be waited on: its exit code tells.
@@ -266,7 +266,7 @@ public:
         if(SUCCEEDED(hr)&&(count<0||count>static_cast<int>(capacity)))hr=HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
         for(int n=0;SUCCEEDED(hr)&&n<count;++n){ComPtr<IAudioSessionControl>control;hr=sessions->GetSession(n,&control);if(SUCCEEDED(hr))hr=add(control.Get());}
         if(SUCCEEDED(hr))hr=collect();if(FAILED(hr)){pause();return hr;}
-        for(auto&[_,i]:idle)watch(i);
+        idle.each([this](Idle&i){watch(i);});
         return hr;
         }catch(const std::bad_alloc&){pause();return E_OUTOFMEMORY;}catch(...){pause();return E_FAIL;}
     }
@@ -274,20 +274,20 @@ public:
         if(!ownThread())std::terminate();if(route)route->close();
         if(managerRegistered&&manager&&notification)manager->UnregisterSessionNotification(notification.Get());managerRegistered=false;
         for(auto&[_,e]:entries){if(e.registered&&e.control&&e.events)e.control->UnregisterAudioSessionNotification(e.events.Get());e.registered=false;e.events.Reset();unwatch(e);}
-        for(auto&[_,i]:idle)unwatch(i);
+        idle.each([](Idle&i){unwatch(i);});
         if(route)route->discard();notification.Reset();route.reset();manager.Reset();enumerator.Reset();
     }
     std::int32_t read(std::vector<AudioSessionRecord>&out)override{
         if(!ownThread())return RPC_E_WRONG_THREAD;auto hr=collect();if(FAILED(hr))return hr;std::vector<AudioSessionRecord>next;next.reserve(entries.size());
-        for(auto i=idle.begin();i!=idle.end();){if(!i->second.asked){unwatch(i->second);i=idle.erase(i);}else{i->second.asked=false;++i;}}
+        idle.round([](Idle&i){unwatch(i);});
         for(auto it=entries.begin();it!=entries.end();){auto&e=it->second;AudioSessionState state{};hr=e.control->GetState(&state);
             // Expired, or its process terminated and that was already reported
             // once (owned attenuation had its chance to be restored): release.
             if((SUCCEEDED(hr)&&state==AudioSessionStateExpired)||e.exitReported){if(e.registered&&e.events)e.control->UnregisterAudioSessionNotification(e.events.Get());unwatch(e);
                 // An expired session of a process that runs on keeps the
                 // process watched until the routes stop asking about it.
-                if(!e.exitReported&&e.process&&e.process->value&&!e.record.processKey.empty()&&!ended(e)&&idle.size()<capacity&&!idle.contains(e.record.processKey)){
-                    Idle kept;kept.process=std::move(e.process);watch(kept);idle.emplace(e.record.processKey,std::move(kept));}
+                if(!e.exitReported&&e.process&&e.process->value&&!e.record.processKey.empty()&&!ended(e)){
+                    Idle kept;kept.process=std::move(e.process);if(auto*watched=idle.keep(e.record.processKey,std::move(kept)))watch(*watched);}
                 it=entries.erase(it);continue;}
             auto record=e.record;record.active=SUCCEEDED(hr)&&state==AudioSessionStateActive;record.volume.reset();record.error=hr;
             if(ended(e)){record.exited=true;record.active=false;e.exitReported=true;}
@@ -302,8 +302,7 @@ public:
     bool processRunning(std::string_view processKey)noexcept override{
         if(!ownThread())return false;
         for(const auto&[_,e]:entries)if(e.record.processKey==processKey&&!e.exitReported&&e.process&&e.process->value&&running(e.process->value))return true;
-        const auto found=idle.find(processKey);if(found==idle.end()||!found->second.process||!found->second.process->value)return false;
-        found->second.asked=true;return running(found->second.process->value);
+        const auto*kept=idle.ask(processKey);return kept&&kept->process&&kept->process->value&&running(kept->process->value);
     }
     void close()noexcept override{pause();entries.clear();idle.clear();endpoint.clear();}
 };

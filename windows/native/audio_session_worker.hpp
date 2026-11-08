@@ -2,6 +2,7 @@
 #include "core/data/file_shelf_store.hpp"
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -97,6 +98,34 @@ public:
     // which ends the route.
     virtual bool processRunning(std::string_view processKey)noexcept=0;
     virtual void close()noexcept=0;
+};
+// The processes a native backend keeps watching after their last session
+// expired, for processRunning. Each read starts a round: a process the routes
+// did not ask about since the previous read is released. Value is the
+// backend's own handle and exit wake; the bookkeeping stays portable so it is
+// tested without native audio.
+template<class Value>class AudioIdleProcesses final {
+public:
+    explicit AudioIdleProcesses(std::size_t limit)noexcept:limit_(limit){}
+    // Kept as asked, so it lasts at least until the read after next. A process
+    // already kept, or a full table, keeps nothing (nullptr; value is dropped).
+    Value*keep(std::string key,Value value){
+        if(entries_.size()>=limit_||entries_.find(key)!=entries_.end())return nullptr;
+        return &entries_.emplace(std::move(key),Kept{std::move(value),true}).first->second.value;
+    }
+    // Marks the process asked this round; nullptr when it is not kept.
+    Value*ask(std::string_view key)noexcept{const auto found=entries_.find(key);if(found==entries_.end())return nullptr;found->second.asked=true;return &found->second.value;}
+    // release(value) runs before a process not asked since the last round is erased.
+    template<class Release>void round(Release&&release)noexcept{
+        for(auto i=entries_.begin();i!=entries_.end();){if(!i->second.asked){release(i->second.value);i=entries_.erase(i);}else{i->second.asked=false;++i;}}
+    }
+    template<class F>void each(F&&f)noexcept{for(auto&[_,kept]:entries_)f(kept.value);}
+    bool contains(std::string_view key)const noexcept{return entries_.find(key)!=entries_.end();}
+    std::size_t size()const noexcept{return entries_.size();}
+    void clear()noexcept{entries_.clear();}
+private:
+    struct Kept{Value value;bool asked{};};
+    std::size_t limit_;std::map<std::string,Kept,std::less<>>entries_;
 };
 // Source-owned attenuation transaction. Direct100% does not alter the user's
 // native mixer; an owned route stays listed, at its gain, while its app has
