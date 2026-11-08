@@ -60,7 +60,7 @@ MapViewport G::zoomed(MapViewport camera,P point,double factor)noexcept{
 bool G::contains(P point)noexcept{return contains(point,radius);}
 bool G::contains(P point,double limit)noexcept{return finite(point)&&std::hypot(point.x-center.x,point.y-center.y)<=limit;}
 
-void validateMapSnapshot(const MapSnapshot&s){validatePins(s.pins);need(mapNormalized(s.viewport)==s.viewport,"The saved map could not be read. The original data has been preserved.");}
+void validateMapSnapshot(const MapSnapshot&s){validatePins(s.pins);need(mapNormalized(s.viewport)==s.viewport,"The saved map could not be read. The original data has been preserved");}
 MapSnapshot migrateMapSnapshot(MapSnapshot s,unsigned version){need(version>=1&&version<=4,version>4?"This map was saved by a newer version of EndfieldHUD":"Invalid map archive version");validatePins(s.pins);if(version==1){const auto&v=s.viewport;need(std::isfinite(v.centerX)&&v.centerX>=0&&v.centerX<1&&std::isfinite(v.centerY)&&v.centerY>=0&&v.centerY<=1&&std::isfinite(v.zoom)&&v.zoom>=1&&v.zoom<=16,"Invalid legacy map camera");s.viewport={};}else{validateMapSnapshot(s);auto old=MapViewport{};old.zoom=version==2?24:72;if(version<4&&s.viewport==old)s.viewport={};}for(auto&p:s.pins)p.id=canonical(std::move(p.id));return s;}
 
 MapState::MapState(MapSnapshot s,MapPersistence p):persisted_(std::move(s)),persistence_(std::move(p)){validateMapSnapshot(persisted_);for(auto&pin:persisted_.pins)pin.id=canonical(std::move(pin.id));need(!persistence_.commit||(persistence_.newID&&persistence_.foundationNow),"Editable map needs injected UUID/date factories");camera_=G::constrained(persisted_.viewport);}
@@ -110,8 +110,8 @@ MapChange MapState::addPin(P point){
     MapChange change;if(!editable())return change;
     const auto location=G::world(point,camera_);if(!(location.y>=0&&location.y<=1))return change;
     try{
-        need(std::isfinite(location.x)&&std::isfinite(location.y),"The map position is invalid.");
-        need(persisted_.pins.size()<maximumPins,"The map can hold up to 128 pins. Remove a pin before adding another.");
+        need(std::isfinite(location.x)&&std::isfinite(location.y),"The map position is invalid");
+        need(persisted_.pins.size()<maximumPins,"The map can hold up to 128 pins. Remove a pin before adding another");
         MapPin pin{canonical(persistence_.newID()),mapWrappedX(location.x),std::min(1.,std::max(0.,location.y)),persistence_.foundationNow()};
         auto next=persisted_;next.pins.push_back(pin);if(!commit(std::move(next),change))return change;
         selected_=std::move(pin.id);pinsChanged(change);

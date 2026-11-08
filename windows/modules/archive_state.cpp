@@ -202,7 +202,7 @@ void ArchiveState::select(std::optional<std::string>id){auto&i=*impl_;i.onThread
     struct Opened{std::optional<ArchiveEntry>entry;std::optional<ArchiveClassificationStatus>status;};
     const bool accepted=i.perform<Opened>([store=i.store,id]{Opened value;value.entry=id?store->entry(*id):std::nullopt;store->select(id);if(value.entry)value.status=store->classificationStatus(value.entry->id);return value;},[self=impl_,id,token,outgoing=std::move(outgoing)](auto failure,auto result){if(self->generation!=token)return;
         if(!failure&&result){if(result->entry){validateArchiveEntry(*result->entry,self->rules);need(id&&result->entry->id==*id&&self->categoryExists(result->entry->categoryID),"Mismatched Archive selection payload");if(result->status)self->record(*result->status,*id);}self->selected=id?(self->dirty.contains(*id)?std::optional(self->dirty.at(*id).entry):(result->entry?std::optional(self->applyingRemovals(std::move(*result->entry))):std::nullopt)):std::nullopt;self->readError.reset();}
-        else {const auto retained=outgoing?(self->selected&&self->selected->id==outgoing->id?self->selected:(self->dirty.contains(outgoing->id)?std::optional(self->dirty.at(outgoing->id).entry):outgoing)):std::nullopt;self->selected=id?(self->dirty.contains(*id)?std::optional(self->dirty.at(*id).entry):retained):std::nullopt;self->readError=message(failure);}self->changed();});if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes.";i.changed();}
+        else {const auto retained=outgoing?(self->selected&&self->selected->id==outgoing->id?self->selected:(self->dirty.contains(outgoing->id)?std::optional(self->dirty.at(outgoing->id).entry):outgoing)):std::nullopt;self->selected=id?(self->dirty.contains(*id)?std::optional(self->dirty.at(*id).entry):retained):std::nullopt;self->readError=message(failure);}self->changed();});if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes";i.changed();}
 }
 bool ArchiveState::create(std::string id,double date,std::optional<std::string>category){auto&i=*impl_;i.onThread();need(ehud::data::validUUID(id)&&std::isfinite(date),"Invalid new Archive identity/date");if(!i.categoryExists(category)){i.readError="Invalid Archive category.";i.changed();return false;}if(i.entries.size()>=archiveMaximumEntries){i.readError="The archive is full";i.changed();return false;}if(!i.writeErrors.empty()||!i.categoryErrors.empty())return false;need(std::none_of(i.entries.begin(),i.entries.end(),[&](const auto&e){return e.id==id;}),"Repeated new Archive identity");i.relock();i.flush();i.invalidate();ArchiveEntry entry;entry.id=id;entry.date=entry.modified=date;entry.categoryID=std::move(category);i.selected=entry;i.unannounced.insert(id);i.dirty[id]={entry,++i.dirtyRevision};i.upsertSummary(entry);i.pendingCreatedSelection=id;++i.selectionRevision;i.selectionFailed=false;i.flush();i.changed();return true;
 }
@@ -231,7 +231,7 @@ void ArchiveState::classifySelected(std::string password,Completion completion){
     i.classificationWork.insert(id);i.changed();
     const bool accepted=i.perform<int>([store=i.store,id,password=std::move(password)]{store->classify(id,password);return 0;},[self=impl_,id,completion](auto failure,auto){self->classificationWork.erase(id);
         if(!failure){self->classified.insert(id);self->verifierProblems.erase(id);if(self->unlockedID==id)self->relock();self->refreshSummary(id);self->events.push_back({"classified",id});}self->changed();if(completion)completion(failure);});
-    if(!accepted){i.classificationWork.erase(id);i.changed();if(completion)completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes.")));}}
+    if(!accepted){i.classificationWork.erase(id);i.changed();if(completion)completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes")));}}
 void ArchiveState::unlockSelected(std::string password,std::function<void(ArchiveUnlockResult,std::string)>completion){auto&i=*impl_;i.onThread();need(bool(completion),"Archive unlock needs a completion");
     if(!i.selected){completion(ArchiveUnlockResult::ignored,{});return;}const auto id=i.selected->id;if(!i.isLocked(id)){completion(ArchiveUnlockResult::unlocked,{});return;}
     if(i.unlocking||i.classificationWork.contains(id)){completion(ArchiveUnlockResult::ignored,{});return;}
@@ -242,13 +242,13 @@ void ArchiveState::unlockSelected(std::string password,std::function<void(Archiv
             if(code==ArchiveClassificationErrorCode::passwordMissing)self->verifierProblems[id]=ArchiveClassificationStatus::passwordMissing;if(code==ArchiveClassificationErrorCode::vaultUnavailable)self->verifierProblems[id]=ArchiveClassificationStatus::vaultUnavailable;
             outcome=code==ArchiveClassificationErrorCode::passwordMissing?ArchiveUnlockResult::passwordMissing:ArchiveUnlockResult::failed;if(outcome==ArchiveUnlockResult::failed)text=message(failure);}
         self->changed();completion(outcome,std::move(text));});
-    if(!accepted){i.unlocking.reset();i.changed();completion(ArchiveUnlockResult::failed,"Archive file queue is busy. Retry after pending work completes.");}}
+    if(!accepted){i.unlocking.reset();i.changed();completion(ArchiveUnlockResult::failed,"Archive file queue is busy. Retry after pending work completes");}}
 void ArchiveState::lockSelected(){auto&i=*impl_;i.onThread();i.relock();i.flush();i.changed();}
 void ArchiveState::declassifySelected(Completion completion){auto&i=*impl_;i.onThread();
     if(!i.selected||!i.classified.contains(i.selected->id)||i.unlockedID!=i.selected->id||i.classificationWork.contains(i.selected->id)){if(completion)completion(refused());return;}
     const auto id=i.selected->id;i.classificationWork.insert(id);i.changed();
     const bool accepted=i.perform<int>([store=i.store,id]{store->declassify(id);return 0;},[self=impl_,id,completion](auto failure,auto){self->classificationWork.erase(id);if(!failure)self->markDeclassified(id);self->changed();if(completion)completion(failure);});
-    if(!accepted){i.classificationWork.erase(id);i.changed();if(completion)completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes.")));}}
+    if(!accepted){i.classificationWork.erase(id);i.changed();if(completion)completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes")));}}
 void ArchiveState::refreshSelectedClassification(){impl_->onThread();impl_->refreshSelectedClassification();}
 void ArchiveState::setOwnerAuthentication(OwnerAuthentication value){auto&i=*impl_;i.onThread();i.ownerAuthentication=std::move(value);}
 void ArchiveState::recoverSelectedClassification(std::optional<std::string>password,std::string reason,Completion completion){auto&i=*impl_;i.onThread();need(bool(completion),"Archive recovery needs a completion");
@@ -261,7 +261,7 @@ void ArchiveState::recoverSelectedClassification(std::optional<std::string>passw
             if(!failure){if(declassify)self->markDeclassified(id);else{self->verifierProblems.erase(id);self->events.push_back({"classificationRecovered",id});if(self->visit==token&&self->selected&&self->selected->id==id)self->unlockedID=id;}}
             else self->refreshSelectedClassification();
             self->changed();completion(failure);});
-        if(!accepted){self->classificationWork.erase(id);self->changed();completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes.")));}});}
+        if(!accepted){self->classificationWork.erase(id);self->changed();completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes")));}});}
 bool ArchiveState::update(ArchiveEntry entry,double modified,double time){auto&i=*impl_;i.onThread();return i.update(std::move(entry),modified,time);}
 bool ArchiveState::moveSelected(std::optional<std::string>id,double modified,double time){auto&i=*impl_;i.onThread();return i.moveSelected(std::move(id),modified,i.at(time));}
 bool ArchiveState::canModify(std::string_view id)const noexcept{return impl_->canModify(id);}
@@ -283,7 +283,7 @@ void ArchiveState::moveEntry(std::string id,std::optional<std::string>category,d
             if(!loaded){self->readError=message(refused());self->changed();}
             done(false);return;}
         self->commitMove(*entry,category,false,modified,self->at(time));done(true);});
-    if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes.";i.changed();done(false);}
+    if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes";i.changed();done(false);}
 }
 void ArchiveState::flush(){impl_->onThread();impl_->flush();}void ArchiveState::retryPendingSaves(){auto&i=*impl_;i.onThread();i.readError.reset();i.flush();i.changed();}
 void ArchiveState::queueCapacityAvailable(){auto&i=*impl_;i.onThread();if(i.backpressured)i.flush(false);}

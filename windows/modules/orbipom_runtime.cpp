@@ -98,8 +98,8 @@ struct OrbiPomRuntime::Impl {
     };
     std::string exception(){
         Value error(context,JS_GetException(context));
-        if(interrupted)return "Original minigame simulation exceeded its command time budget.";
-        CString text(context,error.value);return text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit).";
+        if(interrupted)return "Original minigame simulation exceeded its command time budget";
+        CString text(context,error.value);return text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit)";
     }
     void checked(JSValueConst value){if(JS_IsException(value))throw std::runtime_error(exception());}
     Value property(JSValueConst object,const char*key){Value result(context,JS_GetPropertyStr(context,object,key));checked(result.value);return result;}

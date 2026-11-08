@@ -30,7 +30,7 @@ Json document(const m::MapSnapshot&value,const Json&preserved){
 }
 }
 MapArchive decodeMapArchive(std::string_view bytes){try{
-    auto raw=Json::parse(bytes,MapStore::maximumArchiveBytes);need(raw.isObject()&&raw["version"].isNumber());const auto version=raw["version"].integer();if(version>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD.");need(version>=1&&raw["pins"].isArray()&&raw["pins"].array().size()<=m::MapState::maximumPins&&raw["viewport"].isObject());
+    auto raw=Json::parse(bytes,MapStore::maximumArchiveBytes);need(raw.isObject()&&raw["version"].isNumber());const auto version=raw["version"].integer();if(version>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD");need(version>=1&&raw["pins"].isArray()&&raw["pins"].array().size()<=m::MapState::maximumPins&&raw["viewport"].isObject());
     m::MapSnapshot value;const auto&view=raw["viewport"];value.viewport={number(view["centerX"]),number(view["centerY"]),number(view["zoom"])};value.pins.reserve(raw["pins"].array().size());
     // Archive.camera (WorldMapStore.swift:99-104): wideZoom applies only to a
     // version-4 archive whose viewport still holds exactly the 2.1 floor, and

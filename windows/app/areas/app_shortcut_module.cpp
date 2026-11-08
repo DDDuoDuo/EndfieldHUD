@@ -76,7 +76,7 @@ std::string text(core::Language l, std::string_view english, std::string_view ch
 }
 // AppShortcutStoreError.invalidApplication for Windows targets.
 std::string invalidApplicationText(core::Language l) {
-    return text(l, "Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。");
+    return text(l, "Choose a Windows application (.exe) or its shortcut (.lnk)", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）");
 }
 std::string lower(std::string value) { for (auto& c : value) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return value; }
 std::string suffix(std::string_view path) { const auto dot = path.rfind('.'); return dot == path.npos ? std::string{} : lower(std::string(path.substr(dot))); }
@@ -103,9 +103,9 @@ std::string errorText(core::Language l, std::optional<m::ShortcutErrorCode> code
     case C::missing: return text(l, "This app shortcut is no longer available", "此应用快捷方式已不存在");
     case C::applicationChanged: return text(l, "A different application now occupies this location. Choose the application again", "此位置的应用已更改，请重新选择应用");
     case C::invalidRecord: return text(l, "The saved app shortcuts could not be read. The original data has been preserved", "无法读取应用快捷方式，原始数据已保留");
-    case C::newerVersion: return text(l, "These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。");
-    case C::changedOnDisk: return text(l, "App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。");
-    case C::unavailable: return text(l, "The application is unavailable.", "应用不可用。");
+    case C::newerVersion: return text(l, "These app shortcuts were saved by a newer version of EndfieldHUD", "这些快捷方式由较新版本的 EndfieldHUD 保存");
+    case C::changedOnDisk: return text(l, "App shortcuts changed outside this window. Restart EndfieldHUD before editing", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑");
+    case C::unavailable: return text(l, "The application is unavailable", "应用不可用");
     case C::capacity: return text(l, "App shortcuts could not be saved or opened: ", "无法保存或打开应用快捷方式：") + std::string(detail);
     }
     return osWork ? text(l, "The application is unavailable: ", "应用不可用：") + std::string(detail)
@@ -602,7 +602,7 @@ private:
             // only after it is relinked to a Windows application: its Open
             // in + Add App (where the error shows) asks for one.
             showLaunchError(text(language_, "The application is unavailable: ", "应用不可用：") +
-                text(language_, "Open this shortcut to choose its Windows application.", "请打开此快捷方式，选择对应的 Windows 应用。"), t);
+                text(language_, "Open this shortcut to choose its Windows application", "请打开此快捷方式，选择对应的 Windows 应用"), t);
             host_.requestFrame();return;
         }
         launch_ = Launch{item, LaunchPhase::verify};
