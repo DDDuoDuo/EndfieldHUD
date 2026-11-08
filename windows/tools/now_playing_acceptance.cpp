@@ -614,7 +614,7 @@ struct NowPlayingProbe::Impl {
     std::size_t matching(std::string_view application, const std::vector<m::NowPlayingAudioRoute>& routes) const {
         std::size_t count{};
         for (const auto& route : routes)
-            if (m::nowPlayingAudioRouteFor(application, std::span(&route, 1), services.volume->processAppUserModelID)) ++count;
+            if (m::nowPlayingAudioRouteMatches({std::string(application), {}, {}}, route, services.volume->processAppUserModelID)) ++count;
         return count;
     }
 

@@ -126,23 +126,26 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   if(cover.inFlight)cover.cancel=std::move(cancel);
   return cover.bytes;
  }
- const modules::NowPlayingAudioRoute*volumeTarget(const std::vector<modules::NowPlayingAudioRoute>&routes,std::string_view application){
-  if(!volume||!volume->routes||application.empty())return nullptr;
-  std::function<std::optional<std::string>(const modules::NowPlayingAudioRoute&)>identity;
-  if(volume->processAppUserModelID&&!modules::nowPlayingWin32Identity(application))identity=[this](const modules::NowPlayingAudioRoute&route)->std::optional<std::string>{
+ // The player's route (source audioApplication) and how many routes belong to it.
+ std::pair<const modules::NowPlayingAudioRoute*,std::size_t>volumeTarget(const std::vector<modules::NowPlayingAudioRoute>&routes,const modules::NowPlayingAudioSource&source){
+  if(!volume||!volume->routes||source.appUserModelID.empty())return {};
+  modules::NowPlayingProcessIdentity identity;
+  if(volume->processAppUserModelID&&!modules::nowPlayingWin32Identity(source.appUserModelID))identity=[this](const modules::NowPlayingAudioRoute&route)->std::optional<std::string>{
    for(const auto&[id,value]:identities)if(id==route.id)return value;
    auto value=volume->processAppUserModelID(route);
    if(identities.size()>=64)identities.erase(identities.begin());
    identities.emplace_back(route.id,value);return value;
   };
-  const auto index=modules::nowPlayingAudioRouteFor(application,routes,identity);
-  return index?&routes[*index]:nullptr;
+  const auto match=modules::nowPlayingAudioRouteFor(source,routes,identity);
+  return {match.route?&routes[*match.route]:nullptr,match.matches};
  }
- // Returns whether the resolved process route renders audio (when captured).
- std::optional<bool>applyVolume(modules::NowPlayingViewInput&input,std::string_view application){
+ // Returns whether the resolved process route renders audio (when captured),
+ // only when it is the player's one process route: a silent working route
+ // beside a playing helper never shows a playing player as paused.
+ std::optional<bool>applyVolume(modules::NowPlayingViewInput&input,const modules::NowPlayingAudioSource&source){
   std::vector<modules::NowPlayingAudioRoute>routes;if(volume&&volume->routes&&input.track)routes=volume->routes();
   if(volume&&volume->revision)volumeRevision=volume->revision();
-  const auto*route=input.track?volumeTarget(routes,application):nullptr;
+  const auto[route,matches]=input.track?volumeTarget(routes,source):std::pair<const modules::NowPlayingAudioRoute*,std::size_t>{};
   const std::string id=route?route->id:std::string();
   // The canvas binds a volume drag to this route (input.volumeRoute): a
   // drag never continues onto a different process route.
@@ -154,7 +157,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    const bool confirmed=sameRoute&&face.value&&std::abs(*face.value-pendingVolume->second)<0.0005;
    if(!sameRoute||confirmed)pendingVolume.reset();else input.volume=pendingVolume->second;
   }
-  return route?route->rendering:std::nullopt;
+  return route&&matches==1?route->rendering:std::nullopt;
  }
  void publish(){if(!active)return;const auto&s=service.snapshot();sourcesDirty=false;
   if(!s.fresh&&warm){auto input=*warm;input.failed=true;
@@ -193,7 +196,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    if(remote&&!(sharpen&&cover.broken))artwork=std::move(remote);
   }else stopCover();
   sourcesDirty=false;input.lyrics=sources->lyrics();
-  const auto rendering=applyVolume(input,application);
+  const auto rendering=applyVolume(input,modules::NowPlayingAudioSource{application,{},{}});
   const bool playerWindow=s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow;
   // The time comes from the player's own window: a window-title session, or a
   // media session of the same player whose timeline is unusable (NetEase's
