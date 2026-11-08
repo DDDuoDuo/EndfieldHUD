@@ -170,8 +170,8 @@ void replay(const char* fixture) {
     expect(chrome, C::seek, V::pass);
     expect(chrome, C::artwork, V::gap, "the player publishes no thumbnail; the outlined placeholder is shown");
     expect(chrome, C::lyrics, V::unverified, "no timed lyrics found for 1 track(s) (no lookup was possible; title and artist are needed)");
-    expect(chrome, C::volume, V::gap, "no single process carries this identity (platform gap); the unavailable submenu is shown");
-    check(chrome.verdict() == R::partial, "The browser is partial with its recorded volume gap");
+    expect(chrome, C::volume, V::gap, "no Start shortcut names this identity's executable (platform gap); the unavailable submenu is shown");
+    check(chrome.verdict() == R::partial, "An unresolved browser is partial with its recorded volume gap");
 
     const auto& kugou = row(b, "kugou");
     expect(kugou, C::playback, V::unverified, "only paused observed: resume playback in the player");
@@ -355,6 +355,35 @@ void progressRules() {
     check(refused, "A timeline update after its read is a malformed scenario");
 }
 
+// Source d09780d with a6f2d27 on small scenarios: a browser resolved to its
+// executable adjusts its playing helper; NetEase with one of two processes
+// playing adjusts that one; an unresolved browser is a gap, not a failure.
+void browserRoutes() {
+    const auto run = [](std::string_view routes, std::string_view sessions, std::string_view current) {
+        const std::string step = std::string(R"("sessions":)") + std::string(sessions) + R"(,"current":")" + std::string(current) +
+                                 R"(","capabilities":["play","pause","toggle"],"track":{"title":"Clock","duration":600,"position":100,"playing":true})";
+        t::NowPlayingProbeOptions o;
+        o.volume = true;
+        return t::nowPlayingReplay(Json::parse(std::string(R"({"format":"endfieldhud.nowPlaying.replay","version":1,"routes":)") + std::string(routes) +
+                                               R"(,"steps":[{"at":0,)" + step + R"(},{"at":2,)" + step + "}]}"),
+            o, decoder());
+    };
+    const std::string chromeRoutes = R"([{"id":"4400:1","pid":4400,"executable":"C:\\Replay\\Chrome\\chrome.exe","appUserModelID":"","rendering":false},)"
+                                     R"({"id":"4401:1","pid":4401,"executable":"C:\\Replay\\Chrome\\chrome.exe","appUserModelID":"","rendering":true}])";
+    const auto resolved = run(chromeRoutes, R"([{"id":"Chrome","executable":"C:\\Replay\\Chrome\\chrome.exe"}])", "Chrome");
+    expect(row(resolved, "chrome"), C::volume, V::pass, "one process route (pid 4401), level 100%");
+    const auto unresolved = run(chromeRoutes, R"(["Chrome"])", "Chrome");
+    expect(row(unresolved, "chrome"), C::volume, V::gap, "no Start shortcut names this identity's executable (platform gap); the unavailable submenu is shown");
+    const auto elsewhere = run(chromeRoutes, R"([{"id":"Chrome","executable":"D:\\Portable\\chrome.exe"}])", "Chrome");
+    expect(row(elsewhere, "chrome"), C::volume, V::fail, "no per-app audio session of Chrome on the default output while it was playing");
+    const std::string silent = R"([{"id":"4400:1","pid":4400,"executable":"C:\\Replay\\Chrome\\chrome.exe","appUserModelID":"","rendering":false},)"
+                               R"({"id":"4401:1","pid":4401,"executable":"C:\\Replay\\Chrome\\chrome.exe","appUserModelID":"","rendering":false}])";
+    expect(row(run(silent, R"([{"id":"Chrome","executable":"C:\\Replay\\Chrome\\chrome.exe"}])", "Chrome"), "chrome"), C::volume, V::gap,
+           "2 processes match; the unavailable submenu is shown (no single adjustable process)");
+    const std::string netease = R"([{"id":"4200:1","pid":4200,"executable":"C:\\Replay\\NetEase\\cloudmusic.exe","rendering":false},)"
+                                R"({"id":"4201:1","pid":4201,"executable":"C:\\Replay\\NetEase\\cloudmusic.exe","rendering":true}])";
+    expect(row(run(netease, R"(["cloudmusic.exe"])", "cloudmusic.exe"), "neteaseDesktop"), C::volume, V::pass, "one process route (pid 4201), level 100%");
+}
 void bounds() {
     // Other players are bounded; the most recently confirmed ones stay.
     t::NowPlayingAcceptanceMatrix stored;
@@ -530,6 +559,7 @@ int main(int argc, char** argv) {
         replay(argv[1]);
         windowPlayers(argv[2]);
         progressRules();
+        browserRoutes();
         bounds();
         files(argv[1]);
         std::cout << "now_playing_acceptance_contracts: " << checks << " checks passed\n";
