@@ -174,12 +174,9 @@ void replay(const Json& data, const Json& manifest) {
     // The Mac 1.3.1 Settings pages not ported yet: their recorded differences
     // are listed but do not fail until the item named here lands, and each
     // must still differ, so a page that comes to match is taken off the list.
-    // Display: the page moves (Open on, HUD elements and Close hint rows in
-    // Mac order; Facility alerts on HUD elements). Battery alert: the battery
-    // bar editor. The watch icon's localized title comes with the watch icon.
-    const std::set<std::string> pendingPages{
-        "display/main", "display/main.bottom", "display/menu.theme", "display/menu.clockStyle", "display/menu.centerLogo",
-        "display/battery", "display/menu.method", "display/battery.alertsOff", "display/main.back", "display/main.restored"};
+    // Battery alert: the battery bar editor. The watch icon's localized
+    // title comes with the watch icon.
+    const std::set<std::string> pendingPages{"display/battery", "display/menu.method", "display/battery.alertsOff"};
     const std::set<std::string> pendingIconTitles{"watch"};
     std::set<std::string> pendingMatched;
     const auto row = [&](core::Module module, std::string_view state) {
@@ -738,6 +735,19 @@ void contracts() {
     check(&rebuilt != &staged && rebuilt.value() == 1, "The rebuilt UI scale slider shows the default, not the staged drag value");
     check(!w.control(M::display, "displayRestore").enabled() && committed().isDefault(Settings::Scope::display), "At its defaults, Display's Restore is disabled");
     check(committed().boolean("closeOnFocusLost") == !focusDefault && committed().fields["windowsSummonShortcut"] == hotkey, "System and the hotkey are kept");
+    // Close hint (showsCloseHint), the row right after Battery alert: Display's
+    // Restore resets it.
+    {
+        const auto ids = rowIds(M::display);
+        const auto battery = std::find(ids.begin(), ids.end(), "battery");
+        check(battery != ids.end() && battery + 1 != ids.end() && battery[1] == "row:closeHint" && w.control(M::display, "closeHint").label == "Close hint",
+            "Close hint is the row right after Battery alert");
+    }
+    w.activate(M::display, "closeHint");
+    check(!committed().showsCloseHint() && committed().fields["showsCloseHint"] == Json(false) && w.control(M::display, "displayRestore").enabled(),
+        "Close hint off is saved and enables Display's Restore");
+    w.activate(M::display, "closeHint");
+    check(committed().showsCloseHint() && !w.control(M::display, "displayRestore").enabled(), "Back on, Display is at its defaults again");
     w.clear();
     w.hide(M::display);
     w.show(M::system);

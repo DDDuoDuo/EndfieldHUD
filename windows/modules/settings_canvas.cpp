@@ -42,6 +42,7 @@ bool flag(const Settings& s, std::string_view key) {
     if (key == "recordingMode") return s.recordingMode();
     if (key == "dailyBootLog") return s.dailyBootLog();
     if (key == "facilityAlerts") return s.facilityAlerts();
+    if (key == "showsCloseHint") return s.showsCloseHint();
     const auto& v = s.fields[key];
     return v.isBool() && v.boolean();
 }
@@ -722,6 +723,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
         reading.setTitle(d::asciiUppercase(title)); batteryRow.label = batteryTitle + ", " + title;
     });
     rows.push_back(&batteryRow);
+    rows.push_back(&toggleRow("closeHint", text("Close hint", "关闭提示"), "showsCloseHint", page));
     rows.push_back(&toggleRow("ambient", text("Ambient animation", "持续环境动画"), "ambientAnimation", page));
     rows.push_back(&toggleRow("motion", text("Reduce Motion", "减少动态效果"), "reduceMotion", page));
     rows.push_back(&toggleRow("lowPower", text("Low Power visual mode", "低功耗视觉模式"), "lowPowerVisualMode", page));

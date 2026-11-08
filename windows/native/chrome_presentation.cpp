@@ -213,6 +213,13 @@ bool NativeChromePresentation::setContent(const DesktopChromeContent&content){
         auto footer=footer_;footer["text"]["string"]=DesktopClockArtworkPlan::footerText(content.uppercaseShortcut,content.localizedClose);
         if(layers_->updateLocalContent(footerID_,++footerRevision_,footer,options_)){changed=true;++stats_.footerRasterChanges;}
     }
+    // Close hint (SystemHUDView: hintLabel.isHidden): the footer line is its
+    // own surface below the design box, so hiding it is its placement alone;
+    // no other surface, raster or bound changes (the Mac's projected raster
+    // stops unioning in the label's frame; here nothing unions it).
+    if(previousWorlds_&&placements_[1].opacity!=footerOpacity(previousOpacity_)){
+        placements_[1].opacity=footerOpacity(previousOpacity_);layers_->setPlacements(placements_);changed=true;
+    }
     ++stats_.contentUpdates;return changed;
 }
 bool NativeChromePresentation::setAppearance(const DesktopChromeAppearance&a){
@@ -237,7 +244,7 @@ bool NativeChromePresentation::update(const SourceWatchFrame&frame,const CameraF
         layout.statusToScreen,layout.statusToScreen*Matrix4::translation(dot.x,dot.y)};
     const auto dotOpacity=static_cast<float>(dotOpacity_);
     if(previousWorlds_==worlds&&previousOpacity_==opacity&&placedDot_==dotOpacity)return false;
-    for(unsigned i=0;i<4;++i){placements_[i].world=worlds[i];placements_[i].opacity=i==3?opacity*dotOpacity:opacity;}
+    for(unsigned i=0;i<4;++i){placements_[i].world=worlds[i];placements_[i].opacity=i==3?opacity*dotOpacity:i==1?footerOpacity(opacity):opacity;}
     layers_->setPlacements(placements_);previousWorlds_=worlds;previousOpacity_=opacity;placedDot_=dotOpacity;++stats_.placementUpdates;
     if(transition_)placeTransition();
     return true;

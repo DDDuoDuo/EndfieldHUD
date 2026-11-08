@@ -2229,6 +2229,8 @@ void Application::Impl::applyConfiguration(double time){
     // SystemHUDView.hintLabel (:2654): the shortcut's name uppercased (key titles are ASCII), shown also
     // while opening by hotkey is off; the close text is the catalog row.
     chromeContent.localizedClose=core::localized("CLICK OUTSIDE TO CLOSE","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::design::asciiUppercase(modules::settingsShortcutTitle(modules::settingsShortcut(configuration)));
+    // Display > Close hint: off hides only that line (nothing else moves).
+    chromeContent.showsCloseHint=configuration.showsCloseHint();
     // The clock's status row shows Recording mode (B2b, HUDClockStyleArtwork.updateStatus).
     chromeContent.recording=configuration.recordingMode();chromeContent.reduceMotion=settings.reduceMotion;
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}

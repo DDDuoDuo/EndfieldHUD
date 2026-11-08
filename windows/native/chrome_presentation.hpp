@@ -14,6 +14,9 @@ struct DesktopChromeContent {
     // The applied record's Recording mode (the clock's status row) and
     // Reduce Motion (the record dot stays steady).
     bool recording{},reduceMotion{};
+    // Display > Close hint (showsCloseHint): off hides only the footer line
+    // (its placement is not drawn); nothing else moves.
+    bool showsCloseHint{true};
     bool operator==(const DesktopChromeContent&)const=default;
 };
 struct DesktopChromeAppearance {
@@ -134,6 +137,9 @@ private:
     double dotOpacity_{1};float placedDot_{-1};
     void updateArtwork();
     void rasterizeDot();
+    // The footer line's placement opacity: the canvas opacity, or 0 while
+    // the Close hint is off.
+    float footerOpacity(float canvas)const noexcept{return content_&&!content_->showsCloseHint?0.f:canvas;}
     DesktopChromePresentationStats stats_;
     // Clock style push.
     struct Transition {bool forward{};double start{},progress{};};
