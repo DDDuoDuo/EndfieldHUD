@@ -31,7 +31,7 @@ struct Graph {
         a.setVolume=[this](std::wstring_view endpoint,float v){++volume;lastEndpoint=endpoint;check(endpoint==audio.defaultOutputID,"Volume write carries the endpoint its gesture began on");if(error<0)return error;audio.volume=v;changed();return 0;};
         a.setMute=[this](std::wstring_view endpoint,bool v){++mute;lastEndpoint=endpoint;if(error<0)return error;audio.muted=v;changed();return 0;};
         a.setBalance=[this](std::wstring_view endpoint,float v){++balance;lastEndpoint=endpoint;if(error<0)return error;audio.balance=v;changed();return 0;};
-        a.setAppGain=[this](std::string_view id,float v){++gain;check(id==audio.applications[0].id,"Application command preserves exact process-generation identity");if(error<0)return error;if(!asynchronousGain){audio.applications[0].gain=v;audio.applications[0].state=gpu::AudioApplicationRouteState::active;changed();}return 0;};
+        a.setAppGain=[this](std::wstring_view endpoint,std::string_view id,float v){++gain;lastEndpoint=endpoint;check(endpoint==audio.defaultOutputID,"A gain carries the output it was set on");check(id==audio.applications[0].id,"Application command preserves exact process-generation identity");if(error<0)return error;if(!asynchronousGain){audio.applications[0].gain=v;audio.applications[0].state=gpu::AudioApplicationRouteState::active;changed();}return 0;};
         a.stopApp=[this](std::string_view){++stop;if(error<0)return error;audio.applications[0].gain.reset();audio.applications[0].state=gpu::AudioApplicationRouteState::direct;changed();return 0;};
         a.stopAllApps=[this]{++stopAll;return error;};
         if(selectors){a.setDefaultOutput=[this](std::wstring_view id){++output;audio.defaultOutputID=id;changed();return error;};a.setDefaultInput=[this](std::wstring_view id){++input;audio.defaultInputID=id;changed();return error;};}return a;
@@ -68,14 +68,15 @@ void commands(){Graph graph;gpu::VolumeProviderBinding binding(graph.access());g
     check(callbacks.setBalance("out-一",-.5)&&graph.balance==1&&delivered.balance==-.5,"Stereo balance preserves its signed domain");
     check(callbacks.setMute("out-一",true)&&graph.mute==1&&delivered.muted==true,"Mute reaches the provider without an extra owner");
     check(graph.lastEndpoint==L"out-一","Mute and balance writes carry the bound endpoint for asynchronous validation");
-    check(callbacks.setAppGain("pid:42:creation:1",.4)&&graph.gain==1&&controller.snapshot().applications[0].state==gpu::VolumeAppState::active,"Per-app attenuation remains connected to existing route model");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.4)&&graph.gain==1&&controller.snapshot().applications[0].state==gpu::VolumeAppState::active,"Per-app attenuation remains connected to existing route model");
     check(std::abs(*controller.snapshot().applications[0].gain-.4)<1e-6,"Native float readback is used rather than optimistic double UI value");
     graph.audio.applications[0].available=false;graph.changed();
-    check(callbacks.setAppGain("pid:42:creation:1",.6),"Silent retained enabled route is still adjustable");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.6),"Silent retained enabled route is still adjustable");
     check(callbacks.stopApp("pid:42:creation:1")&&graph.stop==1,"Restoring an application uses the shared session lease cleanup");
-    check(!callbacks.setAppGain("pid:42:creation:1",.5),"Unavailable direct application cannot acquire a new route");
+    check(!callbacks.setAppGain("out-一","pid:42:creation:1",.5),"Unavailable direct application cannot acquire a new route");
     graph.audio.applications[0].available=true;graph.asynchronousGain=true;graph.changed();
-    check(callbacks.setAppGain("pid:42:creation:1",.2)&&!controller.snapshot().applications[0].gain,"Accepted asynchronous command does not fabricate a readback");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.2)&&!controller.snapshot().applications[0].gain,"Accepted asynchronous command does not fabricate a readback");
+    {const auto gains=graph.gain;check(!callbacks.setAppGain("out-b","pid:42:creation:1",.3)&&graph.gain==gains&&binding.lastFailure()->kind==gpu::VolumeProviderFailureKind::deviceChanged,"A gain set on another output never reaches the runtime (source: the output device changed)");}
     graph.audio.applications[0].state=gpu::AudioApplicationRouteState::failed;graph.audio.applications[0].error=-123;graph.changed();
     check(controller.snapshot().applications[0].error&&controller.snapshot().applications[0].error->find("-123")!=std::string::npos,"Asynchronous per-app native failure is surfaced from delivered state");
     graph.audio.defaultOutputID=L"out-b"; // Deliberately delay the notification.

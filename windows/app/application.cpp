@@ -1626,7 +1626,7 @@ void Application::Impl::constructVolume(){
         actions.setMute=[sample,changed](std::string_view id,bool value){if(id!=sample->outputID)return false;sample->muted=value;changed();return true;};
         actions.setDefaultOutput=[sample,changed](std::string_view id){if(std::none_of(sample->outputs.begin(),sample->outputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->outputID=id;changed();return true;};
         actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
-        actions.setAppGain=[sample,changed](std::string_view id,double value){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
+        actions.setAppGain=[sample,changed](std::string_view output,std::string_view id,double value){if(output!=sample->outputID)return false;const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
             if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::active;app->gain=value;changed();return true;};
         actions.stopApp=[sample,changed](std::string_view id){const auto app=std::find_if(sample->applications.begin(),sample->applications.end(),[&](const auto&a){return a.id==id;});
             if(app==sample->applications.end())return false;app->state=gpu::VolumeAppState::direct;app->gain.reset();changed();return true;};

@@ -473,12 +473,13 @@ bool VolumeCanvas::setGain(double value, const native::VolumeApplication& app) {
     const double bounded = std::min(1.0, std::max(0.0, value));
     if (app.state != VolumeAppState::direct) {
         if (app.state == VolumeAppState::failed && bounded == 1) { if (actions_.stopApp) (void)actions_.stopApp(app.id); return true; }
-        return actions_.setAppGain && actions_.setAppGain(app.id, bounded);
+        return actions_.setAppGain && actions_.setAppGain(snapshot_.outputID, app.id, bounded);
     }
     if (bounded == 1) return true;
     if (!currentOutput()) return false;
-    // PerAppAudioController.start(application:output:initialGain:): the runtime starts the route at this gain.
-    return actions_.setAppGain && actions_.setAppGain(app.id, bounded);
+    // PerAppAudioController.start(application:output:initialGain:): the runtime starts the route at this gain,
+    // on this output only.
+    return actions_.setAppGain && actions_.setAppGain(snapshot_.outputID, app.id, bounded);
 }
 
 // --- Input (:415-440) ------------------------------------------------------------------

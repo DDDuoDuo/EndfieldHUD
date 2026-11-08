@@ -96,7 +96,8 @@ std::span<const AudioApplicationRoute>AudioRuntime::applications()const noexcept
 std::uint64_t AudioRuntime::applicationsRevision()const noexcept{return state_->applicationsRevision;}
 bool AudioRuntime::setApplicationGain(std::string_view route,double gain){
     auto&s=*state_;if(s.stopped||!s.onOwner()||!std::isfinite(gain)||gain<0||gain>1)return false;
-    return s.service.setApplicationGain(std::string(route),static_cast<float>(gain));
+    // Now Playing's rows come from this snapshot: the gain is for its output.
+    return s.service.setApplicationGain(s.service.snapshot().defaultOutputID,std::string(route),static_cast<float>(gain));
 }
 bool AudioRuntime::stopApplication(std::string_view route){auto&s=*state_;if(s.stopped||!s.onOwner())return false;return s.service.stopApplication(std::string(route));}
 bool AudioRuntime::powerSuspend(){auto&s=*state_;return !s.stopped&&s.onOwner()&&s.service.powerSuspend();}

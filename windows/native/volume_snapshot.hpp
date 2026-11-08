@@ -50,7 +50,9 @@ struct VolumeCallbacks {
     std::function<void(bool)>setActive;
     // Bound endpoint IDs accompany writes: callers reject a stale endpoint
     // rather than retargeting an in-flight gesture to a different device.
-    std::function<bool(std::string_view,double)>setVolume,setBalance,setAppGain;
+    std::function<bool(std::string_view,double)>setVolume,setBalance;
+    // (output, application, gain): the output the app's gain was set on.
+    std::function<bool(std::string_view,std::string_view,double)>setAppGain;
     std::function<bool(std::string_view,bool)>setMute;
     std::function<bool(std::string_view)>setDefaultOutput,setDefaultInput,stopApp;
     std::function<void()>stopAllApps;

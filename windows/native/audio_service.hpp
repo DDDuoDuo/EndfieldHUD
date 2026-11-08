@@ -107,7 +107,11 @@ public:
     // device that left first, or a default another mixer changed during the
     // switch, reports ERROR_DEVICE_NOT_CONNECTED and switching stays on.
     bool setDefaultEndpoint(AudioFlow,std::wstring endpoint);
-    bool setApplicationGain(std::string application,float);
+    // Like the endpoint writes, a gain carries the output it was set on and
+    // is refused with ERROR_DEVICE_NOT_CONNECTED (commandError) once that is
+    // no longer the default output: it never lands on the next device
+    // (source "The output device changed. Try again").
+    bool setApplicationGain(std::wstring endpoint,std::string application,float);
     bool stopApplication(std::string application);
     // The Output menu's stop before it switches to another device: restores
     // every owned route quietly (source stopAll(), no status of its own).

@@ -404,6 +404,9 @@ public:
             // PerAppAudioController.statusMessage): a start that fails or a
             // cleanup error is shown, a command that succeeds clears it.
             if(c.kind==K::gain){
+                // The same guard as the endpoint writes: the process key is the
+                // same on every output, so a stale gain would land on the next.
+                if(c.endpoint!=state.defaultOutputID||(sessions&&!sessions->endpoint().empty()&&sessions->endpoint()!=c.endpoint)){state.commandError=deviceChanged;return;}
                 if(!sessions||!resumed||!state.applicationsSupported){state.routeError=pending;return;}
                 state.routeError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
             }else if(c.kind==K::stopApplication){
@@ -537,7 +540,7 @@ bool AudioService::setVolume(std::wstring endpoint,float value){if(!endpointToke
 bool AudioService::setMute(std::wstring endpoint,bool value){if(!endpointToken(endpoint))return false;return impl_->enqueue({Command::Kind::mute,std::move(endpoint),{},0,value});}
 bool AudioService::setBalance(std::wstring endpoint,float value){if(!endpointToken(endpoint)||!std::isfinite(value)||value< -1||value>1)return false;return impl_->enqueue({Command::Kind::balance,std::move(endpoint),{},value,false});}
 bool AudioService::setDefaultEndpoint(AudioFlow flow,std::wstring endpoint){if(!endpointToken(endpoint)||(flow!=AudioFlow::output&&flow!=AudioFlow::input))return false;return impl_->enqueue({Command::Kind::defaultEndpoint,std::move(endpoint),{},0,flow==AudioFlow::input});}
-bool AudioService::setApplicationGain(std::string id,float value){if(!applicationToken(id)||!unit(value))return false;return impl_->enqueue({Command::Kind::gain,{},std::move(id),value,false});}
+bool AudioService::setApplicationGain(std::wstring endpoint,std::string id,float value){if(!endpointToken(endpoint)||!applicationToken(id)||!unit(value))return false;return impl_->enqueue({Command::Kind::gain,std::move(endpoint),std::move(id),value,false});}
 bool AudioService::stopApplication(std::string id){if(!applicationToken(id))return false;return impl_->enqueue({Command::Kind::stopApplication,{},std::move(id),0,false});}
 bool AudioService::stopApplications(){return impl_->enqueue({Command::Kind::stopApplications,{},{},0,false});}
 bool AudioService::powerSuspend(){return impl_->enqueue({Command::Kind::suspend,{},{},0,false});}

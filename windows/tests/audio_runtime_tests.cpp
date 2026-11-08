@@ -254,7 +254,7 @@ void malformedAppName(){
     threw=false;
     try{{std::lock_guard l(h.world->m);h.world->master=.3f;}h.wake(&World::volumeWake);
         h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.3)<1e-6;},"An endpoint volume change still drains");
-        check(callbacks.setAppGain("4242:100",.5),"The app's slider is accepted");
+        check(callbacks.setAppGain(binding.snapshot().outputID,"4242:100",.5),"The app's slider is accepted");
         h.until([&]{for(const auto&a:delivered.applications)if(a.id=="4242:100")return a.state==n::VolumeAppState::active;return false;},"The app's gain reaches its row");}
     catch(const std::invalid_argument&){threw=true;}
     check(!threw,"Volume and per-app gain changes with the ill-formed app listed never throw");

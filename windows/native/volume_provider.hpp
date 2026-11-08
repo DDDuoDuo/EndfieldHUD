@@ -28,7 +28,8 @@ struct VolumeProviderAccess {
     std::function<std::int32_t(bool)>requestActive;
     std::function<std::int32_t(std::wstring_view,float)>setVolume,setBalance;
     std::function<std::int32_t(std::wstring_view,bool)>setMute;
-    std::function<std::int32_t(std::string_view,float)>setAppGain;
+    // The default output the gain was set on, the app, the gain.
+    std::function<std::int32_t(std::wstring_view,std::string_view,float)>setAppGain;
     std::function<std::int32_t(std::string_view)>stopApp;
     std::function<std::int32_t()>stopAllApps;
     // A real default-device setter only (production: the audio service's

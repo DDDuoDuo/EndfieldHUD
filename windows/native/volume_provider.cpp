@@ -119,14 +119,18 @@ struct VolumeProviderBinding::State {
         const auto*s=current(id);if(!s)return false;if(!s->muted||!s->canSetMute||!access.setMute)return reject(Kind::unsupported);
         const std::wstring endpoint=s->defaultOutputID;return write([&]{return access.setMute(endpoint,value);});
     }
-    bool application(std::string_view id,double gain,bool stop){
+    // `output` is the output the gain was set on (unused for a stop).
+    bool application(std::string_view id,double gain,bool stop,std::string_view output={}){
         if(!ready())return false;const auto&s=access.readSnapshot();
         if(s.paused||s.applicationsPaused||!s.applicationsSupported)return awaiting(s)?false:reject(Kind::unavailable);
         const auto found=std::find_if(s.applications.begin(),s.applications.end(),[&](const auto&a){return a.id==id;});
         if(found==s.applications.end()||(!found->available&&found->state==AudioApplicationRouteState::direct))return reject(Kind::deviceChanged);
         if(stop){if(!access.stopApp)return reject(Kind::unsupported);return write([&]{return access.stopApp(id);});}
         if(!std::isfinite(gain)||gain<0||gain>1)return reject(Kind::invalidValue);
-        if(!access.setAppGain)return reject(Kind::unsupported);return write([&]{return access.setAppGain(id,static_cast<float>(gain));});
+        if(!access.setAppGain)return reject(Kind::unsupported);
+        // The endpoint writes' guard: a gain set on another output is refused.
+        if(!sameText(s.defaultOutputID,output))return reject(Kind::deviceChanged);
+        const std::wstring endpoint=s.defaultOutputID;return write([&]{return access.setAppGain(endpoint,id,static_cast<float>(gain));});
     }
     bool select(std::string_view id,bool input){
         if(!ready())return false;const auto&s=access.readSnapshot();if(s.paused)return awaiting(s)?false:reject(Kind::unavailable);
@@ -150,7 +154,7 @@ VolumeCallbacks VolumeProviderBinding::callbacks()const{
     c.setVolume=[weak](std::string_view id,double v){const auto s=weak.lock();return s&&s->scalar(id,v,false);};
     c.setBalance=[weak](std::string_view id,double v){const auto s=weak.lock();return s&&s->scalar(id,v,true);};
     c.setMute=[weak](std::string_view id,bool v){const auto s=weak.lock();return s&&s->mute(id,v);};
-    c.setAppGain=[weak](std::string_view id,double v){const auto s=weak.lock();return s&&s->application(id,v,false);};
+    c.setAppGain=[weak](std::string_view output,std::string_view id,double v){const auto s=weak.lock();return s&&s->application(id,v,false,output);};
     c.stopApp=[weak](std::string_view id){const auto s=weak.lock();return s&&s->application(id,1,true);};
     c.stopAllApps=[weak]{if(const auto s=weak.lock();s&&s->ready()&&s->access.stopAllApps)s->write([&]{return s->access.stopAllApps();});};
     c.setDefaultOutput=[weak](std::string_view id){const auto s=weak.lock();return s&&s->select(id,false);};

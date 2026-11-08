@@ -297,7 +297,7 @@ struct VolumeModel {
         c.setVolume = [this](std::string_view id, double v) { writes.push_back("volume " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); state.volume = v; return true; };
         c.setBalance = [this](std::string_view id, double v) { writes.push_back("balance " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
         c.setMute = [this](std::string_view id, bool v) { writes.push_back("mute " + std::string(id) + (v ? " on" : " off")); state.muted = v; if (canvas) canvas->receive(state); return true; };
-        c.setAppGain = [this](std::string_view id, double v) { writes.push_back("gain " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
+        c.setAppGain = [this](std::string_view output, std::string_view id, double v) { if (output != state.outputID) { writes.push_back("stale gain"); return false; } writes.push_back("gain " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
         c.stopApp = [this](std::string_view id) { writes.push_back("stop " + std::string(id)); return true; };
         c.stopAllApps = [this] { writes.push_back("stopAll"); };
         c.setDefaultOutput = [this](std::string_view id) { writes.push_back("output " + std::string(id)); return true; };

@@ -124,7 +124,7 @@ int wmain(int argc,wchar_t**argv){
         report(service.snapshot(),recorder,generation);
         if(gain&&!applied){
             const auto&apps=service.snapshot().applications;
-            if(std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==gain->first;})){applied=service.setApplicationGain(gain->first,gain->second);emit(Json::Object{{"event","appGainRequested"},{"id",gain->first},{"gain",static_cast<double>(gain->second)},{"accepted",applied}});}
+            if(std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==gain->first;})){applied=service.setApplicationGain(service.snapshot().defaultOutputID,gain->first,gain->second);emit(Json::Object{{"event","appGainRequested"},{"id",gain->first},{"gain",static_cast<double>(gain->second)},{"accepted",applied}});}
         }
     }
     const auto stats=service.stats();

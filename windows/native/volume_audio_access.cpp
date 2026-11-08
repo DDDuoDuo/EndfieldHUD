@@ -12,7 +12,7 @@ VolumeProviderAccess volumeProviderAccess(AudioService&service){
     a.setVolume=[&service](std::wstring_view endpoint,float value){return accepted(service.setVolume(std::wstring(endpoint),value));};
     a.setBalance=[&service](std::wstring_view endpoint,float value){return accepted(service.setBalance(std::wstring(endpoint),value));};
     a.setMute=[&service](std::wstring_view endpoint,bool value){return accepted(service.setMute(std::wstring(endpoint),value));};
-    a.setAppGain=[&service](std::string_view id,float value){return accepted(service.setApplicationGain(std::string(id),value));};
+    a.setAppGain=[&service](std::wstring_view endpoint,std::string_view id,float value){return accepted(service.setApplicationGain(std::wstring(endpoint),std::string(id),value));};
     a.stopApp=[&service](std::string_view id){return accepted(service.stopApplication(std::string(id)));};
     a.stopAllApps=[&service]{return accepted(service.stopApplications());};
     a.setDefaultOutput=[&service](std::wstring_view endpoint){return accepted(service.setDefaultEndpoint(AudioFlow::output,std::wstring(endpoint)));};
