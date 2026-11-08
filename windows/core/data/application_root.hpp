@@ -1,6 +1,7 @@
 #pragma once
 #include "core/data/data_store.hpp"
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace ehud::data {
@@ -40,6 +41,12 @@ ApplicationRoot openApplicationRoot(const std::filesystem::path& base);
 // or deletes anything; the work folder stays. True when a backup was restored.
 // Never throws.
 bool restoreInterruptedImportRoot(const std::filesystem::path& base) noexcept;
+#ifdef _WIN32
+// The process token user's SID as text ("S-1-5-21-...-1001"): the data
+// root's private DACL and the Windows account on the personal cards. Throws
+// StoreError(unavailable).
+std::wstring currentUserSid();
+#endif
 // Read-only resolution of the production base. Never creates it.
 // Windows: SHGetKnownFolderPath(FOLDERID_LocalAppData)\EndfieldHUD.
 std::filesystem::path localApplicationDataBase();

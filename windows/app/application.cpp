@@ -640,7 +640,7 @@ void Application::Impl::constructAreas(){
     if(utility){
         const auto window=static_cast<HWND>(host.hwnd());
         longWork=std::make_unique<UtilityExecutor>([window]{PostMessageW(window,utilityMessage,serviceGeneration,0);},32,utilityIdleExit,"EndfieldHUD long work");attributeCompletions(*longWork);
-        areaHost->publish("app.longWorkExecutor",*longWork);
+        areaHost->publish(longWorkExecutorKey,*longWork);
     }
     // The Power page shows the area's merged reading (with the mWh pair).
     if(battery)areaHost->publish<power::PowerPageSink>(power::powerPageSinkKey,batteryPageSink);

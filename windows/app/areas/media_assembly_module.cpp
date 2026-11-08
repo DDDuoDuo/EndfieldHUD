@@ -42,7 +42,7 @@ using Microsoft::WRL::ComPtr;
 using ShelfChoices = std::function<std::vector<mod::NotesShelfChoice>()>;
 using ShelfOpen = std::function<std::optional<std::pair<std::string, std::shared_ptr<void>>>(std::string_view)>;
 constexpr std::string_view shelfChoicesKey = "fileShelf.mediaChoices", shelfOpenKey = "fileShelf.openReference",
-    longWorkKey = "app.longWorkExecutor";
+    longWorkKey = app::longWorkExecutorKey;
 
 // Hidden coverage only: a deterministic synthetic still in the area's owned
 // coverage root (WIC PNG encoder; never user media).

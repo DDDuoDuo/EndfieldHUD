@@ -33,8 +33,7 @@ void requireRoot(bool condition, const char* message) { if (!condition) throw St
 #ifdef _WIN32
 struct LocalFree_ { void operator()(void* value) const noexcept { if (value) LocalFree(value); } };
 struct HandleCloser { void operator()(HANDLE value) const noexcept { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); } };
-// Protected DACL: full control for the current user and SYSTEM only, inherited
-// by every store file and directory created below the base.
+} // namespace
 std::wstring currentUserSid() {
     HANDLE raw{};
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw)) unavailable("Current user identity is unavailable");
@@ -49,6 +48,9 @@ std::wstring currentUserSid() {
     std::unique_ptr<void, LocalFree_> owned(text);
     return text;
 }
+namespace {
+// Protected DACL: full control for the current user and SYSTEM only, inherited
+// by every store file and directory created below the base.
 void createPrivateDirectory(const std::filesystem::path& path) {
     const auto sddl = L"D:P(A;OICI;FA;;;" + currentUserSid() + L")(A;OICI;FA;;;SY)";
     PSECURITY_DESCRIPTOR descriptor{};

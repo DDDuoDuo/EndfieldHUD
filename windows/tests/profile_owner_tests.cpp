@@ -11,6 +11,9 @@
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -268,6 +271,62 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
         tools::ProfileOwner early(w.hwnd,executor,raster,context,idle,f);early.setSyncLocked(ehud::data::ProfileSyncFields::all(),0);
         early.acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="77";p.name="Early";},0);early.start(0);settle();
         check(early.state()->profile().name=="Early"&&early.card()->captions()[1].text=="UID: 77"&&early.core().flush(0)&&ehud::data::ProfileStore(fresh.root).value().name=="Early","A queued account update lands after the load");
+    }
+    // 11. Issue #17: the Windows account through fake calls only (never the
+    // real account): read after the load, the picture decoded on the worker
+    // and kept in memory, Recording mode, the one-minute throttle on opening,
+    // and the read on the host's long-work executor, so a slow name lookup
+    // never holds up a Personal ID save.
+    {
+        Temporary home;seed(home.root,0);m::WorkModeController idle;
+        const auto picturePath=home.root/"account.png";encode(picturePath,120,80);
+        std::atomic<unsigned>reads{};std::optional<std::wstring>picture=picturePath.wstring();std::mutex lock;
+        // The long-work executor (app::longWorkExecutorKey); a held name lookup stands in for a domain controller.
+        app::UtilityExecutor longWork([]{},8);
+        const auto settleAll=[&]{for(int n=0;n<16;++n){longWork.waitIdle();executor.waitIdle();const auto moved=longWork.drain()+executor.drain();if(!moved)break;}};
+        std::mutex gateLock;std::condition_variable gate;bool hold{},heldOut{};std::atomic<bool>released{};
+        gpu::WindowsAccountCalls calls;
+        calls.sid=[]()->std::optional<std::wstring>{return std::wstring(L"S-1-5-21-11-22-33-1001");};
+        calls.displayName=[]()->std::optional<std::wstring>{return std::nullopt;}; // ERROR_NONE_MAPPED on a local account
+        calls.fullName=[&]()->std::optional<std::wstring>{
+            ++reads;std::unique_lock guard(gateLock);
+            if(hold){heldOut=!gate.wait_for(guard,std::chrono::seconds(10),[&]{return !hold;});released=true;}
+            return std::wstring(L"Ada Lovelace");};
+        calls.userName=[]()->std::optional<std::wstring>{return std::wstring(L"ada");};
+        calls.machineString=[&](const std::wstring&,const std::wstring&value)->std::optional<std::wstring>{const std::lock_guard guard(lock);return value==L"Image448"?picture:std::nullopt;};
+        calls.readFile=[](const std::filesystem::path&p,std::uintmax_t limit)->std::optional<std::vector<std::uint8_t>>{
+            const auto bytes=ehud::data::detail::readFile(p,static_cast<std::size_t>(limit));if(!bytes)return std::nullopt;return std::vector<std::uint8_t>(bytes->begin(),bytes->end());};
+        tools::ProfileOwnerOptions a=o;a.appRoot=home.root;a.loaded={};a.account=calls;a.accountExecutor=&longWork;
+        const auto before=read(home.root/"Profile"/"profile.json");
+        tools::ProfileOwner owned(w.hwnd,executor,raster,context,idle,a);owned.start(0);settleAll();
+        const auto shown=[&]{return std::pair{owned.card()->captions()[0].text,owned.card()->captions()[1].text};};
+        check(reads==1&&shown()==std::pair<std::string,std::string>{"Ada Lovelace","UID: 1001"},"After the load the card shows the account's name and RID");
+        check(owned.state()->profile().avatarKey()==std::optional<std::string>("system-1")&&owned.cardTexture(tools::IdCardTextureKind::avatar),"The login picture is decoded and drawn on the card");
+        check(read(home.root/"Profile"/"profile.json")==before&&!std::filesystem::exists(home.root/"Profile"/"Images"),"Reading the account writes nothing");
+        owned.setRecordingMode(true,1);settleAll();
+        check(shown()==std::pair<std::string,std::string>{"Endministrator","UID:"}&&!owned.state()->profile().avatarKey()&&!owned.cardTexture(tools::IdCardTextureKind::avatar),
+              "Recording mode shows Endministrator and the drawn portrait");
+        owned.setRecordingMode(false,2);settleAll();
+        check(shown().first=="Ada Lovelace"&&owned.cardTexture(tools::IdCardTextureKind::avatar),"Leaving Recording mode shows the account again");
+        owned.setOverlayVisible(true,30);settleAll();owned.setOverlayVisible(false,31);
+        check(reads==1,"An opening within a minute of the last read reads nothing");
+        owned.setOverlayVisible(true,61);settleAll();owned.setOverlayVisible(false,62);
+        check(reads==2&&owned.state()->profile().avatarKey()==std::optional<std::string>("system-1"),"A minute later it reads again; an unchanged picture keeps its key");
+        encode(picturePath,160,90);
+        owned.setOverlayVisible(true,130);settleAll();owned.setOverlayVisible(false,131);
+        check(reads==3&&owned.state()->profile().avatarKey()==std::optional<std::string>("system-2")&&owned.cardTexture(tools::IdCardTextureKind::avatar),"A new picture gets a new key");
+        {const std::lock_guard guard(lock);picture.reset();}
+        owned.setOverlayVisible(true,200);settleAll();owned.setOverlayVisible(false,201);
+        check(!owned.state()->profile().avatarKey()&&!owned.cardTexture(tools::IdCardTextureKind::avatar)&&shown().first=="Ada Lovelace","Without a login picture the card draws its portrait");
+        check(owned.core().flush(201)&&read(home.root/"Profile"/"profile.json")==before,"Still nothing written");
+        check(longWork.stats().executed==4,"Every account read ran on the long-work executor");
+        {const std::lock_guard guard(gateLock);hold=true;}
+        owned.setOverlayVisible(true,300); // the read starts and waits on the long-work worker
+        owned.acceptFromGame([](m::PersonalProfile&q){q.gamePlayerID="88";},301);
+        check(owned.core().flush(301)&&ehud::data::ProfileStore(home.root).value().gamePlayerID=="88"&&!released,"A held account read never holds up a Personal ID save");
+        {const std::lock_guard guard(gateLock);hold=false;}gate.notify_all();
+        settleAll();owned.setOverlayVisible(false,302);
+        check(released&&!heldOut&&reads==5&&shown().first=="Ada Lovelace","The held read finishes afterwards");
     }
     executor.shutdown();
 }

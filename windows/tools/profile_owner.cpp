@@ -23,7 +23,7 @@ gpu::LayerImageSourceLimits imageLimits(){gpu::LayerImageSourceLimits l;l.cached
 }
 struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     HWND hwnd;app::UtilityExecutor&executor;gpu::LayerRasterizer&raster;d::Context&context;const m::WorkModeController&work;
-    ProfileOwnerOptions options;
+    ProfileOwnerOptions options;app::UtilityExecutor&accountWork; // the account read's executor (options.accountExecutor)
     m::ProfileTextRules text;m::ProfileDateRules dates;m::ProfileSourceArtwork artwork;m::IdCardSource cardSource;
     std::shared_ptr<const m::IdCardArtwork>cardArtwork;
     gpu::LayerImageSource images{imageLimits()};
@@ -36,8 +36,15 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     app::ModuleAppearance appearance;bool recording{},overlay{},alive{true},started{},cropBaseline{};
     ehud::data::ProfileSyncFields locked{};double time{};std::optional<std::string>loadError;
     std::optional<std::function<void(m::PersonalProfile&)>>pendingGame;
-    // Managed images currently referenced by the committed record and their decodes.
-    std::optional<std::string>avatarName,backgroundName;bool imagesKnown{},avatarFailed{};
+    // Images currently shown (the avatar by Profile::avatarKey: a managed file
+    // or the account's picture) and their decodes; the record's avatar file.
+    std::optional<std::string>avatarName,backgroundName,avatarFile;bool imagesKnown{},avatarFailed{};
+    // Issue #17: the Windows account's login picture (memory only), a fresh
+    // key per new picture so every portrait cache rebuilds; one read at a time.
+    struct AccountPicture {std::optional<std::string>key;std::shared_ptr<const std::vector<std::uint8_t>>bytes;std::shared_ptr<const gpu::ProfileDecodedImage>image;};
+    std::optional<AccountPicture>accountPicture;std::uint64_t accountSerial{};
+    std::optional<m::ProfileAccountSource::Done>accountQueued; // retried on queue capacity
+    app::UtilityExecutor::Route accountRoute;
     std::shared_ptr<const gpu::ProfileDecodedImage>avatar,background;
     // Pickers: the host's chooser (asynchronous) and the modal colour dialog (posted).
     bool choosing{},coloring{};std::uint64_t chooserGeneration{};WPARAM pickerGeneration{1};std::optional<std::array<double,3>>pendingColor;
@@ -58,17 +65,17 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     ProfileOwnerStats statistics;
 
     Impl(HWND h,app::UtilityExecutor&e,gpu::LayerRasterizer&r,d::Context&c,const m::WorkModeController&w,ProfileOwnerOptions o)
-        :hwnd(h),executor(e),raster(r),context(c),work(w),options(std::move(o)),
+        :hwnd(h),executor(e),raster(r),context(c),work(w),options(std::move(o)),accountWork(options.accountExecutor?*options.accountExecutor:e),
          text(gpu::nativeProfileTextRules()),dates(gpu::nativeProfileDateRules(options.timeZone)),
          artwork(m::loadProfileSourceArtwork(options.resources)),cardSource(m::loadIdCardSource(options.resources)),
-         cardArtwork(std::make_shared<const m::IdCardArtwork>(artwork.card)),cardRoute(e.makeRoute()),portraitRoute(e.makeRoute()),carrier(r){
+         cardArtwork(std::make_shared<const m::IdCardArtwork>(artwork.card)),accountRoute(accountWork.makeRoute()),cardRoute(e.makeRoute()),portraitRoute(e.makeRoute()),carrier(r){
         need(IsWindow(h)!=FALSE,"Personal ID owner requires the caller's HWND");
         need(options.pickerMessage>=WM_APP&&options.pickerMessage<=0xbfff,"Profile picker requests use their own WM_APP message");
         draws[0].masks.reserve(8);appearance.accentSRGB={250./255,212./255,31./255};
         options.design.raster.memoryImages=&images;
         carrier.load(blank(),options.design.raster);
     }
-    ~Impl(){executor.invalidate(cardRoute,true);executor.invalidate(portraitRoute,true);}
+    ~Impl(){executor.invalidate(cardRoute,true);executor.invalidate(portraitRoute,true);accountWork.invalidate(accountRoute,true);}
     void initialize(){
         const std::weak_ptr<Impl>weak=shared_from_this();
         service=std::make_unique<m::ProfileService>(options.appRoot,executor,m::ProfileServiceCallbacks{
@@ -168,8 +175,8 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     void loaded(const m::PersonalProfile&p){
         const std::weak_ptr<Impl>weak=shared_from_this();
         state=std::make_unique<m::ProfileState>(p,text,dates,service->persistence(
-            [weak]{const auto i=weak.lock();return i?i->locked:ehud::data::ProfileSyncFields{};}));
-        state->setSyncLocked(locked);
+            [weak]{const auto i=weak.lock();return i?i->locked:ehud::data::ProfileSyncFields{};}),accountSource());
+        state->setSyncLocked(locked);state->setHidesSystemAccount(recording);
         // The read-only Work Mode controller may already hold the launch
         // lifetime: the stored record minus that restore is the offset, and
         // early checkpoints land once.
@@ -180,6 +187,41 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
         if(auto apply=std::exchange(pendingGame,std::nullopt)){try{applyGame(*apply);}catch(const std::exception&){/* the next account refresh retries */}}
         sync();notify();
         if(alive&&state&&options.loaded)options.loaded(state->profile());
+        if(alive&&state)state->refreshSystemAccount(time); // the account at launch
+    }
+    // ---- The Windows account (issue #17) -----------------------------------
+    m::ProfileAccountSource accountSource(){
+        if(!options.account)return {};
+        const std::weak_ptr<Impl>weak=shared_from_this();
+        return {[weak](m::ProfileAccountSource::Done done){if(auto i=weak.lock();i&&i->alive)i->readAccount(std::move(done));}};
+    }
+    // The name, UID and picture on the account executor (never on the UI
+    // thread: the name lookup can wait on a domain controller); an unchanged
+    // picture keeps its key. A full queue retries on the next capacity notice.
+    void readAccount(m::ProfileAccountSource::Done done){
+        struct Reading {ehud::data::SystemAccount account;std::optional<std::shared_ptr<const std::vector<std::uint8_t>>>bytes;std::shared_ptr<const gpu::ProfileDecodedImage>image;};
+        auto reading=std::make_shared<Reading>();
+        const auto calls=*options.account;const auto previous=accountPicture?accountPicture->bytes:nullptr;const std::weak_ptr<Impl>weak=shared_from_this();
+        auto shared=std::make_shared<m::ProfileAccountSource::Done>(std::move(done));
+        const bool accepted=accountWork.submit(accountRoute,[calls,previous,reading]{
+            reading->account=gpu::readWindowsAccount(calls);
+            auto bytes=gpu::readWindowsAccountPicture(calls);
+            if(!bytes){reading->bytes=nullptr;return;}
+            if(previous&&*previous==*bytes)return; // unchanged: no decode, the same key
+            auto owned=std::make_shared<const std::vector<std::uint8_t>>(std::move(*bytes));reading->bytes=owned;
+            try{reading->image=std::make_shared<const gpu::ProfileDecodedImage>(gpu::decodeProfileAvatarWorking(*owned));}
+            catch(const std::exception&){reading->image.reset();} // unreadable: no picture
+        },[weak,reading,shared](std::exception_ptr error){
+            const auto i=weak.lock();if(!i||!i->alive)return;
+            auto account=error?ehud::data::SystemAccount{}:reading->account;
+            if(!error&&reading->bytes){
+                if(!*reading->bytes)i->accountPicture.reset();
+                else i->accountPicture=AccountPicture{reading->image?std::optional("system-"+std::to_string(++i->accountSerial)):std::nullopt,*reading->bytes,reading->image};
+            }
+            if(!error&&i->accountPicture)account.avatarKey=i->accountPicture->key;
+            (*shared)(std::move(account));
+        });
+        if(!accepted)accountQueued=std::move(*shared);
     }
     void loadFailed(m::ProfileFailure code,const std::string&detail){
         // Source canvas with a nil store: defaults, the store's message, no persistence.
@@ -192,10 +234,15 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
         if(!state||!alive||loadError)return;
         const auto&p=state->profile();
         const bool first=!imagesKnown;imagesKnown=true;
-        if(p.avatarFilename!=avatarName){
-            avatarName=p.avatarFilename;avatar.reset();avatarFailed=false;portrait.reset();portraitWanted.reset();
-            if(avatarName)imageService->request(*avatarName,m::ProfileImageKind::avatar);
-            if(!first&&options.avatarChanged)options.avatarChanged(avatarName);
+        if(const auto key=p.avatarKey();key!=avatarName){
+            avatarName=key;avatar.reset();avatarFailed=false;portrait.reset();portraitWanted.reset();
+            // The account's picture is already decoded; a managed file decodes on the worker.
+            if(accountPicture&&accountPicture->key&&avatarName==accountPicture->key)avatar=accountPicture->image;
+            else if(avatarName)imageService->request(*avatarName,m::ProfileImageKind::avatar);
+        }
+        if(p.avatarFilename!=avatarFile){
+            avatarFile=p.avatarFilename;
+            if(!first&&options.avatarChanged)options.avatarChanged(avatarFile);
         }
         if(p.backgroundFilename!=backgroundName){
             backgroundName=p.backgroundFilename;background.reset();
@@ -414,6 +461,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
         service->queueCapacityAvailable();imageService->queueCapacityAvailable();
         if(cardDirty&&!cardBusy){cardDirty=false;scheduleCard();}
         submitPortrait();
+        if(auto done=std::exchange(accountQueued,std::nullopt))readAccount(std::move(*done));
     }
 };
 ProfileOwner::ProfileOwner(HWND h,app::UtilityExecutor&e,gpu::LayerRasterizer&r,d::Context&c,const m::WorkModeController&w,ProfileOwnerOptions o)
@@ -425,8 +473,16 @@ ProfileOwner::~ProfileOwner(){
 }
 DesignOwnerCore&ProfileOwner::core()noexcept{return *impl_->core;}
 void ProfileOwner::start(double t){auto i=impl_;i->advance(t);if(std::exchange(i->started,true))return;i->service->start();}
-void ProfileOwner::setOverlayVisible(bool v,double t){auto i=impl_;i->advance(t);i->overlay=v;if(!v)i->cancelPickers();}
-void ProfileOwner::setRecordingMode(bool v,double t){auto i=impl_;i->advance(t);if(i->recording==v)return;i->recording=v;i->updateCard();}
+void ProfileOwner::setOverlayVisible(bool v,double t){
+    auto i=impl_;i->advance(t);const bool opening=v&&!i->overlay;i->overlay=v;if(!v)i->cancelPickers();
+    // A changed login picture or name shows without a relaunch (at most once a minute).
+    if(opening&&i->state&&!i->loadError)i->state->refreshSystemAccount(i->time,60);
+}
+void ProfileOwner::setRecordingMode(bool v,double t){
+    auto i=impl_;i->advance(t);if(i->recording==v)return;i->recording=v;
+    if(i->state&&!i->loadError)i->state->setHidesSystemAccount(v); // its observer updates the card
+    i->updateCard();
+}
 void ProfileOwner::upload(gpu::Renderer&r){auto i=impl_;i->core->upload(r);i->uploadArt(r);}
 void ProfileOwner::collected(gpu::Renderer&r){auto i=impl_;i->core->collected(r);}
 void ProfileOwner::release(gpu::Renderer&r){
