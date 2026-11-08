@@ -128,6 +128,10 @@ void gallery(){const auto rules=endfield::native::nativeArchiveTextRules();auto 
     check(at(failing)==index&&state.error()&&repo->documents.contains(failing),"A failed delete puts the card back at its old index");
     repo->failRemove=false;repo->failSave=false;state.retryPendingSaves();queue.drain();
     check(repo->documents.at(failing).body=="Unsaved before the delete"&&!state.hasUnsavedChanges(),"Its draft is restored and saves on Retry");
+    // (De)classification in flight holds the document too (Mac canModify: !classificationWork.contains(id)).
+    check(state.canModify(shown.id),"The open document can be modified");state.classifySelected("correct horse",{});
+    check(state.isClassificationBusy()&&!state.canModify(shown.id),"Classification work in flight holds the document");
+    queue.drain();check(!state.isClassificationBusy()&&state.canModify(shown.id),"Its end (here a refused classify) releases it");
     // The editor's delete is unchanged: it closes the open document.
     check(state.deleteSelected()&&!state.selected(),"Deleting the open document closes it");queue.drain();check(!repo->documents.contains(shown.id),"The open document is removed");
 }

@@ -495,6 +495,51 @@ void closedUnseen() {
 // opened; Move to… lists the categories at the same spot and a move toasts
 // once done; Delete asks and stays on the gallery; the labels hide a
 // classified title; an off-screen document's ⋯ stand-in opens the menu.
+//
+// documentStandIn: with no categories, an uncategorized document has nowhere
+// to move (Move to… off, Delete on). A document scrolled out of the grid has
+// no tile; the screen reader still lists it and its ⋯ at the grid's frame,
+// and the ⋯ opens (and closes) its menu at the grid's top-left (7f8ed37).
+void documentStandIn() {
+    World w;
+    for (unsigned n = 1; n <= 30; ++n) {
+        m::ArchiveEntry e; e.id = uuid(1000 + n); e.title = "Note " + std::to_string(n); e.body = "Body"; e.date = e.modified = double(n);
+        w.repo->save(e);
+    }
+    w.open();
+    auto& c = *w.canvas;
+    const auto rows = [&] {
+        std::vector<std::string> out;
+        for (const auto& item : w.items()) if (item.id.starts_with("doc.menu:")) out.push_back(item.id + (item.enabled ? "" : " off"));
+        return out;
+    };
+    const auto shown = w.state.entries();
+    check(shown.size() == 30 && w.control("doc:" + shown.front().id), "Thirty uncategorized documents, the first with a tile");
+    check(w.press("doc:" + shown.front().id + std::string(d::TileMoreButton::suffix)) && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete"},
+        "With no category to pick, Move to… is off and Delete stays on");
+    c.closeMenu();
+    // The last document is scrolled out: no tile, a listed stand-in and its ⋯.
+    const auto& hidden = shown.back();
+    const std::string standIn = "doc:" + hidden.id, standInMore = standIn + std::string(d::TileMoreButton::suffix);
+    check(!w.control(standIn) && !w.control(standInMore), "The last document has no tile");
+    const auto items = w.items();
+    const auto item = [&](const std::string& id) { const auto f = std::find_if(items.begin(), items.end(), [&](const auto& i) { return i.id == id; }); return f == items.end() ? nullptr : &*f; };
+    const auto* listed = item(standIn); const auto* listedMore = item(standInMore);
+    const std::string label = hidden.title + ", 2026.10.23";
+    check(listed && listedMore && listed->label == label && listedMore->label == "More, " + label, "It and its ⋯ are listed for the screen reader with the tile's labels");
+    const auto frame = listed->rect;
+    check(listedMore->rect == frame && frame.width > 0 && frame.height > 0, "Both stand at the grid's frame");
+    // Its ⋯ opens the menu at the grid's top-left, opening no document; again closes it.
+    check(w.press(standInMore) && c.menuOpen() && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete"} && !w.state.selected(),
+        "The stand-in's ⋯ opens the document's menu without opening it");
+    const auto after = w.items();
+    const auto open = std::find_if(after.begin(), after.end(), [](const auto& i) { return i.id == "doc.menu:open"; });
+    check(open != after.end() && open->rect.x >= frame.x && open->rect.x < frame.x + 8 && open->rect.y > frame.y && open->rect.y < frame.y + 20,
+        "The menu opens at the grid's top-left");
+    check(w.press(standInMore) && !c.menuOpen(), "The stand-in's ⋯ closes an open menu");
+    // The stand-in itself opens the document.
+    check(w.press(standIn) && w.state.selected() && w.state.selected()->id == hidden.id, "The stand-in opens its document");
+}
 void documentMenu() {
     World w;
     m::ArchiveCategory ops; ops.id = uuid(901); ops.name = "Ops"; ops.created = 1; w.repo->saveCategory(ops);
@@ -546,6 +591,7 @@ void documentMenu() {
     w.press("delete");
     (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
     check(!w.repo->entry(report) && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "The editor's Delete returns to the gallery");
+    documentStandIn();
 }
 
 void languages() {
