@@ -214,7 +214,7 @@ final class ClipboardStore {
                 kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 96,
                 kCGImageSourceShouldCacheImmediately: true]
             guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { continue }
-            return make(.image, preview: L10n.text("Image", "图像") + " · \(width) × \(height)", thumbnail: thumbnail,
+            return make(.image, preview: L10n.text("Image", "图像") + " / \(width) × \(height)", thumbnail: thumbnail,
                         details: ClipboardDetails(format: type == .png ? "PNG" : "TIFF", pixelWidth: width, pixelHeight: height),
                         payload: .image(type, data))
         }

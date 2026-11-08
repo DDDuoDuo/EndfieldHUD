@@ -272,7 +272,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 860, height: 650),
                             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         Self.configurePanelPresentation(panel, relativeTo: parent)
-        panel.title = region == .mainland ? "EndfieldHUD · 森空岛" : "EndfieldHUD · SKPORT"
+        panel.title = region == .mainland ? "EndfieldHUD / 森空岛" : "EndfieldHUD / SKPORT"
         panel.minSize = NSSize(width: 680, height: 540)
         if #available(macOS 11, *) {} else {
             // Older WebKit has no layout zoom; preserve the site's desktop width.
