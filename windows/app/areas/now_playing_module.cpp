@@ -585,8 +585,14 @@ private:
                    "Fixture metadata reaches the canvas");
         step.check(std::abs(position() - 42) < 1e-9 && !playing() && modules::nowPlayingTime(in.track->duration) == "03:30", "The fixture starts paused at 42 of 210 seconds");
         step.check(in.coverAvailable && session_->artworkStats().decoded > 0 && canvas_->coverViews(t)[1].image, "The fixture cover decodes on the shared executor and shows");
-        step.check(canvas_->coverViews(t)[1].backdrop && cover_->stats().residentTextures == 2,
-                   "The 96 px fixture cover is small: drawn whole over its backdrop, two textures once the cross-fade has settled");
+        {
+            // A slot a finished cross-fade emptied stays resident until the
+            // renderer collects it, so residency is bounded, not exact.
+            const auto cover = cover_->stats();
+            step.check(canvas_->coverViews(t)[1].backdrop && cover.drawnTextures == 2
+                && cover.residentTextures >= 2 && cover.residentTextures <= 4,
+                "The 96 px fixture cover is small: drawn whole over its backdrop, two textures drawn once the cross-fade has settled");
+        }
         step.check(canvas_->showsLyrics() && lyricRow(in, t) == "Current", "Fixture timed lyrics show the current line");
         step.check(in.volumeAvailable && in.volume && std::abs(*in.volume - 1) < 1e-9 && audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
                    "The synthetic process route resolves through the per-app audio bridge");

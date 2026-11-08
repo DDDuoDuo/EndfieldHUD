@@ -32,7 +32,9 @@
 #include "native/notes_image_decoder.hpp"
 
 namespace endfield::native {
-struct NativeNowPlayingCoverStats { std::uint64_t uploads{}, poses{}; std::size_t residentTextures{}, residentBytes{}; };
+// residentTextures counts uploaded slots until the renderer collects them;
+// drawnTextures counts the draws that show a texture this frame.
+struct NativeNowPlayingCoverStats { std::uint64_t uploads{}, poses{}; std::size_t residentTextures{}, residentBytes{}, drawnTextures{}; };
 class NativeNowPlayingCover final {
 public:
     explicit NativeNowPlayingCover(LayerRasterizer&);

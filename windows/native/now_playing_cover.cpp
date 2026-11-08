@@ -125,6 +125,7 @@ bool NativeNowPlayingCover::release(Renderer& r) {
 NativeNowPlayingCoverStats NativeNowPlayingCover::stats() const noexcept {
     auto s = impl_->statistics;
     for (const auto& slot : impl_->slots) if (slot.resident) { ++s.residentTextures; if (slot.uploaded) s.residentBytes += slot.uploaded->straightRGBA.size(); }
+    for (const auto& draw : impl_->draws) if (!draw.textureID.empty()) ++s.drawnTextures;
     return s;
 }
 } // namespace endfield::native
