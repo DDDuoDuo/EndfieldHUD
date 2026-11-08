@@ -41,8 +41,22 @@ struct AudioApplicationAppearance {
 final class AudioApplicationAppearanceResolver {
     private var cache: [URL: AudioApplicationAppearance] = [:]
     private let loadIcon: (URL) -> NSImage?
-    init(loadIcon: @escaping (URL) -> NSImage? = { NSWorkspace.shared.icon(forFile: $0.path) }) {
-        self.loadIcon = loadIcon
+    private let executablePath: (Int32) -> String?
+    convenience init(loadIcon: @escaping (URL) -> NSImage? = { NSWorkspace.shared.icon(forFile: $0.path) }) {
+        self.init(loadIcon: loadIcon, executablePath: PublicAppActivityBackend.path(pid:))
+    }
+    init(loadIcon: @escaping (URL) -> NSImage?, executablePath: @escaping (Int32) -> String?) {
+        self.loadIcon = loadIcon; self.executablePath = executablePath
+    }
+    /// The app a process belongs to. A helper macOS lists as no app (such as
+    /// a browser's audio service) is found from its executable's location.
+    func resolve(pid: Int32) -> AudioApplicationAppearance {
+        let running = NSRunningApplication(processIdentifier: pid)
+        let executable = running.map { $0.executableURL } ?? executablePath(pid).map { URL(fileURLWithPath: $0) }
+        var appearance = resolve(bundleURL: running?.bundleURL, executableURL: executable)
+        let name = running?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        appearance.name = appearance.name ?? name.flatMap { $0.isEmpty ? nil : $0 }
+        return appearance
     }
     func resolve(bundleURL: URL?, executableURL: URL?) -> AudioApplicationAppearance {
         precondition(Thread.isMainThread)
@@ -320,10 +334,8 @@ final class AudioDeviceController {
         if worker != nil {
             var presentation: [Int32: AudioApplicationAppearance] = [:]
             for app in next.activeApplications + next.availableApplications where presentation[app.pid] == nil {
-                let running = NSRunningApplication(processIdentifier: app.pid)
-                var appearance = appearances.resolve(bundleURL: running?.bundleURL, executableURL: running?.executableURL)
-                let name = running?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-                appearance.name = appearance.name ?? name.flatMap { $0.isEmpty ? nil : $0 } ?? app.name
+                var appearance = appearances.resolve(pid: app.pid)
+                appearance.name = appearance.name ?? app.name
                 presentation[app.pid] = appearance
             }
             func decorated(_ applications: [AudioApplicationInfo]) -> [AudioApplicationInfo] {
