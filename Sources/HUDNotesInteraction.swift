@@ -83,7 +83,8 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
     }
 
     /// `animated`: the HUD's close, whose formatting menu artwork finishes its
-    /// short fade with the notes; its input still stops at once.
+    /// short fade with the notes, as do cards still entering or leaving; its
+    /// input still stops at once.
     func deactivate(animated: Bool = false) {
         // Hide immediately when the owner is leaving; the overlay's own close
         // animation governs the entire workspace and owns its teardown. The
@@ -96,7 +97,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
         importGeneration += 1
         pendingImport?.cancel(); pendingImport = nil
-        workspace.cancelInteraction()
+        workspace.cancelInteraction(keepingLeaves: animated)
         dragging = false; externalDrag = false; active = false
         dialogGeneration += 1
         let panel = chooser

@@ -1094,10 +1094,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // running under its canvas.
         let openingCanvas = preservingNowPlayingPresentation || preservingModuleEntrance
             ? designCanvases[selectedModule]?.root : nil
-        // The close keeps a facility banner or tag already leaving on its way out.
+        // The close keeps a facility banner or tag already leaving on its way
+        // out, and desktop notes still entering or leaving with a switch.
         let overlayLeaves: [ObjectIdentifier: Set<String>] = forRetraction
             ? [ObjectIdentifier(facilityBanner.layer): HUDFacilityBanner.leaveKeys,
-               ObjectIdentifier(facilityTags.layer): HUDFacilityTagStack.leaveKeys] : [:]
+               ObjectIdentifier(facilityTags.layer): HUDFacilityTagStack.leaveKeys,
+               ObjectIdentifier(notesCanvas.workspaceLayer): NotesWorkspace.leaveKeys] : [:]
         func remove(_ item: CALayer, keepingEntrance: Bool = false, keeping leaveKeys: Set<String> = []) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }
@@ -1118,7 +1120,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // interrupted request crossed Work Mode's distinct presentation size,
         // before input uses the committed mapping.
         if moduleContent != nil {
-            notesCanvas.setPresentation(notesSelected: selectedModule == .notes, animated: false)
+            // The close lets those notes finish their motion instead of settling them.
+            notesCanvas.setPresentation(notesSelected: selectedModule == .notes, animated: forRetraction)
             // Restoring the committed module host must not reopen the source
             // overview that this cancellation just suspended. In particular,
             // a held initial pose must never submit a deployed stable frame.
