@@ -2817,15 +2817,15 @@ int Application::Impl::runHiddenVerification(){
                     auto&arrangePage=settingsUI->canvas(core::Module::display);
                     const bool opened=arrangePage.performAccessibilityAction("modules",time);settle(1);
                     const bool switched=arrangePage.performAccessibilityAction("modulesArrange",time);settle(.2);
-                    struct Tile{std::string module;std::uint64_t action{};core::Point centre;};
+                    struct Tile{std::string module,button;std::uint64_t action{};core::Point centre;};
                     const auto tilesNow=[&]{std::vector<Tile> tiles;std::optional<core::Point> addApp;
                         for(const auto&[id,action]:session->actions()){if(!session->rowAction(id))continue;const auto*entry=navigationEntry(action);if(!entry)continue;
                             const std::array<std::string,1> ids{id};const auto frame=session->buttonFrame(ids);if(!frame)continue;const core::Point centre{frame->x+frame->width/2,frame->y+frame->height/2};
                             if(entry->module&&entry->target=="addApp")addApp=centre;
-                            else if(entry->module&&ehud::data::ModuleLayout::listsTarget(entry->target))tiles.push_back({entry->target,action,centre});}
+                            else if(entry->module&&ehud::data::ModuleLayout::listsTarget(entry->target))tiles.push_back({entry->target,id,action,centre});}
                         std::sort(tiles.begin(),tiles.end(),[](const Tile&a,const Tile&b){return a.centre.y<b.centre.y||(a.centre.y==b.centre.y&&a.centre.x<b.centre.x);});
                         return std::pair{tiles,addApp};};
-                    const auto [tiles,addApp]=tilesNow();
+                    const auto [tiles,unusedAddApp]=tilesNow();(void)unusedAddApp;
                     hostCheck(opened&&switched&&arrangingModules&&arrangePage.arrangingModules()&&tiles.size()>=3,"Display > Modules > Arrange on HUD turns arranging on; the module tiles are listed on the right");
                     if(tiles.size()>=3){
                         // The host reads its own clock; `at` names the moment for the reader.
@@ -2835,6 +2835,9 @@ int Application::Impl::runHiddenVerification(){
                         {std::vector<HudButtonPeer> peers;navigationPeers(peers);const auto drag=core::localized("Drag to reorder","拖动以调整顺序",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language);
                             hostCheck(std::any_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag;})&&
                                 std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag&&navigationPress(peer);}),"The module tiles say they are dragged, and a press through UI Automation opens nothing");}
+                        // Whatever reaches a tile's activation opens nothing (SystemHUDView onAction).
+                        activate({a.button,a.action});present(time,true);
+                        hostCheck(notes&&notes->selected()==core::Module::display&&notes->modulePresentation().current.module==core::Module::display&&arrangingModules,"An activation of a module tile opens nothing while arranging");
                         // Press, then Esc: dropped back, no write, the release swallowed.
                         const auto revision=settingsUI->controller().revision();
                         hostCheck(pointer(PointerKind::down,a.centre,time)&&arrangeDrag&&!arrangeDrag->lifted&&cursorAt({5,5})==ModuleCursor::closedHand&&!session->navigationPointerActive(),
@@ -2851,20 +2854,28 @@ int Application::Impl::runHiddenVerification(){
                         const auto preview=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
                         hostCheck(preview&&preview->order!=saved.order&&std::find(preview->order.begin(),preview->order.end(),a.module)-preview->order.begin()==std::find(saved.order.begin(),saved.order.end(),b.module)-saved.order.begin(),
                             "Over another module the dragged module takes its place in the preview");
-                        {const auto wheelRevision=settingsUI->controller().revision();(void)onWheel({b.centre.x,b.centre.y,-1,false,0,3});for(unsigned frame=0;frame<30;++frame)present(time+.3+double(frame)/60,true);
-                            hostCheck(arrangeDrag&&arrangeDrag->lifted&&!arrangeDrag->preview.arranging(arrangeDrag->module,rightRowTarget(b.centre))&&settingsUI->controller().revision()==wheelRevision,
-                                "A wheel turned during the drag leaves the preview on the slot under the pointer, unsaved");}
+                        {const auto wheelRevision=settingsUI->controller().revision();const auto scrolledFrom=session->scrollPosition();const auto slotBefore=session->rowActionAt(b.centre,true);
+                            const auto previewBefore=arrangeDrag?std::optional(arrangeDrag->preview.order):std::nullopt;
+                            const bool wheeled=onWheel({b.centre.x,b.centre.y,-1,false,0,6});for(unsigned frame=0;frame<30;++frame)present(time+.3+double(frame)/60,true);
+                            hostCheck(wheeled&&session->scrollPosition()!=scrolledFrom&&session->rowActionAt(b.centre,true)!=slotBefore&&arrangeDrag&&arrangeDrag->lifted&&arrangeDrag->preview.order!=previewBefore&&
+                                !arrangeDrag->preview.arranging(arrangeDrag->module,rightRowTarget(b.centre))&&settingsUI->controller().revision()==wheelRevision,
+                                "A wheel turned during the drag scrolls the list under the tile, and the preview follows the new slot under the pointer, unsaved");}
                         time+=1;const auto shown=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
                         hostCheck(pointer(PointerKind::up,b.centre,time)&&!arrangeDrag&&shown&&configuration.moduleLayout().order==shown->order&&settingsUI->controller().revision()==revision+1,"The release saves the order of the release slot once");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.5;
                         hostCheck(!session->arrangeActive()&&moduleLayout==configuration.moduleLayout(),"The tile settles into its slot and the saved order applies");
                         // Add App does nothing; closing mid-drag snaps.
-                        if(addApp)hostCheck(pointer(PointerKind::down,*addApp,time)&&!arrangeDrag&&pointer(PointerKind::up,*addApp,time)&&notes&&notes->selected()==core::Module::display,"A press on Add App opens nothing while arranging");
-                        const auto [again,unused]=tilesNow();(void)unused;
+                        // Add App ends the list: scrolled into the bound rows first.
+                        const auto scrollList=[&](int direction){for(unsigned n=0;n<40&&session->scrollDirection(direction,false,time,1000);++n)present(time,true);present(time,true);};
+                        scrollList(1);const auto [unusedTiles,lastAddApp]=tilesNow();(void)unusedTiles;
+                        hostCheck(lastAddApp&&pointer(PointerKind::down,*lastAddApp,time)&&!arrangeDrag&&pointer(PointerKind::up,*lastAddApp,time)&&notes&&notes->selected()==core::Module::display,"A press on Add App opens nothing while arranging");
+                        scrollList(-1);const auto [again,unused]=tilesNow();(void)unused;
+                        hostCheck(!again.empty(),"The module tiles are still listed after the save");
                         if(!again.empty()){const auto&c=again.front();const auto before=settingsUI->controller().revision();
                             (void)pointer(PointerKind::down,c.centre,time);(void)pointer(PointerKind::move,{c.centre.x,c.centre.y+20},time);present(time+.02,true);
+                            const bool lifted=arrangeDrag&&arrangeDrag->lifted&&session->arrangeLifted()==c.action;
                             close(time+.05);
-                            hostCheck(!arrangeDrag&&!session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,"Closing mid-drag snaps every tile, writes nothing and ends arranging");
+                            hostCheck(lifted&&!arrangeDrag&&!session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,"Closing mid-drag snaps every tile, writes nothing and ends arranging");
                             for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+.1+double(f)/60,true);
                             time+=1.6;concealed(time);time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
                         // The order changed above goes back.
