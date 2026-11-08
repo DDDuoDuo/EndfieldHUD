@@ -12,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <string>
 
 using namespace ehud::data;
@@ -350,6 +351,63 @@ void settingsVersion130() {
         check(reloaded.value() == next && reloaded.value().moduleLayout() == next.moduleLayout(), "Every 1.3.0 key reloads unchanged");
     }
 }
+// Mac 1.3.1 settings keys (Sources/Models.swift, HUDOverlayLayout.swift,
+// HUDApplicationIcon.swift at 2c047e0). Hand-written records; the typed
+// accessors read a missing or wrong-typed value as its default and only a save
+// rewrites what the Mac's next save rewrites.
+Json settingsFile(const fs::path& root) { return Json::parse(*detail::readFile(root / "settings.json", 1024 * 1024)); }
+void settingsVersion131() {
+    Temporary root;
+    const auto writeSettings = [&](const Json& settings) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", settings}}).encode();
+        std::ofstream file(root.path / "settings.json", std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        check(bool(file), "Write the synthetic settings record");
+    };
+    // chargeBarLength: absent is the classic bar; finite > 0 reads min(1, v).
+    {
+        const auto defaults = Settings::defaults();
+        check(!defaults.fields.contains("chargeBarLength") && !defaults.chargeBarLength() && defaults.showsCloseHint() &&
+              defaults.fields["showsCloseHint"] == Json(true), "Defaults: the classic bar (no key) and the close hint on");
+        Settings value = defaults;
+        const auto read = [&](const Json& stored) { value.set("chargeBarLength", stored); return value.chargeBarLength(); };
+        check(read(.5) == std::optional(.5) && read(1) == std::optional(1.) && read(7.25) == std::optional(1.) && !read(0) && !read(-.2) &&
+              !read("0.5") && !read(true) && !read(nullptr), "A length reads min(1, v) when finite and above 0, otherwise nil");
+        value.setChargeBarLength(.4);check(value.fields["chargeBarLength"] == Json(.4), "A length is written when set");
+        value.setChargeBarLength(3);check(value.fields["chargeBarLength"] == Json(1), "A length is written normalized");
+        for (const double bad : {0., -1., std::nan(""), std::numeric_limits<double>::infinity()}) {
+            value.setChargeBarLength(.4);value.setChargeBarLength(bad);
+            check(!value.fields.contains("chargeBarLength"), "A length that is not finite and above 0 removes the key");
+        }
+        value.setChargeBarLength(.4);value.setChargeBarLength(std::nullopt);
+        check(!value.fields.contains("chargeBarLength"), "nil removes the key");
+        value.set("showsCloseHint", false);check(!value.showsCloseHint(), "The close hint switches off");
+        value.fields.erase("showsCloseHint");check(value.showsCloseHint(), "A missing close hint reads as on");
+    }
+    // A 1.3.0 record (no 1.3.1 keys) reads the defaults; a bad length loads
+    // unchanged and the next save of any setting stores it normalized.
+    writeSettings(Json::Object{{"theme", "light"}, {"chargeBarLength", 4}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().showsCloseHint() && store.value().chargeBarLength() == std::optional(1.) &&
+              settingsFile(root.path)["settings"]["chargeBarLength"] == Json(4), "Loading reads the length as 1 and writes nothing");
+        check(!store.update(store.value()), "An update that changes nothing writes nothing");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root.path)["settings"]["chargeBarLength"] == Json(1) &&
+              store.value().fields["chargeBarLength"] == Json(1), "The next save stores the length normalized");
+    }
+    writeSettings(Json::Object{{"chargeBarLength", "wide"}, {"showsCloseHint", false}});
+    {
+        SettingsStore store(root.path);
+        check(!store.value().chargeBarLength() && !store.value().showsCloseHint() && settingsFile(root.path)["settings"]["chargeBarLength"] == Json("wide"),
+              "A wrong-typed length reads as the classic bar and the rest of the record loads");
+        auto next = store.value();next.set("theme", "light");
+        check(store.update(next) && !settingsFile(root.path)["settings"].contains("chargeBarLength") && !settingsFile(root.path)["settings"]["showsCloseHint"].boolean(),
+              "The next save removes the unusable length and keeps the close hint off");
+    }
+    writeSettings(Json::Object{{"showsCloseHint", "no"}});
+    rejects([&] { SettingsStore invalid(root.path); }, "A non-Boolean close hint is invalid, like the other 1.3.0 switches");
+}
 }
 
 int main(int argc, char** argv) {
@@ -359,6 +417,7 @@ int main(int argc, char** argv) {
         edges();
         settingsSchema();
         settingsVersion130();
+        settingsVersion131();
         std::cout << checks << " profile store normalization checks passed; temporary roots only\n";
         return 0;
     } catch (const std::exception& e) {

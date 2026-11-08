@@ -206,6 +206,20 @@ std::vector<std::string> strings(const Json& value) {
 }
 bool configurableModule(std::string_view name) {return std::find(ModuleLayout::configurable.begin(),ModuleLayout::configurable.end(),name)!=ModuleLayout::configurable.end();}
 bool contains(const std::vector<std::string>& list,std::string_view name) {return std::find(list.begin(),list.end(),name)!=list.end();}
+// AppConfiguration.normalized's chargeBarLength: finite and above 0 becomes
+// min(1, v); anything else (another JSON type too) is nil.
+std::optional<double> barLength(double length) {
+    if(!std::isfinite(length)||length<=0) return std::nullopt;
+    return std::min(1.,length);
+}
+std::optional<double> barLength(const Json& value) {return value.isNumber()?barLength(value.number()):std::nullopt;}
+// The record as Mac ConfigurationStore.update writes it, on every save of any
+// setting (never on load): chargeBarLength normalized, or removed when nil.
+// Both the file and the store's value hold the result.
+Settings saved(Settings value) {
+    if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
+    return value;
+}
 // D2 downgrade mirror: while the summon hotkey is off the record also carries
 // windowsSummonHotkeyDisabled: true, so Windows 1.2.0 keeps the same intent;
 // while it is on the legacy key is removed (absent = on for 1.2.0).
@@ -242,7 +256,7 @@ Settings Settings::defaults() {
         {"batteryAlertsEnabled",true},{"devicePopupEnabled",true},{"lowPowerVisualMode",false},{"applicationIcon","endfield"},
         {"clockFormat","twentyFourHour"},{"clockStyle","digital"},{"centerLogo","endfield"},{"centerLogoRevision",nullptr},{"alertMetric","battery"},
         {"summonShortcut",Json::Object{{"keyCode",50},{"modifiers",1}}},
-        {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true}
+        {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true},{"showsCloseHint",true}
     };return result;
 }
 Settings Settings::restoredDefaults(const Settings& current) {
@@ -257,6 +271,13 @@ bool Settings::summonHotkeyEnabled() const {return flag(fields,"summonHotkeyEnab
 bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);}
 bool Settings::dailyBootLog() const {return flag(fields,"dailyBootLog",true);}
 bool Settings::facilityAlerts() const {return flag(fields,"facilityAlerts",true);}
+bool Settings::showsCloseHint() const {return flag(fields,"showsCloseHint",true);}
+std::optional<double> Settings::chargeBarLength() const {return barLength(fields["chargeBarLength"]);}
+void Settings::setChargeBarLength(std::optional<double> value) {
+    // An unchanged length keeps its saved token (the profile's number rule).
+    if(const auto length=value?barLength(*value):std::nullopt) data::number(fields,"chargeBarLength",*length);
+    else fields.erase("chargeBarLength");
+}
 std::optional<std::string> Settings::dailyBootLogLastDay() const {const auto& value=fields["dailyBootLogLastDay"];if(!value.isString()) return {};return value.string();}
 bool Settings::consumeDailyBootLog(std::string_view today) {
     if(dailyBootLogLastDay()==today) return false;
@@ -353,8 +374,12 @@ bool SettingsStore::markLaunched() {
     auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value_);envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
     detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;launched_=true;return true;
 }
-bool SettingsStore::update(const Settings& value) {
-    validateSettings(value);if(value==value_ && persisted_) return false;
+bool SettingsStore::update(const Settings& next) {
+    // Unchanged compares as the Mac does (normalized against normalized), so a
+    // record loaded with values the next save rewrites is not written by an
+    // update that changes nothing.
+    const auto value=saved(next);
+    validateSettings(value);if(value==saved(value_) && persisted_) return false;
     auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
     detail::replaceFile(path_,persisted_,bytes,jsonLimit);value_=value;envelope_=std::move(envelope);persisted_=bytes;return true;
 }

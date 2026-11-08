@@ -106,6 +106,15 @@ struct Settings {
     bool consumeDailyBootLog(std::string_view today);
     ModuleLayout moduleLayout() const;
     void setModuleLayout(const ModuleLayout&); // removes the keys when default, as the Mac does
+    // Mac 1.3.1 keys (Sources/Models.swift). chargeBarLength is the compact
+    // battery bar's length as a fraction of its display's usable width; absent
+    // (nil) keeps the classic 264 pt bar and it is not in defaults(). A finite
+    // value above 0 reads as min(1, v); anything else, another type included,
+    // reads as nil, and the next save stores it that way. showsCloseHint
+    // (Display > Close hint) is in defaults(); absent reads as on.
+    std::optional<double> chargeBarLength() const;
+    void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
+    bool showsCloseHint() const;
     // The Battery alert method menu (SHELL-99): a saved batteryAlertsEnabled
     // = false shows as "never" (Don't display); choosing any method stores it
     // and turns batteryAlertsEnabled back on.
