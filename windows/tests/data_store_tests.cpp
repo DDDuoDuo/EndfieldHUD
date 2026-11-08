@@ -372,15 +372,25 @@ std::string scalarPrefix(std::string_view text, std::size_t count) {
 void restoreScopes131() {
     using S = Settings::Scope;
     // Every saved key belongs to exactly one of System, Display (HUD elements
-    // inside it) or no Restore, so a new key cannot be forgotten: the list
-    // holds every key of defaults() plus the keys absent while default.
+    // inside it) or no Restore. The record is a JSON bag, so there is no
+    // struct to count (the Mac Mirror check): the keys come from the code
+    // instead. defaults() gives the keys always written, and every typed
+    // setter is run with a value that writes its key, so a new default key or
+    // a setter's new key fails here. Keys the Windows owners write by name
+    // through set() alone are the only ones listed by hand.
     const auto defaults = Settings::defaults();
-    const std::vector<std::string_view> absentByDefault{"chargeBarLength", "hudOverlayLayout", "hudModuleOrder", "hudHiddenModules", "windowsDisplayID",
-        "windowsDisplayName", "windowsSummonShortcut", "storageVolume", "projection.settings.v1", "orbipom.bestScore.v1", "dailyBootLogLastDay"};
+    Settings written = defaults;
+    written.setChargeBarLength(.5);
+    OverlayLayout placed;placed.showsSanity = false;placed.openModule = "map";written.setOverlayLayout(placed);
+    auto hiddenModules = written.moduleLayout();hiddenModules.move(hiddenModules.order[0], 1);hiddenModules.setHidden("archive", true);written.setModuleLayout(hiddenModules);
+    written.setProjection({0x22A6F2, 30, true, false});
+    written.consumeDailyBootLog("2026-11-07");
+    written.setBatteryAlertMethod("always");
+    for (const auto key : {"windowsDisplayID", "windowsDisplayName", "windowsSummonShortcut", "storageVolume", "orbipom.bestScore.v1"}) written.set(key, "set by name");
     const auto listed = [](std::string_view key) { return std::count_if(scopedSettings.begin(), scopedSettings.end(), [&](const ScopedSetting& s) { return s.key == key; }); };
-    for (const auto& [key, value] : defaults.fields.object()) check(listed(key) == 1, "Every default key is in exactly one scope row: " + key);
-    for (const auto key : absentByDefault) check(listed(key) == 1 && !defaults.fields.contains(key), "Every key absent by default is in one scope row: " + std::string(key));
-    check(scopedSettings.size() == defaults.fields.object().size() + absentByDefault.size(), "The restore scopes cover all saved settings and nothing else");
+    for (const auto& [key, value] : written.fields.object()) check(listed(key) == 1, "Every written key is in exactly one scope row: " + key);
+    check(scopedSettings.size() == written.fields.object().size(),
+          "Every scope row is a key defaults(), a typed setter or a by-name Windows owner writes (no stale rows)");
     for (const auto scope : {S::system, S::display, S::hudElements}) check(defaults.isDefault(scope) && defaults.restoring(scope) == defaults, "The defaults are at the defaults in every scope");
 
     // Everything changed (Mac "everything"), plus the Windows-only keys.
