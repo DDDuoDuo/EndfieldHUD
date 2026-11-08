@@ -240,7 +240,7 @@ void lifecycle(){
     {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
     h.wake(&World::topologyWake);
     h.until([&](const auto&x){return x.defaultOutputID==usb&&!app(x,player)->gain;},"Output change stops owned routes");
-    check(!s.snapshot().applicationError,"The routes end quietly, like an explicit stop (source 730f4bb)");
+    check(!s.snapshot().applicationError&&!s.snapshot().routeError,"The routes end quietly, like an explicit stop (source 730f4bb)");
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f,"The previous output's session is restored to its original level");
     {std::lock_guard l(h.world->m);check(h.world->bound==usb&&h.world->sessionCloses==1&&h.world->sessionOpens==2,"Controls and sessions follow the new default output");}
     // A gain set on the old output races the change: refused like a stale
@@ -442,7 +442,7 @@ void hiddenOutputChange(){
     h.wake(&World::topologyWake);
     h.until([](const auto&x){return !x.topologyActive;},"The listener closes with the last route");
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f,"The speaker session is restored on the old endpoint");
-    check(s.snapshot().applications.empty()&&!s.snapshot().applicationError,"The route is gone, quietly");
+    check(s.snapshot().applications.empty()&&!s.snapshot().applicationError&&!s.snapshot().routeError,"The route is gone, quietly");
     {std::lock_guard l(h.world->m);check(h.world->sessionOpens==1&&!h.world->sessionWake&&!h.world->violation,"No session manager opened on the new output while hidden");}
     s.stop();
 }
