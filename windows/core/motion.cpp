@@ -217,6 +217,11 @@ double ModuleTransitionStyle::registrationOpacityAt(double elapsed) {
     return 0;
 }
 
+DesignMotion::ClosingFade DesignMotion::closingFade(double length, double reveal) noexcept {
+    length = std::isfinite(length) ? std::max(0.0, length) : 0;
+    const double duration = std::min(std::isfinite(reveal) ? std::max(0.0, reveal) : 0, length);
+    return {length - duration, duration};
+}
 double DesignMotion::staggerDelay(int index) noexcept {
     return staggerBase + std::min(std::max(0, index), staggerCap) * staggerStep;
 }

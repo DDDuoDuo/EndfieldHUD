@@ -163,6 +163,15 @@ struct DesignMotion {
     // Moves toward -0.6 x offset while fading to 0.
     static DesignMotionSample leaveAt(double elapsed, MotionPoint offset, double fromOpacity = 1,
                                       bool reduceMotion = false) noexcept;
+    // HUDMotion.closingFade(ending:reveal:): the HUD close's fade, as long as
+    // the opening's `reveal` (the whole close when shorter) and timed to end
+    // exactly when the close of `length` ends. A non-finite or negative input
+    // counts as 0.
+    struct ClosingFade {
+        double delay{}, duration{};
+        bool operator==(const ClosingFade &) const = default;
+    };
+    static ClosingFade closingFade(double length, double reveal) noexcept;
 };
 
 // Sources/HUDDesignOverlay.swift HUDCenterOverlay.setContentDimmed (LIB-64):

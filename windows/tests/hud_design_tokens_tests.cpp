@@ -11,6 +11,7 @@
 //           until it lands), argv[2] Sources/HUDDesignIcons.swift.
 #include "modules/hud_design_format.hpp"
 #include "modules/hud_design_icons.hpp"
+#include "core/source_desktop_chrome.hpp"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -187,6 +188,22 @@ void typeScale() {
         for (const auto& [time, eased] : samples)
             check(std::abs(d::easing::listSlide.value(time) - eased) < 1e-9, "The list slide's curve at t = " + std::to_string(time));
         check(d::easing::listSlide.value(0) == 0 && d::easing::listSlide.value(1) == 1 && d::easing::listSlide.value(-1) == 0 && d::easing::listSlide.value(2) == 1, "The list slide's curve starts at 0 and ends at 1");
+    }
+    // HUDMotion.closingFade (HUDDesignMotion.swift): the close's fade lasts
+    // the opening's reveal (DesktopChromeTiming::openingDuration, the twin of
+    // SystemHUDView.sourceRevealDuration), the whole close when shorter, and
+    // ends with the close; a non-finite or negative input counts as 0.
+    {
+        const auto fade = [](double length, double reveal, double delay, double duration) {
+            const auto f = c::DesignMotion::closingFade(length, reveal);
+            return near(f.delay, delay) && near(f.duration, duration);
+        };
+        const double reveal = c::source::DesktopChromeTiming::openingDuration;
+        check(reveal == .24 && fade(.3333, reveal, .0933, .24), "The Watch exit's .3333 s close fades over the last .24 s");
+        check(fade(.1, reveal, 0, .1) && fade(.24, reveal, 0, .24) && fade(0, reveal, 0, 0), "A close shorter than the reveal fades over all of it");
+        check(fade(-1, reveal, 0, 0) && fade(std::nan(""), reveal, 0, 0) && fade(.5, -1, .5, 0) && fade(.5, std::nan(""), .5, 0)
+            && fade(.3333, std::numeric_limits<double>::infinity(), .3333, 0) && fade(std::numeric_limits<double>::infinity(), reveal, 0, 0),
+            "A non-finite or negative length or reveal counts as 0");
     }
     // HUDDuration (:351-388).
     namespace t = d::duration;
@@ -628,6 +645,21 @@ void oracle(const char* path) {
             {"pop", t::pop}, {"taskFlip", t::taskFlip}};
         for (const auto& [name, value] : durations)
             check(tokens["durations"][name].isNumber() && near(tokens["durations"][name].number(), value, 1e-9), std::string("Oracle duration ") + name);
+    }
+    // HUDMotion.closingFade and SystemHUDView.sourceRevealDuration as the
+    // oracle exports them (present from the fixture regenerated with them).
+    if (tokens["closingFade"].isArray()) {
+        const auto number = [](const J& v) {
+            if (v.isNumber()) return v.number();
+            return v.string() == "inf" ? std::numeric_limits<double>::infinity() : std::nan("");
+        };
+        check(!tokens["closingFade"].array().empty(), "Oracle closing fade cases");
+        for (const auto& v : tokens["closingFade"].array()) {
+            const auto f = c::DesignMotion::closingFade(number(v["length"]), number(v["reveal"]));
+            check(near(f.delay, v["delay"].number(), 1e-9) && near(f.duration, v["duration"].number(), 1e-9), "Oracle closing fade " + v.encode());
+        }
+        check(tokens["sourceRevealDuration"].isNumber() && near(tokens["sourceRevealDuration"].number(), c::source::DesktopChromeTiming::openingDuration, 1e-12),
+            "Oracle source reveal duration is DesktopChromeTiming::openingDuration");
     }
     // HUDRenderScale.contentScale for HUDLayer, HUDTextLayer and CATextLayer
     // as the Mac exports them: magnification 1 is the Mac table, both overloads.

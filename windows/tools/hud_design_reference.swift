@@ -179,6 +179,15 @@ private final class FakeCanvas: HUDDesignCanvas {
             "confirmText": d.confirmText, "confirmTextDelay": d.confirmTextDelay, "pillDelay": d.pillDelay, "pillStep": d.pillStep,
             "confirmCallback": d.confirmCallback, "dim": d.dim, "dimFilter": d.dimFilter, "toastVisible": d.toastVisible,
             "toastOut": d.toastOut, "pop": d.pop, "taskFlip": d.taskFlip, "perspective": d.perspective, "scaleConfirmation": d.scaleConfirmation]
+        // The HUD close's fade (HUDMotion.closingFade) and the source canvas
+        // fade-in it plays reversed (SystemHUDView.sourceRevealDuration).
+        let closingFade = [(0.3333, 0.24), (0.1, 0.24), (0.24, 0.24), (0, 0.24), (-1, 0.24), (0.5, -1), (Double.nan, 0.24), (0.3333, Double.infinity)]
+            .map { length, reveal -> [String: Any] in
+                let fade = HUDMotion.closingFade(ending: length, reveal: reveal)
+                return ["length": length.isFinite ? length as Any : (length.isNaN ? "nan" : "inf"),
+                        "reveal": reveal.isFinite ? reveal as Any : (reveal.isNaN ? "nan" : "inf"),
+                        "delay": fade.delay, "duration": fade.duration]
+            }
         let scaleProbe = (HUDLayer.plain(), HUDTextLayer(), CATextLayer())
         let renderScale = [0.5, 1, 1.25, 1.5, 2, 2.5, 3, 3.3, 4, 5, 8, Double.infinity].map { base -> [String: Any] in
             ["base": base.isFinite ? base as Any : "inf", "layer": HUDRenderScale.contentScale(for: scaleProbe.0, baseScale: CGFloat(base)),
@@ -187,6 +196,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         }
         payload["tokens"] = ["palettes": palettes, "themes": themesByMode, "styles": stylesByMode, "accentNormalisation": normalisation, "lightTone": lightTones,
             "easings": easings, "durations": durations,
+            "closingFade": closingFade, "sourceRevealDuration": SystemHUDView.sourceRevealDuration,
             "metric": ["box": [HUDMetric.box.width, HUDMetric.box.height], "headerHeight": HUDMetric.headerHeight, "bodyHeight": HUDMetric.bodyHeight,
                        "rowHeight": HUDMetric.rowHeight, "compactRowHeight": HUDMetric.compactRowHeight, "rowGap": HUDMetric.rowGap,
                        "rowChamfer": HUDMetric.rowChamfer, "buttonChamfer": HUDMetric.buttonChamfer, "sliderLabelColumn": HUDMetric.sliderLabelColumn],
