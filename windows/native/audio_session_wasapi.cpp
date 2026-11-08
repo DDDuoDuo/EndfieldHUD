@@ -115,8 +115,8 @@ struct TaskString{LPWSTR value{};~TaskString(){CoTaskMemFree(value);}};
 std::optional<AudioApplicationExecutable>executable(std::wstring_view path)noexcept{
     try{if(path.empty()||path.size()>=32768||path.find(L'\0')!=path.npos)return {};const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(count<=0||count>32768)return {};
         std::string token(static_cast<std::size_t>(count),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),token.data(),count,nullptr,nullptr)!=count)return {};
-        NativeFileShelfFiles files;auto lease=files.acquire(token);const auto&metadata=lease.metadata();if(metadata.kind!=ehud::data::ShelfFileKind::regular||metadata.isDirectory)return {};
-        return AudioApplicationExecutable{metadata.windowsPath,metadata.identity};
+        auto file=nativeRegularFile(token);if(!file)return {};
+        return AudioApplicationExecutable{std::move(file->path),file->identity};
     }catch(...){return {};}// Presentation failure must not disable audio control.
 }
 // Callback bodies never lock, wait, unregister, invoke owner UI or release a
