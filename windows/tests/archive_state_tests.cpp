@@ -1,6 +1,7 @@
 #include "modules/archive_state.hpp"
 #include "native/archive_text_rules.hpp"
 #include "core/data/file_io.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <algorithm>
 #include <deque>
 #include <iostream>
@@ -59,6 +60,7 @@ void state(){const auto rules=endfield::native::nativeArchiveTextRules();auto re
     state.select(repo->order[1]);state.select(repo->order[2]);queue.drain();check(state.selected()->id==repo->order[2],"Late earlier selection completion cannot replace newer document");
     repo->failRemove=true;const auto deleting=state.selected()->id;check(state.deleteSelected(),"Document deletion requires caller confirmation then schedules durable delete");queue.drain();check(!state.selected()&&std::any_of(state.entries().begin(),state.entries().end(),[&](const auto&e){return e.id==deleting;}),"Failed delete restores gallery reference without resurrecting editor");repo->failRemove=false;state.select(deleting);queue.drain();check(state.deleteSelected(),"Restored document can be selected and explicitly deleted again");queue.drain();check(!repo->documents.contains(deleting),"Delete affects document reference, no media IO occurs");
     auto owned=std::make_unique<mod::ArchiveState>(repo,queue.executor(),rules);owned->activate();queue.drain();owned->select(first);queue.drain();draft=*owned->selected();draft.title="Pending durable shutdown";owned->update(draft,300,10);owned->flush();owned.reset();queue.drain();check(repo->documents.at(first).title==draft.title,"Accepted save survives facade teardown without a UI callback");
+    check(!state.create(id('E',1),301,id('F',1))&&state.error()==std::optional<std::string>("Invalid Archive category")&&endfield::tests::followsInterfaceTextRules(*state.error()),"A create into a missing category shows its error without a final full stop");
 }
 void races(){const auto rules=endfield::native::nativeArchiveTextRules();auto repo=fixture();Queue queue;mod::ArchiveState state(repo,queue.executor(),rules);state.activate();queue.drain();state.select(repo->order.front());queue.drain();const auto first=state.selected()->id;
     // Full shared capacity may be held entirely by unrelated modules. No Archive
