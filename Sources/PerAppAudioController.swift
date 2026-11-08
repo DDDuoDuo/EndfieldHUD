@@ -221,7 +221,7 @@ final class PerAppAudioController {
             let cleanup = owned.route.stop()
             if owned.route.isStopped { routes.removeValue(forKey: processID) }
             sessions[index].state = owned.route.isStopping ? .stopping : .failed
-            sessions[index].error = cleanup.map { message + " " + $0 } ?? message
+            sessions[index].error = L10n.sentences(message, cleanup)
             statusMessage = sessions[index].error
         case .stopped(let error):
             if owned.route.isStopped {

@@ -202,7 +202,7 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
                 if cancellation.isCancelled {
                     send(.event(.stopped(cleanup), stopped: stopped))
                 } else {
-                    let detail = cleanup.map { error.localizedDescription + " " + $0 } ?? error.localizedDescription
+                    let detail = L10n.sentences(error.localizedDescription, cleanup)
                     send(.event(.failed(detail), stopped: stopped))
                 }
                 if stopped { route = nil }
@@ -389,7 +389,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         } catch {
             let cleanup = stop()
             let detail = describe(error)
-            throw PerAppAudioEngineError.message(cleanup.map { detail + " " + $0 } ?? detail)
+            throw PerAppAudioEngineError.message(L10n.sentences(detail, cleanup))
         }
     }
 
@@ -610,7 +610,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         // facade can disable controls and start its independent stop deadline.
         event(.failed(detail))
         let cleanup = stop()
-        event(.stopped(cleanup.map { detail + " " + $0 } ?? detail))
+        event(.stopped(L10n.sentences(detail, cleanup)))
     }
     private func writeDescription(_ description: CATapDescription) -> OSStatus {
         hardware.setDescription(tap, description: description)
