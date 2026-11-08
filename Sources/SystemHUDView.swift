@@ -1053,16 +1053,19 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// The overlays' own exits, inside the close's length. Called after
     /// cancelAnimations, which would strip them; each is immediate when reduced.
-    /// A sub-page swap lands its next page held hidden, to leave with the module.
+    /// A sub-page swap lands its next page held hidden, to leave with the
+    /// module, and a lifted module button settles into its slot.
     private func beginClosingExits() {
         designCanvases.values.forEach { $0.settleSwap(concealed: true) }
+        dropArrangePress(closing: true)
         facilityBanner.hide(animated: true)
         accountGauge.dismiss(animated: true)
         layoutAccountGaugeControls()
         notesInteraction?.deactivate(animated: true)
     }
 
-    /// `forRetraction`: the close only stops input (deactivateModuleInput).
+    /// `forRetraction`: the close only stops input (deactivateModuleInput) and
+    /// keeps a lifted module button where it is drawn for its settle.
     func cancelAnimations(preserveClickFeedback: Bool = false, preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
                           preservingNowPlayingPresentation: Bool = false, preservingModuleEntrance: Bool = false,
                           preservingCursor: Bool = false, forRetraction: Bool = false) {
@@ -1078,7 +1081,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         selectedModule = moduleContent?.selectedModule ?? .power
         if !preservingChargeAnimation { chargeBadge.cancelAnimations() }
         identityCard.resetInteraction()
-        navigation.cancelAnimations()
+        navigation.cancelAnimations(keepingArrangeDrag: forRetraction)
         navigation.select(selectedModule, animated: false)
         if preservingPointerMotion {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
@@ -3426,10 +3429,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var swallowsArrangePress = false
 
     /// Drops a module button's press in its saved place; the rest of the
-    /// press does nothing (arranging ending, the HUD closing).
-    private func dropArrangePress() {
+    /// press does nothing (arranging ending, the HUD closing). The close's
+    /// exits (`closing`) let the tile settle as the HUD folds.
+    private func dropArrangePress(closing: Bool = false) {
         if arrangeDrag != nil, NSEvent.pressedMouseButtons & 1 != 0 { swallowsArrangePress = true }
-        endModuleArrangeDrag(save: false, animated: interactionEnabled && !retracting)
+        endModuleArrangeDrag(save: false, animated: closing || (interactionEnabled && !retracting))
     }
 
     private func setModuleArrangement(_ on: Bool) {
@@ -3554,7 +3558,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// Ends a press on a module button. A lifted drag saves its order (`save`)
     /// or the list returns to the saved one; a press without a lift does nothing.
     /// The dropped tile settles into its slot, and on a cancel every tile slides
-    /// back, unless `animated` is false (the HUD is closing) or under Reduce Motion.
+    /// back, unless `animated` is false (input stopped outside the close) or under Reduce Motion.
     private func endModuleArrangeDrag(save: Bool, animated: Bool = true) {
         guard let drag = arrangeDrag else { return }
         arrangeDrag = nil
@@ -3967,8 +3971,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// deactivation (teardown, a shelf concealment) ends the rest.
     private func deactivateModuleInput(preservingNowPlayingPresentation: Bool = false, forRetraction: Bool = false) {
         if forRetraction {
+            // A module button's press ends with the close's exits, after this
+            // cancel, so its settle is not stripped (beginClosingExits).
             overlayEditor?.cancelPointer()
-            dropArrangePress()
             designCanvases.values.forEach { $0.suspendInput() }
             designContext.overlay.suspendInput()
             facilityBannerRouter.cancel(); facilityTagRouter.cancel()
