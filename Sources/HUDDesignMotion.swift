@@ -110,12 +110,20 @@ enum HUDMotion {
     /// The finite exits: a module or sub-page leave, the confirm bar's bandOut.
     static let exitKeys: Set<String> = ["module.leave", "hud.page.leave", "hud.header.leave", "hud.bandOut"]
 
+    /// A module's own one-shot motions, often still playing when the HUD
+    /// closes: the copy flash, the Work Mode ring's arc and marker, a Reader
+    /// page turn, the Archive seal bars, a Profile value change and a lyric
+    /// step. Loops (blink, scan, sheen, pulse) are never listed here.
+    static let moduleMotionKeys: Set<String> = [
+        "hud.flash", "hud.strokeEnd", "hud.workMode.marker", "hud.reader.turn", "hud.seal", "hud.valueChange",
+        "hud.lyric.position.y", "hud.lyric.opacity", "hud.lyric.transform.scale"]
+
     /// What the HUD's close keeps under the module and the centre overlay:
     /// entrances and exits already playing, a pop, a cover or poster
-    /// cross-fade, and the finite fades and rises of the dim, the confirm bar
-    /// and a toast leaving. They all end inside the close instead of jumping
-    /// to their end state at its start.
-    static let closeKeys: Set<String> = entranceKeys.union(exitKeys).union([
+    /// cross-fade, a module's own one-shot motions, and the finite fades and
+    /// rises of the dim, the confirm bar and a toast leaving. They all end
+    /// inside the close instead of jumping to their end state at its start.
+    static let closeKeys: Set<String> = entranceKeys.union(exitKeys).union(moduleMotionKeys).union([
         "hud.pop", crossFadeKey, "hud.opacity", "hud.transform.translation.y",
         "hud.filters.confirmBlur.inputRadius", "hud.filters.confirmDim.inputEV"])
 
