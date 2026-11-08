@@ -123,7 +123,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             presentationStartCountForVerification += 1
             audio.start(); controller.activate(); refresh()
         } else {
-            stopClock(); closeVolume(); seek?.cancelDrag()
+            // The volume pop-up stays drawn to leave with the page.
+            stopClock(); closeVolume(keepingDrawn: true); seek?.cancelDrag()
             requestedEndRefresh = false
             // Nothing keeps running on the hidden page (bar runs, lyric slides,
             // fades); a finite entrance finishes under the module's leave.
@@ -136,7 +137,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     override func renderScaleChanged() { closeVolume(); super.renderScaleChanged() }
 
-    override func closePopups() { super.closePopups(); closeVolume() }
+    override func closePopups() { super.closePopups(); closeVolume(keepingDrawn: keepsClosingPopupsDrawn) }
 
     private static func removeAnimations(in layer: CALayer) {
         for key in layer.animationKeys() ?? [] where !HUDMotion.entranceKeys.contains(key) { layer.removeAnimation(forKey: key) }
@@ -566,13 +567,15 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         if controller.playerVolumeFailure == .permissionRequired, !controller.isAwaitingPermission { controller.connect() }
     }
 
-    private func closeVolume() {
+    /// `keepingDrawn`: the module is leaving; the pop-up stays drawn with
+    /// the page until it shows again.
+    private func closeVolume(keepingDrawn: Bool = false) {
         guard isVolumeOpen else { return }
         isVolumeOpen = false; volumeGesture = nil
         if let popup {
             popup.clearInteractionState()
             page.remove(popup)
-            HUDMotion.perform { popup.layer.removeFromSuperlayer(); popup.noticeLayer.removeFromSuperlayer() }
+            retirePopup([popup.layer, popup.noticeLayer], keepingDrawn: keepingDrawn)
         }
         popup = nil
         volumeButton?.isOn = false

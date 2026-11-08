@@ -277,7 +277,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func prepareToLeave() {
         entrance = nil
-        closePopups()
+        closePopupsForLeave()
         suspendInput()
         settleSwap(concealed: true)
         willLeave()
@@ -305,7 +305,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             didActivate()
         } else {
             entrance = nil
-            closePopups(); suspendInput(); settleSwap(concealed: true)
+            closePopupsForLeave(); suspendInput(); settleSwap(concealed: true)
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -392,6 +392,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private var swapDeadline = DispatchTime.now()
 
     private func revealSettledPage() {
+        removeDepartedPopups()
         guard swapWork == nil else { return }
         HUDMotion.perform {
             page.layer.removeAnimation(forKey: Self.holdKey)
@@ -483,7 +484,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         menuState = nil
         (state.anchor as? HUDMenuAnchor)?.isOpen = false
         state.menu.controls.forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.menu.layer.removeFromSuperlayer() }
+        retirePopup([state.menu.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
@@ -508,12 +509,38 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         guard let state = popoverState else { return }
         popoverState = nil
         (state.controls + (state.popover.close.map { [$0] } ?? [])).forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.popover.layer.removeFromSuperlayer() }
+        retirePopup([state.popover.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
 
     func closePopups() { closeMenu(); closePopover() }
+
+    /// True while the module leaving closes its menus and pop-overs: they
+    /// stop taking input but stay drawn to leave with the page, and the next
+    /// showing removes them. Every other close removes them at once.
+    private(set) var keepsClosingPopupsDrawn = false
+    private var departedPopups: [CALayer] = []
+
+    private func closePopupsForLeave() {
+        keepsClosingPopupsDrawn = true
+        closePopups()
+        keepsClosingPopupsDrawn = false
+    }
+
+    /// Removes a closed popup's layers, or (`keepingDrawn`, the module
+    /// leaving) keeps them drawn until the next showing.
+    func retirePopup(_ layers: [CALayer], keepingDrawn: Bool) {
+        if keepingDrawn { departedPopups += layers; return }
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
+
+    private func removeDepartedPopups() {
+        guard !departedPopups.isEmpty else { return }
+        let layers = departedPopups
+        departedPopups = []
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
 
     // MARK: Text fields
 
