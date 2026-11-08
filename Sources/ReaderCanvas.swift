@@ -455,6 +455,11 @@ final class ReaderCanvas: HUDDesignCanvas {
         let zoomed = current.isIllustration && imageView.zoom > 1
         if preferences.vertical, !zoomed {
             pendingTurn = nil
+            // Reopening the book shown (the module shown again) empties the
+            // rendered column until its render returns: the drawn pages and
+            // the scroll stay as they are until then.
+            if controller.pages.isEmpty, controller.error == nil, columnLocation == current.location,
+               pageLayers[current.location] != nil { return }
             if columnLocation != current.location { columnLocation = current.location; scrollOffset = 0 }
             clampOffset()
             guard let current = controller.current else { return }
