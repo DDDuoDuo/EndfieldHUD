@@ -994,8 +994,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // A directional wave carries irregular local dropouts through the
         // scene. Backdrop/blur remain smooth; ambient geometry stays intact.
         let machinery = (artwork?.groups.flatMap { $0.sublayers ?? [] } ?? []) + [progress]
+        // The scroll arrows are always drawn; they leave with the cards.
         let cards = navigation.visibleEntries.filter { $0.module != .power && $0.module != .profile }.map(\.layer)
-            + (identityCard.layer.sublayers ?? [])
+            + (identityCard.layer.sublayers ?? []) + (opening ? [] : navigation.chromeLayers)
         let readouts = moduleContent.layer.sublayers?.flatMap { wrapper in
             (wrapper.sublayers ?? []).flatMap { $0.sublayers ?? [] }
         } ?? []

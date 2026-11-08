@@ -27,6 +27,8 @@ final class HUDNavigation {
     var canScrollUp: Bool { rightScrollOffset > 0.01 }
     var canScrollDown: Bool { rightScrollOffset < maxRightScrollOffset - 0.01 }
     var visibleEntries: [HUDNavigationEntry] { entries.filter(\.isVisible) }
+    /// The right-hand list's scroll arrows, drawn beside the cards.
+    var chromeLayers: [CALayer] { [scrollUp, scrollDown] }
     private var hoveredTarget: HUDNavigationTarget?
     private var rawScrollOffset: CGFloat = 0
     private var ownsMomentum = false
