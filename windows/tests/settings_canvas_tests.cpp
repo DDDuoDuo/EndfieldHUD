@@ -174,9 +174,8 @@ void replay(const Json& data, const Json& manifest) {
     // The Mac 1.3.1 Settings pages not ported yet: their recorded differences
     // are listed but do not fail until the item named here lands, and each
     // must still differ, so a page that comes to match is taken off the list.
-    // Battery alert: the battery bar editor. The watch icon's localized
-    // title comes with the watch icon.
-    const std::set<std::string> pendingPages{"display/battery", "display/menu.method", "display/battery.alertsOff"};
+    // The watch icon's localized title comes with the watch icon.
+    const std::set<std::string> pendingPages;
     const std::set<std::string> pendingIconTitles{"watch"};
     std::set<std::string> pendingMatched;
     const auto row = [&](core::Module module, std::string_view state) {
@@ -642,8 +641,14 @@ void contracts() {
     check(w[M::display].performAccessibilityAction("method:never", w.now) && committed().string("displayMode") == "never" && toastTitle() == "Bar hidden", "Don't display toasts Bar hidden");
     w.activate(M::display, "metric");
     check(w[M::display].performAccessibilityAction("metric:gpu", w.now) && committed().string("alertMetric") == "gpu", "The GPU reading is offered");
+    {
+        std::vector<std::string> ids;
+        for (auto* c : w[M::display].page().controls()) if (dynamic_cast<d::RowPlate*>(c)) ids.push_back(c->id());
+        check(ids == std::vector<std::string>{"row:metric", "row:method", "row:duration", "row:placement", "editPosition"} && w[M::display].header().counterText() == "05"
+            && w.control(M::display, "editPosition").label == "Edit position and size", "Battery alert: five rows, no Size slider, counter 05");
+    }
     w.activate(M::display, "editPosition");
-    check(w.hooks.back() == "editPosition", "Edit position hands over to the Power area");
+    check(w.hooks.back() == "editPosition", "Edit position and size hands over to the Power area");
     w.hide(M::display);
     check(w[M::display].section() == "battery", "Battery alert survives leaving Display");
     // MODS-638: a new HUD session (the Mac's new HUDSettingsCanvas, :19)

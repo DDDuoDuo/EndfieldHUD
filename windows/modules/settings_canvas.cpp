@@ -883,7 +883,7 @@ d::RowPlate& SettingsCanvas::paletteRow(d::Page& page) {
     return row("palette", text("Theme color", "主题颜色"), std::move(layers), page, {}, std::move(controls));
 }
 
-// buildBattery (:558-615).
+// buildBattery (:731-778).
 void SettingsCanvas::buildBattery(d::Page& page) {
     const auto& c = config();
     std::vector<d::RowPlate*> rows;
@@ -925,9 +925,8 @@ void SettingsCanvas::buildBattery(d::Page& page) {
     });
     binders_.push_back([this, &placement] { placement.setValue(placementTitle(stringOr(config(), "placement"))); });
     rows.push_back(&row("placement", text("Display position", "显示位置"), placement, page));
-    rows.push_back(&navRow("editPosition", text("Edit position", "编辑位置"), page, [this] { controller_->editBatteryPosition(); }, "↗"));
-    rows.push_back(&sliderRow("batterySize", text("Size", "大小"), c.number("scale") * 100, {65, 160, 1, std::nullopt}, d::ValueFormat::percent, page,
-        [](const Settings& s) { return s.number("scale") * 100; }, [this](double value, bool) { update([&](Settings& s) { s.set("scale", value / 100); }); }));
+    // Size and Length are set with the position, in the bar's own editor.
+    rows.push_back(&navRow("editPosition", text("Edit position and size", "编辑位置和大小"), page, [this] { controller_->editBatteryPosition(); }, "↗"));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"DISPLAY", "BATTERY ALERT"}, "SYS-02", title("Battery alert", "电池提醒"), d::format::pad2(std::int64_t(rows.size())), true);
     wireBack(page, [this] { go(Section::main, false); });
