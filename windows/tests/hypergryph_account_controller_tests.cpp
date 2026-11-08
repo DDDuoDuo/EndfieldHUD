@@ -504,6 +504,29 @@ void showSanity(const Json& oracle) {
     check(!c.hasActiveRequest()&&!c.nextWakeTime(),"Show Sanity off: the header game refreshes nothing and schedules nothing");
     c.setShowsHeaderGauge(true);
     check(c.showsHeaderGauge()&&c.hasActiveRequest(),"Turning Show Sanity on refreshes the account at once");
+    // Mac 427f144 (rolesNeededForPresentation uses headerGame): with the
+    // Account module open, the selected Endfield role is refreshed and the
+    // Arknights header role only while Show Sanity is on.
+    const auto profileGames=[&](bool shows) {
+        FakeAPI a;a.now=[&now]{return now;};FakeVault v;ManualQueue q;MemoryFile f;ProfileSink s;f.bytes=mac->encode();
+        v.values[h::Region::mainland]=h::Credentials{"synthetic-cred","synthetic-token",std::string("synthetic-device")};
+        h::HypergryphAccountController account(a,v,q,&f,&s,nullptr,nullptr,o);
+        account.setShowsHeaderGauge(shows);account.setVisible(true,true);account.tick();
+        std::vector<std::string> games;
+        for(unsigned step=0;step<16;++step) {
+            q.pump();if(a.pending.empty()) break;
+            auto next=std::move(a.pending.front());a.pending.pop_front();
+            if(next.kind=="refresh"||next.kind=="refreshCred") next.resolve(Json::Object{{"ok",Json::Object{{"cred","synthetic-cred"},{"signingToken","synthetic-token"},{"deviceID","synthetic-device"}}}});
+            else if(next.kind=="bindings") next.resolve(Json::Object{{"ok",(*mac)["records"]["mainland"]["roles"]}});
+            else if(next.kind=="profile") {games.push_back(a.calls.back()["game"].string());next.resolve(Json::Object{{"ok",Json::Object{}}});}
+        }
+        check(!account.hasActiveRequest(),"The account refresh settles");
+        return games;
+    };
+    check((*mac)["header"].string()=="arknights"&&profileGames(false)==std::vector<std::string>{"endfield"},
+          "Show Sanity off with the Account module open: only the selected Endfield role is refreshed");
+    check(profileGames(true)==std::vector<std::string>{"endfield","arknights"},
+          "Show Sanity on: the Arknights header role is refreshed with the selected role");
     // HypergryphAccountController.storedHeaderIsHidden (the migration's check):
     // a version 1 cache of at most 1 MB whose header is hidden.
     check(h::cacheHeaderIsHidden(hidden.encode())&&!h::cacheHeaderIsHidden(endfield.encode())&&!h::cacheHeaderIsHidden(std::nullopt),"Only a hidden header hides the gauge");
