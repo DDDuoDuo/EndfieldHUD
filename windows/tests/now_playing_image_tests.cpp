@@ -92,6 +92,9 @@ void drawnSize(){
  check(thumbnail.image&&thumbnail.image->width==200&&thumbnail.image->height==200&&thumbnail.backdrop&&thumbnail.backdrop->width==96,"A 100 px cover is small: enlarged twice (200 px) over a 96 px backdrop");
  const auto grey=n::decodeNowPlayingCover(bitmap(150,150,[](unsigned,unsigned){return true;}),{720,720});
  check(grey.image&&grey.image->width==300&&grey.image->straightRGBA[0]==255&&grey.image->straightRGBA[3]==255&&grey.backdrop&&grey.backdrop->straightRGBA[0]==176,"A white 150 px cover: 300 px with opaque edges over a 176 grey backdrop (255 at -1.2 EV)");
+ // A letterboxed 4:3 video still (15-row bars over a 16:9 picture) loses its bars (b524aae).
+ const auto still=n::decodeNowPlayingCover(bitmap(160,120,[](unsigned,unsigned y){return y>=15&&y<105;}),{720,720});
+ check(still.image&&still.image->width==320&&still.image->height==180&&still.backdrop&&still.nativeWidth==160&&still.nativeHeight==120,"A 160x120 letterboxed still is trimmed to 160x90 and drawn at 320x180 over a backdrop; its native size stays untrimmed");
  const auto large=n::decodeNowPlayingCover(bitmap(1280,1000,[](unsigned x,unsigned){return x%2==0;}),{720,960});
  check(large.image&&large.image->width==960&&!large.backdrop,"A cover that is not small in the 720 layout slot is decoded at the 960 headroom slot without a backdrop");
  const auto source=n::decodeNowPlayingImage(stripes);

@@ -78,6 +78,20 @@ void layout(const Json& j) {
     check(m::nowPlayingCoverLayout(575, 575, {720, 960}) == m::NowPlayingCoverLayout{true, 720}, "A 575 px cover is small at the 720 layout slot, drawn at 720, not 960");
     check(m::nowPlayingCoverLayout(2000, 2000, {720, 960}) == m::NowPlayingCoverLayout{false, 960}, "A large cover is decoded at the headroom slot");
 }
+// trimmingLetterbox over each still: the rows the Mac keeps (b524aae).
+void trim(const Json& j) {
+    for (const auto& row : j["trim"].array()) {
+        const unsigned w = unsigned(row["width"].integer()), h = unsigned(row["height"].integer());
+        const auto source = picture("pattern", w, h, unsigned(row["top"].integer()), int(row["bottom"].integer()),
+                                    std::uint8_t(row["barValue"].integer()), std::uint8_t(row["barAlpha"].integer()));
+        const auto kept = n::nowPlayingTrimmedLetterbox(source);
+        check(kept && kept->width == row["keptWidth"].integer() && kept->height == row["keptHeight"].integer(), row["name"].string() + ": the Mac keeps the same rows");
+        if (kept->height == h) { check(kept == source, row["name"].string() + ": an untrimmed still is returned as it is"); continue; }
+        const unsigned top = unsigned(row["top"].integer());
+        check(std::equal(kept->straightRGBA.begin(), kept->straightRGBA.end(), source->straightRGBA.begin() + std::ptrdiff_t(std::size_t(top) * w * 4)),
+              row["name"].string() + ": the kept rows are the picture's own");
+    }
+}
 // The small-cover step over each decoded picture, against the Mac's decode.
 void decode(const Json& j) {
     for (const auto& row : j["decode"].array()) {
@@ -85,7 +99,6 @@ void decode(const Json& j) {
         const unsigned w = unsigned(row["width"].integer()), h = unsigned(row["height"].integer()), p = unsigned(row["pixels"].integer());
         const unsigned bar = unsigned(row["bar"].integer());
         const m::NowPlayingCoverSlot slot{p, p};
-        if (bar) continue; // letterboxed stills: with the trim
         auto source = picture(row["kind"].string(), w, h, bar);
         // The Mac's thumbnail decode (never enlarged, scaled down to the slot).
         if (std::max(w, h) > p) {
@@ -126,7 +139,7 @@ int main(int argc, char** argv) {
         std::ifstream in(argv[1], std::ios::binary);
         check(bool(in), "Read the Now Playing artwork oracle");
         const auto j = Json::parse(std::string((std::istreambuf_iterator<char>(in)), {}), 1 << 21);
-        constants(j); layout(j); decode(j);
+        constants(j); layout(j); trim(j); decode(j);
         std::cout << "Now Playing artwork: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {

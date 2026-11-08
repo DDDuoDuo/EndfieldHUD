@@ -15,17 +15,35 @@ std::pair<unsigned,unsigned>native(const NowPlayingImageResult&r){if(r.nativeWid
 std::shared_ptr<const NotesImageFrame>frame(const modules::ProfileImage&image){
  const auto straight=modules::profileStraight(image);auto out=std::make_shared<NotesImageFrame>();out->width=straight.width;out->height=straight.height;out->straightRGBA=straight.rgba;return out;}
 }
+std::shared_ptr<const NotesImageFrame>nowPlayingTrimmedLetterbox(std::shared_ptr<const NotesImageFrame>image){
+ if(!image)return image;const unsigned width=image->width,height=image->height;
+ if(!(width>height)||width>modules::nowPlayingMaximumCoverPixels||image->straightRGBA.size()!=std::size_t(width)*height*4)return image;
+ const auto&p=image->straightRGBA;
+ // The Mac reads the picture drawn into a premultiplied context.
+ const auto dark=[&](unsigned row){for(unsigned x=0;x<width;++x){const auto*c=&p[(std::size_t(row)*width+x)*4];const unsigned a=c[3];if(a<250)return false;
+  for(unsigned k=0;k<3;++k)if(std::lround(c[k]*a/255.)>24)return false;}return true;};
+ unsigned top{},bottom{};
+ while(top<height/2&&dark(top))++top;
+ while(bottom<height/2&&dark(height-1-bottom))++bottom;
+ const long kept=long(height)-long(top)-long(bottom);
+ if(top<2||bottom<2||std::abs(long(top)-long(bottom))>long(std::max(2u,height/40))||kept<=0)return image;
+ const double ratio=double(width)/double(kept);if(ratio<1.70||ratio>1.86)return image;
+ auto out=std::make_shared<NotesImageFrame>();out->width=width;out->height=unsigned(kept);
+ const auto begin=p.begin()+static_cast<std::ptrdiff_t>(std::size_t(top)*width*4);out->straightRGBA.assign(begin,begin+static_cast<std::ptrdiff_t>(std::size_t(kept)*width*4));
+ return out;
+}
 NowPlayingImageResult nowPlayingSmallCover(std::shared_ptr<const NotesImageFrame>image,unsigned nativeWidth,unsigned nativeHeight,modules::NowPlayingCoverSlot slot){
  NowPlayingImageResult out{image,NowPlayingImageFailure::none,0,nullptr,nativeWidth,nativeHeight};
  if(!image||!image->width||!image->height||image->straightRGBA.size()!=std::size_t(image->width)*image->height*4)return out;
  const auto plan=modules::nowPlayingCoverLayout(nativeWidth,nativeHeight,slot);
  if(!plan.small)return out;
  try{
-  const modules::ProfileImage picture{image->width,image->height,image->straightRGBA,false};
+  const auto trimmed=nowPlayingTrimmedLetterbox(image);
+  const modules::ProfileImage picture{trimmed->width,trimmed->height,trimmed->straightRGBA,false};
   const double w=picture.width,h=picture.height,factor=double(plan.side)/std::max(w,h),square=std::min(w,h);
   // HUDPortraitArtwork.scaledImage: max(1, round(region x factor)) per side.
   const auto side=[](double v){return std::max(1u,static_cast<unsigned>(std::lround(v)));};
-  auto foreground=factor>1?frame(modules::artworkResampled(picture,1,{0,0,w,h},side(w*factor),side(h*factor),modules::ArtworkEdges::clamped)):image;
+  auto foreground=factor>1?frame(modules::artworkResampled(picture,1,{0,0,w,h},side(w*factor),side(h*factor),modules::ArtworkEdges::clamped)):trimmed;
   const double scale=double(modules::nowPlayingCoverBackdropPixels)/square;
   const auto finish=modules::artworkBlurAndExposure(modules::nowPlayingCoverBackdropBlur,modules::nowPlayingCoverBackdropExposure);
   auto backdrop=frame(modules::artworkResampled(picture,1,{(w-square)/2,(h-square)/2,square,square},side(square*scale),side(square*scale),modules::ArtworkEdges::clamped,&finish));

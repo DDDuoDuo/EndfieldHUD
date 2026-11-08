@@ -31,11 +31,19 @@ NowPlayingImageResult decodeNowPlayingImage(std::span<const std::uint8_t>);
 NowPlayingImageResult decodeNowPlayingCover(std::span<const std::uint8_t>,modules::NowPlayingCoverSlot);
 // The small-cover step of NowPlayingArtworkLoader.decode on a decoded upright
 // picture (straight sRGB) whose source is nativeWidth x nativeHeight: a cover
-// that is not small in `slot` is returned as it is; a small one is drawn
-// whole, Lanczos-enlarged (clamped edges, only when its factor is above 1)
+// that is not small in `slot` is returned as it is; a small one loses its
+// letterbox bars (nowPlayingTrimmedLetterbox) and is drawn whole, Lanczos-enlarged (clamped edges, only when its factor is above 1)
 // to the layout's side, over a backdrop: its centre square resampled to
 // 96 px, blurred and darkened (modules::nowPlayingCoverBackdrop*). If a step
 // fails, the picture is returned without a backdrop.
+// NowPlayingArtworkLoader.trimmingLetterbox (Mac 1.3.1, b524aae): a video
+// still with near-black bars above and below a 16:9 picture (YouTube's 4:3
+// thumbnails) without the bars; anything else is returned as it is. Only
+// wider-than-tall pictures up to 2048 px wide, rows from each edge (fewer
+// than half the height) whose every pixel is opaque (alpha >= 250) and
+// near-black (premultiplied max(r, g, b) <= 24), at least 2 on each side,
+// within max(2, height / 40) of each other, leaving a 1.70...1.86 picture.
+std::shared_ptr<const NotesImageFrame>nowPlayingTrimmedLetterbox(std::shared_ptr<const NotesImageFrame>);
 NowPlayingImageResult nowPlayingSmallCover(std::shared_ptr<const NotesImageFrame>,unsigned nativeWidth,unsigned nativeHeight,modules::NowPlayingCoverSlot);
 class NativeNowPlayingArtwork final {
 public:
