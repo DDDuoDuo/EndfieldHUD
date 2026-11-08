@@ -35,7 +35,8 @@ final class HUDModuleContent {
     var selectedModule: HUDModule { state.selectedModule }
     var isTransitioning: Bool { state.isTransitioning }
     var registeredModuleCount: Int { factories.count }
-    var contentLayerCount: Int { layer.sublayers?.count ?? 0 }
+    /// Screens kept, not counting an old one finishing its leave in the close.
+    var contentLayerCount: Int { (layer.sublayers ?? []).filter { $0 !== departing }.count }
     var activeContentLayer: CALayer? { current.wrapper.sublayers?.first }
     func isPresenting(_ module: HUDModule) -> Bool {
         current.module == module || incoming?.module == module
@@ -124,19 +125,33 @@ final class HUDModuleContent {
     /// screen partly left, the new one not yet shown) lands on the requested
     /// module, kept for the next open, with its screen hidden instead of
     /// showing only to leave again. Its completion is dropped, as by cancel().
+    /// The old screen of that switch, if it was still leaving, finishes its
+    /// leave instead of vanishing, and is removed by the next change.
     func settle(concealed: Bool = false) {
         precondition(Thread.isMainThread)
         pendingInitialModule = nil
         let inFlight = concealed && state.isTransitioning
+        let leaving = inFlight && current.module != state.requestedModule
+            && current.wrapper.animation(forKey: "module.leave") != nil ? current.wrapper : nil
         if concealed { latestCompletion = nil }
-        settle(on: state.requestedModule, notify: !concealed)
+        settle(on: state.requestedModule, notify: !concealed, keeping: leaving)
         if inFlight { withoutActions { current.wrapper.isHidden = true } }
+    }
+
+    /// The old screen a concealed settle left to finish its leave.
+    private var departing: CALayer?
+
+    private func dropDeparting() {
+        guard let wrapper = departing else { return }
+        departing = nil
+        withoutActions { wrapper.removeAnimation(forKey: "module.leave"); wrapper.removeFromSuperlayer() }
     }
 
     /// Close/detach cleanup: invalidate completions and restore the last fully
     /// committed screen. No hidden incoming layer or transition survives.
     func cancel() {
         precondition(Thread.isMainThread)
+        dropDeparting()
         pendingSwap?.cancel(); pendingSwap = nil
         state.cancel()
         latestCompletion = nil
@@ -164,6 +179,7 @@ final class HUDModuleContent {
     }
 
     private func begin(_ transition: HUDModuleSelectionState.Transition) {
+        dropDeparting()
         let next = makeScreen(transition.to)
         incoming = next
         onPresentationChange?(transition.from, transition.to, true)
@@ -259,18 +275,21 @@ final class HUDModuleContent {
         else { finishCallback() }
     }
 
-    private func settle(on module: HUDModule, notify: Bool) {
+    /// `keeping`: a leaving screen that stays attached with its leave.
+    private func settle(on module: HUDModule, notify: Bool, keeping leaving: CALayer? = nil) {
+        dropDeparting()
         pendingSwap?.cancel(); pendingSwap = nil
         let previous = current.module
         state.settle(on: module)
-        removeAnimations(in: layer)
+        removeAnimations(in: layer, except: leaving)
         let chosen: Screen
         if current.module == module { chosen = current }
         else if let next = incoming, next.module == module { chosen = next }
         else { chosen = makeScreen(module) }
         if previous != module, chosen !== current { (factories[previous] as? HUDDirectionalContent)?.prepareToLeave() }
         withoutActions {
-            for child in layer.sublayers ?? [] { child.removeFromSuperlayer() }
+            for child in layer.sublayers ?? [] where child !== leaving { child.removeFromSuperlayer() }
+            departing = leaving
             current = chosen
             incoming = nil
             normalize(chosen)
@@ -440,10 +459,11 @@ final class HUDModuleContent {
         return CGPoint(x: point.y, y: direction.y < 0 ? point.x : length - point.x)
     }
 
-    private func removeAnimations(in item: CALayer) {
+    private func removeAnimations(in item: CALayer, except kept: CALayer? = nil) {
+        guard item !== kept else { return }
         for key in item.animationKeys() ?? [] where key.hasPrefix("module.") { item.removeAnimation(forKey: key) }
-        item.sublayers?.forEach { removeAnimations(in: $0) }
-        if let mask = item.mask { removeAnimations(in: mask) }
+        item.sublayers?.forEach { removeAnimations(in: $0, except: kept) }
+        if let mask = item.mask { removeAnimations(in: mask, except: kept) }
     }
 
     private func applyScale(to item: CALayer) {

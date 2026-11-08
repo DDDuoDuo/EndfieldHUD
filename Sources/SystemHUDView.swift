@@ -1096,11 +1096,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let openingCanvas = preservingNowPlayingPresentation || preservingModuleEntrance
             ? designCanvases[selectedModule]?.root : nil
         // The close keeps a facility banner or tag already leaving on its way
-        // out, and desktop notes still entering or leaving with a switch.
-        let overlayLeaves: [ObjectIdentifier: Set<String>] = forRetraction
+        // out, and desktop notes still entering or leaving with a switch. In
+        // the module and the centre overlay, an entrance or exit already
+        // playing (a switch or sub-page swap caught leaving, the confirm bar
+        // and its dim) finishes inside the close, as do the centre backdrop
+        // and arc fading with a switch.
+        var overlayLeaves: [ObjectIdentifier: Set<String>] = forRetraction
             ? [ObjectIdentifier(facilityBanner.layer): HUDFacilityBanner.leaveKeys,
                ObjectIdentifier(facilityTags.layer): HUDFacilityTagStack.leaveKeys,
-               ObjectIdentifier(notesCanvas.workspaceLayer): NotesWorkspace.leaveKeys] : [:]
+               ObjectIdentifier(notesCanvas.workspaceLayer): NotesWorkspace.leaveKeys,
+               ObjectIdentifier(moduleContrast): ["module.contrast"],
+               ObjectIdentifier(progress): ["module.progress", "hud.strokeEnd", "hud.strokeColor"]] : [:]
+        if forRetraction {
+            for item in designContext.overlay.closingLayers + [moduleContent?.layer].compactMap({ $0 }) {
+                overlayLeaves[ObjectIdentifier(item)] = HUDMotion.closeKeys
+            }
+        }
         func remove(_ item: CALayer, keepingEntrance: Bool = false, keeping leaveKeys: Set<String> = []) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }

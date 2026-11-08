@@ -93,6 +93,17 @@ enum HUDMotion {
     /// the end of the HUD's open keeps running instead of cutting them off.
     static let entranceKeys: Set<String> = ["hud.enter", "hud.wipe", "hud.wipe.fade", "hud.grow"]
 
+    /// The finite exits: a module or sub-page leave, the confirm bar's bandOut.
+    static let exitKeys: Set<String> = ["module.leave", "hud.page.leave", "hud.header.leave", "hud.bandOut"]
+
+    /// What the HUD's close keeps under the module and the centre overlay:
+    /// entrances and exits already playing, a pop, and the finite fades and
+    /// rises of the dim, the confirm bar and a toast leaving. They all end
+    /// inside the close instead of jumping to their end state at its start.
+    static let closeKeys: Set<String> = entranceKeys.union(exitKeys).union([
+        "hud.pop", "hud.opacity", "hud.transform.translation.y",
+        "hud.filters.confirmBlur.inputRadius", "hud.filters.confirmDim.inputEV"])
+
     /// The leave: .13 s to transparent while moving −0.6 × the new direction.
     /// Holds its end state; the caller removes the layer when the swap happens.
     static func leave(_ layer: CALayer, toward offset: CGPoint, env: HUDDesignEnvironment, key: String = "hud.leave") {

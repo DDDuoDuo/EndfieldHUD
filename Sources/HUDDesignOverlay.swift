@@ -434,6 +434,11 @@ final class HUDCenterOverlay {
         }
     }
 
+    /// The overlay and the dim's picture of the content: the HUD's close
+    /// keeps their motion (HUDMotion.closeKeys) so a bar, toast or dim
+    /// already moving finishes inside it.
+    var closingLayers: [CALayer] { [layer, still] }
+
     var isConfirming: Bool { confirmState.isOpen }
     var capturesInput: Bool { confirmState.request != nil }
 

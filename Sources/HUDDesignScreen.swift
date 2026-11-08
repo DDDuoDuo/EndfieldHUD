@@ -348,6 +348,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         // time: settling it would show the next page at full opacity only to
         // send it out again.
         if let work = swapWork { work.cancel() } else {
+            finishLeave()
             let old = page.layer
             leavingPage = old
             HUDMotion.leave(old, toward: offset, env: env, key: "hud.page.leave")
@@ -372,19 +373,20 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     /// Completes a pending sub-navigation at once. `concealed` is for a module
-    /// that leaves or stops being active: the new page and the header had
-    /// already left, so they stay hidden until the module shows again
+    /// that leaves or stops being active (the HUD's close included): the old
+    /// page and the header finish the leave they are in and stay transparent,
+    /// and the new page waits hidden, until the module shows again
     /// (makeContent, setActive) instead of popping in while it leaves.
     func settleSwap(concealed: Bool = false) {
         guard let work = swapWork else { return }
         work.cancel(); swapWork = nil
         CATransaction.begin()
-        finishLeave()
-        install(makePage(restoring: [:]))
+        // The model ends transparent, so a cancel that strips the leave keeps them out.
         if concealed {
-            HUDMotion.hold(page.layer, key: Self.holdKey)
-            if showsHeader { HUDMotion.hold(header.layer, key: Self.holdKey) }
-        }
+            HUDMotion.perform { leavingPage?.opacity = 0; if showsHeader { header.layer.opacity = 0 } }
+        } else { finishLeave() }
+        install(makePage(restoring: [:]))
+        if concealed { HUDMotion.hold(page.layer, key: Self.holdKey) }
         CATransaction.commit()
     }
 
@@ -394,6 +396,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private func revealSettledPage() {
         removeDepartedPopups()
         guard swapWork == nil else { return }
+        finishLeave()
         HUDMotion.perform {
             page.layer.removeAnimation(forKey: Self.holdKey)
             if showsHeader { header.layer.removeAnimation(forKey: Self.holdKey) }
@@ -404,7 +407,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         HUDMotion.perform {
             leavingPage?.removeAnimation(forKey: "hud.page.leave")
             leavingPage?.removeFromSuperlayer()
-            header.layer.removeAnimation(forKey: "hud.header.leave")
+            if showsHeader { header.layer.removeAnimation(forKey: "hud.header.leave"); header.layer.opacity = 1 }
         }
         leavingPage = nil
     }
