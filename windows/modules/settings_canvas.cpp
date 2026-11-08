@@ -648,14 +648,10 @@ void SettingsCanvas::confirmModulesReset() {
 }
 // cursor(at:) (:391-398).
 std::optional<d::Cursor> SettingsCanvas::cursor(std::optional<d::Point> point) const {
-    if (moduleDrag_) return d::Cursor::closedHand;
-    if (!isActive() || section_ != Section::modules || !point) return std::nullopt;
-    for (const auto& [module, row] : moduleRows_) {
-        const auto& grip = row.grip->layer();
-        if (!d::isVisible(grip, root()) || !d::isUnclipped(grip, *point, root())) continue;
-        if (const auto local = d::convert(*point, root(), grip); local && row.grip->contains(*local)) return d::Cursor::openHand;
-    }
-    return std::nullopt;
+    if (!moduleDrag_ && !(isActive() && section_ == Section::modules)) return std::nullopt;
+    std::vector<d::DragGrip*> grips;
+    for (const auto& [module, row] : moduleRows_) grips.push_back(row.grip);
+    return d::DragGrip::cursor(moduleDrag_.has_value(), grips, point, root());
 }
 bool SettingsCanvas::inputLocked() const { return Canvas::inputLocked() || capturingShortcut(); }
 

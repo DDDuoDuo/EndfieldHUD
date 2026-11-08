@@ -195,16 +195,26 @@ private:
 };
 
 // HUDDragGrip (LIB-34): 2 x 3 dots of 2 px, 4 apart (6 x 10) in bracket ->
-// #111 while hovered or dragging (.22 ease, tint). A drag starts after 3 px
-// (began reports the press point), then moved, then ended; a press without a
-// drag activates; clearing mid-drag ends at the start point. No label: out of
-// the accessibility tree (owners expose move actions instead).
+// #111 while hovered or dragging (.22 ease, tint). A drag starts after
+// liftDistance (began reports the press point), then moved, then ended; a
+// press without a drag activates; clearing mid-drag ends at the start point.
+// No label: out of the accessibility tree (owners expose move actions instead).
 class DragGrip final : public Control {
 public:
     enum class Phase : std::uint8_t { began, moved, ended };
+    // How far the pointer travels before a press becomes a drag.
+    static constexpr double liftDistance = 3;
     DragGrip(Builder&, std::string id, std::string label, Size size, Point dotsAt);
     std::function<void(Phase, Point)> onDrag;
     bool dragging() const noexcept { return dragging_; }
+    // HUDDragGrip.isUnderPointer: the grip is shown and unclipped under
+    // `rootPoint` (in `root`); its owner's cursor is the open hand there.
+    bool underPointer(Point rootPoint, const Layer& root) const noexcept;
+    // HUDDragGrip.cursor(lifted:grips:at:in:), the drag-to-reorder hint every
+    // grip list shares (TODO cards, App Shortcut rows, Modules): the closed
+    // hand while a row is lifted, the open hand over a shown grip, otherwise
+    // the owner has no cursor.
+    static std::optional<Cursor> cursor(bool lifted, std::span<DragGrip* const> grips, std::optional<Point> rootPoint, const Layer& root);
     bool pointerDown(Point) override;
     void pointerDragged(Point) override;
     void pointerUp(Point) override;

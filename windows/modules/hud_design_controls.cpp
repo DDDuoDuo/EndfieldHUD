@@ -646,7 +646,7 @@ bool DragGrip::pointerDown(Point p) {
 void DragGrip::pointerDragged(Point p) {
     if (!pressPoint_) return;
     if (!dragging_) {
-        if (std::hypot(p.x - pressPoint_->x, p.y - pressPoint_->y) <= 3) return;
+        if (std::hypot(p.x - pressPoint_->x, p.y - pressPoint_->y) <= liftDistance) return;
         dragging_ = true;
         if (onDrag) onDrag(Phase::began, *pressPoint_);
     }
@@ -664,6 +664,17 @@ void DragGrip::clearInteractionState() {
 }
 std::optional<AccessibilityRole> DragGrip::accessibilityRole() const {
     return label.empty() ? std::nullopt : std::optional<AccessibilityRole>(AccessibilityRole::button);
+}
+bool DragGrip::underPointer(Point rootPoint, const Layer& root) const noexcept {
+    if (!isVisible(layer(), root) || !isUnclipped(layer(), rootPoint, root)) return false;
+    const auto local = convert(rootPoint, root, layer());
+    return local && contains(*local);
+}
+std::optional<Cursor> DragGrip::cursor(bool lifted, std::span<DragGrip* const> grips, std::optional<Point> rootPoint, const Layer& root) {
+    if (lifted) return Cursor::closedHand;
+    if (!rootPoint) return std::nullopt;
+    const bool over = std::any_of(grips.begin(), grips.end(), [&](const DragGrip* grip) { return grip && grip->underPointer(*rootPoint, root); });
+    return over ? std::optional<Cursor>(Cursor::openHand) : std::nullopt;
 }
 
 // ---------------------------------------------------------------------------

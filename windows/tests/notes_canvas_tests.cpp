@@ -78,6 +78,24 @@ void rules() {
     // dragTaskForTesting (:818-826): the first task moves to the third slot.
     canvas.dragTask("0000000C-0000-4000-8000-000000000001", 2);
     check(store->document().tasks[2].id == "0000000C-0000-4000-8000-000000000001", "A dragged task lands on its slot");
+    // The drag hand over the TODO grips (Mac d32a5bf): the open hand over a grip, the closed hand while a card is lifted.
+    {
+        // The dropped card has landed (the page is rebuilt) and the list is back at its top.
+        w.now += 1; w.context.advance(w.now);
+        for (const auto& area : canvas.page().scrollAreas()) area->setOffset(0);
+        const std::string first = store->document().tasks[0].id;
+        const auto r = control(canvas, "task:" + first + ":grip")->rect(canvas.root());
+        const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+        check(canvas.cursor(grip) == d::Cursor::openHand && !canvas.cursor(d::Point{grip.x + 300, grip.y}) && !canvas.cursor(std::nullopt),
+            "The open hand shows over a TODO grip only");
+        d::PointerInput press; press.point = grip;
+        check(canvas.pointerDown(grip, press, w.now), "The TODO grip takes the press");
+        canvas.pointerDragged({grip.x, grip.y + 6}, w.now);
+        check(canvas.cursor(d::Point{grip.x + 300, grip.y}) == d::Cursor::closedHand && canvas.inputLocked(), "The closed hand shows anywhere while a card is lifted");
+        canvas.pointerDragged({grip.x, grip.y + canvas.cardHeight + d::metric::rowGap}, w.now);
+        canvas.pointerUp({grip.x, grip.y + canvas.cardHeight + d::metric::rowGap}, w.now);
+        check(store->document().tasks[1].id == first && canvas.cursor(grip) != d::Cursor::closedHand, "The drop saves the slot and lets the hand go");
+    }
     // setFolded (:708-728): Hide keeps the document and folds the body.
     canvas.setFolded(true);
     check(store->document().isFolded, "Hide folds the centre");
@@ -85,6 +103,7 @@ void rules() {
     // selectTab (:699-706): the TEXT tab shows the note and "01".
     canvas.selectTab(data::NotesCentreDocument::Tab::text, -1);
     check(store->document().tab == data::NotesCentreDocument::Tab::text && canvas.header().counterText() == "01" && canvas.formatBar(), "The TEXT tab shows the note and its bar");
+    check(!canvas.cursor(d::Point{26, 160}), "No drag hand on the TEXT tab");
     // MODS-638: a new HUD session builds the Mac's TEXT editor anew (:533-557): the note reloaded, the caret at its end.
     check(canvas.noteArea() != nullptr, "The TEXT note has its editor");
     canvas.noteArea()->document().setSelection({{0, 0}});

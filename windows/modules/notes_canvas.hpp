@@ -117,6 +117,9 @@ public:
     bool handleScroll(design::Point, design::Point delta) override;
     bool editingOtherText() const override;
     void endOtherEditing(bool commit) override;
+    // The open hand over a TODO card's grip, the closed hand while one is
+    // lifted; only while active on the TODO tab (or lifted).
+    std::optional<design::Cursor> cursor(std::optional<design::Point>) const override;
 private:
     struct EditingTask { std::string id; design::TextField* field{}; };
     ehud::data::NotesCentreStore* store_;
@@ -124,6 +127,7 @@ private:
     design::Tabs* tabs_{};
     NotesFormatBar* formatBar_{};
     std::vector<std::pair<std::string, design::TaskCard*>> cards_;   // document order
+    std::vector<design::DragGrip*> taskGrips_;                       // the TODO cards' grips (the cursor hint)
     design::ScrollArea* taskList_{};
     design::Layer *body_{}, *bodyContent_{}, *addBar_{};
     design::Control* mediaButton_{};

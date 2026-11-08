@@ -112,7 +112,7 @@ d::Button& NotesCanvas::foldButton(d::Page& page, bool folded) {
     return button;
 }
 void NotesCanvas::buildPage(d::Page& page) {
-    cards_.clear(); tabs_ = nullptr; formatBar_ = nullptr; foldButton_ = nullptr; reorder_.reset(); taskList_ = nullptr;
+    cards_.clear(); taskGrips_.clear(); tabs_ = nullptr; formatBar_ = nullptr; foldButton_ = nullptr; reorder_.reset(); taskList_ = nullptr;
     if (editingTask_ && !editingTask_->field->editing()) editingTask_.reset();
     const auto& doc = document();
     const bool folded = doc.isFolded && options_.storageAvailable;
@@ -212,6 +212,7 @@ double NotesCanvas::buildTasks(d::Page& page, d::Layer& content, double top, std
             page.add(card.controls()); page.add(grip);
             staggered.push_back(&card.layer());
             cards_.emplace_back(id, &card);
+            taskGrips_.push_back(&grip);
         }
         list.setContentHeight(4 + natural);
         page.restoreOffset(list);
@@ -417,6 +418,11 @@ void NotesCanvas::cancelReorder() {
     std::vector<std::string> saved;
     for (const auto& task : document().tasks) saved.push_back(task.id);
     state.cancel(saved, reorderRows());
+}
+// The open hand over a TODO card's grip, the closed hand while one is lifted (Mac d32a5bf).
+std::optional<d::Cursor> NotesCanvas::cursor(std::optional<Point> point) const {
+    if (!reorder_ && !(isActive() && document().tab == Document::Tab::todo)) return std::nullopt;
+    return d::DragGrip::cursor(reorder_.has_value(), taskGrips_, point, root());
 }
 
 // --- TEXT (:499-615) ------------------------------------------------------------------------

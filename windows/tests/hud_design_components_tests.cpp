@@ -406,6 +406,24 @@ void buttons() {
     check(near(*must(grip.layer(), "grip.dots").tint(), d::fixed::nearBlack), "Hover darkens the dots");
 }
 
+// HUDDragGrip's shared list rules (Mac d32a5bf, cd52576): the lift distance,
+// the drag-to-reorder cursor and the edge auto-scroll step.
+void gripRules() {
+    World w;
+    check(d::DragGrip::liftDistance == 3, "A press becomes a drag past 3 points");
+    auto& shown = w.b.make<d::DragGrip>("grip.shown", "", d::Size{14, 56}, Point{5, 24});
+    auto& hidden = w.b.make<d::DragGrip>("grip.hidden", "", d::Size{14, 56}, Point{5, 24});
+    w.host(shown.layer()).setOrigin({20, 100});
+    w.host(hidden.layer()).setOrigin({20, 200}); hidden.layer().setHidden(true);
+    std::vector<d::DragGrip*> grips{&shown, &hidden};
+    check(shown.underPointer({27, 130}, w.root) && !shown.underPointer({40, 130}, w.root) && !hidden.underPointer({27, 230}, w.root), "Under the pointer: a shown grip's own area only");
+    check(d::DragGrip::cursor(false, grips, Point{27, 130}, w.root) == d::Cursor::openHand, "The open hand over a shown grip");
+    check(!d::DragGrip::cursor(false, grips, Point{27, 230}, w.root) && !d::DragGrip::cursor(false, grips, Point{300, 130}, w.root)
+        && !d::DragGrip::cursor(false, grips, std::nullopt, w.root), "No cursor over a hidden grip, elsewhere or without a pointer");
+    check(d::DragGrip::cursor(true, grips, std::nullopt, w.root) == d::Cursor::closedHand && d::DragGrip::cursor(true, {}, Point{300, 400}, w.root) == d::Cursor::closedHand,
+        "The closed hand anywhere while a row is lifted");
+}
+
 // HUDListReorder (Mac 3c7088a): the lifted row rises and follows the pointer,
 // the list scrolls under it past its edges, the others glide to their new
 // slots, the drop settles it and a cancel puts every row back at once.
@@ -1635,7 +1653,7 @@ void oracle(const Json& data) {
 
 int main(int argc, char** argv) {
     try {
-        controlBase(); rows(); toggles(); buttons(); listReorder(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
+        controlBase(); rows(); toggles(); buttons(); gripRules(); listReorder(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr)) oracle(*data);
         else std::cout << "hud-design-source.json not present: Swift-derived contracts only\n";
         std::cout << "hud_design_components_tests: " << checks << " checks passed\n";
