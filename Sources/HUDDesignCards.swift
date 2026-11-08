@@ -524,7 +524,7 @@ final class HUDArchiveTile: HUDControl {
     func setPoster(_ image: CGImage?, animated: Bool = false) {
         guard style == .standard, image != nil || poster != nil else { return }
         if animated, image != nil, poster?.isHidden != false {
-            HUDMotion.crossFade(well, duration: HUDDuration.hover, env: env, key: "hud.poster.fade")
+            HUDMotion.crossFade(well, duration: HUDDuration.hover, env: env)
         }
         HUDMotion.perform {
             if poster == nil, image != nil {

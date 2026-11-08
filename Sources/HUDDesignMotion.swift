@@ -81,12 +81,17 @@ enum HUDMotion {
 
     /// Cross-fades a layer's next contents (a cover or poster arriving) with
     /// what it shows now, in one ease-in-out fade. Nothing under Reduce Motion.
-    static func crossFade(_ layer: CALayer, duration: CFTimeInterval, env: HUDDesignEnvironment, key: String) {
+    /// Finite, so the close and a module leave let it finish (crossFadeKey).
+    static func crossFade(_ layer: CALayer, duration: CFTimeInterval, env: HUDDesignEnvironment) {
         guard !env.reducesMotion else { return }
         let fade = CATransition()
         fade.type = .fade; fade.duration = duration; fade.timingFunction = HUDEasing.easeInOut
-        layer.add(fade, forKey: key)
+        layer.add(fade, forKey: crossFadeKey)
     }
+
+    /// The key every contents cross-fade plays under (Core Animation files
+    /// any transition under kCATransition, whatever key it is added with).
+    static let crossFadeKey = kCATransition
 
     /// The list stagger: 36 ms apart after 60 ms, index capped at 14 (spec §1.10).
     static func staggerDelay(_ index: Int) -> CFTimeInterval {
@@ -106,11 +111,12 @@ enum HUDMotion {
     static let exitKeys: Set<String> = ["module.leave", "hud.page.leave", "hud.header.leave", "hud.bandOut"]
 
     /// What the HUD's close keeps under the module and the centre overlay:
-    /// entrances and exits already playing, a pop, and the finite fades and
-    /// rises of the dim, the confirm bar and a toast leaving. They all end
-    /// inside the close instead of jumping to their end state at its start.
+    /// entrances and exits already playing, a pop, a cover or poster
+    /// cross-fade, and the finite fades and rises of the dim, the confirm bar
+    /// and a toast leaving. They all end inside the close instead of jumping
+    /// to their end state at its start.
     static let closeKeys: Set<String> = entranceKeys.union(exitKeys).union([
-        "hud.pop", "hud.opacity", "hud.transform.translation.y",
+        "hud.pop", crossFadeKey, "hud.opacity", "hud.transform.translation.y",
         "hud.filters.confirmBlur.inputRadius", "hud.filters.confirmDim.inputEV"])
 
     /// The leave: .13 s to transparent while moving −0.6 × the new direction.

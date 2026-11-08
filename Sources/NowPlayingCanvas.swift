@@ -141,7 +141,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     override func closePopups() { super.closePopups(); closeVolume(keepingDrawn: keepsClosingPopupsDrawn) }
 
-    private static let finiteKeys = HUDMotion.entranceKeys.union(HUDMotion.exitKeys)
+    private static let finiteKeys = HUDMotion.entranceKeys.union(HUDMotion.exitKeys).union([HUDMotion.crossFadeKey])
 
     private static func removeAnimations(in layer: CALayer) {
         for key in layer.animationKeys() ?? [] where !finiteKeys.contains(key) { layer.removeAnimation(forKey: key) }
@@ -336,7 +336,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         guard let art, artwork?.image !== displayedArt else { return }
         displayedArt = artwork?.image
         if animated, art.superlayer != nil {
-            for layer in [backdrop, art].compactMap({ $0 }) { HUDMotion.crossFade(layer, duration: 0.2, env: env, key: "hud.art.fade") }
+            for layer in [backdrop, art].compactMap({ $0 }) { HUDMotion.crossFade(layer, duration: 0.2, env: env) }
         }
         HUDMotion.perform {
             art.contents = artwork?.image; backdrop?.contents = artwork?.backdrop
