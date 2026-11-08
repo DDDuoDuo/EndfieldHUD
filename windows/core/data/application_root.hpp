@@ -29,6 +29,17 @@ struct ApplicationRoot {
 // development previews pass an owned temporary directory. Its parent must
 // already exist. Throws StoreError (newerVersion / invalid / unavailable).
 ApplicationRoot openApplicationRoot(const std::filesystem::path& base);
+// Data left by the Import from Mac of earlier Windows versions (removed in
+// 1.3.1): an import switched the data root with two renames, v1 to
+// "v1.backup-*" and the staged "v1.import-<token>\root" to v1, after writing
+// "activation.json" (naming the backup) next to the "import-work.json" marker.
+// A process killed between the two renames left no v1. Before anything opens
+// the root (the host's startup, under its single-instance guard, so no import
+// can be live), this moves that backup back to v1, only while v1 is absent and
+// only when the marker and journal are exactly the importer's. Never replaces
+// or deletes anything; the work folder stays. True when a backup was restored.
+// Never throws.
+bool restoreInterruptedImportRoot(const std::filesystem::path& base) noexcept;
 // Read-only resolution of the production base. Never creates it.
 // Windows: SHGetKnownFolderPath(FOLDERID_LocalAppData)\EndfieldHUD.
 std::filesystem::path localApplicationDataBase();

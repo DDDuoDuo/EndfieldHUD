@@ -269,6 +269,9 @@ int run(const std::vector<std::string>& values) {
     std::vector<std::chrono::steady_clock::time_point> recoveries;
     for (;;) {
         const auto base = isolated.empty() ? ehud::data::localApplicationDataBase() : isolated;
+        // An earlier version's Mac import killed between its two renames left
+        // no v1: its backup moves back before anything opens the root.
+        (void)ehud::data::restoreInterruptedImportRoot(base);
         const auto root = openRoot(base);
         if (!root) return 1;
         fatalDataFolder = root->data;
