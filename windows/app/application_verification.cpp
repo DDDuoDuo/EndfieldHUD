@@ -3137,10 +3137,36 @@ int Application::Impl::runHiddenVerification(){
                 // the shell is composed or asks for frames once the HUD is hidden.
                 {
                     const auto closeCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    // Presses held on the industry logo and on the list's down arrow, and
+                    // the clock's hover plate lit, as the close starts (SH4, S-D4).
+                    session->setScrollPosition(1,t);t=run(t,.1);
+                    const auto logo=session->logoFrame();const auto arrowFrame=session->scrollFrame()?session->scrollIndicatorFrame(1):std::nullopt;
+                    const auto logoAt=logo?std::optional(core::Point{logo->x+logo->width/2,logo->y+logo->height/2}):std::nullopt;
+                    const auto arrowAt=arrowFrame?std::optional(core::Point{arrowFrame->x+arrowFrame->width/2,arrowFrame->y+arrowFrame->height/2}):std::nullopt;
+                    const bool logoHeld=centerLogoMainID.empty()||(logoAt&&logoPointer({PointerKind::down,PointerButton::left,logoAt->x,logoAt->y},t)&&logoPressed);
+                    const bool arrowHeld=arrowAt&&scrollIndicatorPointer({PointerKind::down,PointerButton::left,arrowAt->x,arrowAt->y},t)&&scrollIndicatorPressed==std::optional(1);
+                    const double scrolledAt=session->scrollPosition();setClockHovered(true);
                     perform(lifecycle.toggle(),t);
-                    closeCheck(closing&&!session->inputEnabled()&&!moduleInputAllowed()&&!clockAcceptsInput()&&!logoPressed&&!scrollIndicatorPressed&&
+                    closeCheck(logoHeld&&arrowHeld&&closing&&!session->inputEnabled()&&!moduleInputAllowed()&&!clockAcceptsInput()&&!logoPressed&&!scrollIndicatorPressed&&
                         !registry.any([](ModuleOwner&o){return o.capturesPointer()||o.capturesKeys();},"close check"),
-                        "Input stops at the close's start: nothing captures the pointer or the keys");
+                        "Input stops at the close's start: the logo and arrow presses end, nothing captures the pointer or the keys");
+                    // Their releases during the close do nothing, and a press on the
+                    // header sanity wallet opens no recovery menu.
+                    {const bool logoQuiet=!logoAt||(!logoPointer({PointerKind::up,PointerButton::left,logoAt->x,logoAt->y},t)&&!session->logoFlickering());
+                     const bool arrowQuiet=arrowAt&&!scrollIndicatorPointer({PointerKind::up,PointerButton::left,arrowAt->x,arrowAt->y},t)&&session->scrollPosition()==scrolledAt;
+                     std::optional<core::Point> wallet;
+                     if(chromePlan&&chromePlan->projection().center){
+                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)**chromePlan->projection().center,metrics.pixelWidth,metrics.pixelHeight);
+                         if(const auto q=plane.project({646,23}))wallet=core::Point{q->x/metrics.scale,q->y/metrics.scale};}
+                     if(wallet){(void)onPointer({PointerKind::down,PointerButton::left,wallet->x,wallet->y});(void)onPointer({PointerKind::up,PointerButton::left,wallet->x,wallet->y});}
+                     closeCheck(logoQuiet&&arrowQuiet&&wallet&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing&&
+                         !registry.any([](ModuleOwner&o){return o.capturesPointer()||o.capturesKeys();},"close check"),
+                         "During the close a logo or arrow release does nothing and a wallet press opens no recovery menu");}
+                    // S-D4 (Mac parity): a move during the close keeps the kept hover;
+                    // the pointer leaving the HUD clears it.
+                    {(void)onPointer({PointerKind::move,PointerButton::none,metrics.width*.5,metrics.height*.5});const bool kept=chromeContent.clockHovered;
+                     (void)onPointer({PointerKind::leave,PointerButton::none,0,0});
+                     closeCheck(kept&&!chromeContent.clockHovered,"A move during the close keeps the clock's hover plate; leaving the HUD clears it");}
                     const double exitLength=chromePlan?chromePlan->exitSeconds():0.;
                     const auto fade=core::DesignMotion::closingFade(exitLength,source::DesktopChromeTiming::openingDuration);
                     double previous=canvasCapturedOpacity,last=-1;bool onCurve=true,falling=true;unsigned closingFrames=0;

@@ -339,5 +339,12 @@ void arrangeSession(){
      session.close(c+.02);session.sample(c+.02+DesignMotion::listSlide/2);
      check(session.arrangeActive(),"The session's close keeps the slide running");
      session.sample(c+.02+DesignMotion::listSlide+.001);check(!session.arrangeActive(),"It settles inside the close");}
+    // Under Reduce Motion the close's drop is not animated (endModuleArrangeDrag):
+    // every tile is back in its slot at once.
+    {const double c=t+7;session.showStable(c,1);session.setInputEnabled(true,c);session.setScrollPosition(1,c);session.sample(c);const auto at=centre(button(101));
+     session.setArrangeDrag(101,at,true,c);session.setArrangeDrag(101,Point{at.x,at.y+30},true,c);session.sample(c);
+     session.setInputEnabled(false,c+.01);const bool lifted=session.arrangeLifted()==101&&session.arrangeActive();
+     session.setArrangeDrag(std::nullopt,std::nullopt,false,c+.02);const bool dropped=!session.arrangeLifted()&&!session.arrangeActive();session.close(c+.02);
+     check(lifted&&dropped&&!session.arrangeActive()&&session.sample(c+.02)->sourceFrame->tileTranslations.empty(),"Reduce Motion: closing mid-drag puts every tile back at once");}
 }
 int main(int argc,char**argv){try{synthetic();entranceEnd();arrangeMotion();arrangeSession();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

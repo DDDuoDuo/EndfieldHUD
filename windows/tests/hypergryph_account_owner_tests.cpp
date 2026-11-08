@@ -224,9 +224,24 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             clock=closedAt+.08;frame({});const double fading=owner.gauge().sceneStats().popoverOpacity;
             check(!owner.gauge().model().popoverOpen()&&!owner.capturesPointer()&&owner.recoveryEntries().size()==1&&fading>0&&fading<1,
                   ("At +.08 s the closed recovery menu still fades out on the top layer ("+std::to_string(fading)+")").c_str());
+            // A press on the wallet during the close is refused (allowsModuleInput).
+            check(!owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},closedAt+.1)&&!owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),
+                  "A wallet press during the close opens no recovery menu");
+            (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},closedAt+.1);
             clock=closedAt+.17;frame({});
             check(owner.recoveryEntries().empty()&&owner.gauge().sceneStats().popoverOpacity==0,"It is gone once its .16 s fade ends");
             owner.setOverlayVisible(true,clock+=.05);clock+=.3;frame({});
+        }
+        // Under Reduce Motion the close dismisses the menu at once.
+        {
+            app::ModuleAppearance reduced;reduced.accentSRGB={250./255,212./255,31./255};reduced.reduceMotion=true;
+            owner.setAppearance(reduced,clock+=.05);
+            check(owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&owner.gauge().model().popoverOpen(),"Reduce Motion: the wallet opens the recovery menu");
+            (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+            frame({});check(owner.recoveryEntries().size()==1,"Reduce Motion: the open menu is composed");
+            owner.overlayClosing(clock+=.05);frame({});
+            check(!owner.gauge().model().popoverOpen()&&owner.recoveryEntries().empty()&&owner.gauge().sceneStats().popoverOpacity==0,"Reduce Motion: the close removes the recovery menu at once");
+            owner.setOverlayVisible(true,clock+=.05);reduced.reduceMotion=false;owner.setAppearance(reduced,clock);clock+=1;frame({});
         }
         // Steady tilt frames through the bundle: no allocation.
         frame({});const auto beforeRaster=raster.stats();allocations=0;counting=true;
