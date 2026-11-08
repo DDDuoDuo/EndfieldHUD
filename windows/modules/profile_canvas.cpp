@@ -1055,14 +1055,38 @@ void ProfileCanvas::openMoreMenu(const d::Control& anchor) {
         item("tag", text("Edit #", "修改 #"), canEdit(ProfileField::tag)),
         item("picture", text("Change profile picture", "更换头像"), store_ != nullptr),
         item("portrait", text("Adjust portrait", "调整头像")),
-        item("restore", text("Restore default picture", "恢复默认头像"), store_ != nullptr)};
+        item("restore", text("Restore default picture", "恢复默认头像"), store_ != nullptr),
+        item("system", std::string(core::translated(useWindowsAccountInfo, env().language)), canUseSystemAccount())};
+    items.back().separatorBefore = true;
     openMenu("profile.more", std::move(items), anchor, std::nullopt, [this](const d::Menu::Item& picked) {
         if (picked.id == "name") beginEdit(ProfileField::name);
         else if (picked.id == "tag") beginEdit(ProfileField::tag);
         else if (picked.id == "picture") chooseImage(ProfileImageKind::avatar);
         else if (picked.id == "portrait") { if (refs_.more) openPortraitPopover(*refs_.more); }
+        else if (picked.id == "system") useSystemAccount();
         else restoreAvatar();
     });
+}
+// canUseSystemAccount (aaae230, ad93ac5): something the account can fill
+// shows a chosen value instead. The default picture counts only when there
+// is an account picture to show. Off while Recording mode hides the account.
+bool ProfileCanvas::canUseSystemAccount() const {
+    if (!store_ || !profile_.systemAccount.value) return false;
+    return (canEdit(ProfileField::name) && !profile_.followsSystemName())
+        || (canEdit(ProfileField::playerID) && profile_.playerIDOverride)
+        || profile_.avatarFilename || (!profile_.autoAvatar && profile_.systemAccount.value->avatarKey);
+}
+// A field a game sync owns is left to the sync; clearing the picture turns
+// a game avatar sync off through the account owner's avatar observer.
+void ProfileCanvas::useSystemAccount() {
+    if (!store_) return;
+    try {
+        store_->useSystemAccount(canEdit(ProfileField::name), canEdit(ProfileField::playerID));
+        // The result toast (Canvas::toast): the title in the UI language, the English caption elsewhere.
+        const bool english = env().language == core::Language::english;
+        toast(d::ToastRequest{d::Icon::reset, std::string(core::translated(windowsAccountInfoToast, env().language)),
+            english ? std::string() : std::string(windowsAccountInfoToast.english), std::nullopt});
+    } catch (const std::exception& e) { showError(profileErrorText(e, env().language)); }
 }
 void ProfileCanvas::restoreAvatar() {
     if (!store_) return;

@@ -8,7 +8,12 @@ import QuartzCore
 //    text, Recording mode, a sync-locked card, birthday shown, a custom card colour, an avatar at zoom 2.4
 //    with offsets, background art with geometry, zh-Hans, Light pop-over, the failed store) as its model
 //    layer tree, controls, accessibility items, header, toast, and the art box / portrait numbers, with the
-//    scenario INPUT (profile values, synced fields, best score, work seconds) the Windows suite rebuilds.
+//    scenario INPUT (profile values, synced fields, best score, work seconds) the Windows suite rebuilds;
+//  - issue #17 (Mac 1.3.1): a synthetic account through UserProfileStore's own SystemAccountSource (never
+//    the real account): the card following it, a chosen Player ID with the menu, its login picture and
+//    Recording mode hiding it. Each ⋯ menu is recorded twice: as the Mac opens it, and (state + "Windows")
+//    the same items through the Mac's own openMenu with the Windows title of the sixth, "Use Windows
+//    account info" (the Windows port's wording; the Mac's says "Mac").
 // Isolation: temporary CFFIXED_USER_HOME, a store in a temporary directory, TZ UTC; no window, no input
 // posted, no panel opened; Reduce Motion on so every change lands at once.
 
@@ -42,8 +47,11 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
      "avatarZoom": p.avatarZoom, "avatarOffsetX": p.avatarOffsetX, "avatarOffsetY": p.avatarOffsetY,
      "backgroundWidth": p.backgroundWidth, "backgroundZoom": p.backgroundZoom, "backgroundOffsetX": p.backgroundOffsetX,
      "backgroundOffsetY": p.backgroundOffsetY, "thumbnailZoom": p.thumbnailZoom, "thumbnailOffsetX": p.thumbnailOffsetX,
-     "thumbnailOffsetY": p.thumbnailOffsetY, "accumulatedWorkSeconds": p.accumulatedWorkSeconds]
+     "thumbnailOffsetY": p.thumbnailOffsetY, "accumulatedWorkSeconds": p.accumulatedWorkSeconds,
+     "autoName": p.autoName, "autoAvatar": p.autoAvatar]
 }
+/// The account a scenario's store reads (the Windows suite feeds the same one).
+private struct OracleAccount { let name: String; let uid: String; let picture: Data? }
 
 @main private enum ProfileCanvasReference {
     static func main() throws {
@@ -87,7 +95,8 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
         var states: [[String: Any]] = []
         var best = 3262, work: TimeInterval = 7 * 3600 + 1234
         func record(_ canvas: PersonalProfileCanvas, _ context: HUDDesignContext, _ store: UserProfileStore?, state: String,
-                    language: AppLanguage = .english, light: Bool = false, synced: [String]? = nil, extra: [String: Any] = [:]) throws {
+                    language: AppLanguage = .english, light: Bool = false, synced: [String]? = nil, account: OracleAccount? = nil,
+                    extra: [String: Any] = [:]) throws {
             var row: [String: Any] = ["state": state, "language": languageName(language), "light": light,
                 "layer": try recorder.tree(canvas.root, id: "root"),
                 "controls": canvas.page.controls.map { controlState($0, in: canvas.root) },
@@ -95,7 +104,9 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
                 "header": ["counter": canvas.header.counterTextForTesting, "title": canvas.header.titleTextForTesting.0],
                 "input": ["profile": profileRow(store?.profile ?? UserProfile(awakeningDate: Date(timeIntervalSinceReferenceDate: 0), uid: "1000000000")),
                           "store": store != nil, "synced": synced as Any? ?? NSNull(), "best": best, "work": work,
-                          "recording": context.recordingMode],
+                          "recording": context.recordingMode,
+                          "account": account.map { ["name": $0.name, "uid": $0.uid, "picture": $0.picture != nil] as [String: Any] } as Any? ?? NSNull(),
+                          "hidesAccount": store?.hidesSystemAccount ?? false],
                 "textHidden": canvas.isTextHidden, "inputLocked": canvas.isInputLocked, "presentingPanel": canvas.isPresentingPanel]
             if canvas.isMenuOpen || canvas.isPopoverOpen { row["top"] = try recorder.tree(canvas.top, id: "top") }
             if let toast = context.overlay.toastState.current { row["toast"] = ["icon": toast.icon.rawValue, "title": toast.title, "caption": toast.caption] }
@@ -118,9 +129,11 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
         func hover(_ canvas: PersonalProfileCanvas, _ id: String?) {
             HUDControlHighlightLayer.update(in: canvas.root, point: id.map { centre(control(canvas, $0), in: canvas.root) }, pressed: false)
         }
-        func makeStore(_ name: String, _ edit: (inout UserProfile) -> Void) throws -> UserProfileStore {
+        func makeStore(_ name: String, account: OracleAccount? = nil, _ edit: (inout UserProfile) -> Void) throws -> UserProfileStore {
             let directory = root.appendingPathComponent(name, isDirectory: true)
-            let store = try UserProfileStore(directory: directory, now: Date(timeIntervalSinceReferenceDate: 0))
+            let source = account.map { a in UserProfileStore.SystemAccountSource(identity: { SystemAccountIdentity(name: a.name, uid: a.uid) },
+                                                                                  picture: { a.picture }) }
+            let store = try UserProfileStore(directory: directory, now: Date(timeIntervalSinceReferenceDate: 0), systemAccount: source)
             try store.update { p in
                 p.name = "Endministrator"; p.tag = "1018"; p.introduction = "Talos-II field engineer. Prefers tea."
                 p.awakeningDate = Date(timeIntervalSinceReferenceDate: 788_961_600) // 2026/01/01 12:00 UTC
@@ -128,7 +141,31 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
                 p.operatorsCount = 23; p.weaponsCount = 41; p.archivesCount = 108; p.accumulatedWorkSeconds = 3600
                 edit(&p)
             }
+            if account != nil {
+                // The account's name and UID land at once, its picture on the main queue after a utility read.
+                store.refreshSystemAccount()
+                let deadline = Date().addingTimeInterval(5)
+                while account?.picture != nil && store.profile.avatarKey == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+                precondition(account?.picture == nil || store.profile.avatarKey != nil, "The account picture arrived")
+            }
             return store
+        }
+        // The Mac's ⋯ menu, then its Windows twin (the same rows, the sixth with the Windows title).
+        func recordMenus(_ canvas: PersonalProfileCanvas, _ context: HUDDesignContext, _ store: UserProfileStore?, state: String,
+                         account: OracleAccount? = nil) throws {
+            control(canvas, "profile:menu").onActivate?()
+            try record(canvas, context, store, state: state, account: account)
+            let rows = canvas.accessibilityItems.filter { $0.id.hasPrefix("profile.more:") }
+            precondition(rows.last?.id == "profile.more:system" && rows.last?.label == "Use Mac account info", "The Mac's sixth item")
+            let items = rows.map { row in
+                HUDMenu.Item(id: String(row.id.dropFirst("profile.more:".count)),
+                             title: row.id == "profile.more:system" ? "Use Windows account info" : row.label,
+                             separatorBefore: row.id == "profile.more:system", enabled: row.enabled)
+            }
+            canvas.closeMenu()
+            canvas.openMenu(id: "profile.more", items: items, anchor: control(canvas, "profile:menu")) { _ in }
+            try record(canvas, context, store, state: state + "Windows", account: account)
+            canvas.closeMenu()
         }
         func canvasFor(_ store: UserProfileStore?, error: String? = nil) -> (PersonalProfileCanvas, HUDDesignContext) {
             let context = HUDDesignContext(env: env)
@@ -147,9 +184,7 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
             hover(canvas, "profile:visibility"); try record(canvas, context, store, state: "hoverEye")
             hover(canvas, "profile:backgroundMenu"); try record(canvas, context, store, state: "hoverTheme")
             hover(canvas, nil)
-            control(canvas, "profile:menu").onActivate?()
-            try record(canvas, context, store, state: "moreMenu")
-            canvas.closeMenu()
+            try recordMenus(canvas, context, store, state: "moreMenu")
             control(canvas, "profile:backgroundMenu").onActivate?()
             try record(canvas, context, store, state: "themePopover")
             canvas.closePopover()
@@ -224,6 +259,33 @@ private func profileRow(_ p: UserProfile) -> [String: Any] {
             let store = try makeStore("Silhouette") { p in p.avatarZoom = 3.5; p.avatarOffsetX = -1; p.avatarOffsetY = 0.25 }
             let (canvas, context) = canvasFor(store)
             try record(canvas, context, store, state: "silhouetteZoom")
+            canvas.setActive(false)
+        }
+        // Issue #17: a synthetic account (name, UID, login picture) through the store's own source.
+        do {
+            let ada = OracleAccount(name: "  Ada Lovelace\n", uid: "1001", picture: nil)
+            let store = try makeStore("Account", account: ada) { _ in }
+            let (canvas, context) = canvasFor(store)
+            try record(canvas, context, store, state: "account", account: ada)
+            try recordMenus(canvas, context, store, state: "accountMenu", account: ada)
+            store.hidesSystemAccount = true; context.setRecordingMode(true)
+            try record(canvas, context, store, state: "accountRecording", account: ada)
+            store.hidesSystemAccount = false; context.setRecordingMode(false)
+            try store.update { $0.playerIDOverride = "778899" }
+            try record(canvas, context, store, state: "accountPlayerID", account: ada)
+            try recordMenus(canvas, context, store, state: "accountPlayerIDMenu", account: ada)
+            canvas.setActive(false)
+        }
+        do {
+            let pictureURL = root.appendingPathComponent("account.png")
+            try png(pictureURL, width: 120, height: 80)
+            let ada = OracleAccount(name: "Ada Lovelace", uid: "1001", picture: try Data(contentsOf: pictureURL))
+            let store = try makeStore("AccountPicture", account: ada) { _ in }
+            let (canvas, context) = canvasFor(store)
+            try record(canvas, context, store, state: "accountPicture", account: ada)
+            try store.removeImage(kind: .avatar)
+            try record(canvas, context, store, state: "accountPictureRestored", account: ada)
+            try recordMenus(canvas, context, store, state: "accountPictureMenu", account: ada)
             canvas.setActive(false)
         }
         // A failed store (the canvas's nil store): defaults, disabled editing, the Notice toast.

@@ -82,6 +82,14 @@ struct ProfileCanvasServices {
     std::function<bool(ProfileImageKind, const std::string& path)> importImage;
 };
 
+// Issue #17's Windows-only menu item and toast (the Mac rows say "Mac" and
+// stay out of the generated catalog). The wording is not yet confirmed:
+// change it here only.
+inline constexpr core::TranslationEntry useWindowsAccountInfo{"Use Windows account info", "使用 Windows 账户信息", "使用 Windows 帳號資訊",
+    "Windows のアカウント情報を使用", "Windows 계정 정보 사용"};
+inline constexpr core::TranslationEntry windowsAccountInfoToast{"Windows account info", "已使用 Windows 账户信息", "已使用 Windows 帳號資訊",
+    "Windows のアカウント情報を使用しました", "Windows 계정 정보 사용됨"};
+
 class ProfileCanvas final : public design::Canvas {
 public:
     static constexpr design::Point cardOrigin{0, design::metric::headerHeight};
@@ -234,6 +242,8 @@ private:
     void playValueChange(design::Layer&);
     void openMoreMenu(const design::Control& anchor);
     void restoreAvatar();
+    bool canUseSystemAccount() const;
+    void useSystemAccount();
     void openThemePopover(const design::Control& anchor);
     void openPortraitPopover(const design::Control& anchor);
     design::Slider& sliderRow(design::Popover&, ProfileField, double y, double width);

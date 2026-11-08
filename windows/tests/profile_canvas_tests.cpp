@@ -204,7 +204,15 @@ struct Oracle {
                  {"thumbnailZoom", &m::PersonalProfile::thumbnailZoom}, {"thumbnailOffsetX", &m::PersonalProfile::thumbnailOffsetX},
                  {"thumbnailOffsetY", &m::PersonalProfile::thumbnailOffsetY}, {"accumulatedWorkSeconds", &m::PersonalProfile::accumulatedWorkSeconds}})
             out.*field = p[key].number();
+        if (p["autoName"].isBool()) out.autoName = p["autoName"].boolean();
+        if (p["autoAvatar"].isBool()) out.autoAvatar = p["autoAvatar"].boolean();
         return out;
+    }
+    // Issue #17: the synthetic account the Mac store read (its picture under the first store key, "system-1").
+    static std::optional<ehud::data::SystemAccount> account(const Json& r) {
+        const auto& a = r["input"]["account"];
+        if (!a.isObject()) return std::nullopt;
+        return ehud::data::SystemAccount{a["name"].string(), a["uid"].string(), a["picture"].boolean() ? std::optional<std::string>("system-1") : std::nullopt};
     }
 };
 ehud::data::ProfileSyncFields fieldsOf(const Json& list) {
@@ -220,16 +228,32 @@ void oracleScenes(Oracle& o) {
     for (const auto& r : o.data["states"].array()) cases.push_back({r["state"].string(), r["language"].string(), r["light"].boolean()});
     for (const auto& c : cases) {
         const Json& r = *o.row(c.state, c.language, c.light);
+        // A ⋯ menu as the Mac opens it ends with "Use Mac account info"; Windows shows its
+        // twin (state + "Windows": the same rows through the Mac's openMenu with the Windows
+        // title), compared below. The Mac row only has to list the same items and states.
+        if (const Json* twin = o.row(c.state + "Windows", c.language, c.light)) {
+            ++o.compared;
+            const auto items = [](const Json& row) {
+                std::vector<std::pair<std::string, bool>> out;
+                for (const auto& a : row["accessibility"].array()) if (a["id"].string().starts_with("profile.more:")) out.emplace_back(a["id"].string(), a["enabled"].boolean());
+                return out;
+            };
+            if (items(r) != items(*twin) || items(r).empty() || items(r).back().first != "profile.more:system") o.failures.push_back(c.state + ": the Windows twin lists other items");
+            continue;
+        }
         World w(o.measurer);
         const auto language = c.language == "zh-Hans" ? Language::simplifiedChinese : c.language == "ja" ? Language::japanese : Language::english;
         w.appearance(language, c.light, r["input"]["recording"].boolean());
         Owner owner; owner.best = r["input"]["best"].integer(); owner.work = r["input"]["work"].number();
         auto p = o.profile(r);
         owner.avatar = p.avatarFilename.has_value(); owner.background = p.backgroundFilename.has_value();
+        owner.account = Oracle::account(r);
         std::unique_ptr<m::ProfileState> store;
         m::ProfileCanvas canvas(w.context, owner.text, owner.dates, owner.services());
         if (r["input"]["store"].boolean()) {
             store = owner.store(p);
+            store->setHidesSystemAccount(r["input"]["hidesAccount"].isBool() && r["input"]["hidesAccount"].boolean());
+            owner.avatar = store->profile().avatarKey().has_value();
             store->setSyncLocked(fieldsOf(r["input"]["synced"]));
             canvas.setStore(store.get());
         } else {
@@ -266,7 +290,7 @@ void oracleScenes(Oracle& o) {
         else if (s == "hoverMore") hover("profile:menu");
         else if (s == "hoverEye") hover("profile:visibility");
         else if (s == "hoverTheme") hover("profile:backgroundMenu");
-        else if (s == "moreMenu") canvas.perform("profile:menu", w.now);
+        else if (s.ends_with("MenuWindows")) canvas.perform("profile:menu", w.now);
         else if (s.starts_with("themePopover")) canvas.perform("profile:backgroundMenu", w.now);
         else if (s == "portraitPopover") { canvas.perform("profile:menu", w.now); canvas.perform("profile.more:portrait", w.now); }
         else if (s == "textHidden" || s == "imagesHidden") canvas.perform("profile:visibility", w.now);
@@ -696,13 +720,85 @@ void systemAccountName() {
     canvas.setActive(false, w.now);
 }
 
+// Issue #17 (aaae230, ad93ac5): the ⋯ menu's sixth item after a separator,
+// "Use Windows account info" in five languages, enabled only while the account
+// was read, Recording mode is off and something shows a chosen value; it puts
+// the account back and toasts.
+void systemAccountMenu() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    const std::function<d::Layer*(d::Layer&, std::string_view)> find = [&](d::Layer& l, std::string_view id) -> d::Layer* {
+        if (l.id().ends_with(id)) return &l;
+        for (d::Layer* c : l.children()) if (auto* f = find(*c, id)) return f;
+        return nullptr;
+    };
+    const auto item = [&](m::ProfileCanvas& canvas) {
+        canvas.perform("profile:menu", w.now);
+        std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+        const auto it = std::find_if(items.begin(), items.end(), [](const auto& i) { return i.id == "profile.more:system"; });
+        check(it != items.end() && it == items.end() - 1, "Use Windows account info is the menu's last item");
+        const bool separated = find(canvas.top(), "menu.separator.5") != nullptr;
+        canvas.closeMenu();
+        return std::pair{*it, separated};
+    };
+    // No account read (tests, previews, a failed read): listed and off.
+    {
+        Owner o; auto store = o.store(sample());
+        m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services()); canvas.setStore(store.get()); w.show(canvas);
+        const auto [system, separated] = item(canvas);
+        check(system.label == "Use Windows account info" && !system.enabled && separated, "The sixth item, after a separator, is off without an account");
+        canvas.setActive(false, w.now);
+    }
+    Owner o; o.account = ehud::data::SystemAccount{"Ada Lovelace", "1001", std::nullopt};
+    auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services()); canvas.setStore(store.get()); w.show(canvas);
+    check(!item(canvas).first.enabled, "Nothing chosen: the account already shows, the item is off");
+    store->update([](m::PersonalProfile& p) { p.autoAvatar = false; });
+    check(!item(canvas).first.enabled, "The default picture counts only when there is an account picture to show");
+    store->update([](m::PersonalProfile& p) { p.playerIDOverride = "42"; });
+    check(item(canvas).first.enabled, "A Player ID override is a chosen value");
+    store->setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::uid));
+    check(!item(canvas).first.enabled, "A Player ID the game sync owns does not count");
+    store->setSyncLocked({});
+    store->setHidesSystemAccount(true);
+    check(!item(canvas).first.enabled, "Off while Recording mode hides the account");
+    store->setHidesSystemAccount(false);
+    canvas.perform("profile:menu", w.now); canvas.perform("profile.more:system", w.now);
+    const auto& v = store->profile();
+    check(!v.playerIDOverride && v.autoName && v.autoAvatar && v.displayedUID() == "1001" && v.displayedName() == "Ada Lovelace", "The account shows again");
+    check(w.toast() && w.toast()->title == "Windows account info" && w.toast()->caption.empty() && w.toast()->icon == d::Icon::reset, "It toasts Windows account info");
+    store->update([](m::PersonalProfile& p) { p.name = "Kal'tsit"; p.autoName = false; });
+    check(item(canvas).first.enabled, "A typed name is a chosen value");
+    store->update([](m::PersonalProfile& p) { p.name = "Endministrator"; p.autoName = true; p.avatarFilename = "00000000-0000-4000-8000-000000000001.image"; });
+    check(item(canvas).first.enabled, "A chosen picture is a chosen value");
+    store->update([](m::PersonalProfile& p) { p.avatarFilename.reset(); p.autoAvatar = false; });
+    o.account->avatarKey = "system-1"; store->refreshSystemAccount(100);
+    check(item(canvas).first.enabled, "The default picture counts once there is an account picture");
+    canvas.setActive(false, w.now);
+    // Five languages: the item and the toast (the toast's caption is the English title).
+    const std::array<std::pair<Language, std::pair<std::string_view, std::string_view>>, 5> rows{{
+        {Language::english, {"Use Windows account info", "Windows account info"}},
+        {Language::simplifiedChinese, {"使用 Windows 账户信息", "已使用 Windows 账户信息"}},
+        {Language::traditionalChinese, {"使用 Windows 帳號資訊", "已使用 Windows 帳號資訊"}},
+        {Language::japanese, {"Windows のアカウント情報を使用", "Windows のアカウント情報を使用しました"}},
+        {Language::korean, {"Windows 계정 정보 사용", "Windows 계정 정보 사용됨"}}}};
+    for (const auto& [language, text] : rows) {
+        w.appearance(language);
+        canvas.setActive(true, w.now);
+        check(item(canvas).first.label == text.first, "The item in every language");
+        canvas.perform("profile:menu", w.now); canvas.perform("profile.more:system", w.now);
+        check(w.toast() && w.toast()->title == text.second && w.toast()->caption == (language == Language::english ? "" : "Windows account info"), "The toast in every language");
+        store->update([](m::PersonalProfile& p) { p.autoAvatar = false; });
+        canvas.setActive(false, w.now);
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         std::optional<Json> data;
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
         behaviour(); hiddenScaleChange(); decodeBeforeFirstShow();
-        partsKept(); reopenEditors(); reopenKeepsPage(); systemAccountName();
+        partsKept(); reopenEditors(); reopenKeepsPage(); systemAccountName(); systemAccountMenu();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);
