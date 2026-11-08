@@ -114,6 +114,10 @@ core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
 std::optional<PlaneMask> designPlaneMask(const modules::design::PoseMask&, const core::Matrix4& inverseBox) noexcept;
 class NativeDesignScene final {
 public:
+    // LayerRasterOptions::magnification: the tree is drawn under a transform
+    // that scales it on screen (the battery bar editor's strip at 0.7); the
+    // density syncContent takes is then layerContentsScale(s, magnification)
+    // and the TextServices carry the same magnification for text leaves.
     NativeDesignScene(LayerRasterizer&, LayerRasterOptions, std::string sourcePrefix, DesignImages = {});
     ~NativeDesignScene();
     NativeDesignScene(const NativeDesignScene&) = delete;

@@ -532,8 +532,8 @@ private:
     // two densities agree (box density 4).
     bool oversampled(const Layer& l, const Run& run) const {
         if (!l.text() || l.hidden() || !options_.text) return false;
-        const double s = options_.text->boxScale;
-        if (!(textContentsScale(s) > layerContentsScale(s))) return false;
+        const double s = options_.text->boxScale, m = options_.text->magnification;
+        if (!(textContentsScale(s, m) > layerContentsScale(s, m))) return false;
         return std::none_of(run.levels.begin(), run.levels.end(), [](const Level& v) { return v.layer->hidden(); });
     }
     // Before `l`'s own drawing joins the run: closes it on a density change.

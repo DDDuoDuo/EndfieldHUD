@@ -307,6 +307,14 @@ void text() {
     const auto& tx = node["text"];
     check(node["kind"].string() == "text" && node["id"].string() == "t" && node["position"] == J(J::Array{5., 6.}) && node["bounds"] == J(J::Array{0., 0., 70., 12.}), "The node's bounds are the CSS line box");
     check(node["anchorPoint"] == J(J::Array{0., 0.}) && node["contentsScale"].number() == 3, "Anchor (0,0); contentsScale = textContentsScale(boxScale 2)");
+    {
+        // A tree drawn under a 0.7 transform (the battery bar editor's strip):
+        // its text leaves carry textContentsScale(boxScale, 0.7).
+        auto shrunk = s;
+        shrunk.magnification = .7;
+        check(d::textNode("t", mixed, shrunk)["contentsScale"].number() == d::textContentsScale(2, .7) && d::textContentsScale(2, .7) == 2 &&
+              d::textNode("t", mixed, s)["contentsScale"].number() == 3, "Text leaves follow the TextServices' magnification");
+    }
     check(tx["string"].string() == "HI \xE6\x97\xA5\xF0\x9F\x98\x80", "string = displayed runs, empty runs dropped");
     const auto& runs = tx["runs"].array();
     check(runs.size() == 2 && runs[0]["utf16Range"] == J(J::Array{std::int64_t(0), std::int64_t(3)}) && runs[1]["utf16Range"] == J(J::Array{std::int64_t(3), std::int64_t(3)}), "UTF-16 ranges (BMP 1 unit, astral 2)");

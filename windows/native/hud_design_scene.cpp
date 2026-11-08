@@ -363,7 +363,11 @@ void NativeDesignScene::setImages(DesignImages images) { impl_->images = std::mo
 bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices& text, std::uint64_t revision, double pixelsPerPoint, double now) {
     auto& i = *impl_;
     i.time(now);
-    need(std::isfinite(pixelsPerPoint) && pixelsPerPoint >= 1 && pixelsPerPoint <= 4, "Design density outside 1...4");
+    // layerContentsScale: 1...4 (x the options' magnification for a tree drawn
+    // under an enlarging or shrinking transform, such as the 0.7 bar editor strip).
+    const double magnification = core::renderMagnification(i.options.magnification);
+    need(std::isfinite(pixelsPerPoint) && pixelsPerPoint >= magnification && pixelsPerPoint <= core::maximumRenderScale * magnification,
+         "Design density outside 1...4 (times the magnification)");
     const bool content = !i.synced || i.revision != revision || i.density != pixelsPerPoint || i.root != &root || i.imagesDirty;
     if (!content) {
         // A scroll step or glide (no content event): only the visibility
