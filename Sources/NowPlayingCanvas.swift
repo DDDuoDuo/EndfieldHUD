@@ -456,17 +456,23 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     private var currentOutput: AudioDeviceInfo? { audio.snapshot.outputs.first { $0.id == audio.snapshot.defaultOutputID } }
 
     /// The audio process of the playing app, its own or a helper inside its
-    /// bundle (a browser plays through one): the one with a route, else the
-    /// one playing, else the only one. Never an unrelated process, nor a
-    /// guess between several (the Volume module lists those individually).
+    /// bundle (a browser plays through one): the one with a live route, else
+    /// the one playing, else the one with a failed route, else the only one.
+    /// A failed route never outranks the process now playing (a browser's
+    /// replaced helper). Never an unrelated process, nor a guess between
+    /// several (the Volume module lists those individually).
     private var audioApplication: AudioApplicationInfo? {
         guard let app = controller.snapshot.application else { return nil }
         let matches = perAppAudio.candidates(in: audio.snapshot).filter {
             $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL
         }
-        let routed = matches.filter { match in perAppAudio.sessions.contains { $0.processID == match.id } }
-        let playing = matches.filter(\.isRunningOutput)
-        let preferred = !routed.isEmpty ? routed : !playing.isEmpty ? playing : matches
+        func routed(live: Bool) -> [AudioApplicationInfo] {
+            matches.filter { match in perAppAudio.sessions.contains {
+                $0.processID == match.id && ($0.state == .preparing || $0.state == .active) == live
+            } }
+        }
+        let live = routed(live: true), playing = matches.filter(\.isRunningOutput), ended = routed(live: false)
+        let preferred = [live, playing, ended].first { !$0.isEmpty } ?? matches
         return preferred.count == 1 ? preferred[0] : nil
     }
 
