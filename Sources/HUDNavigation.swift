@@ -1426,21 +1426,30 @@ final class HUDNavigationEntry {
             polygon(p(14, 10), p(18, 10), p(18, 14), p(22, 14), p(22, 18), p(18, 18),
                     p(18, 22), p(14, 22), p(14, 18), p(10, 18), p(10, 14), p(14, 14))
         case .system:
-            box(7, 7, 18, 18); box(12, 12, 8, 8)
-            for v in [CGFloat(9), 19] {
-                box(v, 1, 4, 5); box(v, 26, 4, 5)
-                box(1, v, 5, 4); box(26, v, 5, 4)
+            // A chamfered core with a diamond window; pins stand clear of it.
+            polygon(p(6.5, 11.5), p(11.5, 6.5), p(20.5, 6.5), p(25.5, 11.5),
+                    p(25.5, 20.5), p(20.5, 25.5), p(11.5, 25.5), p(6.5, 20.5))
+            polygon(p(16, 10.5), p(21.5, 16), p(16, 21.5), p(10.5, 16))
+            for v in [CGFloat(9.5), 18.5] {
+                box(v, 1, 4, 4); box(v, 27, 4, 4)
+                box(1, v, 4, 4); box(27, v, 4, 4)
             }
         case .display, .projection:
-            path.addRoundedRect(in: CGRect(x: 2, y: 4, width: 28, height: 20), cornerWidth: 2, cornerHeight: 2)
-            box(6, 8, 20, 12); box(13, 25, 6, 2); box(8, 28, 16, 3)
+            // Frame and lit panel share two cut corners; the stand is apart.
+            polygon(p(2, 8), p(6, 4), p(30, 4), p(30, 19), p(26, 23), p(2, 23))
+            polygon(p(5, 9.5), p(7.5, 7), p(27, 7), p(27, 17.5), p(24.5, 20), p(5, 20))
+            polygon(p(7.5, 11.5), p(9.5, 9.5), p(24.5, 9.5), p(24.5, 15.5), p(22.5, 17.5), p(7.5, 17.5))
+            polygon(p(13, 25), p(19, 25), p(22, 30), p(10, 30))
         case .hotkeys:
-            path.addRoundedRect(in: CGRect(x: 1, y: 6, width: 30, height: 21), cornerWidth: 2, cornerHeight: 2)
-            for x in [CGFloat(5), 11, 17, 23] { box(x, 10, 4, 4) }
-            box(6, 19, 20, 3)
+            // Two keys of a combination; the front one carries a chevron.
+            polygon(p(2, 6), p(6, 2), p(19, 2), p(19, 9), p(9, 9), p(9, 19), p(2, 19))
+            polygon(p(12, 16), p(16, 12), p(30, 12), p(30, 26), p(26, 30), p(12, 30))
+            polygon(p(17, 17.5), p(21, 17.5), p(25.5, 21), p(21, 24.5), p(17, 24.5), p(21.5, 21))
         case .about:
-            path.addEllipse(in: CGRect(x: 2, y: 2, width: 28, height: 28))
-            box(14, 7, 4, 4); box(14, 14, 4, 11)
+            // A hexagonal badge with an "i" cut out of it.
+            polygon(p(16, 1), p(28.99, 8.5), p(28.99, 23.5), p(16, 31), p(3.01, 23.5), p(3.01, 8.5))
+            polygon(p(16, 6.9), p(18.6, 9.5), p(16, 12.1), p(13.4, 9.5))
+            polygon(p(13.5, 14), p(18.5, 14), p(18.5, 24.5), p(16, 26.5), p(13.5, 24.5))
         case .storage:
             box(12, 2, 8, 8); box(14.5, 11, 3, 4)
             box(5, 15, 22, 3)

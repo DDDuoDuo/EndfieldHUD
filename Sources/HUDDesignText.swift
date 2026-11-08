@@ -295,11 +295,13 @@ final class HUDStandardTextLayer: CATextLayer {
         ctx.restoreGState()
     }
 
-    /// The distance from the top of the bounds to the first line's top.
-    var textTop: CGFloat {
-        guard centersVertically else { return 0 }
+    /// The drawn lines as one block: its distance from the top of the bounds
+    /// and the lines' total height.
+    var textBlock: (top: CGFloat, height: CGFloat) {
         let text = drawnText()
-        return text.length > 0 && bounds.width > 0 ? blockTop(layoutLines(text)) : 0
+        guard text.length > 0, bounds.width > 0 else { return (0, 0) }
+        let lines = layoutLines(text)
+        return (blockTop(lines), lines.reduce(0) { $0 + $1.height })
     }
 
     private func blockTop(_ lines: [(line: CTLine, start: Int, ascent: CGFloat, height: CGFloat)]) -> CGFloat {

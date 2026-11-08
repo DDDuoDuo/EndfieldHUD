@@ -98,8 +98,8 @@ final class HUDSourceWatchView: NSView {
     private lazy var desktopLeftLabelIDs: [HUDSourceID: HUDSourceID] = Dictionary(uniqueKeysWithValues:
         document.buttons.prefix(4).compactMap { button in button.label.map { (button.nodeID, $0.nodeID) } })
     /// Left icons share one box; each glyph's visible bottom sits this far
-    /// above the top of its caption's first line (`HUDStandardTextLayer.textTop`).
-    static let desktopLeftIconSide = 80.0, desktopLeftIconGap = 9.0
+    /// above the top of its caption's first line (`HUDStandardTextLayer.textBlock`).
+    static let desktopLeftIconSide = 96.0, desktopLeftIconGap = 9.0
     /// Noto's CJK sets 0.02–0.03 em tighter than the game's HarmonyOS Sans SC
     /// (ink gaps between characters); Latin captions keep the face's own spacing.
     static let desktopCJKCaptionTracking: CGFloat = 0.02
@@ -2351,6 +2351,8 @@ final class HUDSourceWatchView: NSView {
             if mask.path !== clip.path { mask.path = clip.path }
             if container.opacity != opacity { container.opacity = opacity }
         }
+        // Each left icon's visible bottom, set where its caption is placed.
+        var leftIconBottoms: [HUDSourceID: Double] = [:]
         for (id, layers) in desktopLabels {
             guard let node = frame.node(id), node.activeInHierarchy, let rect = node.rect,
                   let button = desktopLabelButtons[id], actionsByID[button] != nil else {
@@ -2360,7 +2362,26 @@ final class HUDSourceWatchView: NSView {
             let world = simd_mul(camera.worldRoot, node.worldMatrix)
             let area = desktopCaptionSize(CGSize(width: rect.size.x, height: rect.size.y), target: actionsByID[button]?.target)
             let width = Double(area.width), height = Double(area.height)
-            let x = rect.origin.x + (rect.size.x - width) / 2, y = rect.origin.y + (rect.size.y - height) / 2
+            let x = rect.origin.x + (rect.size.x - width) / 2
+            var y = rect.origin.y + (rect.size.y - height) / 2
+            let textBounds = CGRect(x: 0, y: 0, width: width, height: height)
+            if layers.text.bounds != textBounds { layers.text.bounds = textBounds }
+            if desktopLeftLabelIDs[button] == id, let iconID = desktopIconIDs[button], let glyph = desktopIconGlyphs[iconID] {
+                // Icon, gap and caption lines centre as one group on the
+                // button plate (the caption's parent), whatever the icon's
+                // proportions or the caption's line count.
+                let block = layers.text.textBlock
+                let iconHeight = Double(glyph.height) * Self.desktopLeftIconSide / Double(HUDSourceDesktopIconLayout.box)
+                let lineTop = y + height - Double(block.top)
+                let groupCenter = (lineTop + Self.desktopLeftIconGap + iconHeight + lineTop - Double(block.height)) / 2
+                var plateCenter = 0.0
+                if let parentID = node.node.parentID, let plate = frame.node(parentID)?.rect {
+                    plateCenter = simd_mul(node.localMatrix.inverse,
+                        SIMD4(plate.origin.x + plate.size.x / 2, plate.origin.y + plate.size.y / 2, 0, 1)).y
+                }
+                y += plateCenter - groupCenter
+                leftIconBottoms[id] = lineTop + plateCenter - groupCenter + Self.desktopLeftIconGap
+            }
             let corners = [SIMD3(x, y + height, 0), SIMD3(x + width, y + height, 0),
                            SIMD3(x + width, y, 0), SIMD3(x, y, 0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
@@ -2375,8 +2396,6 @@ final class HUDSourceWatchView: NSView {
                 continue
             }
             present(layers.container, mask: layers.clip, clip: projectedClip, opacity: Float(frame.inheritedAlpha[id] ?? 1))
-            let textBounds = CGRect(x: 0, y: 0, width: width, height: height)
-            if layers.text.bounds != textBounds { layers.text.bounds = textBounds }
             if layers.text.contentsScale != textScale { layers.text.contentsScale = textScale }
             layers.text.transform = Self.projectiveTextTransform(corners, size: CGSize(width: width, height: height))
         }
@@ -2392,15 +2411,14 @@ final class HUDSourceWatchView: NSView {
             var w = right ? 80.0 : rect.size.x, h = right ? 80.0 : rect.size.y
             var x = rect.origin.x + (rect.size.x - w) / 2, y = rect.origin.y + (rect.size.y - h) / 2
             if let labelID = desktopLeftLabelIDs[buttonID], let label = frame.node(labelID), let labelRect = label.rect,
-               let glyph = desktopIconGlyphs[iconID] {
+               let glyph = desktopIconGlyphs[iconID], let bottom = leftIconBottoms[labelID] {
                 // In the caption's plane: one box size, centred over the
                 // caption, the glyph's visible bottom a fixed gap above the
-                // caption's first line (y up). The authored caption keeps its place in its button.
+                // caption's first line (y up), the group centred by the caption pass.
                 world = simd_mul(camera.worldRoot, label.worldMatrix)
                 w = Self.desktopLeftIconSide; h = w
                 x = labelRect.origin.x + labelRect.size.x / 2 - w / 2
-                let textTop = Double(desktopLabels[labelID]?.text.textTop ?? 0)
-                y = labelRect.origin.y + labelRect.size.y - textTop + Self.desktopLeftIconGap - Double(glyph.minY) * w / Double(HUDSourceDesktopIconLayout.box)
+                y = bottom - Double(glyph.minY) * w / Double(HUDSourceDesktopIconLayout.box)
             }
             let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
