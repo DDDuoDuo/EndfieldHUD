@@ -131,10 +131,13 @@ struct Hud {
     core::source::DesktopChromeSettings chrome;
     double time{};
     bool released{};
-    Hud(HWND h, gpu::Renderer& r, tools::ShelfServiceOptions options, core::Language language = core::Language::english) : hwnd(h), renderer(r) {
+    // `utility`: the shared executor handed over before the owner starts (the
+    // module-coverage host's order); otherwise the test hands it over later.
+    Hud(HWND h, gpu::Renderer& r, tools::ShelfServiceOptions options, core::Language language = core::Language::english, app::UtilityExecutor* utility = nullptr) : hwnd(h), renderer(r) {
         tools::DesignOverlayOptions o; o.raster.pixelsPerPoint = 1; o.window = hwnd;
         overlay = std::make_unique<tools::DesignOverlayOwner>(raster, o);
         shelf = std::make_unique<tools::ShelfService>(hwnd, std::move(options));
+        if (utility) shelf->setUtility(utility);
         tools::DesignOwnerOptions ownerOptions; ownerOptions.name = "fileShelf"; ownerOptions.routing = tools::ShelfService::routing(); ownerOptions.raster.pixelsPerPoint = 1;
         ownerOptions.now = [this] { return time; };
         owner = shelf->makeOwner(raster, overlay->context(), std::move(ownerOptions));
@@ -375,6 +378,70 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     hud.release();
     hud.shelf.reset();
     check(RevokeDragDrop(hwnd) == DRAGDROP_E_NOTREGISTERED && !IsWindowVisible(hwnd), "Teardown revokes the drop target; nothing was shown");
+}
+
+// The relink ledger is read as the owner starts (EndfieldHUD.exe makes the
+// owner, then hands it the shared executor), so the first showing lists the
+// imported rows and is not rebuilt when its own refresh read lands.
+void relinksAtStart(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp;
+    const auto root = temp.root / "data";
+    constexpr UINT utilityNotice = WM_APP + 301;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); });
+    Hud hud(hwnd, renderer, tools::ShelfServiceOptions{root, false, false});
+    auto& shelf = *hud.shelf;
+    const auto settle = [&] { utility.waitIdle(); utility.drain(); MSG m{}; while (PeekMessageW(&m, hwnd, utilityNotice, utilityNotice, PM_REMOVE)) {} hud.pump(); };
+    const auto reportID = std::string("BBBBBBBB-0000-4000-8000-000000000001");
+    std::filesystem::create_directories(root / "Migration"); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({imported(reportID, "Report.pdf", false, 700000000.5)}));
+    check(shelf.pendingRelinks() == 0, "Without the shared executor the owner has read nothing yet");
+    shelf.setUtility(&utility); settle();
+    check(shelf.pendingRelinks() == 1, "Handed the executor, the owner reads the ledger before the Shelf is shown");
+    auto& context = hud.overlay->context();
+    hud.frame();
+    const auto built = context.pagesBuilt();
+    check(hud.canvas().itemCount() == 1 && hud.item("Report.pdf") && hud.item("Report.pdf")->awaitingRelink, "The first showing already lists the imported row");
+    settle(); hud.frame();
+    check(context.pagesBuilt() == built && hud.canvas().itemCount() == 1, "The showing's own read lands with the same rows: no rebuild");
+}
+// The executor handed over before the owner starts (the module-coverage
+// host): makeOwner reads. The start read only reads: a row whose record is
+// already on the shelf (the app stopped between the two writes) stays
+// unresolved until the showing's read repairs it, so launching writes nothing.
+void relinksAtOwnerStart(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp;
+    const auto root = temp.root / "data";
+    constexpr UINT utilityNotice = WM_APP + 302;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); });
+    const auto drainUtility = [&] { utility.waitIdle(); utility.drain(); MSG m{}; while (PeekMessageW(&m, hwnd, utilityNotice, utilityNotice, PM_REMOVE)) {} };
+    const auto kept = temp.root / "Kept.txt"; write(kept, "kept");
+    std::string keptID;
+    {
+        Hud first(hwnd, renderer, tools::ShelfServiceOptions{root, false, false}, core::Language::english, &utility);
+        first.frame();
+        check(first.shelf->importFiles(std::vector<std::string>{utf8(kept)}, first.time), "A Windows reference is on the shelf");
+        drainUtility(); first.pump();
+        check(first.canvas().itemCount() == 1, "The reference is listed");
+        keptID = first.canvas().items()[0].id;
+    }
+    const auto reportID = std::string("BBBBBBBB-0000-4000-8000-000000000002");
+    const auto stopped = imported(keptID, "Kept.txt", false, 700000000.25);
+    std::filesystem::create_directories(root / "Migration");
+    write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({imported(reportID, "Report.pdf", false, 700000000.5), stopped}));
+    const auto unresolved = [&] { const mig::MacRelinkLedger ledger(root); const auto* row = ledger.find(stopped.id); return row && row->state == mig::RelinkState::unresolved; };
+    tools::ShelfServiceOptions relaunch{root, false, false}; relaunch.persistentDataRoot = true; // the next launch opens the same root
+    Hud hud(hwnd, renderer, std::move(relaunch), core::Language::english, &utility);
+    auto& shelf = *hud.shelf;
+    drainUtility(); hud.pump();
+    check(shelf.pendingRelinks() == 1, "Started with the executor, the owner reads the ledger before the Shelf is shown; the row on the shelf is not listed");
+    check(unresolved(), "The start read writes nothing to the ledger");
+    auto& context = hud.overlay->context();
+    hud.frame();
+    const auto built = context.pagesBuilt();
+    check(hud.canvas().itemCount() == 2 && hud.item("Report.pdf") && hud.item("Report.pdf")->awaitingRelink && hud.item("Kept.txt") && !hud.item("Kept.txt")->awaitingRelink,
+          "The first showing already lists the imported row beside the reference");
+    drainUtility(); hud.pump(); hud.frame();
+    check(context.pagesBuilt() == built && hud.canvas().itemCount() == 2, "The showing's own read lands with the same rows: no rebuild");
+    check(!unresolved(), "The showing's read resolves the row whose record is on the shelf");
 }
 
 // Mac-imported Shelf items (Migration/relink.json written by an earlier import):
@@ -625,6 +692,8 @@ int wmain(int argc, wchar_t** argv) {
         gpu::Renderer renderer; renderer.initialize(window.hwnd, 1280, 800, {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
         text();
         services(window.hwnd, renderer);
+        relinksAtStart(window.hwnd, renderer);
+        relinksAtOwnerStart(window.hwnd, renderer);
         relink(window.hwnd, renderer);
         deferredSaves(window.hwnd, renderer);
         openAfterShutdown(window.hwnd, renderer);
