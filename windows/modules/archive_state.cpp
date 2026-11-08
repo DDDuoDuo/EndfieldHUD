@@ -15,6 +15,7 @@ void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
 bool holdsMacMedia(const ArchiveEntry&e,const ArchiveJson&mac){for(const auto&m:e.media){if(!m.isObject()||m.contains("referencePlatform"))continue;if(mac["bookmark"].isString()?m["bookmark"]==mac["bookmark"]&&m["lastKnownPath"]==mac["lastKnownPath"]:m==mac)return true;}return false;}
 bool holdsWindowsPath(const ArchiveEntry&e,std::string_view path){for(const auto&m:e.media)if(m.isObject()&&m["referencePlatform"]==ArchiveJson("windows")&&m["windowsPath"].isString()&&m["windowsPath"].string()==path)return true;return false;}
 std::string message(std::exception_ptr e){try{if(e)std::rethrow_exception(e);}catch(const std::exception&v){return v.what();}catch(...){return "The archive could not be saved.";}return {};}
+std::exception_ptr refused(){return std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::invalid,"The archive could not be read. The original was preserved."));}
 }
 struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
     struct Pending{ArchiveEntry entry;std::uint64_t revision{};};
@@ -43,6 +44,12 @@ struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
     void onThread()const{need(std::this_thread::get_id()==thread,"Archive state belongs to its creating thread");need(alive,"Archive state is detached");}
     bool categoryExists(const std::optional<std::string>&id)const{return !id||std::any_of(categories.begin(),categories.end(),[&](const auto&c){return c.id==*id;});}
     bool isLocked(std::string_view id)const{return classified.contains(id)&&unlockedID!=id;}
+    // canModify (ArchiveStore.swift:915-920): a gallery move or delete may touch
+    // this document now: not locked, being deleted, (de)classified or held by a
+    // category removal.
+    bool canModify(std::string_view id)const{return !isLocked(id)&&!deleting.contains(id)&&!classificationWork.contains(id)&&std::none_of(categoryRemovals.begin(),categoryRemovals.end(),[&](const auto&r){return r.second.contains(id);});}
+    bool listed(std::string_view id)const{return std::any_of(entries.begin(),entries.end(),[&](const auto&e){return e.id==id;});}
+    bool valid(const ArchiveEntry&e)const{try{validateArchiveEntry(e,rules);return true;}catch(const std::exception&){return false;}}
     void relock(){unlockedID.reset();++visit;}
     // record(status, for:) (ArchiveStore.swift:982-987).
     void record(ArchiveClassificationStatus status,const std::string&id){if(status==ArchiveClassificationStatus::unclassified)classified.erase(id);else classified.insert(id);
@@ -92,6 +99,17 @@ struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
         std::vector<ArchiveSummary>incoming;incoming.reserve(value.entries.size());for(auto&s:value.entries)if(!deleting.contains(s.id))incoming.push_back(applyingRemovals(std::move(s)));bounded(std::move(incoming));for(const auto&[id,p]:dirty){(void)id;upsertSummary(p.entry);}
         selected=value.selected&&!deleting.contains(value.selected->id)?std::optional(dirty.contains(value.selected->id)?dirty.at(value.selected->id).entry:applyingRemovals(std::move(*value.selected))):std::nullopt;readError.reset();changed();
     }
+    // stage (ArchiveStore.swift:1073-1084): an edit as the newest dirty
+    // revision; only the open document's edits debounce (.35 s), other
+    // documents are flushed by their caller.
+    void stage(ArchiveEntry entry,bool selecting,double modified,double time){entry.modified=modified;if(selecting)selected=entry;const auto id=entry.id;dirty[id]={entry,++dirtyRevision};upsertSummary(entry);if(selecting)deadline=time+.35;}
+    bool update(ArchiveEntry entry,double modified,double time){time=at(time);validateArchiveEntry(entry,rules);need(std::isfinite(modified),"Invalid Archive modified date");if(!selected||selected->id!=entry.id||deleting.contains(entry.id)||isLocked(entry.id)||!categoryExists(entry.categoryID))return false;stage(std::move(entry),true,modified,time);changed();return true;}
+    // commitMove (:827-832): the one move write; the payload and its category column are saved together.
+    bool commitMove(ArchiveEntry entry,std::optional<std::string>category,bool selecting,double modified,double time){entry.categoryID=std::move(category);const auto id=entry.id;
+        if(selecting){if(!update(std::move(entry),modified,time))return false;}else stage(std::move(entry),false,modified,time);categoryChanges[id]=dirtyRevision;flush();changed();return true;}
+    bool moveSelected(std::optional<std::string>category,double modified,double time){if(!selected||isLocked(selected->id)||selected->categoryID==category||!categoryExists(category))return false;return commitMove(*selected,std::move(category),true,modified,time);}
+    // moveEntry's path for the open document: moved when its category is now the target.
+    void moveOpen(const std::optional<std::string>&category,double modified,double time,const std::function<void(bool)>&done){const auto before=selected?selected->categoryID:std::nullopt;moveSelected(category,modified,time);done(before!=category&&selected&&selected->categoryID==category);}
     void flush(bool retryFailed=true){
         if(!alive)return;if(flushing){retryFlush=true;return;}flushing=true;backpressured=false;deadline.reset();
         struct Finish{Impl&state;~Finish(){state.flushing=false;}}finish{*this};
@@ -207,7 +225,6 @@ bool ArchiveState::isClassified(std::string_view id)const noexcept{return impl_-
 ArchiveClassificationStatus ArchiveState::selectedClassification()const noexcept{const auto&i=*impl_;if(!i.selected||!i.classified.contains(i.selected->id))return ArchiveClassificationStatus::unclassified;const auto found=i.verifierProblems.find(i.selected->id);return found==i.verifierProblems.end()?ArchiveClassificationStatus::protectedByPassword:found->second;}
 bool ArchiveState::isSelectedLocked()const noexcept{const auto&i=*impl_;return i.selected&&i.isLocked(i.selected->id);}
 bool ArchiveState::isClassificationBusy()const noexcept{const auto&i=*impl_;return i.unlocking||!i.classificationWork.empty();}
-namespace {std::exception_ptr refused(){return std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::invalid,"The archive could not be read. The original was preserved."));}}
 void ArchiveState::classifySelected(std::string password,Completion completion){auto&i=*impl_;i.onThread();
     if(!i.selected||i.deleting.contains(i.selected->id)||i.classified.contains(i.selected->id)||i.classificationWork.contains(i.selected->id)||archivePasswordIssue(password,std::nullopt,i.rules)){if(completion)completion(refused());return;}
     const auto id=i.selected->id;i.flush(); // FIFO: the pending document save commits before the flag.
@@ -245,15 +262,53 @@ void ArchiveState::recoverSelectedClassification(std::optional<std::string>passw
             else self->refreshSelectedClassification();
             self->changed();completion(failure);});
         if(!accepted){self->classificationWork.erase(id);self->changed();completion(std::make_exception_ptr(ehud::data::StoreError(ehud::data::StoreErrorCode::unavailable,"Archive file queue is busy. Retry after pending work completes.")));}});}
-bool ArchiveState::update(ArchiveEntry entry,double modified,double time){auto&i=*impl_;i.onThread();time=i.at(time);validateArchiveEntry(entry,i.rules);need(std::isfinite(modified),"Invalid Archive modified date");if(!i.selected||i.selected->id!=entry.id||i.deleting.contains(entry.id)||i.isLocked(entry.id)||!i.categoryExists(entry.categoryID))return false;entry.modified=modified;i.selected=entry;i.dirty[entry.id]={entry,++i.dirtyRevision};i.upsertSummary(entry);i.deadline=time+.35;i.changed();return true;}
-bool ArchiveState::moveSelected(std::optional<std::string>id,double modified,double time){auto&i=*impl_;i.onThread();if(!i.selected||i.isLocked(i.selected->id)||i.selected->categoryID==id||!i.categoryExists(id))return false;auto entry=*i.selected;entry.categoryID=std::move(id);if(!update(std::move(entry),modified,time))return false;i.categoryChanges[i.selected->id]=i.dirtyRevision;i.flush();i.changed();return true;}
+bool ArchiveState::update(ArchiveEntry entry,double modified,double time){auto&i=*impl_;i.onThread();return i.update(std::move(entry),modified,time);}
+bool ArchiveState::moveSelected(std::optional<std::string>id,double modified,double time){auto&i=*impl_;i.onThread();return i.moveSelected(std::move(id),modified,i.at(time));}
+bool ArchiveState::canModify(std::string_view id)const noexcept{return impl_->canModify(id);}
+// moveEntry (ArchiveStore.swift:797-826). A closed document is loaded on the
+// executor (or its unsaved draft is used), checked again on delivery and
+// saved through the dirty/flush path, so it moves to the front of All.
+void ArchiveState::moveEntry(std::string id,std::optional<std::string>category,double modified,double time,std::function<void(bool)>completion){auto&i=*impl_;i.onThread();need(ehud::data::validUUID(id)&&std::isfinite(modified),"Invalid Archive move");time=i.at(time);
+    const std::function<void(bool)>done=[completion=std::move(completion)](bool moved){if(completion)completion(moved);};
+    if(i.selected&&i.selected->id==id){i.moveOpen(category,modified,time,done);return;}
+    const auto summary=std::find_if(i.entries.begin(),i.entries.end(),[&](const auto&e){return e.id==id;});
+    if(!i.canModify(id)||!i.categoryExists(category)||summary==i.entries.end()||summary->categoryID==category){done(false);return;}
+    if(const auto pending=i.dirty.find(id);pending!=i.dirty.end()){i.commitMove(pending->second.entry,std::move(category),false,modified,time);done(true);return;}
+    const bool accepted=i.perform<std::optional<ArchiveEntry>>([store=i.store,id]{return store->entry(id);},[self=impl_,id,category,modified,time,done](auto failure,auto result){
+        if(self->selected&&self->selected->id==id){self->moveOpen(category,modified,self->at(time),done);return;}
+        if(failure){self->readError=message(failure);self->changed();done(false);return;}
+        const std::optional<ArchiveEntry>loaded=result?std::move(*result):std::nullopt;
+        const auto entry=self->dirty.contains(id)?std::optional(self->dirty.at(id).entry):loaded?std::optional(self->applyingRemovals(*loaded)):std::nullopt;
+        if(!self->canModify(id)||!self->categoryExists(category)||!self->listed(id)||!entry||!self->valid(*entry)||entry->categoryID==category){
+            if(!loaded){self->readError=message(refused());self->changed();}
+            done(false);return;}
+        self->commitMove(*entry,category,false,modified,self->at(time));done(true);});
+    if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes.";i.changed();done(false);}
+}
 void ArchiveState::flush(){impl_->onThread();impl_->flush();}void ArchiveState::retryPendingSaves(){auto&i=*impl_;i.onThread();i.readError.reset();i.flush();i.changed();}
 void ArchiveState::queueCapacityAvailable(){auto&i=*impl_;i.onThread();if(i.backpressured)i.flush(false);}
 std::optional<double>ArchiveState::saveDeadline()const noexcept{return impl_->deadline;}
 bool ArchiveState::flushIfDue(double t){auto&i=*impl_;i.onThread();t=i.at(t);if(!i.deadline||t<*i.deadline)return false;i.flush();return true;}
 // Locked documents cannot be deleted; unlock (or recover) first.
-bool ArchiveState::deleteSelected(){auto&i=*impl_;i.onThread();if(!i.selected||i.deleting.contains(i.selected->id)||i.isLocked(i.selected->id))return false;const auto entry=*i.selected;const auto id=entry.id;std::optional<Impl::Pending>pending;if(i.dirty.contains(id)){pending=i.dirty.at(id);i.dirty.erase(id);}i.deadline.reset();i.deleting.insert(id);i.relock();i.invalidate();i.selected.reset();const auto found=std::find_if(i.entries.begin(),i.entries.end(),[&](const auto&s){return s.id==id;});if(found!=i.entries.end()){i.thumbnailBytes-=archiveThumbnailCost(found->thumbnail);i.entries.erase(found);}i.changed();
-    const bool accepted=i.perform<int>([store=i.store,id,ledger=i.ledger]{store->remove(id);if(ledger&&ledger->removed)ledger->removed(id,nullptr);return 0;},[self=impl_,entry,pending](auto failure,auto){self->deleting.erase(entry.id);if(!failure){self->writeErrors.erase(entry.id);self->unannounced.erase(entry.id);self->categoryChanges.erase(entry.id);self->classified.erase(entry.id);self->verifierProblems.erase(entry.id);self->events.push_back({"deleted",entry.id});}else {if(pending)self->dirty[entry.id]=*pending;self->upsertSummary(entry);self->writeErrors[entry.id]=message(failure);}self->changed();});if(!accepted){i.deleting.erase(id);if(pending)i.dirty[id]=*pending;i.upsertSummary(entry);i.writeErrors[id]="Archive file queue is busy. Retry deletion when capacity is available.";i.changed();return false;}return true;
+bool ArchiveState::deleteSelected(){auto&i=*impl_;i.onThread();return i.selected&&deleteEntry(i.selected->id);}
+// delete(_:) (ArchiveStore.swift:1175-1207): the open document or, from the
+// gallery, any other one. Only the open document relocks, drops its save
+// deadline and invalidates the presentation (that bumps the generation, which
+// would drop a select still in flight). A failed delete of a closed document
+// puts its card back at its old index and restores its draft.
+bool ArchiveState::deleteEntry(std::string_view value){auto&i=*impl_;i.onThread();const std::string id(value);
+    const std::optional<ArchiveEntry>entry=i.selected&&i.selected->id==id?i.selected:std::nullopt;
+    if(entry){if(i.deleting.contains(id)||i.isLocked(id))return false;}else if(!i.canModify(id)||!i.listed(id))return false;
+    std::optional<Impl::Pending>pending;if(i.dirty.contains(id)){pending=i.dirty.at(id);i.dirty.erase(id);}
+    if(entry)i.deadline.reset();
+    i.deleting.insert(id);
+    if(entry){i.relock();i.invalidate();i.selected.reset();}
+    std::optional<std::size_t>index;std::optional<ArchiveSummary>removed;
+    if(const auto found=std::find_if(i.entries.begin(),i.entries.end(),[&](const auto&s){return s.id==id;});found!=i.entries.end()){index=std::size_t(found-i.entries.begin());removed=*found;i.thumbnailBytes-=archiveThumbnailCost(found->thumbnail);i.entries.erase(found);}
+    i.changed();
+    const auto restore=[id,entry,removed,index](Impl&self){if(entry)self.upsertSummary(*entry);else if(removed&&index&&!self.listed(id)){self.entries.insert(self.entries.begin()+std::ptrdiff_t(std::min(*index,self.entries.size())),*removed);self.thumbnailBytes+=archiveThumbnailCost(removed->thumbnail);}};
+    const bool accepted=i.perform<int>([store=i.store,id,ledger=i.ledger]{store->remove(id);if(ledger&&ledger->removed)ledger->removed(id,nullptr);return 0;},[self=impl_,id,pending,restore](auto failure,auto){self->deleting.erase(id);if(!failure){self->writeErrors.erase(id);self->unannounced.erase(id);self->categoryChanges.erase(id);self->classified.erase(id);self->verifierProblems.erase(id);self->events.push_back({"deleted",id});}else {if(pending)self->dirty[id]=*pending;restore(*self);self->writeErrors[id]=message(failure);}self->changed();});
+    if(!accepted){i.deleting.erase(id);if(pending)i.dirty[id]=*pending;restore(i);i.writeErrors[id]="Archive file queue is busy. Retry deletion when capacity is available.";i.changed();return false;}return true;
 }
 bool ArchiveState::deleteCategory(std::string_view value){auto&i=*impl_;i.onThread();const std::string id(value);if(i.categoryRemovals.contains(id)||!i.categoryExists(std::optional(id)))return false;std::set<std::string,std::less<>>affected;for(const auto&s:i.entries)if(s.categoryID==id)affected.insert(s.id);for(const auto&[document,p]:i.dirty)if(p.entry.categoryID==id)affected.insert(document);if(i.selected&&i.selected->categoryID==id)affected.insert(i.selected->id);i.categoryRemovals[id]=affected;i.categories.erase(std::remove_if(i.categories.begin(),i.categories.end(),[&](const auto&c){return c.id==id;}),i.categories.end());i.dirtyCategories.erase(id);i.categoryErrors.erase(id);i.categoryRenames.erase(id);i.viewedCategories.erase(id);
     for(const auto&document:affected){std::optional<ArchiveEntry>entry=i.dirty.contains(document)?std::optional(i.dirty.at(document).entry):(i.selected&&i.selected->id==document?i.selected:std::nullopt);if(entry){entry->categoryID.reset();i.dirty[document]={*entry,++i.dirtyRevision};if(i.selected&&i.selected->id==document)i.selected=*entry;}}

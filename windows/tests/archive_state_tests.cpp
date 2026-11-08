@@ -76,6 +76,61 @@ void textReference(const std::filesystem::path&root){const auto rules=endfield::
     for(const auto&row:oracle["pairs"].array())check((rules.categoryNameKey(row["left"].string())==rules.categoryNameKey(row["right"].string()))==row["equal"].boolean(),"Installed native category equality matches unchanged ArchiveCategory.nameKey");
 }
 }
+// Gallery moves and deletes of any document (Mac 1.3.1 ArchiveStore.swift
+// moveEntry, delete, canModify): a closed document loads on the queue (or its
+// unsaved draft is used), is checked again on delivery and saves through the
+// dirty/flush path; the open document, its draft and deadline are untouched.
+void gallery(){const auto rules=endfield::native::nativeArchiveTextRules();auto repo=fixture();Queue queue;mod::ArchiveState state(repo,queue.executor(),rules);state.activate();queue.drain();
+    const auto at=[&](const std::string&key){const auto e=state.entries();const auto it=std::find_if(e.begin(),e.end(),[&](const auto&s){return s.id==key;});return it==e.end()?std::ptrdiff_t(-1):it-e.begin();};
+    const auto summary=[&](const std::string&key){for(const auto&s:state.entries())if(s.id==key)return s;throw std::runtime_error("No summary");};
+    std::vector<int>moves;const auto record=[&](bool moved){moves.push_back(moved?1:0);};
+    // A closed document moves after one lazy read, to the front of All.
+    const auto closed=id('B',2),target=repo->cats[5].id;
+    check(state.canModify(closed)&&summary(closed).categoryID!=target,"A closed, unlocked document can be modified");
+    (void)state.takeEvents();const auto reads=repo->reads;state.moveEntry(closed,target,500,1,record);
+    check(moves.empty()&&queue.jobs.size()==1&&summary(closed).categoryID!=target,"The closed document is read on the queue first");
+    queue.drain();
+    check(moves==std::vector<int>{1}&&repo->reads==reads+1&&repo->documents.at(closed).categoryID==target&&repo->documents.at(closed).modified==500,"It moves and saves with the move's date");
+    check(at(closed)==0&&summary(closed).categoryID==target&&!state.selected()&&!state.hasUnsavedChanges(),"It moves to the front of All, nothing opened");
+    {const auto events=state.takeEvents();check(std::any_of(events.begin(),events.end(),[&](const auto&e){return e.name=="categoryChanged"&&e.id==closed;}),"The move is logged as categoryChanged");}
+    moves.clear();state.moveEntry(closed,target,501,2,record);state.moveEntry(closed,id('A',99),501,2,record);
+    check(moves==std::vector<int>{0,0}&&queue.jobs.empty(),"The same or an unknown category is refused at once");
+    moves.clear();state.moveEntry(closed,std::nullopt,502,3,record);queue.drain();
+    check(moves==std::vector<int>{1}&&!repo->documents.at(closed).categoryID,"Uncategorized is a target");
+    // The open document goes through moveSelected; its own draft keeps debouncing.
+    const auto open=id('B',4);state.select(open);queue.drain();auto draft=*state.selected();draft.body="Open draft";state.update(draft,503,4);
+    moves.clear();state.moveEntry(open,target,504,4.1,record);
+    check(moves==std::vector<int>{1}&&state.selected()->categoryID==target&&state.selected()->body=="Open draft","The open document moves at once with its draft");
+    queue.drain();check(repo->documents.at(open).categoryID==target&&repo->documents.at(open).body=="Open draft","The open document's move saves its draft too");
+    // A closed document whose unsaved draft is still pending moves that draft.
+    draft=*state.selected();draft.body="Draft left behind";state.update(draft,505,5);const auto behind=open;state.select(id('B',5));
+    moves.clear();state.moveEntry(behind,std::nullopt,506,5.1,record);
+    check(moves==std::vector<int>{1}&&summary(behind).title==draft.title&&!summary(behind).categoryID,"A closed document's pending draft moves without a read");
+    queue.drain();check(repo->documents.at(behind).body=="Draft left behind"&&!repo->documents.at(behind).categoryID,"The draft and the category save together");
+    // Checked again on delivery: deleted while its read was queued.
+    const auto raced=id('B',7);moves.clear();state.moveEntry(raced,target,507,6,record);check(state.deleteEntry(raced),"The document is deleted while its move reads");
+    queue.drain();check(moves==std::vector<int>{0}&&!repo->documents.contains(raced),"A document deleted meanwhile is not moved");
+    // A category removal holds its documents: no move, no delete until it commits.
+    const auto held=id('B',8);const auto category=summary(held).categoryID;check(category.has_value(),"The fixture document has a category");
+    check(state.deleteCategory(*category)&&!state.canModify(held),"A category removal holds its documents");
+    moves.clear();state.moveEntry(held,target,508,7,record);check(moves==std::vector<int>{0}&&!state.deleteEntry(held),"A held document cannot be moved or deleted");
+    queue.drain();check(state.canModify(held),"The committed removal releases it");
+    // Gallery delete leaves the open document, its draft and deadline alone.
+    const auto shown=*state.selected();draft=shown;draft.body="Still typing";state.update(draft,509,8);const auto deadline=state.saveDeadline();
+    const auto gone=id('B',10);(void)state.takeEvents();check(state.deleteEntry(gone)&&at(gone)<0,"A closed document leaves the gallery at once");
+    check(state.selected()&&state.selected()->id==shown.id&&state.selected()->body=="Still typing"&&state.saveDeadline()==deadline,"The open document and its save deadline stay");
+    queue.drain();check(!repo->documents.contains(gone)&&!state.selected()->id.empty(),"The closed document is removed");
+    {const auto events=state.takeEvents();check(std::any_of(events.begin(),events.end(),[&](const auto&e){return e.name=="deleted"&&e.id==gone;}),"The delete is logged");}
+    // A failed delete puts the card back at its old index with its draft.
+    const auto failing=id('B',11);state.select(failing);queue.drain();repo->failSave=true;draft=*state.selected();draft.body="Unsaved before the delete";state.update(draft,510,9);state.select(shown.id);queue.drain();
+    check(state.hasUnsavedChanges()&&state.error(),"The closed document keeps its failed draft");
+    const auto index=at(failing);repo->failRemove=true;check(state.deleteEntry(failing),"The failing delete is queued");queue.drain();
+    check(at(failing)==index&&state.error()&&repo->documents.contains(failing),"A failed delete puts the card back at its old index");
+    repo->failRemove=false;repo->failSave=false;state.retryPendingSaves();queue.drain();
+    check(repo->documents.at(failing).body=="Unsaved before the delete"&&!state.hasUnsavedChanges(),"Its draft is restored and saves on Retry");
+    // The editor's delete is unchanged: it closes the open document.
+    check(state.deleteSelected()&&!state.selected(),"Deleting the open document closes it");queue.drain();check(!repo->documents.contains(shown.id),"The open document is removed");
+}
 // Mac import relink ledger upkeep: behind the record write on the FIFO queue,
 // only when the stored entry shows the change; reconcile once behind the first load.
 void relinkLedger(){const auto rules=endfield::native::nativeArchiveTextRules();auto repo=fixture();
@@ -102,4 +157,4 @@ void relinkLedger(){const auto rules=endfield::native::nativeArchiveTextRules();
     check(calls.size()==2&&calls[1].kind=="removed"&&calls[1].id==second&&calls[1].mac==mac&&calls[1].stored,"The removed attachment's row follows the record write");
     check(state.deleteSelected(),"The entry is deleted");queue.drain();check(calls.size()==3&&calls[2].kind=="removed"&&calls[2].id==second&&!calls[2].mac&&calls[2].stored,"A deleted entry's rows follow the record removal");
 }
-int main(int argc,char**argv){try{check(argc>=1&&argc<=2,"The optional argument is the actual-source Archive text reference root");model();state();races();relinkLedger();if(argc==2)textReference(argv[1]);std::cout<<"PASS "<<checks<<" Archive state/model contracts\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc>=1&&argc<=2,"The optional argument is the actual-source Archive text reference root");model();state();races();gallery();relinkLedger();if(argc==2)textReference(argv[1]);std::cout<<"PASS "<<checks<<" Archive state/model contracts\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
