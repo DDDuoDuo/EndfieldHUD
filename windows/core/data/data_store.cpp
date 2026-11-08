@@ -138,6 +138,9 @@ Profile decodeProfile(const Json& object) {
     profile.backgroundWidth=fallbackReal("backgroundWidth",600);profile.backgroundZoom=fallbackReal("backgroundZoom",1);
     profile.backgroundOffsetX=fallbackReal("backgroundOffsetX",0);profile.backgroundOffsetY=fallbackReal("backgroundOffsetY",0);
     profile.thumbnailZoom=fallbackReal("thumbnailZoom",1);profile.thumbnailOffsetX=fallbackReal("thumbnailOffsetX",0);profile.thumbnailOffsetY=fallbackReal("thumbnailOffsetY",0);
+    // Cards saved before issue #17 follow the account only while they still
+    // carry the default name (the name as stored); nothing is rewritten here.
+    profile.autoName=flag("autoName",profile.name==Profile::defaultName);profile.autoAvatar=flag("autoAvatar",true);
     return profile;
 }
 void validateProfile(const Profile& profile) {
@@ -172,7 +175,8 @@ Json encodeProfile(const Profile& profile) {
     number(object,"avatarZoom",profile.avatarZoom);number(object,"avatarOffsetX",profile.avatarOffsetX);number(object,"avatarOffsetY",profile.avatarOffsetY);
     number(object,"backgroundWidth",profile.backgroundWidth);number(object,"backgroundZoom",profile.backgroundZoom);number(object,"backgroundOffsetX",profile.backgroundOffsetX);number(object,"backgroundOffsetY",profile.backgroundOffsetY);
     number(object,"thumbnailZoom",profile.thumbnailZoom);number(object,"thumbnailOffsetX",profile.thumbnailOffsetX);number(object,"thumbnailOffsetY",profile.thumbnailOffsetY);
-    number(object,"accumulatedWorkSeconds",profile.accumulatedWorkSeconds);return object;
+    number(object,"accumulatedWorkSeconds",profile.accumulatedWorkSeconds);
+    object["autoName"]=profile.autoName;object["autoAvatar"]=profile.autoAvatar;return object;
 }
 void validateSettings(const Settings& value) {
     require(value.fields.isObject(),"Invalid settings object");const auto defaults=Settings::defaults();
@@ -599,7 +603,21 @@ Profile normalizedEditableProfile(Profile value) {
     value.thumbnailZoom=bound(value.thumbnailZoom,1,20,1);value.thumbnailOffsetX=bound(value.thumbnailOffsetX,-1,1,0);value.thumbnailOffsetY=bound(value.thumbnailOffsetY,-1,1,0);
     return value;
 }
-std::string Profile::displayedUID() const {return playerIDOverride.value_or(gamePlayerID.value_or(uid));}
+std::string Profile::displayedName() const {
+    if(followsSystemName()&&systemAccount.value&&systemAccount.value->name) return *systemAccount.value->name;
+    return name;
+}
+std::optional<std::string> Profile::avatarKey() const {
+    if(avatarFilename) return avatarFilename;
+    if(autoAvatar&&systemAccount.value) return systemAccount.value->avatarKey;
+    return std::nullopt;
+}
+std::string Profile::displayedUID() const {
+    if(playerIDOverride) return *playerIDOverride;
+    if(gamePlayerID) return *gamePlayerID;
+    if(systemAccount.value&&systemAccount.value->uid) return *systemAccount.value->uid;
+    return uid;
+}
 ProfileStore::ProfileStore(const std::filesystem::path& root) {
     detail::validateRoot(root);path_=root/"Profile"/"profile.json";persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
@@ -626,7 +644,7 @@ bool ProfileStore::commit(const Profile& value,bool fromGame) {
     if(value==value_ && persisted_) return false;
     const auto fields=encodeProfile(value);auto envelope=envelope_;envelope["version"]=1;envelope["profile"]=fields;
     const auto bytes=encodeRecord(envelope);detail::replaceFile(path_,persisted_,bytes,jsonLimit);
-    value_=value;value_.originalFields=fields;envelope_=std::move(envelope);persisted_=bytes;return true;
+    value_=value;value_.originalFields=fields;value_.systemAccount={};envelope_=std::move(envelope);persisted_=bytes;return true;
 }
 std::filesystem::path ProfileStore::imagePath(std::string_view filename) const {
     require(imageName(filename),"Invalid managed profile image name");return path_.parent_path()/"Images"/std::string(filename);

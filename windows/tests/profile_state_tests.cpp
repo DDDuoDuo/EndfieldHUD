@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <vector>
 
 namespace m=endfield::modules;namespace n=endfield::native;using Json=ehud::data::Json;using endfield::core::Language;
 namespace {
@@ -185,6 +186,85 @@ void native(){
     check(m::profileParseAwakeningDate("2026/01/02",zone.dates())==(1767312000.-978307200.)+3*3600,"Input parses as local noon in the new zone");
     bool rejected2{};try{zone.setDateRules({});}catch(const std::invalid_argument&){rejected2=true;}check(rejected2,"Date rules are required");
 }
+// Issue #17 (Mac UserProfileStore a2777d8..60a61ae): the account through an
+// injected source only (never the real account), shown values, Recording
+// mode, the saved flags, Use account info, observers and the 60 s throttle.
+void systemAccount(){
+    const auto text=n::nativeProfileTextRules();const auto dates=n::nativeProfileDateRules(u"UTC");
+    // SystemAccountIdentity's name and UID rules (UserProfile.cappedName).
+    const auto clean=[&](std::string name,std::string uid){return m::normalizedSystemAccount({std::move(name),std::move(uid),std::nullopt},text);};
+    check(clean("  Ada\u0007 Love\r\nlace\u200d ","1001")==ehud::data::SystemAccount{"Ada Lovelace","1001",std::nullopt},"Control characters and line breaks are dropped, the name trimmed");
+    check(clean("abcdefghijklmnopqrstuvwxyz","").name==std::optional<std::string>("abcdefghijklmnopqrst")&&!clean("x","").uid,"The name is capped at 20 characters; an empty UID is none");
+    check(!clean(" \t\u3000 ","12a").name&&!clean("x","12a").uid&&!clean("x","\xef\xbc\x91").uid,"A blank name is none; a UID must be ASCII digits");
+    check(m::profileCappedName(" \n😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 ",text)==[]{std::string s;for(int k=0;k<20;++k)s+="😀";return s;}(),"One cap for typed and account names");
+    check(m::profileTextLimit(m::ProfileField::name)==ehud::data::Profile::nameLimit,"The editor's limit is the same cap");
+
+    m::PersonalProfile p;p.uid="1000000000";p.awakeningDate=0;
+    std::size_t commits{},notices{},reads{};std::vector<m::ProfileAccountSource::Done>pending;
+    m::ProfilePersistence io;io.commit=[&](const m::PersonalProfile&v){++commits;check(!v.systemAccount.value,"The persistence never sees the account");return v;};
+    m::ProfileAccountSource source;source.read=[&](m::ProfileAccountSource::Done done){++reads;pending.push_back(std::move(done));};
+    const auto answer=[&](ehud::data::SystemAccount a){check(!pending.empty(),"A read is pending");auto done=std::move(pending.front());pending.erase(pending.begin());done(std::move(a));};
+    // No source (tests, previews, hidden coverage): nothing is read.
+    m::ProfileState none(p,text,dates,io);none.refreshSystemAccount(0);
+    check(!none.systemAccount()&&none.profile().displayedName()=="Endministrator"&&none.profile().displayedUID()=="1000000000"&&!none.profile().avatarKey(),"Without a source the stored defaults show");
+    m::ProfileState store(p,text,dates,io,source);store.observe([&]{++notices;});
+    store.refreshSystemAccount(100);store.refreshSystemAccount(101);
+    check(reads==1&&pending.size()==1&&notices==0,"One read at a time; nothing shows before it answers");
+    answer({" Ada Lovelace ","1001","system-1"});
+    check(notices==1&&commits==0&&store.profile().displayedName()=="Ada Lovelace"&&store.profile().displayedUID()=="1001"&&store.profile().avatarKey()==std::optional<std::string>("system-1"),
+          "The account's name, UID and picture show; nothing is saved");
+    check(m::profileValue(m::ProfileField::name,store.profile(),dates)=="Ada Lovelace","Personal ID's name value is the shown name");
+    // The throttle: HUD opens within 60 s of the last read do not read.
+    store.refreshSystemAccount(150,60);check(reads==1,"A read 50 s after the last is skipped");
+    store.refreshSystemAccount(161,60);check(reads==2,"A read 61 s after the last runs");
+    answer({"Ada Lovelace","1001","system-1"});
+    check(notices==1,"An unchanged account notifies no one");
+    store.refreshSystemAccount(300);answer({"Ada Lovelace","1001","system-2"});
+    check(notices==2&&store.profile().avatarKey()==std::optional<std::string>("system-2"),"A new picture is a new key and a notice");
+    // Recording mode hides only the account's values.
+    store.setHidesSystemAccount(true);
+    check(notices==3&&store.profile().displayedName()=="Endministrator"&&store.profile().displayedUID()=="1000000000"&&!store.profile().avatarKey()&&store.systemAccount().has_value(),
+          "Recording mode shows the stored defaults in place of the account");
+    store.setHidesSystemAccount(true);check(notices==3,"Setting the same switch again notifies no one");
+    store.update([](m::PersonalProfile&v){v.playerIDOverride="42";});
+    check(store.profile().displayedUID()=="42"&&!store.profile().systemAccount.value,"A chosen value still shows in Recording mode");
+    store.setHidesSystemAccount(false);
+    check(store.profile().displayedName()=="Ada Lovelace"&&store.profile().displayedUID()=="42","Leaving Recording mode shows the account again under the chosen UID");
+    // A typed name stops following (the canvas sets autoName off with it).
+    store.update([](m::PersonalProfile&v){v.name="Kal'tsit";v.autoName=false;});
+    check(store.profile().displayedName()=="Kal'tsit"&&!store.profile().autoName,"A typed name wins and clears autoName");
+    // Restore default picture: the drawn portrait, not the account's.
+    store.imageImported(m::ProfileImageKind::avatar,"00000000-0000-4000-8000-000000000001.image");
+    check(store.profile().avatarKey()==std::optional<std::string>("00000000-0000-4000-8000-000000000001.image"),"A chosen picture wins");
+    store.removeImage(m::ProfileImageKind::avatar);
+    check(!store.profile().autoAvatar&&!store.profile().avatarKey(),"Restore default picture sets autoAvatar off: the drawn portrait");
+    // Use Windows account info: name, Player ID and picture back to the account.
+    const auto before=commits;
+    check(store.useSystemAccount(),"Use account info saves");
+    const auto&v=store.profile();
+    check(commits==before+1&&v.name=="Endministrator"&&v.autoName&&!v.playerIDOverride&&!v.avatarFilename&&v.autoAvatar&&v.avatarZoom==1&&v.avatarOffsetX==0&&v.avatarOffsetY==0,
+          "The default name follows again, no override, no chosen picture, autoAvatar on");
+    check(v.displayedName()=="Ada Lovelace"&&v.displayedUID()=="1001"&&v.avatarKey()==std::optional<std::string>("system-2"),"The card shows the account again");
+    check(!store.useSystemAccount()&&commits==before+1,"Nothing left to change: nothing is saved");
+    // Fields a game sync owns are left to it.
+    store.update([](m::PersonalProfile&q){q.name="Typed";q.autoName=false;q.playerIDOverride="7";});
+    store.setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::name).with(ehud::data::ProfileSyncField::uid));
+    store.useSystemAccount(false,false);
+    check(store.profile().name=="Typed"&&store.profile().playerIDOverride==std::optional<std::string>("7")&&store.profile().autoAvatar,"A synced name and Player ID stay");
+    store.setSyncLocked({});
+    // A failed or empty read falls back to the stored defaults.
+    store.update([](m::PersonalProfile&q){q.name="Endministrator";q.autoName=true;q.playerIDOverride.reset();});
+    store.refreshSystemAccount(1000);answer({});
+    check(!store.systemAccount()&&store.profile().displayedName()=="Endministrator"&&store.profile().displayedUID()=="1000000000"&&!store.profile().avatarKey(),"An empty reading shows the stored defaults");
+    store.refreshSystemAccount(2000);answer({"\xff","1001",std::nullopt});
+    check(store.systemAccount()==std::nullopt,"An unreadable name is no account");
+    // A late answer after the store is gone is dropped.
+    {
+        std::vector<m::ProfileAccountSource::Done>late;m::ProfileAccountSource lateSource;lateSource.read=[&](m::ProfileAccountSource::Done d){late.push_back(std::move(d));};
+        {m::ProfileState gone(p,text,dates,io,lateSource);gone.refreshSystemAccount(0);}
+        check(late.size()==1,"The read started");late.front()({"Ada","1",std::nullopt});
+    }
+}
 }
 int main(int argc,char**argv){
     try{
@@ -195,7 +275,7 @@ int main(int argc,char**argv){
         check(fixture["provenance"]["modifications"].array().empty(),"Oracle compiled the unchanged Mac sources");
         // The v1.2.0 canvas scenario (actions, pop-overs, inline errors) is gone with the Mac's
         // (tests/profile_canvas_tests.cpp compares the 1.3.0 page); the record rules are unchanged.
-        staticGeometry(fixture);labels(fixture);decoding(fixture);dates(fixture);cropEvents(fixture);native();
+        staticGeometry(fixture);labels(fixture);decoding(fixture);dates(fixture);cropEvents(fixture);native();systemAccount();
         std::cout<<"Personal Profile state: "<<checks<<" source checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"Personal Profile state failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

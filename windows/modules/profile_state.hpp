@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -50,6 +51,7 @@ struct ProfileTextRules {
     std::function<std::string(std::string_view,std::size_t)>prefix;  // String(prefix(n))
     std::function<std::string(std::string_view,bool includeNewlines)>trim; // .whitespaces[AndNewlines]
     std::function<std::string(std::string_view)>removeNewlines;       // filter { !$0.isNewline }
+    std::function<std::string(std::string_view)>removeControl;        // scalars not in .controlCharacters (the account name)
     std::function<bool(std::string_view)>hasControl,hasWhitespace;   // .controlCharacters, .whitespacesAndNewlines
     std::function<std::string(std::string_view)>uppercase;            // String.uppercased(), full Unicode mapping
 };
@@ -64,9 +66,18 @@ std::optional<ProfileField>profileField(std::string_view)noexcept;
 std::string profileFieldTitle(ProfileField,core::Language);          // PersonalProfileField.title
 bool profileGeometryField(ProfileField)noexcept;                    // isGeometry
 bool profileNumericField(ProfileField)noexcept;                     // isNumeric (levels and counters)
-// PersonalProfileField.textLimit (Mac 1.3.0): name 20, tag 11 (room for a
-// typed "#"), playerID 64, introduction 150, dates 10, levels 2, counters 5.
+// PersonalProfileField.textLimit (Mac 1.3.1): name UserProfile.nameLimit
+// (Profile::nameLimit), tag 11 (room for a typed "#"), playerID 64,
+// introduction 150, dates 10, levels 2, counters 5.
 std::optional<std::size_t>profileTextLimit(ProfileField)noexcept;
+// UserProfile.cappedName: trimmed at both ends (whitespace and newlines) and
+// cut to Profile::nameLimit characters. The saved name, the store's check, the
+// inline editor and the account name share it.
+std::string profileCappedName(std::string_view,const ProfileTextRules&);
+// SystemAccountIdentity's rules (issue #17): the name loses control
+// characters and line breaks, is capped, trimmed and none when empty; the UID
+// must be ASCII digits. The picture key is kept as given.
+ehud::data::SystemAccount normalizedSystemAccount(ehud::data::SystemAccount,const ProfileTextRules&);
 // PersonalProfileField.syncField: the Account field chip that lets an
 // Endfield sync own this value (introduction, birthday and geometry: none).
 std::optional<ehud::data::ProfileSyncField>profileSyncField(ProfileField)noexcept;
@@ -98,13 +109,27 @@ struct ProfilePersistence {
     // thread; callbacks must not destroy this state.
     std::function<PersonalProfile(const PersonalProfile&)>commit;
 };
+// Where the Windows account comes from (issue #17; Mac UserProfileStore.
+// SystemAccountSource). Absent in tests, previews and hidden coverage, which
+// never read the account. `read` starts one read off the owner thread (the
+// name lookup can wait on a domain controller, and the picture is a file);
+// `done` runs later on the owner thread with the raw name and UID and the
+// login picture's image key (the same key while the picture is unchanged;
+// none: no picture or unreadable). Any failure is an empty account.
+struct ProfileAccountSource {
+    using Done=std::function<void(ehud::data::SystemAccount)>;
+    std::function<void(Done)>read;
+};
 // UserProfileStore in memory. A store without persistence (the load failed:
 // the Mac canvas's nil store) refuses every update with
 // ProfileFailure::unavailable. Observers run after each adopted change, in
 // registration order (UserProfileStore.observe).
 class ProfileState final {
 public:
-    ProfileState(PersonalProfile,ProfileTextRules,ProfileDateRules,ProfilePersistence={});
+    ProfileState(PersonalProfile,ProfileTextRules,ProfileDateRules,ProfilePersistence={},ProfileAccountSource={});
+    ~ProfileState();
+    ProfileState(const ProfileState&)=delete;
+    ProfileState&operator=(const ProfileState&)=delete;
     const PersonalProfile&profile()const noexcept{return profile_;}
     const ProfileTextRules&text()const noexcept{return text_;}
     const ProfileDateRules&dates()const noexcept{return dates_;}
@@ -122,9 +147,25 @@ public:
     // identical record (false), commits and notifies. Throws on rejection.
     template<class F>bool update(F&&mutate){auto next=profile_;mutate(next);return commit(std::move(next));}
     bool commit(PersonalProfile);
-    // UserProfileStore.removeImage: avatar zoom 1 / offsets 0; background
-    // width 600, zooms 1, offsets 0 (also the thumbnail).
+    // UserProfileStore.removeImage: avatar zoom 1 / offsets 0 and autoAvatar
+    // off (Restore default picture gives the drawn portrait, not the
+    // account's); background width 600, zooms 1, offsets 0 (also the thumbnail).
     bool removeImage(ProfileImageKind);
+    // Issue #17. refreshSystemAccount reads the account through the source
+    // (none: nothing happens); a read made less than `ifOlderThan` seconds
+    // before `now` is skipped, and one read runs at a time. Observers hear
+    // only a real change of the shown account; nothing is committed.
+    void refreshSystemAccount(double now,double ifOlderThan=0);
+    // Recording mode: the cards show the stored defaults in place of the
+    // account. Chosen and synced values are not affected.
+    void setHidesSystemAccount(bool);
+    bool hidesSystemAccount()const noexcept{return hides_;}
+    // The account as read (normalized), whether or not it is shown.
+    const std::optional<ehud::data::SystemAccount>&systemAccount()const noexcept{return account_;}
+    // Personal ID's "Use Windows account info" (Mac useSystemAccount): the
+    // default name following the account (when `name`), no Player ID
+    // override (when `playerID`), no chosen picture and autoAvatar on.
+    bool useSystemAccount(bool name=true,bool playerID=true);
     // importImage's record half: the managed filename (an avatar resets its
     // crop unless preserved: the account's game avatar keeps it).
     bool imageImported(ProfileImageKind,std::string filename,bool preserveAvatarCrop=false);
@@ -134,9 +175,13 @@ public:
     void removeObserver(std::uint64_t)noexcept;
     std::uint64_t revision()const noexcept{return revision_;}
 private:
-    PersonalProfile profile_;ProfileTextRules text_;ProfileDateRules dates_;ProfilePersistence persistence_;
+    PersonalProfile profile_;ProfileTextRules text_;ProfileDateRules dates_;ProfilePersistence persistence_;ProfileAccountSource source_;
     ehud::data::ProfileSyncFields locked_{};std::uint64_t revision_{1},nextObserver_{1};
     std::vector<std::pair<std::uint64_t,std::function<void()>>>observers_;
+    std::optional<ehud::data::SystemAccount>account_;std::optional<double>accountReadAt_;bool hides_{},readingAccount_{};
+    std::shared_ptr<bool>alive_=std::make_shared<bool>(true); // a read's late answer after destruction is dropped
     void adopt(PersonalProfile);void notify();
+    std::optional<ehud::data::SystemAccount>shownAccount()const{return hides_?std::nullopt:account_;}
+    void publishSystemAccount();
 };
 }

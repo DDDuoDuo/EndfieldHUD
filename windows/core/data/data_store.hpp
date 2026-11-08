@@ -9,6 +9,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ehud::data {
@@ -332,8 +333,20 @@ private:
     void writeBeside(std::string_view key, Json value);
 };
 
+// The signed-in Windows account the personal cards show until a name or a
+// picture is chosen (issue #17; Mac SystemAccountIdentity): its display name,
+// numeric ID (the SID's RID) and the image key of its login picture. Read at
+// runtime by the profile owner and never saved.
+struct SystemAccount {
+    std::optional<std::string> name, uid, avatarKey;
+    bool empty() const noexcept {return !name&&!uid&&!avatarKey;}
+    bool operator==(const SystemAccount&) const = default;
+};
 struct Profile {
-    std::string name{"Endministrator"}, tag{"0000"}, introduction, uid;
+    // UserProfile.defaultName and nameLimit (the longest name the card keeps, in characters).
+    static constexpr std::string_view defaultName{"Endministrator"};
+    static constexpr std::size_t nameLimit{20};
+    std::string name{defaultName}, tag{"0000"}, introduction, uid;
     double awakeningDate{};
     std::optional<std::string> gamePlayerID, playerIDOverride;
     bool hasManualAwakeningDate{}, showsBirthday{};
@@ -344,7 +357,26 @@ struct Profile {
     double backgroundWidth{600}, backgroundZoom{1}, backgroundOffsetX{}, backgroundOffsetY{};
     double thumbnailZoom{1}, thumbnailOffsetX{}, thumbnailOffsetY{}, accumulatedWorkSeconds{};
     Json originalFields{Json::Object{}}; // unknown additive Mac fields survive edits
+    // Issue #17's saved flags, always written. A record without autoName
+    // follows the account only while it carries the default name; a missing
+    // autoAvatar is true. Restore default picture turns autoAvatar off.
+    bool autoName{true}, autoAvatar{true};
+    // Runtime only: the account the store shows (none: not read, or hidden in
+    // Recording mode). Never encoded, and left out of every comparison, so it
+    // can neither cause nor skip a save.
+    struct ShownAccount {
+        std::optional<SystemAccount> value;
+        bool operator==(const ShownAccount&) const noexcept {return true;}
+    } systemAccount;
     static Profile defaults();
+    // UserProfile.followsSystemName: the card shows the account's name.
+    bool followsSystemName() const noexcept {return autoName&&name==defaultName;}
+    // The account's name while the card follows it, else the stored name.
+    std::string displayedName() const;
+    // A chosen or synced picture, then the account's login picture while
+    // autoAvatar; none is the drawn portrait.
+    std::optional<std::string> avatarKey() const;
+    // The Player ID override, the game UID, the account's UID, then the stored UID.
     std::string displayedUID() const;
     bool operator==(const Profile&) const = default;
 };

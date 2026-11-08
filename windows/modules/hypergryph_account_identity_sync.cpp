@@ -22,7 +22,8 @@ bool hasTagForbidden(std::string_view text) {
 void applyGameProfileUpdate(ehud::data::Profile& p,const GameProfileUpdate& u,const design::CharacterRules& characters) {
     auto next=p;
     if(u.gamePlayerID) {next.gamePlayerID=*u.gamePlayerID;next.playerIDOverride.reset();}
-    if(u.name) next.name=*u.name;
+    // A synced name stops the card from following the Windows account (issue #17).
+    if(u.name) {next.name=*u.name;next.autoName=false;}
     if(u.tag) next.tag=*u.tag;
     if(u.awakeningDate) {next.awakeningDate=*u.awakeningDate;next.hasManualAwakeningDate=false;}
     if(u.permissionLevel) next.permissionLevel=static_cast<int>(std::clamp<std::int64_t>(*u.permissionLevel,std::numeric_limits<int>::min(),std::numeric_limits<int>::max()));
@@ -31,12 +32,12 @@ void applyGameProfileUpdate(ehud::data::Profile& p,const GameProfileUpdate& u,co
     if(u.weaponsCount) next.weaponsCount=*u.weaponsCount;
     if(u.archivesCount) next.archivesCount=*u.archivesCount;
     // UserProfile.normalizedEditableValues (fields this update can change).
-    next.name=characters.prefix(trimScalars(next.name,UnicodeSet::whitespacesAndNewlines),20);
+    next.name=characters.prefix(trimScalars(next.name,UnicodeSet::whitespacesAndNewlines),ehud::data::Profile::nameLimit);
     next.tag=characters.prefix(trimScalars(next.tag,UnicodeSet::whitespacesAndNewlines),10);
     next.permissionLevel=std::min(60,std::max(1,next.permissionLevel));
     next.explorationLevel=std::min(7,std::max(1,next.explorationLevel));
     // UserProfileStore.validate for those fields.
-    if(next.name.empty()||characters.count(next.name)>20||hasControl(next.name)) throw std::invalid_argument("invalid synced profile name");
+    if(next.name.empty()||characters.count(next.name)>ehud::data::Profile::nameLimit||hasControl(next.name)) throw std::invalid_argument("invalid synced profile name");
     if(next.tag.empty()||characters.count(next.tag)>10||hasTagForbidden(next.tag)) throw std::invalid_argument("invalid synced profile tag");
     if(next.operatorsCount<0||next.weaponsCount<0||next.archivesCount<0) throw std::invalid_argument("invalid synced profile counts");
     p=std::move(next);

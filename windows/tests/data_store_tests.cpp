@@ -180,6 +180,72 @@ void edges() {
     check(!normalizedEditableProfile(blank).playerIDOverride, "A blank override becomes nil");
 }
 
+// Issue #17's saved flags and the runtime account (Mac UserProfile
+// autoName / autoAvatar / systemAccount): absent keys take the Mac defaults,
+// loading writes nothing, both flags are always written, and the account is
+// never written nor compared.
+void accountFlags131() {
+    const auto flags = [](const Json& record) {
+        Temporary root; writeProfile(root.path, record);
+        const auto before = detail::readFile(root.path / "Profile" / "profile.json", 1024 * 1024);
+        const ProfileStore store(root.path);
+        check(detail::readFile(store.path(), 1024 * 1024) == before, "Loading a record writes nothing back");
+        return std::pair{store.value().autoName, store.value().autoAvatar};
+    };
+    auto record = baseline();
+    check(flags(record) == std::pair{true, true}, "A 1.3.0 card with the default name follows the account");
+    record["name"] = "Endmin";
+    check(flags(record) == std::pair{false, true}, "A 1.3.0 card with a typed name keeps it; its picture still follows");
+    record["name"] = " Endministrator ";
+    check(flags(record) == std::pair{false, true}, "The default-name rule reads the name as stored, before trimming");
+    record = baseline(); record["autoName"] = false; record["autoAvatar"] = false;
+    check(flags(record) == std::pair{false, false}, "Saved flags are kept (also those an earlier Import from Mac wrote)");
+    record["autoName"] = nullptr; record["autoAvatar"] = nullptr;
+    check(flags(record) == std::pair{true, true}, "An explicit null means the Mac decodeIfPresent default");
+    record["autoName"] = "yes";
+    {
+        Temporary root; writeProfile(root.path, record);
+        rejects([&] { ProfileStore store(root.path); }, "A non-Boolean flag is invalid, as Bool decoding is on the Mac");
+    }
+
+    Temporary root; writeProfile(root.path, baseline());
+    ProfileStore store(root.path);
+    auto value = store.value();
+    value.systemAccount.value = SystemAccount{"Ada Lovelace", "1001", "system-1"};
+    check(value == store.value() && !store.update(value), "The runtime account is left out of equality: nothing to save");
+    value.introduction = "Edited";
+    check(store.update(value), "An edit saves");
+    const auto bytes = *detail::readFile(store.path(), 1024 * 1024);
+    const auto saved = Json::parse(bytes)["profile"];
+    check(saved["autoName"].isBool() && saved["autoName"].boolean() && saved["autoAvatar"].isBool() && saved["autoAvatar"].boolean(),
+          "Both flags are always written, defaults included");
+    check(bytes.find("Ada Lovelace") == std::string::npos && bytes.find("1001") == std::string::npos && bytes.find("system-1") == std::string::npos
+          && !saved.contains("systemAccount"), "The account is never written");
+    check(!ProfileStore(root.path).value().systemAccount.value, "A reload has no account");
+
+    // Shown values: chosen or synced, then the account, then the stored defaults.
+    Profile p = store.value();
+    p.systemAccount.value = SystemAccount{"Ada Lovelace", "1001", "system-1"};
+    check(p.followsSystemName() && p.displayedName() == "Ada Lovelace" && p.displayedUID() == "1001" && p.avatarKey() == std::optional<std::string>("system-1"),
+          "The default card shows the account's name, UID and picture");
+    p.gamePlayerID = "778899";
+    check(p.displayedUID() == "778899", "A game UID wins over the account's");
+    p.playerIDOverride = "42";
+    check(p.displayedUID() == "42", "The Player ID override wins over both");
+    p.autoName = false;
+    check(!p.followsSystemName() && p.displayedName() == "Endministrator", "A chosen default name is kept");
+    p.autoName = true; p.name = "Kal'tsit";
+    check(!p.followsSystemName() && p.displayedName() == "Kal'tsit", "Any other stored name wins");
+    p.autoAvatar = false;
+    check(!p.avatarKey(), "Restored default picture: the drawn portrait");
+    p.autoAvatar = true; p.avatarFilename = "00000000-0000-4000-8000-000000000001.image";
+    check(p.avatarKey() == p.avatarFilename, "A chosen picture wins");
+    Profile none = store.value();
+    check(none.displayedName() == "Endministrator" && none.displayedUID() == none.uid && !none.avatarKey(), "Without an account: the stored defaults");
+    none.systemAccount.value = SystemAccount{std::nullopt, std::nullopt, std::nullopt};
+    check(none.displayedName() == "Endministrator" && none.displayedUID() == none.uid, "An empty reading keeps the stored defaults");
+}
+
 // Settings record schema for the Windows battery-alert additions (no Mac
 // oracle). displayMode and alertMetric are open string choices: "never"
 // (Don't display) and "gpu" persist and reload verbatim, as does another
@@ -746,6 +812,7 @@ int main(int argc, char** argv) {
         if (argc != 2) throw std::runtime_error("Usage: data_store_tests profile-state-source.json");
         oracle(argv[1]);
         edges();
+        accountFlags131();
         settingsSchema();
         settingsVersion130();
         settingsVersion131();

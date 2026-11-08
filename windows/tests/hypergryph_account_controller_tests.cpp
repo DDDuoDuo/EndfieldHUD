@@ -373,6 +373,10 @@ void identitySync() {
     h::applyGameProfileUpdate(p,u,d::portableCharacterRules());
     check(p.uid=="1234567890"&&p.gamePlayerID==std::optional<std::string>("9007199254740993")&&!p.playerIDOverride,"Original local UID preserved; decimal game UID never rounded; override cleared");
     check(p.name=="Very long display na"&&p.tag=="0042"&&p.permissionLevel==60&&p.explorationLevel==1&&p.awakeningDate==-100&&!p.hasManualAwakeningDate,"Mac normalization of synced fields");
+    check(!p.autoName,"A synced name stops the card following the Windows account (issue #17)");
+    ehud::data::Profile kept;kept.uid="1234567890";h::GameProfileUpdate levels;levels.permissionLevel=3;
+    h::applyGameProfileUpdate(kept,levels,d::portableCharacterRules());
+    check(kept.autoName&&kept.name=="Endministrator","An update without a name leaves autoName on");
     h::GameProfileUpdate bad;bad.gamePlayerID="1";bad.tag="12 3";bool rejected{};try {h::applyGameProfileUpdate(p,bad,d::portableCharacterRules());} catch(const std::invalid_argument&) {rejected=true;}
     check(rejected&&p.tag=="0042","Invalid synced values are rejected without partial changes");
 }
