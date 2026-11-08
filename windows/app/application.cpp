@@ -1905,7 +1905,7 @@ void Application::Impl::updateTrayMenu(){
     menu.push_back({gpu::TrayAction::none,{},false,false,true});
     menu.push_back({gpu::TrayAction::about,t("About EndfieldHUD","关于 EndfieldHUD"),bool(settingsUI)});
     // AppDelegate.checkForAppUpdates: the windowsUpdates area's state title
-    // ("Update available · …", "Checking for updates…") or the plain item.
+    // ("Update available 1.2.1 (19)…", "Checking for updates…") or the plain item.
     std::wstring updateTitle=t("Check for Updates…","检查更新…");
     if(auto*u=updates())(void)isolateService(UpdateService::key,"tray",[&]{updateTitle=wide(u->trayTitle(language));});
     menu.push_back({gpu::TrayAction::checkUpdates,std::move(updateTitle),bool(settingsUI)});

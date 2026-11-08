@@ -69,7 +69,7 @@ struct NativeClipboardProvider::Impl {
             // The Mac names PNG and TIFF pasteboard data; a Windows DIB is a bitmap ("BMP").
             d.format=p.image_format==ClipboardImageFormat::png?"PNG":p.image_format==ClipboardImageFormat::tiff?"TIFF":"BMP";
             // No preview: the canvas titles image records "Image" and never
-            // reads the Mac's "Image · W × H" preview.
+            // reads the Mac's "Image / W × H" preview (ClipboardStore.swift).
             if(p.decodedImage){const auto&t=*p.decodedImage;
                 d.pixelWidth=t.sourceWidth;d.pixelHeight=t.sourceHeight;r.thumbnail=modules::design::ImageSource{modules::design::ImageSource::Kind::memory,key(item.id),{},1};}
             break;

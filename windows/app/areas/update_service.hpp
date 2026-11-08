@@ -45,7 +45,7 @@ public:
     // toggle state and availability).
     virtual modules::SettingsUpdateStatus settingsStatus(core::Language) const = 0;
     virtual std::string automaticTitle(core::Language) const = 0; // the toggle label on Windows
-    virtual std::string trayTitle(core::Language) const = 0;      // "Update available · 1.2.1 (19)…" / "Checking for updates…" / "Check for Updates…"
+    virtual std::string trayTitle(core::Language) const = 0;      // "Update available 1.2.1 (19)…" / "Checking for updates…" / "Check for Updates…"
     virtual std::string trayHelp(core::Language) const = 0;       // detail, else title
     virtual bool hasUpdate() const = 0;
     // One observer (the host's): runs on the UI thread after any change above.

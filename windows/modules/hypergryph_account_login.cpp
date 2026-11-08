@@ -221,7 +221,7 @@ std::string loginDiagnosticTag(LoginDiagnostic d,int code) {
 
 LoginSession::Strings LoginSession::strings(Region r,core::Language l,AccountWording wording) {
     const auto t=[&](std::string_view e,std::string_view z){return accountText(e,z,l,wording);};
-    return {r==Region::mainland?"EndfieldHUD · 森空岛":"EndfieldHUD · SKPORT",t("Connect through the official website","通过官方网站关联"),
+    return {r==Region::mainland?"EndfieldHUD / 森空岛":"EndfieldHUD / SKPORT",t("Connect through the official website","通过官方网站关联"),
         t(macConsentDetail,macConsentDetailChinese),
         login_policy::siteURL(r),t("Continue to official sign-in","继续前往官方登录"),t("Cancel","取消"),t("Retry","重试")};
 }

@@ -111,7 +111,12 @@ void session() {
     check(expiring.deadline(899.9)==std::nullopt&&expiring.deadline(900)==h::LoginFailure::expired,"Session expires after 900 s");
     expiring.finish(h::LoginSession::Outcome::expired);check(expiring.diagnostics().back()=="expired","Expiry records the expired tag");
     const auto zh=h::LoginSession::strings(h::Region::mainland,endfield::core::Language::simplifiedChinese);
-    check(zh.title=="EndfieldHUD · 森空岛"&&zh.consentTitle=="通过官方网站关联"&&zh.continueLabel=="继续前往官方登录"&&h::LoginSession::strings(h::Region::global,endfield::core::Language::english).title=="EndfieldHUD · SKPORT","Login window strings");
+    check(zh.title=="EndfieldHUD / 森空岛"&&zh.consentTitle=="通过官方网站关联"&&zh.continueLabel=="继续前往官方登录"&&h::LoginSession::strings(h::Region::global,endfield::core::Language::english).title=="EndfieldHUD / SKPORT","Login window strings");
+    // Mac 29e895f: a slash, not a middle dot, in the sign-in title; no login window text has a dot separator.
+    for(const auto region:{h::Region::mainland,h::Region::global})for(unsigned n=0;n<6;++n)for(const auto wording:{h::AccountWording::windows,h::AccountWording::mac}){
+        const auto s=h::LoginSession::strings(region,static_cast<endfield::core::Language>(n),wording);
+        for(const auto* value:{&s.title,&s.consentTitle,&s.consentDetail,&s.site,&s.continueLabel,&s.cancelLabel,&s.retryLabel})check(!endfield::tests::hasDotSeparator(*value),"Login window strings have no dot separator");
+    }
     check(p::documentEndWrapper("x();").find("DOMContentLoaded")!=std::string::npos,"Document-end injection waits for the parsed DOM");
 }
 // Windows names its own credential store; the Mac Keychain text stays available
