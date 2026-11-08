@@ -121,7 +121,8 @@ if(WIN32)
     hud_map_owner hud_map_store hud_latest_save hud_map_assets hud_orbipom_runtime
     hud_work_mode_canvas hud_calendar_canvas hud_calendar_civil hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
+    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native
+    hud_hypergryph_account_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)

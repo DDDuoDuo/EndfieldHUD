@@ -300,6 +300,13 @@ public:
     // once by the hidden-Sanity migration; any saved value counts as set.
     bool sanityMigrated() const noexcept;
     bool markSanityMigrated(); // false when already set; no write
+    // ConfigurationStore.migrateHiddenSanity: runs once. The flag is set
+    // first; then, when `headerHidden` says 1.3.0's Account > Header display
+    // hid the gauge, Show Sanity is saved off through update() (which also
+    // writes what every save writes, such as the watch icon). The account
+    // cache is never touched. True when the record changed. Normal launches
+    // only: diagnostic and test runs never call it.
+    bool migrateHiddenSanity(const std::function<bool()>& headerHidden);
 private:
     std::filesystem::path path_;
     CharacterPrefix characters_;

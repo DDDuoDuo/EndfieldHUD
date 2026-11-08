@@ -12,6 +12,7 @@
 #include "app/areas/calendar_reminder_module.hpp"
 #include "app/areas/update_service.hpp"
 #include "native/archive_password_vault.hpp"
+#include "native/hypergryph_account_vault.hpp"
 #include "native/profile_text.hpp"
 #include "native/storage_files.hpp"
 #include <cctype>
@@ -1628,7 +1629,11 @@ void Application::Impl::constructSettings(){
         if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}}
         },[this]{refresh(now());}},
         // The HUD elements text is cut to 24 Characters (Swift prefix) on save.
-        [](std::string_view text,std::size_t count){return std::string(native::graphemePrefix(text,count));});settingsSaves->start();
+        [](std::string_view text,std::size_t count){return std::string(native::graphemePrefix(text,count));},
+        // Once, at a normal launch (AppDelegate: never a diagnostic run): a
+        // gauge hidden in 1.3.0's Account > Header display starts with Show
+        // Sanity off. The account cache is only read.
+        production()&&!args.isolatedDataRoot?std::function<bool()>([root=args.dataRoot]{return gpu::storedHeaderIsHidden(root/L"Account");}):std::function<bool()>{});settingsSaves->start();
     // Hidden integration owns no frame/message loop. This explicit test
     // preparation barrier drains the same asynchronous read before input.
     if(!visibleMode()){utility->waitIdle();utility->drain();need(settingsSaves->status().loaded,"Hidden Settings initial read failed");}

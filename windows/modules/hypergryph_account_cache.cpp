@@ -151,9 +151,25 @@ std::optional<AccountCache> decodeCache(const Json& o) {
     c.extra=std::move(extra);
     return c;
 }
-std::optional<AccountCache> decodeCacheBytes(std::string_view bytes) {
+// The saved cache's bytes parsed, only while they are at most 1 MB (Mac
+// HypergryphAccountController.readCache, shared by the cache load and the
+// hidden-header check).
+static std::optional<Json> parseCacheBytes(std::string_view bytes) {
     if(bytes.size()>maximumCacheBytes) return std::nullopt;
-    try {return decodeCache(Json::parse(bytes,maximumCacheBytes));} catch(const std::exception&) {return std::nullopt;}
+    try {return Json::parse(bytes,maximumCacheBytes);} catch(const std::exception&) {return std::nullopt;}
+}
+std::optional<AccountCache> decodeCacheBytes(std::string_view bytes) {
+    const auto parsed=parseCacheBytes(bytes);if(!parsed) return std::nullopt;
+    try {return decodeCache(*parsed);} catch(const std::exception&) {return std::nullopt;}
+}
+bool cacheHeaderIsHidden(std::optional<std::string_view> bytes) {
+    if(!bytes) return false;
+    const auto parsed=parseCacheBytes(*bytes);if(!parsed||!parsed->isObject()) return false;
+    // Decodable {version: Int?, header: String?}: null reads as missing, a
+    // field of another type fails the decode.
+    const auto& version=(*parsed)["version"];const auto& header=(*parsed)["header"];
+    if(!version.isNumber()||version.number()!=1) return false;
+    return header.isString()&&header.string()==hiddenHeader;
 }
 std::string encodeCacheBytes(const AccountCache& c) {return encodeCache(c).encode(maximumCacheBytes);}
 }

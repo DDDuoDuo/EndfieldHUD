@@ -545,6 +545,11 @@ bool SettingsStore::markSanityMigrated() {
     if(sanityMigrated()) return false;
     auto envelope=envelope_;envelope["hudOverlaySanityMigrated"]=true;write(std::move(envelope),value_);return true;
 }
+bool SettingsStore::migrateHiddenSanity(const std::function<bool()>& headerHidden) {
+    if(!markSanityMigrated()||!headerHidden||!headerHidden()) return false;
+    auto next=value_;auto layout=next.overlayLayout(characters_);layout.showsSanity=false;next.setOverlayLayout(layout,characters_);
+    return update(next);
+}
 bool SettingsStore::update(const Settings& next) {
     // Unchanged compares as the Mac does (normalized against normalized), so a
     // record loaded with values the next save rewrites is not written by an

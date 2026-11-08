@@ -660,6 +660,31 @@ void settingsVersion131() {
         SettingsStore store(root.path);
         check(store.lastOpenedModule() == "map" && store.sanityMigrated() && store.saveLastOpenedModule("map"), "An unknown last module reads as Map and saving Map replaces it; any migration value counts");
     }
+    // ConfigurationStore.migrateHiddenSanity: once, the flag first; a hidden
+    // 1.3.0 header turns Show Sanity off through an ordinary update (which
+    // also stores the watch for a saved battery icon).
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        int asked{};
+        check(store.migrateHiddenSanity([&] { ++asked; return true; }) && asked == 1 && store.sanityMigrated() && !store.value().overlayLayout().showsSanity,
+              "A hidden header turns Show Sanity off once");
+        const auto file = settingsFile(root.path);
+        check(file["hudOverlaySanityMigrated"] == Json(true) && file["settings"]["hudOverlayLayout"]["showsSanity"] == Json(false) &&
+              file["settings"]["applicationIcon"] == Json("watch") && file["settings"]["theme"] == Json("light"), "The migration saves like any update");
+        check(!store.migrateHiddenSanity([&] { ++asked; return true; }) && asked == 1, "The migration never runs twice");
+        const SettingsStore reloaded(root.path);
+        check(!reloaded.value().overlayLayout().showsSanity && reloaded.sanityMigrated(), "Show Sanity stays off after a restart");
+    }
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        const auto record = store.value();
+        check(!store.migrateHiddenSanity([] { return false; }) && store.sanityMigrated() && store.value() == record &&
+              settingsFile(root.path)["settings"]["applicationIcon"] == Json("battery"), "A shown header only sets the flag; the record is not saved");
+        auto next = store.value();auto layout = next.overlayLayout();layout.showsSanity = false;next.setOverlayLayout(layout);check(store.update(next), "Hide the gauge later");
+        check(!store.migrateHiddenSanity([] { return true; }), "A later launch never migrates again");
+    }
     restoreScopes131();
 }
 }

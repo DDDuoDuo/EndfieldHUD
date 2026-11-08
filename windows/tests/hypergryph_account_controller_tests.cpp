@@ -504,6 +504,15 @@ void showSanity(const Json& oracle) {
     check(!c.hasActiveRequest()&&!c.nextWakeTime(),"Show Sanity off: the header game refreshes nothing and schedules nothing");
     c.setShowsHeaderGauge(true);
     check(c.showsHeaderGauge()&&c.hasActiveRequest(),"Turning Show Sanity on refreshes the account at once");
+    // HypergryphAccountController.storedHeaderIsHidden (the migration's check):
+    // a version 1 cache of at most 1 MB whose header is hidden.
+    check(h::cacheHeaderIsHidden(hidden.encode())&&!h::cacheHeaderIsHidden(endfield.encode())&&!h::cacheHeaderIsHidden(std::nullopt),"Only a hidden header hides the gauge");
+    Json newer=hidden;newer["version"]=2;Json text=hidden;text["version"]="1";Json bare=Json::Object{{"version",1},{"header","hidden"}};
+    check(!h::cacheHeaderIsHidden(newer.encode())&&!h::cacheHeaderIsHidden(text.encode())&&h::cacheHeaderIsHidden(bare.encode()),
+          "Only version 1 counts; nothing else is decoded");
+    std::string large=bare.encode();large.insert(large.size()-1,std::string(h::maximumCacheBytes,' '));
+    check(!h::cacheHeaderIsHidden(large)&&!h::cacheHeaderIsHidden(std::string("[1]"))&&!h::cacheHeaderIsHidden(std::string("{")),
+          "A cache over 1 MB or one that does not decode reads as shown");
     check(file.bytes==std::optional<std::string>(hidden.encode()),"Show Sanity never rewrites the account cache");
 }
 void importedCache(const Json& oracle) {

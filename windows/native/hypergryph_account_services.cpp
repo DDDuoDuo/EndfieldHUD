@@ -73,7 +73,7 @@ HypergryphAccountServices::HypergryphAccountServices(app::UtilityExecutor& execu
     if(i.options.synthetic) i.vault=i.options.synthetic->vault;
     else {i.dpapi=std::make_unique<DpapiAccountVault>(i.options.accountDirectory);i.vault=i.dpapi.get();}
     // Cache writes leave the UI thread; a failed write surfaces the Mac status text.
-    i.cache=std::make_unique<QueuedAccountCacheFile>(i.options.accountDirectory/L"profile-cache.json",executor,
+    i.cache=std::make_unique<QueuedAccountCacheFile>(i.options.accountDirectory/accountCacheName,executor,
         [impl=impl_.get()]{if(impl->controller) impl->controller->cacheWriteFailed();});
     // A cache an earlier Mac import wrote (requiresReconnect, no credentials)
     // was committed with inherited security; it gets the owner-only DACL

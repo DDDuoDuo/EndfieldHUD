@@ -13,17 +13,25 @@ struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
     struct Worker {
         std::filesystem::path root;
         ehud::data::CharacterPrefix characters;
+        std::function<bool()> sanityHeaderHidden;
         std::unique_ptr<ehud::data::SettingsStore>store;
-        Worker(std::filesystem::path path,ehud::data::CharacterPrefix rule):root(std::move(path)),characters(std::move(rule)){}
-        void initialize(){if(!store)store=std::make_unique<ehud::data::SettingsStore>(root,characters);}
+        Worker(std::filesystem::path path,ehud::data::CharacterPrefix rule,std::function<bool()> hidden)
+            :root(std::move(path)),characters(std::move(rule)),sanityHeaderHidden(std::move(hidden)){}
+        void initialize(){
+            if(store)return;
+            store=std::make_unique<ehud::data::SettingsStore>(root,characters);
+            // A failed migration write leaves the record and the flag as they
+            // were (the next normal launch tries again); the load goes on.
+            if(sanityHeaderHidden)try{store->migrateHiddenSanity(sanityHeaderHidden);}catch(const std::exception&){}
+        }
     };
     UtilityExecutor&executor;SettingsSaveCallbacks callbacks;std::shared_ptr<Worker>worker;
     UtilityExecutor::Route route;
     const std::thread::id owner=std::this_thread::get_id();
     SettingsSaveStatus state;std::shared_ptr<const ehud::data::Settings>baseline,latest;
     bool alive{true},started{};
-    Impl(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks cb,ehud::data::CharacterPrefix characters)
-        :executor(e),callbacks(std::move(cb)),worker(std::make_shared<Worker>(std::move(root),std::move(characters))),route(e.makeRoute()){}
+    Impl(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks cb,ehud::data::CharacterPrefix characters,std::function<bool()> hidden)
+        :executor(e),callbacks(std::move(cb)),worker(std::make_shared<Worker>(std::move(root),std::move(characters),std::move(hidden))),route(e.makeRoute()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Settings save queue owner-thread operation");}
     void notify(){if(alive&&callbacks.changed)callbacks.changed();}
     void pump(){
@@ -60,13 +68,13 @@ struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
         state.busy=true;
     }
 };
-SettingsSaveQueue::SettingsSaveQueue(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks callbacks,ehud::data::CharacterPrefix characters){
+SettingsSaveQueue::SettingsSaveQueue(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks callbacks,ehud::data::CharacterPrefix characters,std::function<bool()> hidden){
     // Lexical checks only. Filesystem identity/ordinary-file checks stay in the
     // existing store and run on the worker, including a missing/new root.
     if(root.empty()||!root.is_absolute()||root==root.root_path()||root.lexically_normal()!=root||
        root.native().find(std::filesystem::path::value_type{})!=std::filesystem::path::string_type::npos)
         throw std::invalid_argument("Settings save queue requires an explicit absolute app root");
-    impl_=std::make_shared<Impl>(std::move(root),e,std::move(callbacks),std::move(characters));
+    impl_=std::make_shared<Impl>(std::move(root),e,std::move(callbacks),std::move(characters),std::move(hidden));
 }
 SettingsSaveQueue::~SettingsSaveQueue(){auto i=impl_;i->alive=false;i->executor.invalidate(i->route,false);}
 void SettingsSaveQueue::start(){auto i=impl_;i->onOwner();i->started=true;i->pump();}

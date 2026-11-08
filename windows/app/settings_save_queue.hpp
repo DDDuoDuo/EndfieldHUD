@@ -34,8 +34,11 @@ class SettingsSaveQueue final {
 public:
     // `characters` is the store's Character rule for the HUD elements text
     // (ehud::data::SettingsStore); the app passes native::graphemePrefix.
+    // `sanityHeaderHidden` (normal launches only; empty in diagnostic and
+    // test runs): the initial load first runs the one-time hidden-Sanity
+    // migration (SettingsStore::migrateHiddenSanity) with it, on the worker.
     SettingsSaveQueue(std::filesystem::path explicitAppRoot,UtilityExecutor&,
-        SettingsSaveCallbacks={},ehud::data::CharacterPrefix characters={});
+        SettingsSaveCallbacks={},ehud::data::CharacterPrefix characters={},std::function<bool()> sanityHeaderHidden={});
     ~SettingsSaveQueue();
     SettingsSaveQueue(const SettingsSaveQueue&)=delete;
     SettingsSaveQueue&operator=(const SettingsSaveQueue&)=delete;

@@ -319,9 +319,23 @@ void importedCache() {
     }
     executor.shutdown();CloseHandle(event);
 }
+// The hidden-Sanity migration's check reads the cache through the same
+// bounded read as the cache files and never changes the file.
+void storedHeader() {
+    TempDirectory temp;const auto directory=temp.path/L"Account";
+    check(!n::storedHeaderIsHidden(directory),"No cache: the gauge was shown");
+    std::filesystem::create_directories(directory);const auto file=directory/n::accountCacheName;
+    const auto put=[&](const std::string& bytes){std::ofstream out(file,std::ios::binary|std::ios::trunc);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));};
+    const std::string hidden=R"({"version":1,"header":"hidden","region":"mainland"})";
+    put(hidden);check(n::storedHeaderIsHidden(directory)&&n::readAccountCache(file)==std::optional<std::string>(hidden),"A version 1 hidden header is read and left as it is");
+    put(R"({"version":2,"header":"hidden"})");check(!n::storedHeaderIsHidden(directory),"Another cache version is ignored");
+    put(R"({"version":1,"header":"endfield"})");check(!n::storedHeaderIsHidden(directory),"A shown header is not migrated");
+    std::string large=hidden;large.insert(large.size()-1,std::string(h::maximumCacheBytes,' '));put(large);
+    check(!n::storedHeaderIsHidden(directory),"A cache over 1 MB is ignored");
+}
 int main() {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {vault();heads();session();transport();clientPlumbing();avatar();queuedCache();services();importedCache();if(SUCCEEDED(hr)) CoUninitialize();
+    try {vault();heads();session();transport();clientPlumbing();avatar();queuedCache();services();importedCache();storedHeader();if(SUCCEEDED(hr)) CoUninitialize();
         std::cout<<"PASS "<<checks<<" Windows account platform checks (WinHTTP "<<sessionReport<<")\n";return 0;}
     catch(const std::exception& e) {if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

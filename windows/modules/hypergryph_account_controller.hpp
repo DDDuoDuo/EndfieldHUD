@@ -15,7 +15,7 @@ namespace endfield::modules::hypergryph {
 struct AccountPresentation {
     enum class RegionChoice {china,global};
     // Hiding the gauge is Display > HUD elements > Show Sanity (1.3.1); a
-    // cache that still says hiddenHeader reads as endfield.
+    // cache that still says hiddenHeader (the cache codec) reads as endfield.
     enum class HeaderMode {workMode,endfield,arknights};
     enum class Status {disconnected,connecting,connected,refreshing,failed};
     struct RoleRow {std::string id,title,subtitle;bool operator==(const RoleRow&) const=default;};
@@ -34,8 +34,6 @@ struct AccountPresentation {
     bool busy() const noexcept {return status==Status::connecting||status==Status::refreshing;}
     bool operator==(const AccountPresentation&) const=default;
 };
-// The 1.3.0 header value that hid the gauge; the cache keeps it for v1.2.0.
-inline constexpr std::string_view hiddenHeader="hidden";
 std::string_view headerModeName(AccountPresentation::HeaderMode) noexcept;
 std::optional<AccountPresentation::HeaderMode> headerModeNamed(std::string_view) noexcept;
 std::string headerModeTitle(AccountPresentation::HeaderMode,core::Language);

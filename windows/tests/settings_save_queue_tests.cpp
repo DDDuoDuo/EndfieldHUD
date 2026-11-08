@@ -93,4 +93,16 @@ void characterRule(){
     data::OverlayLayout layout;layout.titleText="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";loaded.setOverlayLayout(layout);queue.save(loaded);
     check(queue.flush()&&data::SettingsStore(t.root).value().overlayLayout().titleText=="ABCDEFGHIJKLMNOPQRSTUVWX","The queue's store saves the title cut to 24 Characters");
 }
-int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();characterRule();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// The hidden-Sanity migration runs with the initial load on the worker, once,
+// only when the owner passes its check (a normal launch); without it
+// (diagnostic and test runs) nothing is marked.
+void sanityMigration(){
+    {Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;unsigned asked{};
+        app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}},{},[&]{++asked;return true;});
+        check(queue.flush()&&asked==1&&!loaded.overlayLayout().showsSanity,"A normal launch loads the record with Show Sanity migrated off");
+        check(data::SettingsStore(t.root).sanityMigrated(),"The migration flag is saved beside the record");}
+    {Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;
+        app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}});
+        check(queue.flush()&&loaded.overlayLayout().showsSanity&&!data::SettingsStore(t.root).sanityMigrated(),"A diagnostic run leaves the migration for a normal launch");}
+}
+int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();characterRule();sanityMigration();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}

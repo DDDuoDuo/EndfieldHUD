@@ -55,5 +55,11 @@ Json encodeCache(const AccountCache&);
 // keeps working in memory and never overwrites those original bytes.
 std::optional<AccountCache> decodeCache(const Json&);
 std::optional<AccountCache> decodeCacheBytes(std::string_view);
+// Mac HypergryphAccountController.storedHeaderIsHidden: whether saved cache
+// bytes (1.3.0 and earlier) hide the header gauge, read without loading the
+// rest of the account: a version 1 cache of at most 1 MB whose header is
+// hiddenHeader. Missing, larger or undecodable bytes read as false.
+inline constexpr std::string_view hiddenHeader="hidden";
+bool cacheHeaderIsHidden(std::optional<std::string_view> bytes);
 std::string encodeCacheBytes(const AccountCache&);
 }
