@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <thread>
 namespace endfield::native {
@@ -36,7 +37,7 @@ NowPlayingImageResult nowPlayingSmallCover(std::shared_ptr<const NotesImageFrame
  NowPlayingImageResult out{image,NowPlayingImageFailure::none,0,nullptr,nativeWidth,nativeHeight};
  if(!image||!image->width||!image->height||image->straightRGBA.size()!=std::size_t(image->width)*image->height*4)return out;
  const auto plan=modules::nowPlayingCoverLayout(nativeWidth,nativeHeight,slot);
- if(!plan.small)return out;
+ if(!plan.isSmall)return out;
  try{
   const auto trimmed=nowPlayingTrimmedLetterbox(image);
   const modules::ProfileImage picture{trimmed->width,trimmed->height,trimmed->straightRGBA,false};
@@ -167,7 +168,7 @@ NowPlayingImageResult decodeNowPlayingCover(std::span<const std::uint8_t>bytes,m
  for(auto*side:{&slot.layout,&slot.decode})*side=std::clamp(*side,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);
  // A small cover is decoded within the layout slot (the Mac's one slot);
  // only a cover that is not small uses the decode headroom.
- auto result=decode(bytes,[slot](unsigned w,unsigned h){return modules::nowPlayingCoverLayout(w,h,slot).small?slot.layout:slot.decode;});
+ auto result=decode(bytes,[slot](unsigned w,unsigned h){return modules::nowPlayingCoverLayout(w,h,slot).isSmall?slot.layout:slot.decode;});
  if(!result.image)return result;
  return nowPlayingSmallCover(std::move(result.image),result.nativeWidth,result.nativeHeight,slot);
 }

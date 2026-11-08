@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::modules {
 namespace {

@@ -224,13 +224,13 @@ void nothingPlaying() {
     const auto shown = canvas.coverViews(w.now)[1];
     check(shown.frame.x == 0 && shown.frame.y == 0 && shown.frame.width == 480 && shown.frame.height == 480 && !shown.backdrop, "A cover that fills the slot is aspect-filled, without a backdrop");
     // A small cover (with a backdrop) is drawn whole at its own pixels over it.
-    auto small = std::make_shared<endfield::native::NotesImageFrame>(); small->width = small->height = 300;
+    auto whole = std::make_shared<endfield::native::NotesImageFrame>(); whole->width = whole->height = 300;
     auto fill = std::make_shared<endfield::native::NotesImageFrame>(); fill->width = fill->height = 96;
-    ctl.cover = {small, fill, 300, 300}; ctl.input.coverRevision = 2;
+    ctl.cover = {whole, fill, 300, 300}; ctl.input.coverRevision = 2;
     canvas.refresh(w.now);
     const auto drawn = canvas.coverViews(w.now)[1];
     const double scale = w.context.boxScale();
-    check(drawn.image == small && drawn.backdrop == fill && std::abs(drawn.frame.width - 300 / scale) < 1e-9 && std::abs(drawn.frame.x - (480 - 300 / scale) / 2) < 1e-9
+    check(drawn.image == whole && drawn.backdrop == fill && std::abs(drawn.frame.width - 300 / scale) < 1e-9 && std::abs(drawn.frame.x - (480 - 300 / scale) / 2) < 1e-9
         && find(canvas.root(), "nowPlaying.cover.ring")->hidden(), "A small cover is drawn at px / boxScale, centred over its backdrop (:325-347); the placeholder stays hidden");
     ctl.cover = {cover, nullptr, 960, 960}; ctl.input.coverRevision = 3;
     canvas.refresh(w.now);

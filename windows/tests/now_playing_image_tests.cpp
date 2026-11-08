@@ -38,7 +38,7 @@ void smallCovers(){Q q([]{});
  const auto square=[](unsigned side){auto i=std::make_shared<n::NotesImageFrame>();i->width=i->height=side;i->straightRGBA.assign(std::size_t(side)*side*4,128);return i;};
  unsigned decodes{};unsigned native{150};
  n::NativeNowPlayingArtwork art(q,[]{},n::NativeNowPlayingArtwork::SizedDecoder([&](std::span<const std::uint8_t>,endfield::modules::NowPlayingCoverSlot slot){++decodes;
-  const auto plan=endfield::modules::nowPlayingCoverLayout(native,native,slot);n::NowPlayingImageResult r{square(plan.side)};r.nativeWidth=r.nativeHeight=native;if(plan.small)r.backdrop=square(96);return r;}));
+  const auto plan=endfield::modules::nowPlayingCoverLayout(native,native,slot);n::NowPlayingImageResult r{square(plan.side)};r.nativeWidth=r.nativeHeight=native;if(plan.isSmall)r.backdrop=square(96);return r;}));
  auto a=bytes(21);art.request(a);flush(q);
  check(decodes==1&&art.result().image->width==300&&art.result().backdrop&&art.stats().residentBytes==300u*300*4+96u*96*4,"A 150 px cover at 720 is drawn at 300 px; its 96 px backdrop counts as resident");
  check(!art.setPixelSize({960,960})&&decodes==1,"At 960 the 150 px cover is drawn the same (300 px over its backdrop): no new decode");

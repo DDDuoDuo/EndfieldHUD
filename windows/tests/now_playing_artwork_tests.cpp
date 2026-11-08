@@ -70,7 +70,7 @@ void layout(const Json& j) {
     for (const auto& row : j["layout"].array()) {
         const unsigned w = unsigned(row["width"].integer()), h = unsigned(row["height"].integer()), p = unsigned(row["pixels"].integer());
         const auto plan = m::nowPlayingCoverLayout(w, h, {p, p});
-        check(plan.small == row["small"].boolean() && plan.side == row["side"].integer(),
+        check(plan.isSmall == row["small"].boolean() && plan.side == row["side"].integer(),
               "layout(native:pixels:) of " + std::to_string(w) + "x" + std::to_string(h) + " at " + std::to_string(p) + " matches the Mac");
     }
     // Decision AW-D2 (a): the layout slot decides; the headroom slot bounds only a cover that is not small.

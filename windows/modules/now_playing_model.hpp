@@ -63,8 +63,9 @@ NowPlayingCoverSlot nowPlayingCoverSlot(double points,double boxScale)noexcept;
 // width x height native pixels is small in `slot.layout` (short side > 0 and
 // layout / short > fillLimit) and the longer side it is drawn at: a small
 // one round(min(layout, long x maximumEnlargement)), any other its own size
-// scaled down to at most `slot.decode`.
-struct NowPlayingCoverLayout {bool small{};unsigned side{};bool operator==(const NowPlayingCoverLayout&)const=default;};
+// scaled down to at most `slot.decode`. The flag is `isSmall` because the
+// Windows SDK's rpcndr.h defines `small` as a macro.
+struct NowPlayingCoverLayout {bool isSmall{};unsigned side{};bool operator==(const NowPlayingCoverLayout&)const=default;};
 NowPlayingCoverLayout nowPlayingCoverLayout(unsigned width,unsigned height,NowPlayingCoverSlot)noexcept;
 
 // Transient Unicode metadata only; never persisted or included in Event Log.
