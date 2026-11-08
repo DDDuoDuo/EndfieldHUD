@@ -73,18 +73,30 @@ void launchTargets(){
     p->changed();flush(q,service);p->reading(players({{7,"Invented.Player","Unknown"}}));settle(service);
     check(asked.size()==3,"A failure is kept until the next activation");
     service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{8,"Invented.Player","Unknown"},{9,"Chrome","Chrome"}}));settle(service);
-    check(asked.size()==4&&asked.back()=="Invented.Player"&&service.snapshot().media.sessions[1].executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","A new activation retries a failure and keeps the resolved targets");
-    fail=true;for(int k=0;k<20;++k){p->changed();flush(q,service);p->reading(players({{static_cast<std::uint64_t>(10+k),"Player"+std::to_string(k),"Many"}}));settle(service);}
-    check(asked.size()==24,"Each new explicit identity is asked once");
+    check(asked.size()==5&&asked[3]=="Invented.Player"&&asked[4]=="Chrome"&&service.snapshot().media.sessions[1].executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","A new activation retries a failure and checks a resolved target again");
+    p->changed();flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==5,"A target checked in this activation is not asked again");
+    // A browser that updated in place runs a new file at the same path: the
+    // next activation shows the known target at once, then the new identity.
+    auto updated=identity;updated.objectID[0]=8;const auto previous=identity;identity=updated;
+    service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));
+    q.waitIdle();q.drain();service.drain();
+    check(service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe"&&service.snapshot().media.session->executableIdentity==previous,"The known target fills the read before it is checked again");
+    const auto revision=service.snapshot().revision;settle(service);
+    check(asked.size()==6&&service.snapshot().media.session->executableIdentity==updated&&service.snapshot().media.sessions[0].executableIdentity==updated&&service.snapshot().revision>revision,"A changed file identity is republished");
+    fail=true;service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==7&&service.snapshot().media.session->executablePath.empty()&&!service.snapshot().media.session->executableIdentity,"A target whose Start shortcut is gone is withdrawn");
+    for(int k=0;k<20;++k){p->changed();flush(q,service);p->reading(players({{static_cast<std::uint64_t>(10+k),"Player"+std::to_string(k),"Many"}}));settle(service);}
+    check(asked.size()==27,"Each new explicit identity is asked once");
     fail=false;p->changed();flush(q,service);p->reading(players({{40,"Chrome","Chrome"}}));settle(service);
-    check(asked.size()==25&&service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","The cache holds at most a bounded set of identities");
+    check(asked.size()==28&&service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","The cache holds at most a bounded set of identities");
     // A provider may carry a target itself (replays); it is validated and kept.
     p->changed();flush(q,service);auto own=players({{41,"Firefox.Hash","Firefox"}});own.value.sessions[0].executablePath="C:\\Replay\\firefox.exe";own.value.session=own.value.sessions[0];p->reading(own);settle(service);
-    check(asked.size()==25&&service.snapshot().media.session->executablePath=="C:\\Replay\\firefox.exe","A session that already names its executable is not resolved");
+    check(asked.size()==28&&service.snapshot().media.session->executablePath=="C:\\Replay\\firefox.exe","A session that already names its executable is not resolved");
     p->changed();flush(q,service);auto bad=own;bad.value.sessions[0].executablePath.clear();bad.value.sessions[0].executableIdentity=identity;bad.value.session=bad.value.sessions[0];p->reading(bad);settle(service);
     check(service.snapshot().failure==n::NowPlayingServiceFailure::unavailable,"An identity without its path is rejected");
     n::NativeNowPlayingService plain(q,[&]{return p;},[]{},[]{return 0.;});plain.setActive(true);flush(q,plain);p->started({});flush(q,plain);p->reading(players(listed));settle(plain);
-    check(asked.size()==25&&plain.snapshot().media.session->executablePath.empty(),"Without a resolver nothing is resolved");
+    check(asked.size()==28&&plain.snapshot().media.session->executablePath.empty(),"Without a resolver nothing is resolved");
 }
 #ifdef _WIN32
 // Hidden native check (read-only, this session's Start menu): "MSEdge"

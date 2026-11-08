@@ -35,7 +35,8 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     std::shared_ptr<NowPlayingProvider>provider;app::UtilityExecutor::Route route{};NowPlayingServiceSnapshot published;
     // Launch targets of explicit AppUserModelIDs (most recent last).
     NowPlayingLaunchResolver resolver;app::UtilityExecutor::Route resolveRoute{};
-    struct Launch{std::string id;std::optional<NowPlayingLaunchTarget>target;};std::vector<Launch>launches;std::optional<std::string>resolving;
+    // `current`: resolved during this activation (nowPlayingLaunchTargetCache).
+    struct Launch{std::string id;std::optional<NowPlayingLaunchTarget>target;bool current{true};};std::vector<Launch>launches;std::optional<std::string>resolving;
     std::atomic<std::uint64_t>generation{1},events{};std::mutex mutex;std::optional<Message>message;bool notified{},changed{};
     bool alive{true},ready{},inFlight{},pendingRead{},pendingResync{};std::optional<Command>pendingCommand;std::optional<NowPlayingCommandReceipt>executingCommand;std::uint64_t serial{},commandToken{};Phase phase{Phase::idle};
     Impl(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>clock,double bound,NowPlayingLaunchResolver resolve):executor(e),factory(std::move(f)),notify(std::move(n)),now(std::move(clock)),timeout(bound),resolver(std::move(resolve)){need(bool(factory)&&bool(notify)&&bool(now)&&std::isfinite(timeout)&&timeout>0&&timeout<=30,"Now Playing needs provider, owner clock/wake and bounded timeout");}
@@ -53,7 +54,7 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     }
     void activate(){
         check();if(!alive)return;const auto expected=generation.load(std::memory_order_acquire);published.active=true;published.busy=true;published.fresh=false;++published.revision;
-        std::erase_if(launches,[](const Launch&l){return !l.target;});
+        std::erase_if(launches,[](const Launch&l){return !l.target;});for(auto&l:launches)l.current=false;
         try{auto next=factory();need(bool(next),"Now Playing provider factory returned no provider");if(!alive||!published.active||generation.load()!=expected){next->stop();return;}provider=std::move(next);route=executor.makeRoute();pendingRead=true;schedule();}
         catch(...){if(alive&&generation.load()==expected){published.busy=false;published.failure=NowPlayingServiceFailure::unavailable;++published.revision;}}
     }
@@ -107,8 +108,11 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     void resolve(){
         if(!resolver||resolving||!alive||!published.active)return;
         std::optional<std::string>next;
-        for(const auto&s:published.media.sessions)if(s.origin==modules::NowPlayingSessionOrigin::mediaSession&&s.executablePath.empty()&&modules::nowPlayingExplicitIdentity(s.appUserModelID)
-            &&std::none_of(launches.begin(),launches.end(),[&](const Launch&l){return l.id==s.appUserModelID;})){next=s.appUserModelID;break;}
+        // An identity never resolved (and not named by its provider), or one
+        // resolved in an earlier activation, which is checked again.
+        for(const auto&s:published.media.sessions)if(s.origin==modules::NowPlayingSessionOrigin::mediaSession&&modules::nowPlayingExplicitIdentity(s.appUserModelID)){
+            const auto known=std::find_if(launches.begin(),launches.end(),[&](const Launch&l){return l.id==s.appUserModelID;});
+            if(known==launches.end()?s.executablePath.empty():!known->current){next=s.appUserModelID;break;}}
         if(!next)return;
         if(!resolveRoute)resolveRoute=executor.makeRoute();
         auto result=std::make_shared<std::optional<NowPlayingLaunchTarget>>();const auto weak=weak_from_this();const auto expected=generation.load(std::memory_order_acquire);
@@ -118,11 +122,21 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
                 if(self->resolving&&*self->resolving==id)self->resolving.reset();
                 std::optional<NowPlayingLaunchTarget>target;
                 if(!error&&*result&&!(*result)->path.empty()&&(*result)->path.size()<=32767*3&&ehud::data::Json::validUtf8((*result)->path)&&(*result)->path.find('\0')==std::string::npos)target=std::move(*result);
-                std::erase_if(self->launches,[&](const Launch&l){return l.id==id;});
+                std::optional<NowPlayingLaunchTarget>previous;
+                if(const auto old=std::find_if(self->launches.begin(),self->launches.end(),[&](const Launch&l){return l.id==id;});old!=self->launches.end()){previous=std::move(old->target);self->launches.erase(old);}
                 if(self->launches.size()>=nowPlayingLaunchTargetCache)self->launches.erase(self->launches.begin());
-                self->launches.push_back({id,std::move(target)});
+                self->launches.push_back({id,target});
                 if(self->generation.load(std::memory_order_acquire)!=expected||!self->published.active)return;
-                if(self->launched())++self->published.revision;
+                // A checked-again target that changed replaces the earlier one
+                // in the sessions it filled.
+                bool replaced{};
+                if(previous&&(!target||target->path!=previous->path||target->identity!=previous->identity)){
+                    const auto refill=[&](modules::NowPlayingSession&s){
+                        if(s.appUserModelID!=id||s.executablePath!=previous->path||s.executableIdentity!=previous->identity)return;
+                        if(target){s.executablePath=target->path;s.executableIdentity=target->identity;}else{s.executablePath.clear();s.executableIdentity.reset();}replaced=true;};
+                    for(auto&s:self->published.media.sessions)refill(s);if(self->published.media.session)refill(*self->published.media.session);
+                }
+                if(self->launched()||replaced)++self->published.revision;
                 self->resolve();
             });
         if(accepted)resolving=*next;

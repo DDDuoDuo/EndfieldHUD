@@ -108,8 +108,11 @@ struct NowPlayingServiceSnapshot {
 // its file identity (nowPlayingAppsFolderExecutable).
 struct NowPlayingLaunchTarget {std::string path;ehud::data::ShelfFileIdentity identity;};
 using NowPlayingLaunchResolver=std::function<std::optional<NowPlayingLaunchTarget>(const std::string&appUserModelID)>;
-// Launch targets kept across activations; a failure is kept until the next
-// activation (a Start shortcut installed meanwhile is then found).
+// Launch targets kept across activations, at most this many identities. A
+// failure is kept until the next activation (a Start shortcut installed
+// meanwhile is then found). A found target is used at once on the next
+// activation and checked again there: a browser that updated in place has a
+// new executable file, whose new identity is then republished.
 inline constexpr std::size_t nowPlayingLaunchTargetCache=16;
 class NativeNowPlayingService final {
 public:
