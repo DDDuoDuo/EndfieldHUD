@@ -95,12 +95,20 @@ enum HUDPortraitArtwork {
         let magnification = CGFloat(zoom.isFinite ? min(20, max(1, zoom)) : 1)
         let longSide = min(2048, side * max(fill.width, fill.height) * magnification * scale * 1.35)
         let factor = min(1, longSide / max(extent.width, extent.height))
-        let width = max(1, Int((extent.width * factor).rounded())), height = max(1, Int((extent.height * factor).rounded()))
-        let origin = source.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-        let scaled = factor < 1 ? origin.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: factor, kCIInputAspectRatioKey: 1])
-                                : origin
-        guard let output = renderContext.createCGImage(scaled, from: CGRect(x: 0, y: 0, width: width, height: height)) else { return nil }
+        guard let output = scaledImage(source, region: extent, factor: factor) else { return nil }
         return (output, fill)
+    }
+    /// `region` of `source` as a bitmap `factor` times its size, Lanczos-resampled
+    /// (drawn as it is at 1), with `finish` applied after scaling (a blur, say).
+    /// A source clamped to its extent keeps the region's edges opaque.
+    static func scaledImage(_ source: CIImage, region: CGRect, factor: CGFloat,
+                            finish: (CIImage) -> CIImage = { $0 }) -> CGImage? {
+        guard factor.isFinite, factor > 0, !region.isInfinite, region.width > 0, region.height > 0 else { return nil }
+        let width = max(1, Int((region.width * factor).rounded())), height = max(1, Int((region.height * factor).rounded()))
+        let origin = source.transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
+        let scaled = factor != 1 ? origin.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: factor, kCIInputAspectRatioKey: 1])
+                                 : origin
+        return renderContext.createCGImage(finish(scaled), from: CGRect(x: 0, y: 0, width: width, height: height))
     }
 
     static func crop(imageSize: CGSize, targetSize: CGSize, zoom: Double, offset: CGPoint) -> CGRect {

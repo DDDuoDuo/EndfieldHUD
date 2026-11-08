@@ -72,6 +72,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     private var displayedArt: CGImage?
     // Elements of the current page, updated in place between rebuilds.
     private var art: CALayer?
+    private var backdrop: CALayer?
     private var placeholder: CALayer?
     private var titleText: HUDTextLayer?
     private var artistText: HUDTextLayer?
@@ -239,14 +240,16 @@ final class NowPlayingCanvas: HUDDesignCanvas {
                 label.lineFrame = CGRect(x: 0, y: (size.height - 96) / 2 + 86, width: size.width, height: 10)
                 [hatch, ring, label].forEach(cover.addSublayer)
             }
-            art = nil; placeholder = nil; titleText = nil; artistText = nil
+            art = nil; backdrop = nil; placeholder = nil; titleText = nil; artistText = nil
             return cover
         }
+        let fill = HUDLayer.plain("nowPlaying.cover.backdrop")
         let image = HUDLayer.plain("nowPlaying.cover.art")
         let shade = HUDLayer.gradient("nowPlaying.cover.shade")
         let title = HUDTextLayer(track.title, style: HUDTextStyle(size: 21, weight: .bold, color: HUDColor.white(1), lineHeight: 1.2))
         let artist = HUDTextLayer(track.artist, style: HUDTextStyle(size: 14, weight: .regular, color: HUDColor.white(0.8), lineHeight: 1.2))
         HUDMotion.perform {
+            fill.frame = bounds; fill.contentsGravity = .resizeAspectFill
             image.frame = bounds; image.contentsGravity = .resizeAspectFill
             ring.position = CGPoint(x: size.width / 2, y: size.height / 2)
             shade.frame = CGRect(x: 0, y: size.height - 116, width: size.width, height: 116)
@@ -254,9 +257,9 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             shade.locations = [0, 0.3, 1]
             title.lineFrame = CGRect(x: 20, y: size.height - 38 - 21 * 1.2, width: size.width - 40, height: 21 * 1.2)
             artist.lineFrame = CGRect(x: 20, y: size.height - 16 - 14 * 1.2, width: size.width - 40, height: 14 * 1.2)
-            [image, ring, shade, title, artist].forEach(cover.addSublayer)
+            [fill, image, ring, shade, title, artist].forEach(cover.addSublayer)
         }
-        art = image; placeholder = ring; titleText = title; artistText = artist
+        art = image; backdrop = fill; placeholder = ring; titleText = title; artistText = artist
         return cover
     }
 
@@ -308,7 +311,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             if let track { titleText?.text = track.title; artistText?.text = track.artist; trackReadout?.track = track }
             durationText?.text = Self.time(track?.duration)
         }
-        showArt(controller.artworkImage, animated: animated)
+        showArt(controller.artwork, animated: animated)
         seek?.isEnabled = canSeek
         lyricWindow?.setLyrics(track == nil ? nil : controller.lyrics)
         setLyricsVisible(showsLyrics && track != nil && controller.lyrics?.hasContent == true, animated: animated)
@@ -322,16 +325,26 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         return track.supportsSeeking && track.duration != nil && track.position != nil && controller.snapshot.failure == nil
     }
 
-    /// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes.
-    private func showArt(_ image: CGImage?, animated: Bool) {
-        guard let art, image !== displayedArt else { return }
-        displayedArt = image
+    /// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes,
+    /// with its backdrop. A cover that fills the slot is drawn aspect-filled as
+    /// before; a small one (with a backdrop) is drawn whole at its own pixels,
+    /// centred over its blurred fill, rather than stretched by the GPU.
+    private func showArt(_ artwork: NowPlayingArtworkImage?, animated: Bool) {
+        guard let art, artwork?.image !== displayedArt else { return }
+        displayedArt = artwork?.image
         if animated, !env.reducesMotion, art.superlayer != nil {
-            let fade = CATransition()
-            fade.type = .fade; fade.duration = 0.2; fade.timingFunction = HUDEasing.easeInOut
-            art.add(fade, forKey: "hud.art.fade")
+            for layer in [backdrop, art].compactMap({ $0 }) {
+                let fade = CATransition()
+                fade.type = .fade; fade.duration = 0.2; fade.timingFunction = HUDEasing.easeInOut
+                layer.add(fade, forKey: "hud.art.fade")
+            }
         }
-        HUDMotion.perform { art.contents = image; placeholder?.isHidden = image != nil }
+        HUDMotion.perform {
+            art.contents = artwork?.image; backdrop?.contents = artwork?.backdrop
+            art.contentsGravity = artwork?.backdrop == nil ? .resizeAspectFill : .center
+            art.contentsScale = env.renderScale
+            placeholder?.isHidden = artwork != nil
+        }
     }
 
     /// The whole lyric block fades (.24 s) when lyrics are toggled, arrive or end.

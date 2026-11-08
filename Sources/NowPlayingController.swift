@@ -185,10 +185,13 @@ final class NowPlayingController {
         return loader
     }()
     var artworkImage: CGImage? { artworkLoader.image }
+    /// The shown cover with its native size and, for a small one, its backdrop.
+    var artwork: NowPlayingArtworkImage? { artworkLoader.artwork }
     /// Decoded cover size in pixels: the drawn slot's longer side in points times
     /// its backing scale (`NowPlayingArtworkLoader.pixelSize(points:scale:)`).
-    /// 720 px until the UI sets it. Covers are never decoded larger; a change
-    /// re-decodes the shown cover, which stays visible until replaced.
+    /// 720 px until the UI sets it. Covers are never decoded larger, and a
+    /// small one is enlarged at most twice; a change re-decodes the shown
+    /// cover, which stays visible until replaced.
     var artworkPixelSize: Int {
         get { artworkLoader.pixelSize }
         set { artworkLoader.setPixelSize(newValue) }
