@@ -2778,16 +2778,23 @@ int Application::Impl::runHiddenVerification(){
                     beginOverlayPlacement(time);present(time,true);time+=.1;
                     {const auto shut=hudElements->frames()[G::index(G::Element::sanity)];
                         if(const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2}))drag(*press,{-40,30});}
+                    // The press is on the title, away from the gauge the strip sits beside:
+                    // the close's cancel ends it with no release, so the strip stays where
+                    // it is drawn (the Mac lays it out again only on a release or an alert).
                     {const auto*draft=hudElements->draft();const bool moved=draft&&draft->sanity!=saved.sanity;const auto movedDraft=draft?std::optional(*draft):std::nullopt;
-                        const auto shut=hudElements->frames()[G::index(G::Element::sanity)];const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2});
+                        const auto shut=hudElements->frames()[G::index(G::Element::title)];const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2});
+                        const auto stripAt=[&]{const auto*strip=hudElements->strip();return strip?hudElements->stripClientPoint({strip->size().width/2,0}):std::nullopt;};
+                        const auto stripBefore=stripAt();
                         if(press)(void)hudElements->pointer({PointerKind::down,PointerButton::left,press->x,press->y},time);
-                        const bool pressed=hudElements->dragged().has_value();
+                        const bool pressed=hudElements->dragged()==G::Element::title;
                         hudElements->overlayClosing(time);present(time+.05,true);
+                        const auto stripAfter=stripAt();
                         const bool kept=placingOverlay()&&hudElements->draft()&&*hudElements->draft()==*movedDraft&&shownOverlayLayout()==*movedDraft&&!hudElements->dragged()&&
-                            !hudElements->topEntries().empty()&&!hudElements->capturesPointer()&&!hudElements->capturesKeys()&&!hudElements->covers({0,0});
+                            !hudElements->topEntries().empty()&&!hudElements->capturesPointer()&&!hudElements->capturesKeys()&&!hudElements->covers({0,0})&&
+                            stripBefore&&stripAfter&&std::abs(stripAfter->x-stripBefore->x)<.5&&std::abs(stripAfter->y-stripBefore->y)<.5;
                         const bool ignored=press&&!hudElements->pointer({PointerKind::move,PointerButton::none,press->x+50,press->y},time+.06)&&
                             !hudElements->pointer({PointerKind::up,PointerButton::left,press->x+50,press->y},time+.07)&&*hudElements->draft()==*movedDraft;
-                        hostCheck(moved&&pressed&&kept&&ignored,"The HUD close ends the press and keeps the strip, the marks and the moved draft drawn, taking no input");
+                        hostCheck(moved&&pressed&&kept&&ignored,"The HUD close ends the press and keeps the strip where it is drawn, the marks and the moved draft, taking no input");
                         (void)hudElements->hostEvent({HostEvent::Kind::overlayConcealed,0},time+.4);
                         const bool dropped=!placingOverlay()&&shownOverlayLayout()==saved&&settingsUI->controller().committed().overlayLayout(graphemes)==saved;
                         hudElements->setOverlayVisible(true,time+.4);present(time+.4,true);time+=.5;

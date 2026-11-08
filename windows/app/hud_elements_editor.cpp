@@ -161,9 +161,12 @@ struct HudElementsEditor::Impl {
     void layout() {
         if (!editor || !draft) return;
         const auto drawn = frames(*draft);
+        bool moved = false;
         for (const auto e : G::elements) {
             const auto n = G::index(e);
-            grownFrames[n] = G::grown(drawn[n], G::hitSlop);
+            const auto grown = G::grown(drawn[n], G::hitSlop);
+            moved = moved || grownFrames[n] != grown;
+            grownFrames[n] = grown;
             const d::Size size{grownFrames[n].width, grownFrames[n].height};
             if (markSizes[n] == size) continue;
             markSizes[n] = size;
@@ -173,6 +176,11 @@ struct HudElementsEditor::Impl {
             ++markRevisions[n];
         }
         if (editor->adjusting() || editor->dragging()) return;
+        // The Mac lays the editor out on events (a drag's release, an alert
+        // arriving or clearing: facilityChanged), not every frame: during the
+        // close, whose cancel ended the press without that release, the strip
+        // moves only when an element's frame does.
+        if (closing && !moved) return;
         const auto box = d::geometry::boxRect();
         const double unit = d::geometry::baseUnit;
         const auto local = [&](core::Rect r) { return d::Rect{(r.x - box.x) / unit, (r.y - box.y) / unit, r.width / unit, r.height / unit}; };
@@ -342,9 +350,9 @@ void HudElementsEditor::update(const ModuleFrame& frame) {
     i.posed = true;
     if (!i.editor) { i.collectEditors(); return; }
     // The marks (and a strip beside them) follow the elements' natural sizes:
-    // an alert arriving or clearing while placing (facilityChanged). The
-    // close keeps them where they are drawn.
-    if (!i.closing) i.layout();
+    // an alert arriving or clearing while placing (facilityChanged), during
+    // the close too.
+    i.layout();
     // The strip on the content box at its origin (overlayEditorHost in box
     // coordinates), the marks on the core plane; the top layer fades with the
     // HUD close as every native layer does (5b2a9d3: topLayout).
