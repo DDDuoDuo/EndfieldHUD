@@ -469,8 +469,7 @@ final class HUDCenterOverlay {
     /// Cancel hides then calls back at once; Confirm calls back after 120 ms.
     private func finish(_ decision: HUDConfirmState.Decision) {
         let handlers = confirmHandlers
-        confirmHandlers = nil
-        router.set([])
+        suspendInput()
         confirmBar.hide(animated: true) { [weak self] in
             guard let self, self.confirmState.decision != nil else { return }
             self.confirmState.close()
@@ -489,12 +488,18 @@ final class HUDCenterOverlay {
     /// Closes an open bar without a decision (module change, HUD close).
     func dismissConfirm() {
         guard confirmState.request != nil else { return }
-        confirmHandlers = nil
+        suspendInput()
         confirmState.close()
-        router.set([])
         confirmBar.hide(animated: false)
         if toastState.current == nil { setDimmed(false) }
         onChange?()
+    }
+
+    /// The bar stays drawn but decides nothing more: no handler, no control
+    /// (the HUD's close, which hides it with the module; reset() at the end).
+    func suspendInput() {
+        confirmHandlers = nil
+        router.set([])
     }
 
     func showToast(_ request: HUDToastRequest, completion: (() -> Void)? = nil) {

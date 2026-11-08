@@ -263,8 +263,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func prepareToLeave() {
         closePopups()
-        endEditing(commit: true)
-        cancelGestures()
+        suspendInput()
         settleSwap(concealed: true)
         willLeave()
         // Last, so a re-render made while the module leaves keeps its page.
@@ -290,7 +289,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             if isStale { rerender() }
             didActivate()
         } else {
-            closePopups(); endEditing(commit: true); cancelGestures(); settleSwap(concealed: true)
+            closePopups(); suspendInput(); settleSwap(concealed: true)
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -317,7 +316,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// The next page, a Back included, starts at the top.
     func navigate(dx: CGFloat, dy: CGFloat = 0) {
         let offset = HUDShellPosition.subpageOffset(dx: dx, dy: dy)
-        closePopups(); endEditing(commit: true); cancelGestures()
+        closePopups(); suspendInput()
         guard !env.reducesMotion, root.superlayer != nil else {
             if let work = swapWork { work.cancel(); swapWork = nil; finishLeave() }
             install(makePage(restoring: [:])); return
@@ -501,6 +500,10 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     func endEditing(commit: Bool) { textFields.forEach { $0.endEditing(commit: commit) } }
+
+    /// Inline editors commit and gestures end while the page stays drawn,
+    /// menus included (the HUD's close: they leave with the module).
+    func suspendInput() { endEditing(commit: true); cancelGestures() }
 
     /// The native editor under a host view point, for the host's hitTest.
     func textView(atHost point: CGPoint) -> NSView? {

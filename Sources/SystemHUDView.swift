@@ -149,8 +149,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             updateButtonStates()
             if interactionEnabled { scheduleVisibleMotion(); refreshChargeHover(); headerClock.setActive(window != nil); hudDidBecomeInteractive() }
             else {
-                deactivateModuleInput()
-                facilityBanner.hide(animated: false)
+                // The close (retracting) stops input itself and lets the
+                // overlays leave with it (beginRetraction, beginClosingExits).
+                if !retracting {
+                    deactivateModuleInput()
+                    facilityBanner.hide(animated: false)
+                }
                 if motion.isPointerFollowing {
                     motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion,
                                                  initialPoint: currentPointerTarget())
@@ -897,12 +901,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let blurOpacity = blurBackdrop.layer?.presentation()?.opacity ?? blurBackdrop.layer?.opacity ?? 0
         // Freeze ambient rotations, but keep event-driven pointer response on
         // the spatial layers while the separate deployment wrappers retract.
-        cancelAnimations(preserveClickFeedback: true, preservingPointerMotion: true)
+        beginRetraction()
         transitioning = true
-        retracting = true
         transitionCompletion = completion
         navigationButtons.values.forEach { $0.isEnabled = false }
         let token = generation
+        beginClosingExits()
         guard !HUDRuntimeAppearance.reduceMotion else {
             chargeBadge.setStable(visible: false)
             withoutActions {
@@ -930,6 +934,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         CATransaction.setCompletionBlock { shellFinished = true; finish() }
         // Determine the sweep while the scene still has its settled geometry.
         addDeploymentFlicker(opening: false)
+        moduleContent.leaveForClose()
         // The top plane (HUD elements strip, recovery menu) folds with the
         // core plane whose elements it edits.
         let retraction: [(HUDDepthPlane, Double, Double, CGFloat)] = [
@@ -1032,16 +1037,38 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         motion.stop(freezePresentation: true)
         sourceWatch?.suspendForConcealment()
         headerClock.setActive(false)
+        // The retraction only stopped input; the hidden HUD ends the rest.
+        deactivateModuleInput()
     }
 
+    /// The start of every animated close: input stops at once (the view owns
+    /// this), while the overlays stay drawn to leave with the HUD. A running
+    /// module entrance keeps going under the module's leave.
+    private func beginRetraction() {
+        retracting = true
+        interactionEnabled = false
+        cancelAnimations(preserveClickFeedback: true, preservingPointerMotion: true,
+                         preservingModuleEntrance: true, forRetraction: true)
+    }
+
+    /// The overlays' own exits, inside the close's length. Called after
+    /// cancelAnimations, which would strip them; each is immediate when reduced.
+    private func beginClosingExits() {
+        facilityBanner.hide(animated: true)
+        accountGauge.dismiss(animated: true)
+        layoutAccountGaugeControls()
+        notesInteraction?.deactivate(animated: true)
+    }
+
+    /// `forRetraction`: the close only stops input (deactivateModuleInput).
     func cancelAnimations(preserveClickFeedback: Bool = false, preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
                           preservingNowPlayingPresentation: Bool = false, preservingModuleEntrance: Bool = false,
-                          preservingCursor: Bool = false) {
+                          preservingCursor: Bool = false, forRetraction: Bool = false) {
         sourceEntranceReady = nil
         headerClock.setActive(false)
         sourceWatch?.suspendForConcealment(preservingCursor: preservingCursor)
         if !preservingNowPlayingPresentation { modulePresentationAllowed = false }
-        deactivateModuleInput(preservingNowPlayingPresentation: preservingNowPlayingPresentation)
+        deactivateModuleInput(preservingNowPlayingPresentation: preservingNowPlayingPresentation, forRetraction: forRetraction)
         generation += 1 // A transaction completion can fire when animations are removed.
         transitioning = false
         transitionCompletion = nil
@@ -2164,10 +2191,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func animateSourceExit(completion: @escaping () -> Void) {
         let surfaces = [canvas, notesWorkspace, topLayout].map { ($0, $0.presentation()?.opacity ?? $0.opacity) }
         let heldOpening = sourceWatch?.isPreparingBackdrop == true
-        cancelAnimations(preserveClickFeedback: true, preservingPointerMotion: true)
-        transitioning = true; retracting = true; transitionCompletion = completion
+        beginRetraction()
+        transitioning = true; transitionCompletion = completion
         let token = generation
         updateButtonStates()
+        beginClosingExits()
         let finish: () -> Void = { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == token else { return }
@@ -2192,6 +2220,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             return
         }
         if !HUDRuntimeAppearance.reduceMotion {
+            moduleContent.leaveForClose()
             animateSourceBlur(sourceWatch.document.blurAnimation.exit)
             // All feature planes already inherit the original center wrapper
             // through the shared homography; another fold would double its tilt.
@@ -2632,7 +2661,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         accountController.setVisible(window != nil && interactionEnabled && !retracting, accountModule: selectedModule == .account)
         updateAccountPresentation()
         notesInteraction?.setVisible(window != nil && interactionEnabled)
-        notesInteraction?.setActive(notesWorkspaceIsInteractive)
+        // A close leaves the notes, the modules and the confirm bar drawn
+        // (beginClosingExits); the hidden HUD's deactivation ends them.
+        if !retracting { notesInteraction?.setActive(notesWorkspaceIsInteractive) }
         // Presentation changes come first: Now Playing retires the shared audio
         // observer before Volume's page, activated below, starts its own.
         let presenting = window != nil && !retracting && modulePresentationAllowed
@@ -2645,8 +2676,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // A cancelled presentation (cancelAnimations) keeps every module idle
         // until showStable or new interaction allows presentation again.
         let designInput = window != nil && modulePresentationAllowed && allowsModuleInput && !moduleContent.isTransitioning
-        for (module, canvas) in designCanvases { canvas.setActive(designInput && selectedModule == module) }
-        if !allowsModuleInput { designContext.overlay.reset() }
+        if !retracting {
+            for (module, canvas) in designCanvases { canvas.setActive(designInput && selectedModule == module) }
+            if !allowsModuleInput { designContext.overlay.reset() }
+        }
         layoutDesignAccessibility()
         updateNavigationButtonStates()
     }
@@ -3388,9 +3421,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// Esc, or arranging ending, dropped the press: its drags and release do nothing.
     private var swallowsArrangePress = false
 
-    private func setModuleArrangement(_ on: Bool) {
+    /// Drops a module button's press in its saved place; the rest of the
+    /// press does nothing (arranging ending, the HUD closing).
+    private func dropArrangePress() {
         if arrangeDrag != nil, NSEvent.pressedMouseButtons & 1 != 0 { swallowsArrangePress = true }
         endModuleArrangeDrag(save: false, animated: interactionEnabled && !retracting)
+    }
+
+    private func setModuleArrangement(_ on: Bool) {
+        dropArrangePress()
         guard on != arrangingModules else { return }
         arrangingModules = on
         updateArrangeMarks()
@@ -3918,12 +3957,27 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         actionFeedback.add(action, forKey: "action.engage")
     }
 
-    private func deactivateModuleInput(preservingNowPlayingPresentation: Bool = false) {
-        cancelOverlayPlacement()
-        accountGauge.dismiss(animated: false)
-        layoutAccountGaugeControls()
-        clearControlHighlights()
-        notesInteraction?.deactivate()
+    /// `forRetraction`: the HUD's close stops every input at once but leaves
+    /// what is drawn (the placement strip and its draft, menus, the confirm
+    /// bar, highlights, module state) to leave with it. The hidden HUD's full
+    /// deactivation (teardown, a shelf concealment) ends the rest.
+    private func deactivateModuleInput(preservingNowPlayingPresentation: Bool = false, forRetraction: Bool = false) {
+        if forRetraction {
+            overlayEditor?.cancelPointer()
+            dropArrangePress()
+            designCanvases.values.forEach { $0.suspendInput() }
+            designContext.overlay.suspendInput()
+            facilityBannerRouter.cancel(); facilityTagRouter.cancel()
+            layoutAccountGaugeControls()
+        } else {
+            cancelOverlayPlacement()
+            accountGauge.dismiss(animated: false)
+            layoutAccountGaugeControls()
+            clearControlHighlights()
+            notesInteraction?.deactivate()
+            // A close's banner leave ends before the HUD is hidden.
+            if retracting { facilityBanner.hide(animated: false) }
+        }
         if !preservingNowPlayingPresentation {
             nowPlayingCanvas.setPresented(false)
             mediaAssemblyCanvas.setPresented(false)
@@ -3931,9 +3985,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         settingsInteractions.values.forEach { $0.deactivate() }
         // A module switch closes the confirm bar and toast at once (spec §1.10).
-        designCanvases.values.forEach { $0.setActive(false) }
+        if !forRetraction { designCanvases.values.forEach { $0.setActive(false) } }
         mapCanvas.releaseRasterWorkingSet()
-        designContext.overlay.reset()
+        if !forRetraction { designContext.overlay.reset() }
         layoutDesignAccessibility()
     }
 
@@ -3960,7 +4014,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseDragged(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         if swallowsArrangePress { return }
-        if overlayEditor != nil { overlayPointerDragged(location); return }
+        if overlayEditor != nil { if allowsModuleInput { overlayPointerDragged(location) }; return }
         if arrangeDrag != nil { dragArrangedModule(to: location); return }
         if notesWorkspaceIsInteractive, notesCanvas.isDragging, let local = notesWorkspacePoint(location) {
             notesInteraction?.mouseDraggedInWorkspace(to: local); return
@@ -3979,7 +4033,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         summonedDuringFileDrag = false
         let releaseLocation = convert(event.locationInWindow, from: nil), far = CGPoint(x: -10_000, y: -10_000)
         if swallowsArrangePress { swallowsArrangePress = false; refreshArrangeCursor(); return }
-        if overlayEditor != nil { overlayPointerUp(releaseLocation); return }
+        if overlayEditor != nil { if allowsModuleInput { overlayPointerUp(releaseLocation) }; return }
         if arrangeDrag != nil {
             // The order saved is the slot under the tile where it is let go.
             if arrangeDrag?.lifted == true { dragArrangedModule(to: releaseLocation, edgeScroll: false) }
@@ -3987,10 +4041,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             refreshArrangeCursor()
             return
         }
-        facilityBannerRouter.pointerUp(at: facilityBannerPoint(releaseLocation) ?? far, in: facilityBanner.layer)
-        facilityTagRouter.pointerUp(at: facilityTagPoint(releaseLocation) ?? far, in: facilityTags.layer)
+        // A press made before the HUD started closing decides nothing on release.
         let release = designBoxPoint(releaseLocation) ?? far
-        designContext.overlay.router.pointerUp(at: release, in: designContext.overlay.layer)
+        if allowsModuleInput {
+            facilityBannerRouter.pointerUp(at: facilityBannerPoint(releaseLocation) ?? far, in: facilityBanner.layer)
+            facilityTagRouter.pointerUp(at: facilityTagPoint(releaseLocation) ?? far, in: facilityTags.layer)
+            designContext.overlay.router.pointerUp(at: release, in: designContext.overlay.layer)
+        }
         if let canvas = activeDesignCanvas {
             canvas.pointerUp(at: release)
             sourceWatch?.refreshSourceCursor()

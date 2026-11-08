@@ -82,9 +82,14 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         else { active = true; refreshActions() }
     }
 
-    func deactivate() {
+    /// `animated`: the HUD's close, whose formatting menu artwork finishes its
+    /// short fade with the notes; its input still stops at once.
+    func deactivate(animated: Bool = false) {
         // Hide immediately when the owner is leaving; the overlay's own close
-        // animation governs the entire workspace and owns its teardown.
+        // animation governs the entire workspace and owns its teardown. The
+        // HUD's close dismisses its menu last, after the cancels below.
+        let closingMenu = animated ? formatting : nil
+        if closingMenu != nil { formatting = nil; formattingNoteID = nil }
         active = false
         finishEditing()
         closeFormatting()
@@ -98,6 +103,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         chooser = nil
         panel?.cancel(nil)
         buttons.values.forEach { $0.isHidden = true }; mediaSliders.values.forEach { $0.isHidden = true }
+        dismiss(closingMenu, animated: true)
     }
 
     @discardableResult func mouseDownInWorkspace(at point: CGPoint, clickCount: Int) -> Bool {
@@ -438,14 +444,15 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         popup.layoutAccessibility()
     }
 
-    /// Input stops at once; the artwork finishes a short fade on the plane.
-    private func dismiss(_ popup: NotesDesktopPopup?) {
+    /// Input stops at once; the artwork finishes a short fade on the plane
+    /// (while active, or `animated`).
+    private func dismiss(_ popup: NotesDesktopPopup?, animated: Bool? = nil) {
         guard let popup else { return }
         popup.cancelInteraction()
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
         popup.removeFromSuperview()
         let layer = popup.chrome
-        guard active, !workspace.env.reducesMotion, layer.superlayer != nil else { layer.removeAllAnimations(); layer.removeFromSuperlayer(); return }
+        guard animated ?? active, !workspace.env.reducesMotion, layer.superlayer != nil else { layer.removeAllAnimations(); layer.removeFromSuperlayer(); return }
         retiringMenuArtwork = layer
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self, weak layer] in

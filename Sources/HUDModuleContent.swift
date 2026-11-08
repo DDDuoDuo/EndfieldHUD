@@ -195,11 +195,9 @@ final class HUDModuleContent {
         (factories[transition.from] as? HUDDirectionalContent)?.prepareToLeave()
         withoutActions { layer.masksToBounds = false }
         let offset = HUDShellPosition.entranceOffset(from: transition.from, to: transition.to)
-        let unit = content.contentUnit
-        let leave = HUDDesignEnvironment(reduceMotion: shouldReduceMotion)
         // A screen skipped below was never attached: there is nothing to leave.
         let shown = current.wrapper.superlayer != nil
-        HUDMotion.leave(current.wrapper, toward: CGPoint(x: offset.x * unit, y: offset.y * unit), env: leave, key: "module.leave")
+        playLeave(current, toward: offset, unit: content.contentUnit)
         let swap = DispatchWorkItem { [weak self] in
             guard let self else { return }
             // One commit for the whole swap. A top-level explicit transaction
@@ -217,6 +215,22 @@ final class HUDModuleContent {
         }
         pendingSwap = swap
         DispatchQueue.main.asyncAfter(deadline: .now() + (shown ? HUDDuration.leave : 0), execute: swap)
+    }
+
+    /// The HUD's close: the shown redesigned screen leaves back toward the side
+    /// its opening entrance came from, the entrance reversed. No selection,
+    /// swap or state changes; cancel() restores the screen. Nothing when reduced.
+    func leaveForClose() {
+        precondition(Thread.isMainThread)
+        guard let content = factories[current.module] as? HUDDirectionalContent, current.wrapper.superlayer != nil else { return }
+        let offset = HUDShellPosition.entranceOffset(from: nil, to: current.module)
+        playLeave(current, toward: CGPoint(x: -offset.x, y: -offset.y), unit: content.contentUnit)
+    }
+
+    /// The module leave (.13 s): `offset` in content px, `unit` design points per px.
+    private func playLeave(_ screen: Screen, toward offset: CGPoint, unit: CGFloat) {
+        HUDMotion.leave(screen.wrapper, toward: CGPoint(x: offset.x * unit, y: offset.y * unit),
+                        env: HUDDesignEnvironment(reduceMotion: shouldReduceMotion), key: "module.leave")
     }
 
     private func finish(_ transition: HUDModuleSelectionState.Transition) {
