@@ -99,7 +99,7 @@ public:
     // or relink survives (the committed records stay).
     void resetSession() override;
     // A published icon changed (the owner extracted, released or replaced
-    // one): the rows re-render in place.
+    // one): each row's tile takes its artwork in place (no rebuild).
     void iconsChanged();
 
     void buildPage(design::Page&) override;
@@ -118,6 +118,7 @@ private:
     std::vector<AppShortcutRequest> pending_;
     std::optional<std::string> relink_;     // the imported record the open chooser relinks
     bool chooser_{}, dropTarget_{}, revealsEnd_{}, built_{};
+    std::vector<std::function<void()>> binders_; // each row's tile artwork (iconsChanged)
     design::Menu::IconTile artwork(std::string_view preset, const ShortcutRecord&) const;
     design::Color originalColor(const ShortcutRecord&) const;
     design::RowPlate& makeRow(const ShortcutRecord&, double width, design::Page&);

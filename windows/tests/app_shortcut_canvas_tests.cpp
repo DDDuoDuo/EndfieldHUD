@@ -238,6 +238,32 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     check(!canvas.chooserOpen() && owner.cancels == 1, "Leaving the module closes the chooser");
 }
 
+// An icon the owner publishes after the page was built (still extracting
+// when the module opened): its tile takes the picture and colour in place,
+// with no rebuild (the entrance keeps running).
+void lateIcons(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner;
+    m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    canvas.setStore(fileOf({record("A", "Alpha", "original"), record("B", "Bravo", "camera")}));
+    w.show(canvas);
+    const auto picture = [&](std::string_view id) -> std::string {
+        for (const auto* layer : control(canvas, "apps:" + std::string(id) + ":icon")->layer().children())
+            if (layer->id().ends_with(".icon")) return layer->content() ? layer->content()->encode() : std::string();
+        throw std::runtime_error("no icon layer");
+    };
+    const auto camera = picture("B");
+    check(picture("A").find("icon.A") == std::string::npos, "Before its extraction the App icon tile shows the fallback");
+    const auto* page = &canvas.page();
+    const auto pages = w.context.pagesBuilt();
+    owner.icons["A"] = true; owner.colors["A"] = d::rgb(0x336699);
+    canvas.iconsChanged();
+    check(&canvas.page() == page && w.context.pagesBuilt() == pages, "A published icon rebuilds no page");
+    check(picture("A").find("icon.A") != std::string::npos && picture("B") == camera, "The tile shows the published icon; a preset tile is unchanged");
+    owner.icons["A"] = false; canvas.iconsChanged();
+    check(&canvas.page() == page && w.context.pagesBuilt() == pages && picture("A").find("icon.A") == std::string::npos, "A released icon goes back to the fallback in place");
+}
+
 // --- The Mac oracle -------------------------------------------------------------------------
 struct Oracle {
     const Json& data;
@@ -358,6 +384,7 @@ int main(int argc, char** argv) {
         if (argc < 3) throw std::runtime_error("usage: app_shortcut_canvas_tests ORACLE RESOURCES");
         const auto packaged = assets(argv[2]);
         canvasRules(packaged->artwork());
+        lateIcons(packaged->artwork());
         if (const auto data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "presets", "glyphFrames", "trim"})) {
             artworkOracle(*data, packaged->artwork(), argv[2]);
             Oracle oracle(*data);

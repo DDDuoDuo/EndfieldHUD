@@ -13,21 +13,21 @@ namespace {
 class AppShortcutTile final : public d::Control {
 public:
     AppShortcutTile(d::Builder& b, std::string id, std::string label, const d::Menu::IconTile& artwork)
-        : Control(b.env, id, std::move(label), b.layer(id)), brighten_(&b.layer(id + ".brighten")) {
+        : Control(b.env, id, std::move(label), b.layer(id)), picture_(&b.layer(id + ".icon")), brighten_(&b.layer(id + ".brighten")) {
         const d::Rect bounds{0, 0, artwork.size.width, artwork.size.height};
         layer().setBounds(artwork.size); layer().setAnimatable();
-        d::setBackground(layer(), artwork.fill.value_or(d::clear));
-        d::Layer& picture = b.layer(id + ".icon");
-        picture.setFrame(artwork.frame.value_or(d::Rect{5, 5, bounds.width - 10, bounds.height - 10}));
-        // A nil CGImage draws nothing (an unreadable icon).
-        if (!artwork.image.key.empty()) picture.setContent(d::image(picture.id(), d::localBounds(picture), artwork.image, "resizeAspect", std::nullopt, true));
+        draw(artwork);
         d::Layer& ring = b.layer(id + ".ring");
         ring.setFrame(bounds); d::setBorder(ring, std::nullopt, d::black(.25), 1);
         brighten_->setFrame(bounds); d::setBackground(*brighten_, d::white(.07)); brighten_->setAnimatable();
         brighten_->setValue(d::Channel::opacity, 0);
-        for (d::Layer* part : {&picture, brighten_, &ring}) layer().add(*part);
+        for (d::Layer* part : {picture_, brighten_, &ring}) layer().add(*part);
         setTarget(bounds);
     }
+    // The tile's colour and picture, in place (an icon the owner published
+    // after the row was built), the row and its entrance left as they are.
+    void setArtwork(const d::Menu::IconTile& artwork) { if (artwork != shown_) draw(artwork); }
+    const d::Menu::IconTile& artwork() const noexcept { return shown_; }
     void hoverChanged() override { d::applyHoverMotion(*this, 1, 1, .965, brighten_); }
     void pressChanged() override { d::applyHoverMotion(*this, 1, 1, .965, brighten_); }
     std::optional<d::AccessibilityRole> accessibilityRole() const override { return d::AccessibilityRole::popUp; }
@@ -37,7 +37,16 @@ public:
         out.push_back(std::move(item));
     }
 private:
-    d::Layer* brighten_;
+    d::Layer *picture_, *brighten_;
+    d::Menu::IconTile shown_;
+    void draw(const d::Menu::IconTile& artwork) {
+        shown_ = artwork;
+        d::setBackground(layer(), artwork.fill.value_or(d::clear));
+        picture_->setFrame(artwork.frame.value_or(d::Rect{5, 5, artwork.size.width - 10, artwork.size.height - 10}));
+        // A nil CGImage draws nothing (an unreadable icon).
+        if (!artwork.image.key.empty()) picture_->setContent(d::image(picture_->id(), d::localBounds(*picture_), artwork.image, "resizeAspect", std::nullopt, true));
+        else picture_->clearContent();
+    }
 };
 }
 
@@ -68,7 +77,9 @@ void AppShortcutCanvas::resetSession() {
     dropTarget_ = false; relink_.reset();
     Canvas::resetSession();
 }
-void AppShortcutCanvas::iconsChanged() { if (renderedLanguage() && !editingText()) rerender(); }
+// Each tile takes its artwork in place: the Mac has every icon at build, so
+// a late one must not rebuild the page (and drop its entrance) here.
+void AppShortcutCanvas::iconsChanged() { if (renderedLanguage()) for (const auto& bind : binders_) bind(); }
 void AppShortcutCanvas::showError(std::string message) { toast(d::Icon::warn, "Notice", "提示", std::move(message)); }
 const ShortcutRecord* AppShortcutCanvas::item(std::string_view id) const {
     const auto found = std::find_if(items_.begin(), items_.end(), [&](const auto& v) { return v.id == id; });
@@ -147,6 +158,7 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
 // MARK: Page (:99-145)
 void AppShortcutCanvas::buildPage(d::Page& page) {
     built_ = true;
+    binders_.clear();
     auto& add = page.make<d::Button>("apps:add", text("Add App", "添加应用"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
     add.place({0, 0});
     add.setEnabled(store_.has_value());
@@ -191,6 +203,7 @@ d::RowPlate& AppShortcutCanvas::makeRow(const ShortcutRecord& record, double wid
     auto& tile = page.make<AppShortcutTile>("apps:" + record.id + ":icon", text("Choose icon", "选择图标") + ", " + record.name,
         artwork(record.iconPreset, record));
     const std::string id = record.id;
+    binders_.push_back([this, &tile, id] { if (const auto* current = item(id)) tile.setArtwork(artwork(current->iconPreset, *current)); });
     tile.onActivate = [this, &tile, id] {
         if (menuOpen()) { closeMenu(); return; }
         if (const auto* current = item(id)) openIconMenu(*current, tile);
