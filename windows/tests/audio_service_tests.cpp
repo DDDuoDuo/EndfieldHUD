@@ -232,11 +232,12 @@ void lifecycle(){
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.4f)<1e-6f,"Session attenuated relative to its original level");
     {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
     h.wake(&World::topologyWake);
-    h.until([&](const auto&x){return x.defaultOutputID==usb&&x.routesStoppedByDeviceChange&&!app(x,player)->gain;},"Output change stops owned routes with the source notice");
+    h.until([&](const auto&x){return x.defaultOutputID==usb&&!app(x,player)->gain;},"Output change stops owned routes");
+    check(!s.snapshot().applicationError,"The routes end quietly, like an explicit stop (source 730f4bb)");
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f,"The previous output's session is restored to its original level");
     {std::lock_guard l(h.world->m);check(h.world->bound==usb&&h.world->sessionCloses==1&&h.world->sessionOpens==2,"Controls and sessions follow the new default output");}
     check(s.setApplicationGain(player,.25f),"Gain on the new output");
-    h.until([&](const auto&x){const auto*a=app(x,player);return !x.routesStoppedByDeviceChange&&a&&a->state==n::AudioApplicationRouteState::active;},"Explicit per-app command clears the notice");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active;},"A route starts on the new output");
 
     check(s.vote(n::AudioVoter::volume,false)==0,"Volume leaves");
     h.until([](const auto&x){return x.paused&&x.applicationsPaused&&!x.available&&x.topologyActive;},"Hidden Volume pauses controls and sessions; topology stays for the Event Log");
@@ -355,6 +356,25 @@ void processExit(){
     h.until([](const auto&x){const auto*a=app(x,"4244:300");return a&&a->state==n::AudioApplicationRouteState::direct&&a->available;},"The restarted app is listed as direct");
     s.stop();
 }
+// Owned attenuation keeps the device listener while nobody shows per-app
+// audio: an output change then restores the routes on the old endpoint, and
+// the listener and sessions close with the last route.
+void hiddenOutputChange(){
+    Harness h;auto&s=*h.service;const auto player=std::string("4242:100");
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown");
+    h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2;},"Sessions listed");
+    check(s.setApplicationGain(player,.5f),"Owned route");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active;},"Route active");
+    check(s.vote(n::AudioVoter::volume,false)==0,"Volume hidden with the route owned");
+    h.until([](const auto&x){return x.applicationsPaused&&x.topologyActive;},"Only the device listener stays");
+    {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
+    h.wake(&World::topologyWake);
+    h.until([](const auto&x){return !x.topologyActive;},"The listener closes with the last route");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f,"The speaker session is restored on the old endpoint");
+    check(s.snapshot().applications.empty()&&!s.snapshot().applicationError,"The route is gone, quietly");
+    {std::lock_guard l(h.world->m);check(h.world->sessionOpens==1&&!h.world->sessionWake&&!h.world->violation,"No session manager opened on the new output while hidden");}
+    s.stop();
+}
 // Now Playing reads AudioApplicationRoute::rendering for window-title
 // players (NetEase keeps the song in its title while paused). A session
 // state event republishes it without repainting Volume; hiding per-app audio
@@ -409,7 +429,7 @@ void defaultDevices(){
             check(w.defaultWrites.size()==3&&w.defaultOutput==usb&&w.multimediaOutput==usb&&w.communicationsOutput==usb,"Console, multimedia and communications are all set");
             check(w.defaultInput==mic&&w.multimediaInput==mic&&w.communicationsInput==mic,"An output switch leaves the input defaults");}
         h.world_until([](World&w){return w.bound==usb&&w.sessionOpens==2;},"The volume control and per-app sessions follow the new output");
-        check(s.snapshot().canSetDefaultOutput&&!s.snapshot().routesStoppedByDeviceChange,"Switching stays available; a switch alone shows no routing notice");
+        check(s.snapshot().canSetDefaultOutput&&!s.snapshot().applicationError,"Switching stays available and quiet");
         check(s.setDefaultEndpoint(n::AudioFlow::input,headset),"Input switch accepted");
         h.until([&](const auto&x){return x.defaultInputID==headset;},"The published default input follows the switch");
         {std::lock_guard l(h.world->m);const auto&w=*h.world;check(w.defaultWrites.size()==6&&w.defaultInput==headset&&w.multimediaInput==headset&&w.communicationsInput==headset&&w.defaultOutput==usb,"Every input role is set; the output stays");}
@@ -539,10 +559,16 @@ void binding(){
     pump([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     check(callbacks.setMute(delivered.outputID,true),"Mute reaches the binding");
     pump([&]{return delivered.muted==true;},"Mute readback");
-    // The Output menu (VolumeCanvas.openDeviceMenu): stop the routes, then switch.
+    // The Output menu (VolumeCanvas.openDeviceMenu): stop the routes quietly,
+    // then switch (730f4bb: no status line of its own).
+    pump([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==2;},"App rows before the switch");
+    check(callbacks.setAppGain("4242:100",.5),"An app route before the switch");
+    pump([&]{const auto&a=delivered.applications;return std::any_of(a.begin(),a.end(),[](const auto&x){return x.state==n::VolumeAppState::active&&x.gain==.5;});},"The route is active before the switch");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.4f)<1e-6f,"The old output's session is attenuated");
     callbacks.stopAllApps();check(callbacks.setDefaultOutput("{0.0.0.00000000}.{usb}"),"The Output menu's choice is accepted");
     pump([&]{return delivered.outputID=="{0.0.0.00000000}.{usb}"&&delivered.canSetVolume;},"The new default output reaches the Volume UI with its controls");
-    check(!delivered.status&&delivered.routingStopped,"Switching to another output shows the routing notice, as the source's stopAll(reason:) does with no owned route");
+    check(!delivered.status&&!delivered.applicationMessage&&!delivered.perAppStatus,"Switching to another output is quiet: no toast, app message or status line");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f,"The old output's session is back at its original level");
     callbacks.stopAllApps();check(callbacks.setDefaultOutput("{0.0.0.00000000}.{speaker}"),"Switching back");
     pump([&]{return delivered.outputID=="{0.0.0.00000000}.{speaker}";},"The previous output is the default again");
     {std::lock_guard l(h.world->m);check(h.world->defaultWrites.size()==6&&h.world->communicationsOutput==speaker&&!h.world->violation,"Each switch wrote the three roles on the worker");}
@@ -560,7 +586,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();processExit();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();processExit();hiddenOutputChange();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif

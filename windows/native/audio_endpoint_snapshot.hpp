@@ -45,9 +45,6 @@ struct AudioEndpointSnapshot {
     bool applicationsSupported{},applicationsPaused{true};
     std::vector<AudioApplicationRoute>applications;
     std::int32_t applicationError{};
-    // Source PerAppAudioController.stopAll(reason:) after an output change.
-    // Cleared by the next explicit per-app command.
-    bool routesStoppedByDeviceChange{};
     // Topology tier. A failed/incomplete enumeration keeps the previous list:
     // a read error is never reported as a disconnection. The generation
     // advances on the first complete read after the listener opens (the

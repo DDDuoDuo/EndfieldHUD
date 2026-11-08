@@ -349,9 +349,10 @@ public:
         void switchSessions(const std::wstring&target){
             if(!sessions->endpoint().empty()){
                 if(owned()){
-                    // Source: "App routing stopped because the output device changed."
+                    // Another output took over: the routes end quietly, like an
+                    // explicit stop (source 730f4bb).
                     const auto hr=call([&]{return routes.stopAll(*sessions);});
-                    state.routesStoppedByDeviceChange=true;if(hr<0)state.applicationError=hr;
+                    if(hr<0)state.applicationError=hr;
                 }
                 if(journal)journal->demote(sessions->endpoint());
                 touched();
@@ -400,18 +401,14 @@ public:
         void applicationCommand(const Command&c){
             using K=Command::Kind;
             if(c.kind==K::gain){
-                state.routesStoppedByDeviceChange=false;
                 if(!sessions||!resumed||!state.applicationsSupported){state.applicationError=pending;return;}
                 state.applicationError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
             }else if(c.kind==K::stopApplication){
-                state.routesStoppedByDeviceChange=false;
                 if(!sessions)return;state.applicationError=call([&]{return routes.stop(c.id,*sessions);});
             }else{
-                // stopApplications is the Output menu's stop before it switches
-                // to another device (source VolumeCanvas.openDeviceMenu:
-                // stopAll(reason: "App routing stopped because the output
-                // device changed."), shown whether or not a route was owned).
-                if(c.kind==K::stopApplications)state.routesStoppedByDeviceChange=true;
+                // stopApplications is the Output menu's quiet stop before it
+                // switches to another device (source VolumeCanvas.openDeviceMenu:
+                // stopAll(), with no status of its own since 730f4bb).
                 if(!sessions)return;const auto hr=call([&]{return routes.stopAll(*sessions);});
                 state.applicationError=hr;
             }
@@ -446,7 +443,7 @@ public:
             if(topology&&endpointsOpen)refreshTopology();
             if(sessions&&!(demand&tierApplications)&&!sessions->endpoint().empty()&&sessions->endpoint()!=state.defaultOutputID&&owned()){
                 const auto hr=call([&]{return routes.stopAll(*sessions);});
-                state.routesStoppedByDeviceChange=true;if(hr<0)state.applicationError=hr;
+                if(hr<0)state.applicationError=hr;
                 touched(); // Failed restores stay owned here and remain retryable.
             }
             syncVolume((demand&tierEndpoints)!=0);

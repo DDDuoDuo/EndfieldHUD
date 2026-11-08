@@ -170,6 +170,5 @@ void workerStatus(){
     Graph graph;gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
     graph.audio.commandError=static_cast<std::int32_t>(0x8007048Fu);graph.changed();check(binding.snapshot().status=="The audio device changed. Try the control again.","An asynchronous worker command failure is surfaced with the source text");
     graph.audio.commandError=0;graph.changed();check(!binding.snapshot().status,"A later successful command clears the asynchronous status");
-    graph.audio.routesStoppedByDeviceChange=true;graph.changed();check(binding.snapshot().routingStopped,"Output change notice reaches the presentation snapshot");
 }
 int main(){try{lifecycle();commands();selection();lifetime();boundaries();revisit();endpointTraits();workerStatus();std::cout<<"PASS "<<checks<<" injected Volume provider checks (no native audio accessed)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

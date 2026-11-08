@@ -110,8 +110,7 @@ public:
     bool setApplicationGain(std::string application,float);
     bool stopApplication(std::string application);
     // The Output menu's stop before it switches to another device: restores
-    // every owned route and reports routesStoppedByDeviceChange (source
-    // stopAll(reason:)), whether or not a route was owned.
+    // every owned route quietly (source stopAll(), no status of its own).
     bool stopApplications();
     // System suspend: restore every owned route (source: sleep stops routes).
     // Resume re-reads the device list once.

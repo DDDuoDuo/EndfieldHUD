@@ -67,7 +67,7 @@ void report(const n::AudioEndpointSnapshot&s,n::AudioTopologyRecorder&recorder,s
         {"canSetVolume",s.canSetVolume},{"canSetMute",s.canSetMute},{"canSetBalance",s.canSetBalance},{"commandError",s.commandError}});
     Json::Array apps;for(const auto&a:s.applications)apps.emplace_back(Json::Object{{"id",a.id},{"name",text(a.name)},{"pid",static_cast<std::int64_t>(a.pid)},{"available",a.available},
         {"state",a.state==n::AudioApplicationRouteState::active?"active":a.state==n::AudioApplicationRouteState::failed?"failed":"direct"},{"gain",optional(a.gain)},{"appUserModelID",a.appUserModelID},{"error",a.error}});
-    emit(Json::Object{{"event","applications"},{"supported",s.applicationsSupported},{"routesStoppedByDeviceChange",s.routesStoppedByDeviceChange},{"error",s.applicationError},{"applications",std::move(apps)}});
+    emit(Json::Object{{"event","applications"},{"supported",s.applicationsSupported},{"error",s.applicationError},{"applications",std::move(apps)}});
     if(s.topologyGeneration!=generation){
         generation=s.topologyGeneration;
         for(const auto&e:recorder.receive(s.topology))emit(Json::Object{{"event",e.connected?"audioDeviceConnected":"audioDeviceDisconnected"},{"device",e.device}});

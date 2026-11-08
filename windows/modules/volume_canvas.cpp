@@ -89,11 +89,10 @@ const native::VolumeApplication* VolumeCanvas::application(std::string_view id) 
     const auto it = std::find_if(snapshot_.applications.begin(), snapshot_.applications.end(), [&](const auto& a) { return a.id == id; });
     return it == snapshot_.applications.end() ? nullptr : &*it;
 }
-// PerAppAudioController.statusMessage: the runtime's per-app status, or the
-// route stop after an output change (stopAll(reason:)).
+// PerAppAudioController.statusMessage: the runtime's per-app status. A route
+// stop after an output change adds none of its own (730f4bb).
 std::optional<std::string> VolumeCanvas::perAppStatus() const {
-    if (snapshot_.perAppStatus) return snapshot_.perAppStatus->empty() ? std::nullopt : snapshot_.perAppStatus;
-    if (snapshot_.routingStopped) return text("App routing stopped because the output device changed.", "输出设备已更改，应用混音已停止。");
+    if (snapshot_.perAppStatus && !snapshot_.perAppStatus->empty()) return snapshot_.perAppStatus;
     return std::nullopt;
 }
 int VolumeCanvas::visibleApplicationRows() const { return perAppStatus() ? 2 : 3; }
@@ -267,8 +266,7 @@ void VolumeCanvas::openDeviceMenu(bool input, const d::Dropdown& anchor) {
             .enabled = input ? device.canBeDefaultInput : device.canBeDefaultOutput});
     openMenu(input ? "input" : "output", std::move(items), anchor, std::nullopt, [this, input](const d::Menu::Item& item) {
         if (input) { if (actions_.setDefaultInput) (void)actions_.setDefaultInput(item.id); return; }
-        // "App routing stopped because the output device changed.": stopAllApps carries this reason (the runtime
-        // reports it as routingStopped, whether or not a route was owned).
+        // The routes stop quietly before the switch (730f4bb: stopAll() has no reason).
         if (item.id != snapshot_.outputID && actions_.stopAllApps) actions_.stopAllApps();
         if (actions_.setDefaultOutput) (void)actions_.setDefaultOutput(item.id);
     });

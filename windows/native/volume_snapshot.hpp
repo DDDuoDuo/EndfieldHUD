@@ -42,9 +42,6 @@ struct VolumeSnapshot {
     // status: AudioDeviceController.statusMessage; applicationMessage:
     // applicationActivityMessage; perAppStatus: PerAppAudioController.statusMessage.
     std::optional<std::string>status,applicationMessage,perAppStatus;
-    // Owned routes were restored because the default output changed; shown
-    // as the source per-app status until the next explicit per-app command.
-    bool routingStopped{};
     bool operator==(const VolumeSnapshot&)const=default;
 };
 struct VolumeCallbacks {
