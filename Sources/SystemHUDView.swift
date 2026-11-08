@@ -2666,10 +2666,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if !retracting { notesInteraction?.setActive(notesWorkspaceIsInteractive) }
         // Presentation changes come first: Now Playing retires the shared audio
         // observer before Volume's page, activated below, starts its own.
-        let presenting = window != nil && !retracting && modulePresentationAllowed
-        nowPlayingCanvas.setPresented(presenting && selectedModule == .nowPlaying)
-        mediaAssemblyCanvas.setPresented(presenting && selectedModule == .mediaAssembly)
-        calendarCanvas.setPresented(presenting && selectedModule == .calendar)
+        if !retracting {
+            let presenting = window != nil && modulePresentationAllowed
+            nowPlayingCanvas.setPresented(presenting && selectedModule == .nowPlaying)
+            mediaAssemblyCanvas.setPresented(presenting && selectedModule == .mediaAssembly)
+            calendarCanvas.setPresented(presenting && selectedModule == .calendar)
+        }
         for (module, input) in settingsInteractions {
             input.setActive(allowsModuleInput && !moduleContent.isTransitioning && selectedModule == module)
         }
@@ -3978,7 +3980,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             // A close's banner leave ends before the HUD is hidden.
             if retracting { facilityBanner.hide(animated: false) }
         }
-        if !preservingNowPlayingPresentation {
+        // A close keeps the presented pages (and Now Playing's volume pop-up)
+        // drawn to leave with the module; the hidden HUD's deactivation ends them.
+        if !preservingNowPlayingPresentation && !forRetraction {
             nowPlayingCanvas.setPresented(false)
             mediaAssemblyCanvas.setPresented(false)
             calendarCanvas.setPresented(false)
