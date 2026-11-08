@@ -978,10 +978,7 @@ std::optional<core::Module> Application::Impl::AreaHost::hoveredModule()const no
     if(!impl_.session||!impl_.contentCatalog)return std::nullopt;
     const auto hovered=impl_.session->hovered();if(!hovered)return std::nullopt;
     const auto&actions=impl_.session->actions();const auto action=actions.find(*hovered);if(action==actions.end())return std::nullopt;
-    for(const auto&e:impl_.contentCatalog->entries())if(e.action==action->second){
-        for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==e.target)return module;}
-        return std::nullopt;
-    }
+    for(const auto&e:impl_.contentCatalog->entries())if(e.action==action->second)return core::moduleNamed(e.target);
     return std::nullopt;
 }
 bool Application::Impl::AreaHost::isolatedDataRoot()const noexcept{return impl_.args.isolatedDataRoot;}

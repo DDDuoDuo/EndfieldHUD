@@ -75,6 +75,9 @@ void moduleGeometry() {
           "Content frame is offset into the shared440x440 module viewport");
     check(moduleIdentifier(Module::fileShelf) == "fileShelf" && moduleIdentifier(Module::activityMonitor) == "activityMonitor",
           "Stable identifiers retain current Mac raw values");
+    for (unsigned n = 0; n <= static_cast<unsigned>(Module::profile); ++n)
+        check(moduleNamed(moduleIdentifier(static_cast<Module>(n))) == static_cast<Module>(n), "Every raw value names its module");
+    check(!moduleNamed("teleporter") && !moduleNamed("") && !moduleNamed("Map"), "A name that is no raw value names no module");
     auto direction = moduleDirection(Module::notes, Module::map);
     check(direction.x == 0 && direction.y == 1, "Same-group forward selection moves down in Mac declaration order");
     direction = moduleDirection(Module::map, Module::notes);

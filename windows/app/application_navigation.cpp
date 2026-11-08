@@ -140,10 +140,7 @@ std::vector<std::uint64_t> Application::Impl::layoutRightActions(std::span<const
 }
 // OverlayController: the HUD reopens on moduleLayout.restorable(lastSystemModule).
 core::Module Application::Impl::restorableModule(core::Module last) const {
-    const auto name = moduleLayout.restorable(core::moduleIdentifier(last));
-    for (unsigned i = 0; i <= static_cast<unsigned>(core::Module::profile); ++i)
-        if (core::moduleIdentifier(static_cast<core::Module>(i)) == name) return static_cast<core::Module>(i);
-    return last;
+    return core::moduleNamed(moduleLayout.restorable(core::moduleIdentifier(last))).value_or(last);
 }
 
 // Read when a client asks (no allocation): the current frame's geometry.

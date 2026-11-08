@@ -65,6 +65,11 @@ std::string_view moduleIdentifier(Module module) {
         "system", "display", "hotkeys", "about", "storage", "activityMonitor", "power", "profile"};
     return identifiers.at(static_cast<std::size_t>(module));
 }
+std::optional<Module> moduleNamed(std::string_view identifier) noexcept {
+    for (unsigned n = 0; n <= static_cast<unsigned>(Module::profile); ++n)
+        if (moduleIdentifier(static_cast<Module>(n)) == identifier) return static_cast<Module>(n);
+    return std::nullopt;
+}
 MotionRect moduleContentFrame(Module module) {
     switch (module) {
     case Module::reader: case Module::archive: case Module::calendar:

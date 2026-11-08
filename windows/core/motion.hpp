@@ -20,6 +20,8 @@ struct MotionPoint { double x{}, y{}; bool operator==(const MotionPoint &) const
 struct MotionRect { double x{}, y{}, width{}, height{}; };
 ModuleGroup moduleGroup(Module module);
 std::string_view moduleIdentifier(Module module);
+// HUDModule(rawValue:): the module a saved name stands for, nullopt for none.
+std::optional<Module> moduleNamed(std::string_view identifier) noexcept;
 MotionRect moduleContentFrame(Module module);
 MotionRect moduleLocalContentFrame(Module module);
 MotionPoint moduleDirection(Module from, Module to);

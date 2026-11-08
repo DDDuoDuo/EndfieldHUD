@@ -13,8 +13,7 @@ unsigned checks{};
 void check(bool value, const std::string& why) { ++checks; if (!value) throw std::runtime_error(why); }
 
 core::Module moduleNamed(std::string_view name) {
-    for (unsigned n = 0; n <= static_cast<unsigned>(core::Module::profile); ++n)
-        if (core::moduleIdentifier(static_cast<core::Module>(n)) == name) return static_cast<core::Module>(n);
+    if (const auto module = core::moduleNamed(name)) return *module;
     throw std::runtime_error("Unknown source module " + std::string(name));
 }
 int phaseIndex(core::SystemOverlayPhase value) { return static_cast<int>(value); }
