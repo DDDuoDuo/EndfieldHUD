@@ -46,6 +46,7 @@ void MediaAssemblyCanvas::setPresented(bool value) {
 void MediaAssemblyCanvas::show(double now) {
     env().now = now;
     enteringStickers();
+    revealReleasedPreview();
     setPresented(true);
     Canvas::show(now);
 }
@@ -55,6 +56,7 @@ void MediaAssemblyCanvas::didActivate() {
     // makeContent): activation after willLeave presents it again, so the
     // session reactivates and renders one fresh preview.
     enteringStickers();
+    revealReleasedPreview();
     setPresented(true);
     const auto& session = controller_->session();
     if (session.exporting() && !exportShown_) exportShown_ = session.progress();
@@ -732,6 +734,13 @@ void MediaAssemblyCanvas::takePreview() {
     if (revealOnPreview_) { revealOnPreview_ = false; stage().setContentOpacity(0, false); stage().setContentOpacity(1, true); }
 }
 void MediaAssemblyCanvas::releasePreview() noexcept { if (stage_) stage_->releaseImages(); }
+// The owner released the stage's picture while the page was hidden (a switch
+// away or a HUD close). The Mac keeps it (a switch back cross-fades the kept
+// artwork) or builds a fresh canvas (a reopen fades the preview in), so the
+// re-rendered preview fades in here instead of popping into the empty stage.
+void MediaAssemblyCanvas::revealReleasedPreview() {
+    if (stage_ && controller_->session().document() && !stage_->image()) revealOnPreview_ = true;
+}
 // Every stage layer from the current state, in place.
 void MediaAssemblyCanvas::layoutStage() {
     if (!renderedLanguage()) return;

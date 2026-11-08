@@ -228,6 +228,7 @@ private:
     const MediaAssemblySticker* selectedItem() const;
     const MediaAssemblySticker* sticker(std::string_view id) const;
     void takePreview();
+    void revealReleasedPreview();
     void layoutStage();
     static design::Point stagePoint(design::Point);
     void zoomStep(double factor);
