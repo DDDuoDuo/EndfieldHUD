@@ -148,8 +148,8 @@ public:
     // The store changed outside the canvas (a relink, the import ledger read):
     // reload, re-render when the structure changed (no selection change).
     void storeChanged();
-    // Accessibility and verification actions (:596-612): shelf:add,
-    // shelf:clear, shelf:<id>:select|open|reveal|remove (+ Windows :relink).
+    // Accessibility and verification actions (:601-624): shelf:add,
+    // shelf:clear, shelf:<id>:select|open|reveal|remove|menu (+ Windows :relink).
     bool perform(std::string_view);
     // ShelfFileProperties.read's completion (:378-385).
     void propertiesRead(const std::string& id, ShelfFileProperties);
@@ -269,6 +269,9 @@ private:
     void loadProperties(const FileShelfItem&);
     void selectionChanged();
     void beginDrag(const std::string& id);
+    // A file's Open / Reveal / Remove menu (Relink for an imported item
+    // awaiting it), from a right-click at a point or the tile's ⋯ (`anchor`).
+    void openItemMenu(std::string_view itemID, design::Rect anchorRect, const design::Control* anchor);
     void chooseFiles();
     void reveal(const std::set<std::string, std::less<>>&, bool animated);
     void finishClear();

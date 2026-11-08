@@ -80,16 +80,22 @@ std::optional<std::string> FileShelfItem::sizeLabel() const {
     return d::format::fileSize(*byteCount);
 }
 
-// --- ShelfTile (:731-773): the shared archive tile plus the press that
-// becomes either a click (selection) or, after 5 px, a drag-out ------------------
+// --- ShelfTile (:765-790): the shared archive tile with its ⋯ plus the
+// press that becomes either a click (selection) or, after 5 px, a drag-out ---------
 class FileShelfCanvas::Tile final : public d::Control {
 public:
     Tile(d::Builder& b, const FileShelfItem& item, int index, double width, int columns, bool redacted, FileShelfCanvas& canvas)
-        : Control(b.env, "file:" + std::to_string(index), spokenLabel(item, redacted, b.env), b.layer("file:" + std::to_string(index))),
+        : Control(b.env, controlID(index), spokenLabel(item, redacted, b.env), b.layer(controlID(index))),
           itemID(item.id), number(index), canvas_(&canvas) {
         const auto language = b.env.language;
         tile = &b.make<d::ArchiveTile>(tileID(item, columns), index, item.name, tileKind(item), extensionLabel(item),
             sizeTag(item, language), std::nullopt, width, 100.0, redacted);
+        more = &attachMore(*tile, item, index, redacted, b.env);
+        // The ⋯ opens the tile's menu; registered after its tile, so its press never selects or drags the tile.
+        more->onActivate = [this] {
+            if (canvas_->menuOpen()) { canvas_->closeMenu(); return; }
+            canvas_->openItemMenu(itemID, more->rect(canvas_->root()), more);
+        };
         auto& l = layer();
         l.setAnimatable();                 // the add entrance and the Clear `gone`
         l.setPartRoot(true);
@@ -98,11 +104,23 @@ public:
         l.add(tile->layer());
     }
     d::ArchiveTile* tile{};
+    d::TileMoreButton* more{};
     std::string itemID;
     int number{};
+    static std::string controlID(int index) { return "file:" + std::to_string(index); }
+    // The spoken name: "Redacted" while recording, never the file's name.
+    static std::string spokenName(const FileShelfItem& item, bool redacted, core::Language language) {
+        return redacted ? core::localized("Redacted", "已隐藏", language) : item.name;
+    }
+    // The ⋯ of the tile numbered `index` ("file:<n>:more", "More, <name>"),
+    // also on a tile of the other layout built ahead (same artwork).
+    static d::TileMoreButton& attachMore(d::ArchiveTile& tile, const FileShelfItem& item, int index, bool redacted, const d::Environment& environment) {
+        return tile.attachMore(controlID(index) + std::string(d::TileMoreButton::suffix),
+            d::TileMoreButton::label(environment, spokenName(item, redacted, environment.language)));
+    }
     static std::string spokenLabel(const FileShelfItem& item, bool redacted, const d::Environment& environment) {
         const auto language = environment.language;
-        std::string out = redacted ? core::localized("Redacted", "已隐藏", language) : item.name;
+        std::string out = spokenName(item, redacted, language);
         out += ", " + kindText(item, language);
         if (const auto size = sizeTag(item, language)) out += ", " + *size;
         return out;
@@ -303,9 +321,9 @@ void FileShelfCanvas::syncTiles(d::Page& page, double offset, bool routing) {
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (wanted.contains(it->first)) { ++it; continue; }
         Tile& tile = *it->second;
-        tile.clearInteractionState();
+        tile.clearInteractionState(); tile.more->clearInteractionState();
         tile.layer().removeFromParent();
-        page.remove(tile);
+        page.remove(tile); page.remove(*tile.more);
         parked_.emplace(it->first, &tile);
         it = tiles_.erase(it); changed = true;
     }
@@ -321,7 +339,7 @@ void FileShelfCanvas::syncTiles(d::Page& page, double offset, bool routing) {
         tile->layer().setFrame(layout_->frame(n));
         grid_->content().add(tile->layer());
         if (selected) tile->tile->setSelected(true);
-        page.add(*tile);
+        page.add(std::vector<d::Control*>{tile, tile->more});
         if (!routing) page.stagger(tile->layer());
         tiles_.emplace(value.id, tile); changed = true;
     }
@@ -369,6 +387,7 @@ bool FileShelfCanvas::buildAlternates(d::Page& page, std::size_t limit) {
         if (added == limit) return false;
         auto& tile = page.make<d::ArchiveTile>(id, int(n) + 1, value.name, tileKind(value), extensionLabel(value),
             sizeTag(value, env().language), std::nullopt, other->tileWidth, 100.0, recording);
+        Tile::attachMore(tile, value, int(n) + 1, recording, env());
         // Transparent, not hidden: a hidden layer emits its text with the box
         // density (a different artwork from the shown tile's).
         tile.layer().setValue(d::Channel::opacity, 0);
@@ -814,6 +833,11 @@ bool FileShelfCanvas::perform(std::string_view value) {
     else if (verb == "reveal") reveal(std::string_view(id));
     else if (verb == "remove") remove({id});
     else if (verb == "relink" && found->awaitingRelink && services_.relink) services_.relink(id);
+    else if (verb == "menu") {
+        const auto tile = tiles_.find(id);
+        const d::TileMoreButton* more = tile == tiles_.end() ? nullptr : tile->second->more;
+        openItemMenu(id, more ? more->rect(root()) : tileRect(id).value_or(d::Rect{}), more);
+    }
     else return false;
     return true;
 }
@@ -867,9 +891,14 @@ bool FileShelfCanvas::handleRightPointerDown(d::Point point) {
         if (!d::isVisible(layer, root()) || !d::isUnclipped(layer, point, root())) continue;
         if (const auto local = d::convert(point, root(), layer); local && tile->contains(*local)) { hit = tile; break; }
     }
-    if (!hit) return false;
-    const auto* value = item(hit->itemID);
-    if (!value) return false;
+    if (!hit || !item(hit->itemID)) return false;
+    openItemMenu(hit->itemID, d::Rect{point.x, point.y, 1, 1}, nullptr);
+    return true;
+}
+// A file's menu, from a right-click at a point or its ⋯ (`anchor`) (:682-695).
+void FileShelfCanvas::openItemMenu(std::string_view itemID, d::Rect anchorRect, const d::Control* anchor) {
+    const auto* value = item(itemID);
+    if (!value) return;
     const bool available = !value->availabilityError;
     const auto language = env().language;
     std::vector<d::Menu::Item> menu;
@@ -878,13 +907,12 @@ bool FileShelfCanvas::handleRightPointerDown(d::Point point) {
     menu.push_back({.id = "reveal", .title = shelfText(ShelfText::revealInExplorer, language), .enabled = available});
     menu.push_back({.id = "remove", .title = text("Remove from shelf", "从暂存架移除"), .danger = true, .separatorBefore = true});
     const std::string id = value->id;
-    openMenu("shelf.menu", std::move(menu), d::Rect{point.x, point.y, 1, 1}, nullptr, 170.0, [this, id](const d::Menu::Item& pick) {
+    openMenu("shelf.menu", std::move(menu), anchorRect, anchor, 170.0, [this, id](const d::Menu::Item& pick) {
         if (pick.id == "open") open(id);
         else if (pick.id == "reveal") this->reveal(std::string_view(id));
         else if (pick.id == "relink") { if (services_.relink) services_.relink(id); }
         else this->remove({id});
     });
-    return true;
 }
 void FileShelfCanvas::accessibilityItems(std::vector<d::AccessibilityItem>& out) const {
     Canvas::accessibilityItems(out);
