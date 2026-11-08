@@ -810,6 +810,8 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME compact_runtime_builder_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_watch_runtime_input_tests.py")
+    # Catalog lookups written with a literal pair: in the catalog, no final full stop, no middle dot (tools/check_interface_text.py).
+    add_test(NAME interface_text_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_interface_text_tests.py")
     foreach(test shader_translation source_frame_comparison)
       add_test(NAME ${test}_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_${test}.py")
     endforeach()
