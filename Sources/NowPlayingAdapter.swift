@@ -4,7 +4,9 @@ import Darwin
 /// Validates and folds the adapter's bounded JSON-lines protocol. Diffs preserve
 /// unchanged album art; a new full payload always starts a new identity.
 struct NowPlayingAdapterState {
-    static let maximumLineBytes = 12 * 1024 * 1024
+    /// A line with the largest accepted cover (base64, plus room for JSON
+    /// escapes) and the rest of its payload.
+    static let maximumLineBytes = ((NowPlayingArtworkLoader.maximumEmbeddedBytes + 2) / 3) * 4 + 2 * 1024 * 1024
     private(set) var payload: [String: Any] = [:]
     private(set) var artwork: Data?
     private(set) var revision = 0
@@ -65,6 +67,56 @@ struct NowPlayingAdapterState {
 }
 private extension Double { var mapSeconds: Double { self / 1_000_000 } }
 
+/// Splits the adapter's output into lines of at most `maximumLineBytes`. A line
+/// that passes the limit inside its cover loses only the cover: the
+/// `artworkData` value becomes `null` as it streams in, so the track still
+/// updates without art. Any other overlong line fails the stream.
+struct NowPlayingAdapterLineBuffer {
+    private static let artworkKey = Data("\"artworkData\":\"".utf8)
+    private static let droppedArtwork = Data("\"artworkData\":null".utf8)
+    private(set) var pending = Data()
+    private(set) var droppingArtwork = false
+    /// The lines `data` completes, or nil when a line passes the limit outside a cover.
+    mutating func append(_ data: Data) -> [Data]? {
+        var chunk = data[...]
+        if droppingArtwork { // Still inside a dropped cover: skip to its closing quote.
+            guard let quote = chunk.firstIndex(of: 0x22) else { return [] }
+            chunk = chunk[chunk.index(after: quote)...]; droppingArtwork = false
+        }
+        pending.append(contentsOf: chunk)
+        var lines: [Data] = []
+        if chunk.contains(10) {
+            while let newline = pending.firstIndex(of: 10) {
+                var line = Data(pending[..<newline]); pending.removeSubrange(...newline)
+                if line.count > NowPlayingAdapterState.maximumLineBytes {
+                    guard Self.dropArtwork(in: &line) == .closed,
+                          line.count <= NowPlayingAdapterState.maximumLineBytes else { removeAll(); return nil }
+                }
+                lines.append(line)
+            }
+        }
+        guard pending.count > NowPlayingAdapterState.maximumLineBytes else { return lines }
+        switch Self.dropArtwork(in: &pending) {
+        case .missing: removeAll(); return nil
+        case .open: droppingArtwork = true
+        case .closed: break
+        }
+        guard pending.count <= NowPlayingAdapterState.maximumLineBytes else { removeAll(); return nil }
+        return lines
+    }
+    private enum Drop { case missing, closed, open }
+    /// Replaces the cover in `line` with `null`; `.open` when its value runs
+    /// past the end of `line`.
+    private static func dropArtwork(in line: inout Data) -> Drop {
+        guard let key = line.range(of: artworkKey) else { return .missing }
+        if let quote = line[key.upperBound...].firstIndex(of: 0x22) {
+            line.replaceSubrange(key.lowerBound...quote, with: droppedArtwork); return .closed
+        }
+        line.replaceSubrange(key.lowerBound..., with: droppedArtwork); return .open
+    }
+    mutating func removeAll() { pending.removeAll(); droppingArtwork = false }
+}
+
 /// One native notification stream only while the module is visible. The helper
 /// is bundled source-built MediaRemoteAdapter (BSD-3-Clause), hosted by the OS
 /// Perl interpreter for macOS compatibility. No repeated get/spawn polling.
@@ -74,7 +126,7 @@ final class NowPlayingAdapter {
     private var state = NowPlayingAdapterState()
     private var process: Process?
     private var readHandle: FileHandle?
-    private var input = Data()
+    private var input = NowPlayingAdapterLineBuffer()
     private var generation = 0
     private var callback: (() -> Void)?
     private var streaming = false
@@ -121,18 +173,14 @@ final class NowPlayingAdapter {
     private func receive(_ data: Data, expected: Int) {
         lock.lock()
         guard generation == expected else { lock.unlock(); return }
-        guard data.count <= NowPlayingAdapterState.maximumLineBytes - input.count else {
-            input.removeAll(); lock.unlock()
+        guard let lines = input.append(data) else {
+            lock.unlock()
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.matches(expected) else { return }; self.stop()
             }; return
         }
-        input.append(data)
         var changed = false
-        while let newline = input.firstIndex(of: 10) {
-            let line = Data(input[..<newline]); input.removeSubrange(...newline)
-            changed = state.accept(line) || changed
-        }
+        for line in lines { changed = state.accept(line) || changed }
         lock.unlock()
         if changed { DispatchQueue.main.async { [weak self] in
             guard let self, self.matches(expected) else { return }; self.callback?()

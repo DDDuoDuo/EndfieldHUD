@@ -53,8 +53,10 @@ final class NowPlayingArtworkLoader {
     static let maximumBytes = 8 * 1_024 * 1_024
     /// Cover bytes a player hands over directly (MediaRemote, the adapter):
     /// bounded by their pixels (`maximumPixels`, checked from the header) and
-    /// by an uncompressed cover of the largest decode size, so a browser's
-    /// uncompressed TIFF is not dropped for its byte count.
+    /// by a ceiling that fits an uncompressed RGBA cover of the largest decode
+    /// size, so a browser's uncompressed TIFF of up to 2048 px still shows.
+    /// The adapter's line limit is derived from it; a larger cover drops only
+    /// its art, never the track or the stream.
     static let maximumEmbeddedBytes = maximumPixelSize * maximumPixelSize * 4 + 1_024 * 1_024
     static let maximumPixels = 32_000_000
     /// The decode size until the UI passes its slot's: about the 480-point
