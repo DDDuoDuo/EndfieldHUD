@@ -137,6 +137,9 @@ public:
     // Back to the idle, hidden panel without onFinish (the HUD closed under
     // it: the Mac tears the whole view down).
     void stop() { reset(); }
+    // The HUD close strips the cursor blink (the cursor shows at full
+    // opacity); the lines keep typing until the HUD is hidden.
+    void stopBlink();
     static double slotTop(int index) noexcept { return firstLineTop + double(index) * lineHeight; }
     // The segments as runs; the last character of every segment but the last
     // carries the 8 px flex gap (as extra tracking).

@@ -143,10 +143,23 @@ void panel() {
     at(52.82); check(!log.isFinishing(), "the tail lasts 900 ms");
     at(52.822); check(log.isFinishing(), "then the wipe-up");
     at(53.21); check(finished == 2, "finished");
+    // The HUD close strips the blink (the cursor at full opacity) and the
+    // lines keep typing.
+    at(60);
+    log.play(lines, "1.3.0");
+    at(60.28); at(60.54);
+    check(log.isBlinking() && log.revealedCount() == 2 && near(log.cursor().value(Channel::opacity), .2), "a new log blinks and types");
+    log.stopBlink();
+    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1), "stopBlink ends the blink with the cursor shown");
+    at(61);
+    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1) && log.revealedCount() > 2 && log.isPlaying(), "the lines keep typing without the blink");
+    log.stop();
+    check(!log.isPlaying() && finished == 2, "stop ends it without onFinish");
     // No lines: 900 ms then finish.
+    at(62);
     log.play({}, "1.3.0");
-    at(54.12); check(log.isFinishing(), "an empty log finishes after 900 ms");
-    at(54.51); check(finished == 3, "and completes");
+    at(62.91); check(log.isFinishing(), "an empty log finishes after 900 ms");
+    at(63.3); check(finished == 3, "and completes");
     // Reduce Motion: no wipe, no blink, the finish completes at once.
     env.reduceMotion = true;
     log.play({b::BootLogLine::sub("x")}, "1.3.0");

@@ -189,6 +189,9 @@ void FacilityTagStack::setActive(bool on) {
     active_ = on;
     for (auto& tag : tags_) tag->setLooping(active_ && tag->state != State::collapsing);
 }
+void FacilityTagStack::stopLoops() {
+    for (auto& tag : tags_) tag->setLooping(false);
+}
 std::vector<d::Control*> FacilityTagStack::controls() const {
     std::vector<d::Control*> out;
     for (const auto& tag : tags_) if (tag->state == State::live) { out.push_back(tag->control); out.push_back(tag->close); }

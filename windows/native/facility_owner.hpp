@@ -51,6 +51,15 @@
 // (Work Mode streak), the Work Mode controller (hours), the monitor's disk
 // reading (else a direct read) and the profile card's name.
 //
+// The HUD close (Mac 48584b5, 19e5575, 5c8a905): input stops at its start;
+// the banner rises and fades out (a leave already running finishes), a
+// banner or tag still arriving keeps arriving, only the hazard loops stop,
+// and the tags and a playing boot log stay drawn (the log keeps typing,
+// without its blink, and takes no press or key); all of it fades with the
+// canvas. The hidden HUD (overlayConcealed, or overlayRetracted for a File
+// Shelf drag) ends whatever still plays; a log that ended during the close
+// leaves the centre concealed until then.
+//
 // Recording mode: nothing here (the tag no longer exists, SHELL-16/72); the
 // design Context's env().recordingMode is applied by the host.
 #include "app/application.hpp"

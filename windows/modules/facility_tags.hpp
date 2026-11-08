@@ -44,6 +44,10 @@ public:
     // while the HUD is hidden.
     bool isActive() const noexcept { return active_; }
     void setActive(bool);
+    // The HUD close stops the running hazard loops (its cancel strips them;
+    // 5c8a905 keeps only arrivals and dismissals). The stack stays active, so
+    // a tag added during the close loops, as on the Mac.
+    void stopLoops();
     // The settled height of the column.
     double preferredHeight() const noexcept { return preferredHeight_; }
     // Tags and their x buttons (later entries on top), for the host's router

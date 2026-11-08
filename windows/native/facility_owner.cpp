@@ -92,7 +92,10 @@ struct FacilityOwner::Impl {
     std::vector<gpu::LayerCompositionEntry> modal;
     double time{}, lastRead{-1e300}, lastMemory{-1e300};
     std::optional<core::Language> renderedLanguage;
-    bool visible{}, interactive{}, playsBootLog{}, concealed{}, updating{}, pressed{};
+    // closing: from the close's start (overlayClosing) until the hidden HUD
+    // settles it (overlayConcealed, overlayRetracted, a reopen): everything
+    // stays drawn to fade with the close, nothing takes input.
+    bool visible{}, interactive{}, playsBootLog{}, concealed{}, updating{}, pressed{}, closing{};
 
     Impl(app::ApplicationHost& h, d::Context& c, gpu::LayerRasterizer& r, FacilityOwnerOptions o)
         : host(h), context(c), options(std::move(o)), monitor(sources()), banner(c.env()), tags(c.env()), bootLog(c.env()),
@@ -254,9 +257,13 @@ struct FacilityOwner::Impl {
         }
     }
     // finishBootLog (:3051-3057): the centre enters from below, then the checks run.
+    // A log that ends inside the HUD close (S-D2) leaves the centre concealed
+    // and plays no entrance: the hidden HUD shows it again (overlayConcealed).
     void finishBootLog() {
-        conceal(false);
-        if (stage.enterCentre) stage.enterCentre(core::ShellPosition::subpageOffset(0, 1), time);
+        if (!closing) {
+            conceal(false);
+            if (stage.enterCentre) stage.enterCentre(core::ShellPosition::subpageOffset(0, 1), time);
+        }
         if (monitor.isEnabled()) readAll();
         facilityChanged();
     }
@@ -314,6 +321,9 @@ struct FacilityOwner::Impl {
     bool bannerShows() const { return visible && banner.isShowing(); }
     bool tagsShow() const { return visible && !tags.empty(); }
     bool bootShows() const { return visible && bootLog.isPlaying(); }
+    // The boot log takes presses and keys only while the HUD is not closing
+    // (S-D1: it stays drawn and typing through the close, taking nothing).
+    bool bootInput() const { return bootShows() && !closing; }
     std::optional<core::Point> local(const Surface& s, core::Point logical) const {
         if (!s.posed) return std::nullopt;
         return s.projection.unproject({logical.x * metrics.scale, logical.y * metrics.scale});
@@ -339,6 +349,38 @@ struct FacilityOwner::Impl {
         interactive = false;
         cancelPointer();
         banner.hide(false);
+    }
+    // The start of the HUD close (48584b5, 19e5575, 5c8a905;
+    // SystemHUDView.deactivateModuleInput(forRetraction:) and
+    // beginClosingExits): input stops at once, the banner rises and fades
+    // (fbOut .26 s, at once under Reduce Motion) and a leave already running
+    // finishes; the drop, the unfold and a tag's slide-in keep playing, and
+    // only the hazard loops stop. The boot log stays drawn and typing,
+    // without its cursor blink. Everything fades with the canvas.
+    void beginClose() {
+        interactive = false;
+        cancelPointer();
+        closing = true;
+        banner.hide(true);
+        banner.stopLoops();
+        tags.stopLoops();
+        bootLog.stopBlink();
+        changed();
+    }
+    // The hidden HUD's full deactivation (OverlayController's teardown, a
+    // File Shelf hide): whatever still plays ends, nothing is composed. Keyed
+    // on `visible`, so it also settles an owner rebuilt (repairModule) during
+    // the close with visible on and closing off.
+    void settleClose() {
+        if (!visible) return;
+        banner.hide(false);
+        bootLog.stop();
+        playsBootLog = false;
+        visible = false; interactive = false; closing = false;
+        tags.setActive(false);
+        cancelPointer();
+        for (auto* s : {&bannerSurface, &tagSurface, &bootSurface}) s->composed = false;
+        changed();
     }
     std::vector<d::Control*> automationControls() {
         std::vector<d::Control*> out;
@@ -387,7 +429,10 @@ void FacilityOwner::resize(const app::ClientMetrics& m) {
 void FacilityOwner::setOverlayVisible(bool v, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!v) { overlayClosing(t); return; }
+    if (!v) { overlayClosing(t); i.settleClose(); return; }
+    // A reopen during the close (a File Shelf restore before its hide gets
+    // no overlayConcealed) settles the close first, then opens as usual.
+    if (i.visible && i.closing) i.settleClose();
     if (i.visible) return;
     i.visible = true; i.interactive = false;
     i.facilityChanged();
@@ -395,24 +440,22 @@ void FacilityOwner::setOverlayVisible(bool v, double t) {
     if (i.stage.deferEntrance) i.stage.deferEntrance(i.playsBootLog);
     if (i.playsBootLog) i.conceal(true);
 }
-// Closing: interaction off (the banner hides at once); a log still playing
-// stops with the view. The centre stays concealed until the close finished.
+// Closing: input stops at once and everything leaves with the HUD
+// (beginClose); the hidden HUD settles the rest (overlayConcealed,
+// overlayRetracted). A log still playing keeps the centre concealed until
+// then. A second call (forceConceal after a close) changes nothing.
 void FacilityOwner::overlayClosing(double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.visible) return;
-    i.deactivate();
-    i.bootLog.stop();
-    i.playsBootLog = false;
-    i.visible = false;
-    i.tags.setActive(false);
-    i.changed();
+    if (!i.visible || i.closing) return;
+    i.beginClose();
 }
 void FacilityOwner::update(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
-    // The opening finished: interactionEnabled -> hudDidBecomeInteractive.
-    const bool interactive = i.visible && i.host.overlayPhase() == core::SystemOverlayPhase::open;
+    // The opening finished: interactionEnabled -> hudDidBecomeInteractive
+    // (never during a close: a File Shelf retract keeps the lifecycle open).
+    const bool interactive = i.visible && !i.closing && i.host.overlayPhase() == core::SystemOverlayPhase::open;
     if (interactive && !i.interactive) { i.interactive = true; i.becameInteractive(); }
     else if (!interactive && i.interactive) i.deactivate();
     // A language change re-renders the banner and the tags (SHELL-18).
@@ -504,11 +547,11 @@ bool FacilityOwner::covers(core::Point p) const {
 // (updateControlHighlights updates both layers with the bar open).
 bool FacilityOwner::capturesPointer() const {
     const auto& i = *impl_;
-    if (i.bootShows() || i.tracking) return true;
+    if (i.bootInput() || i.tracking) return true;
     return i.allowsInputBesidePlacement() && i.context.overlay().capturesInput() && (i.bannerShows() || i.tagsShow());
 }
-bool FacilityOwner::capturesKeys() const { return impl_->bootShows(); }
-bool FacilityOwner::suppressesKeyFilters() const { return impl_->bootShows(); }
+bool FacilityOwner::capturesKeys() const { return impl_->bootInput(); }
+bool FacilityOwner::suppressesKeyFilters() const { return impl_->bootInput(); }
 // mouseDown (:1511-1524): the boot log skips on any press; then the banner
 // router, then the tag router (with their own hover pass, :1441-1449).
 bool FacilityOwner::pointer(const app::PointerEvent& e, double t) {
@@ -516,7 +559,7 @@ bool FacilityOwner::pointer(const app::PointerEvent& e, double t) {
     i.clock(t);
     const bool left = e.button == app::PointerButton::left;
     const bool press = (e.kind == app::PointerKind::down || e.kind == app::PointerKind::doubleClick) && left;
-    if (i.bootShows()) {
+    if (i.bootInput()) {
         if (press) i.bootLog.skip();
         return press || (e.kind == app::PointerKind::up && left);
     }
@@ -561,7 +604,7 @@ bool FacilityOwner::pointer(const app::PointerEvent& e, double t) {
 bool FacilityOwner::key(const app::KeyEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.bootShows()) return false;
+    if (!i.bootInput()) return false;
     if (e.kind == app::KeyKind::down) i.bootLog.skip();
     return true;
 }
@@ -599,8 +642,11 @@ bool FacilityOwner::hostEvent(const app::HostEvent& e, double t) {
         if (i.time >= i.lastRead + modules::FacilityAlertMonitor::pollInterval) i.readAll();
         else if (i.time >= i.lastMemory + memoryInterval && !i.monitor.sampling()) i.readMemory();
         return false;
-    case K::overlayConcealed:
-        // The close finished: the next opening decides its own centre.
+    case K::overlayConcealed: case K::overlayRetracted:
+        // The HUD is hidden (the close finished, or a File Shelf drag hid
+        // it): what still plays ends, and the next opening decides its own
+        // centre.
+        i.settleClose();
         if (i.concealed) i.conceal(false);
         return false;
     default:

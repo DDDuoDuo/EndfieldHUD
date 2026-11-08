@@ -300,33 +300,157 @@ void run(const std::filesystem::path& shader) {
     frame(128.1);
     check(!owner->banner().isShowing(), "A listed alert shows its banner once");
 
-    // --- Closing and the next opening of the day ---------------------------------
-    owner->overlayClosing(130); overlay.overlayClosing(130);
+    // --- The HUD close (48584b5, 19e5575, 5c8a905): everything leaves with it ------
+    using K = a::HostEvent::Kind;
+    using m::FacilityAlertKind;
+    const auto alertsOn = [&](bool on, double t) { host.configuration.set("facilityAlerts", ehud::data::Json(on)); (void)owner->hostEvent({K::settingsChanged, 0}, t); };
+    // Fresh alerts (alerts off and on again raise them): a banner arriving, two tags.
+    free = 40'000'000'000;
+    alertsOn(false, 129); alertsOn(true, 129.5);
+    frame(129.5);
+    check(owner->banner().isShowing() && owner->banner().isHazardRunning() && owner->tags().kinds().size() == 2, "Fresh alerts: a banner arrives and two tags show");
+    // A press held on the banner as the close starts.
+    a::PointerEvent held; held.kind = a::PointerKind::down; held.button = a::PointerButton::left; held.x = bannerCentre->x; held.y = bannerCentre->y;
+    check(owner->pointer(held, 129.6), "The banner takes a press");
+    host.phase = c::SystemOverlayPhase::closing;
+    owner->overlayClosing(129.6); overlay.overlayClosing(129.6);
+    check(!owner->capturesPointer() && !owner->capturesKeys() && !owner->covers(*bannerCentre), "Input stops at the close's start");
+    const auto opened = host.chosen.size();
+    held.kind = a::PointerKind::up;
+    check(!owner->pointer(held, 129.62) && host.chosen.size() == opened, "A banner press released during the close opens nothing");
+    owner->overlayClosing(129.62); // forceConceal after a close: nothing changes
+    const auto [plane2, modal2] = frame(129.7);
+    check(owner->banner().isShowing() && plane2 > 0 && modal2 > 0 && owner->requiresFrames(129.7), "At +.1 s the banner is still leaving and the tags are composed");
+    check(!owner->banner().isHazardRunning() && !owner->tags().tag(FacilityAlertKind::memory)->looping && !owner->tags().tag(FacilityAlertKind::disk)->looping,
+        "Only the hazard loops stopped");
+    check(owner->banner().plate().presented(m::design::Channel::wipe, 129.7) < 1, "The banner still arriving keeps unfolding");
+    frame(129.87);
+    check(!owner->banner().isShowing() && owner->tags().kinds().size() == 2 && frame(129.88).first > 0, "The banner left at +.26 s; the tags stay to fade with the canvas");
+    // The hidden HUD: nothing composed, no frame demand, no loop.
     host.visible = false;
-    check(!owner->banner().isShowing(), "Closing hides the banner at once");
-    (void)owner->hostEvent({a::HostEvent::Kind::overlayConcealed, 0}, 131);
-    frame(131);
+    (void)owner->hostEvent({K::overlayConcealed, 0}, 130);
+    const auto [plane3, modal3] = frame(130);
+    check(plane3 == 0 && modal3 == 0 && !owner->requiresFrames(130) && !owner->capturesPointer(), "Hidden: nothing composed and no frame demand");
+    // An owner rebuilt during a close (repairModule: shown, not closing) is settled by the hidden HUD too.
+    host.visible = true;
+    owner->setOverlayVisible(true, 131);
+    check(frame(131.1).first > 0, "A rebuilt owner draws its tags during the close");
+    host.visible = false;
+    (void)owner->hostEvent({K::overlayConcealed, 0}, 131.2);
+    check(frame(131.2) == std::pair<std::size_t, std::size_t>{0, 0} && !owner->requiresFrames(131.2), "The hidden HUD settles the rebuilt owner");
+    // A close queued during the opening (58605be) never takes input, even with
+    // the lifecycle open (a File Shelf retract), and the File Shelf hide settles it.
+    host.visible = true; host.phase = c::SystemOverlayPhase::opening;
+    overlay.setOverlayVisible(true, 132); owner->setOverlayVisible(true, 132);
+    frame(132.05);
+    owner->overlayClosing(132.1); overlay.overlayClosing(132.1);
+    host.phase = c::SystemOverlayPhase::open;
+    frame(132.2);
+    {
+        const auto shown = owner->tags().tag(FacilityAlertKind::memory);
+        const auto point = shown ? client(tagWorld, {shown->frame.x + 20, shown->frame.y + 14}) : std::nullopt;
+        check(point && !owner->covers(*point) && !owner->capturesPointer() && !shown->looping, "The queued close's owner takes no input and runs no loop");
+    }
+    host.visible = false;
+    (void)owner->hostEvent({K::overlayRetracted, 0}, 132.3);
+    check(frame(132.3) == std::pair<std::size_t, std::size_t>{0, 0} && !owner->requiresFrames(132.3), "The File Shelf hide settles the close");
+
+    // --- The next opening of the day ----------------------------------------------
     host.visible = true; host.phase = c::SystemOverlayPhase::opening;
     overlay.setOverlayVisible(true, 140); owner->setOverlayVisible(true, 140);
     check(deferred == false && !owner->playsBootLogOnOpen(), "The second opening of the day plays no log");
     host.phase = c::SystemOverlayPhase::open;
     frame(140.2);
     check(!owner->bootLog().isPlaying() && !owner->capturesPointer(), "No log, no capture");
-    check(owner->tags().kinds() == std::vector{m::FacilityAlertKind::memory}, "Listed alerts keep their tags across openings");
-    // Reduce Motion: the next day plays nothing and keeps the day.
-    owner->overlayClosing(150); overlay.overlayClosing(150); host.visible = false;
-    today.day = 24;
+    check(owner->tags().kinds().size() == 2 && owner->tags().tag(FacilityAlertKind::memory)->looping && !owner->banner().isShowing(),
+        "Listed alerts keep their tags (looping again) across openings; presented ones show no banner");
+    // A dismissal running when the close starts finishes inside it.
+    {
+        const auto shown = owner->tags().tag(FacilityAlertKind::disk);
+        const auto x = shown ? client(tagWorld, {shown->frame.x + shown->frame.width - 14, shown->frame.y + 14}) : std::nullopt;
+        check(x && press(*x, 140.3) && owner->tags().tag(FacilityAlertKind::disk)->struck, "x strikes the disk tag through");
+        host.phase = c::SystemOverlayPhase::closing;
+        owner->overlayClosing(140.4); overlay.overlayClosing(140.4);
+        frame(140.5);
+        check(owner->tags().shownKinds().size() == 2 && owner->tags().tag(FacilityAlertKind::disk)->struck, "The struck tag holds its place inside the close");
+        frame(140.7); frame(141); // x acts on the release (140.35): collapse at +.3 s, removal .26 s later
+        check(owner->tags().shownKinds() == std::vector{FacilityAlertKind::memory}, "Its collapse and removal run inside the close");
+        host.visible = false;
+        (void)owner->hostEvent({K::overlayConcealed, 0}, 141.1);
+        frame(141.1);
+    }
+
+    // --- The boot log during the close (S-D1, S-D2) ----------------------------------
+    today.day = 24; entered.reset();
+    host.visible = true; host.phase = c::SystemOverlayPhase::opening;
+    overlay.setOverlayVisible(true, 142); owner->setOverlayVisible(true, 142);
+    check(owner->playsBootLogOnOpen() && concealed == true, "The next day's first opening plays the log");
+    host.phase = c::SystemOverlayPhase::open;
+    frame(142.1); frame(142.6);
+    const int typed = owner->bootLog().revealedCount();
+    check(owner->bootLog().isPlaying() && owner->bootLog().isBlinking() && typed > 0, "The log types and blinks");
+    host.phase = c::SystemOverlayPhase::closing;
+    owner->overlayClosing(142.6); overlay.overlayClosing(142.6);
+    check(!owner->capturesPointer() && !owner->capturesKeys() && !owner->suppressesKeyFilters() && !owner->key(key, 142.62) && !owner->bootLog().isFinishing(),
+        "During the close the log takes no key");
+    {
+        a::PointerEvent skip; skip.kind = a::PointerKind::down; skip.button = a::PointerButton::left; skip.x = 640; skip.y = 400;
+        check(!owner->pointer(skip, 142.63) && !owner->bootLog().isFinishing(), "nor a press");
+    }
+    const auto [plane4, modal4] = frame(143);
+    (void)plane4;
+    check(modal4 > 0 && owner->bootLog().isPlaying() && !owner->bootLog().isBlinking() && owner->bootLog().revealedCount() > typed && concealed == true,
+        "It stays drawn and keeps typing without its blink; the centre stays concealed");
+    host.visible = false;
+    (void)owner->hostEvent({K::overlayConcealed, 0}, 143.2);
+    check(!owner->bootLog().isPlaying() && concealed == false && !entered && frame(143.2).second == 0, "The hidden HUD stops the log and shows the centre again, with no entrance");
+    // A log that ends during the close (its skip's wipe-up) keeps the centre
+    // concealed and plays no entrance until the HUD is hidden.
+    today.day = 25;
+    host.visible = true; host.phase = c::SystemOverlayPhase::opening;
+    overlay.setOverlayVisible(true, 145); owner->setOverlayVisible(true, 145);
+    host.phase = c::SystemOverlayPhase::open;
+    frame(145.1); frame(145.4);
+    check(owner->key(key, 145.4) && owner->bootLog().isFinishing(), "A key skips the log");
+    host.phase = c::SystemOverlayPhase::closing;
+    owner->overlayClosing(145.5); overlay.overlayClosing(145.5);
+    frame(145.6); frame(145.85);
+    check(!owner->bootLog().isPlaying() && concealed == true && !entered, "A log ending during the close keeps the centre concealed with no entrance");
+    host.visible = false;
+    (void)owner->hostEvent({K::overlayConcealed, 0}, 146);
+    check(concealed == false && !entered, "The hidden HUD shows the centre again");
+    frame(146);
+
+    // Reduce Motion: the next day plays nothing and keeps the day; the close is instant.
+    today.day = 26;
     host.look.reduceMotion = true;
     overlay.setAppearance(host.look, 151); owner->setAppearance(host.look, 151);
     host.visible = true; host.phase = c::SystemOverlayPhase::open;
     overlay.setOverlayVisible(true, 152); owner->setOverlayVisible(true, 152);
-    check(!owner->playsBootLogOnOpen() && host.configuration.dailyBootLogLastDay() == "2026-10-23", "Reduce Motion never plays or consumes the log");
+    check(!owner->playsBootLogOnOpen() && host.configuration.dailyBootLogLastDay() == "2026-10-25", "Reduce Motion never plays or consumes the log");
+    frame(152.1);
+    alertsOn(false, 152.2); alertsOn(true, 152.3);
+    check(owner->banner().isShowing(), "A fresh alert shows its banner");
+    host.phase = c::SystemOverlayPhase::closing;
+    owner->overlayClosing(152.4); overlay.overlayClosing(152.4);
+    check(!owner->banner().isShowing(), "Under Reduce Motion the close hides the banner at once");
+    // A reopen during the close settles it first, then opens as usual.
+    host.phase = c::SystemOverlayPhase::open;
+    overlay.setOverlayVisible(true, 152.5); owner->setOverlayVisible(true, 152.5);
+    frame(152.6);
+    {
+        const auto shown = owner->tags().tag(FacilityAlertKind::memory);
+        const auto point = shown ? client(tagWorld, {shown->frame.x + 20, shown->frame.y + 14}) : std::nullopt;
+        check(point && owner->covers(*point), "A reopen during the close takes input again once open");
+    }
     // Facility alerts off: everything clears.
     host.configuration.set("facilityAlerts", ehud::data::Json(false));
     check(owner->hostEvent({a::HostEvent::Kind::settingsChanged, 0}, 153) && !owner->monitor().isEnabled() && owner->monitor().alerts().empty(), "Off stops the monitor and clears the list");
     check(!owner->nextWakeTime(153), "No wake while off");
     frame(154); frame(154.5);
     owner->overlayClosing(160); overlay.overlayClosing(160); host.visible = false;
+    // The close's layers stay published until the hidden HUD settles them.
+    (void)owner->hostEvent({a::HostEvent::Kind::overlayConcealed, 0}, 160); (void)overlay.hostEvent({a::HostEvent::Kind::overlayConcealed, 0}, 160);
     frame(160);
     owner->release(renderer); overlay.release(renderer);
     owner.reset();
