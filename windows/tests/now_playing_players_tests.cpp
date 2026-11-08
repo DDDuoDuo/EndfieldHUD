@@ -941,6 +941,25 @@ void audioActivity() {
     check(o.input().track && !o.input().track->isPlaying && o.input().track->title == "Song", "Without captured activity the title inference stands");
     o.owner->setActive(false, o.now);
 
+    // Two processes of the player: the one with a working route takes the
+    // volume (a6f2d27), but its silence never shows the playing title as
+    // paused; only the player's one process route tells its play state.
+    Owner pair(true);
+    auto owned = route;
+    owned.state = m::NowPlayingAudioRouteState::active;
+    owned.gain = .5;
+    auto helper = route;
+    helper.id = "8:100";
+    helper.pid = 8;
+    helper.rendering = true;
+    pair.routes = {owned, helper};
+    pair.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Song - Artist")});
+    pair.owner->setActive(true, pair.now);
+    pair.flush();
+    check(pair.input().track && pair.input().track->isPlaying && pair.input().volumeAvailable && pair.owner->volumeRoute() == "7:100",
+          "A silent working route beside a playing helper takes the volume and leaves the title playing");
+    pair.owner->setActive(false, pair.now);
+
     // A media session reports its own playback: never overridden.
     Owner listed(true);
     m::NowPlayingAudioRoute spotify;
