@@ -2876,7 +2876,7 @@ int Application::Impl::runHiddenVerification(){
                         hostCheck(pointer(PointerKind::up,b.centre,time)&&!arrangeDrag&&shown&&configuration.moduleLayout().order==shown->order&&settingsUI->controller().revision()==revision+1,"The release saves the order of the release slot once");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.5;
                         hostCheck(!session->arrangeActive()&&moduleLayout==configuration.moduleLayout(),"The tile settles into its slot and the saved order applies");
-                        // Add App does nothing; closing mid-drag snaps.
+                        // Add App does nothing; closing mid-drag slides the tiles back.
                         // Add App ends the list: scrolled into the bound rows first.
                         const auto scrollList=[&](int direction){for(unsigned n=0;n<40&&session->scrollDirection(direction,false,time,1000);++n)present(time,true);present(time,true);};
                         scrollList(1);const auto [unusedTiles,lastAddApp]=tilesNow();(void)unusedTiles;
@@ -2887,8 +2887,13 @@ int Application::Impl::runHiddenVerification(){
                             (void)pointer(PointerKind::down,c.centre,time);(void)pointer(PointerKind::move,{c.centre.x,c.centre.y+20},time);present(time+.02,true);
                             const bool lifted=arrangeDrag&&arrangeDrag->lifted&&session->arrangeLifted()==c.action;
                             close(time+.05);
-                            hostCheck(lifted&&!arrangeDrag&&!session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,"Closing mid-drag snaps every tile, writes nothing and ends arranging");
-                            for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f)present(time+.1+double(f)/60,true);
+                            // d8100a9: the lifted tile and the tiles that moved aside slide back
+                            // to the saved order as the HUD folds (.18 s, inside the close).
+                            hostCheck(lifted&&!arrangeDrag&&swallowsArrangePress&&session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,
+                                "Closing mid-drag writes nothing and ends arranging; the tiles slide back with the close");
+                            std::optional<double> settledAt;
+                            for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f){const double frameAt=time+.1+double(f)/60;present(frameAt,true);if(!settledAt&&!session->arrangeActive())settledAt=frameAt;}
+                            hostCheck(settledAt&&*settledAt<=time+.05+core::DesignMotion::listSlide+1.5/60,"The tiles settle into the saved order within .18 s, before the close ends");
                             time+=1.6;concealed(time);time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
                         // The order changed above goes back.
                         auto restore=settingsUI->controller().committed();restore.setModuleLayout(saved);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;

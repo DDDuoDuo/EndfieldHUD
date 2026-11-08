@@ -327,5 +327,17 @@ void arrangeSession(){
     const Point band{top2.x+(bottom2.x-top2.x)*30/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y),top2.y+(bottom2.y-top2.y)*30/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y)};
     session.setScrollPosition(.5,t+5);check(session.scrollTowardEdge(inside,t+5),"Inside the band");checkNear(session.scrollPosition(),.5+12*unitsPerPoint2/info.hiddenLength,1e-6,"At most 12 points");
     session.setScrollPosition(.5,t+5);check(session.scrollTowardEdge(band,t+5),"Near the band's inner edge");checkNear(session.scrollPosition(),.5+6*unitsPerPoint2/info.hiddenLength,1e-6,"The band is measured in screen points");
+    // The HUD close (d8100a9): input off keeps the lifted tile where it is
+    // drawn, and the close's drop slides it back from there while the close
+    // plays.
+    {const double c=t+6;session.setScrollPosition(1,c);session.sample(c);const auto id=button(100);const auto drawn=[&](const WatchSessionFrame*f){const auto&m=f->sourceFrame->tileTranslations;const auto found=m.find(id);return found==m.end()?std::nullopt:std::optional(found->second);};
+     const auto at=centre(id);session.setArrangeDrag(100,at,true,c);session.setArrangeDrag(100,Point{at.x,at.y+30},true,c);const auto held=drawn(session.sample(c));
+     session.setInputEnabled(false,c+.01);
+     check(held&&session.arrangeLifted()==100&&drawn(session.sample(c+.01))==held,"Input off keeps the lifted tile where it is drawn");
+     session.setArrangeDrag(std::nullopt,std::nullopt,true,c+.02);
+     check(!session.arrangeLifted()&&session.arrangeActive()&&drawn(session.sample(c+.02))==held,"The close's drop starts from where the tile is drawn");
+     session.close(c+.02);session.sample(c+.02+DesignMotion::listSlide/2);
+     check(session.arrangeActive(),"The session's close keeps the slide running");
+     session.sample(c+.02+DesignMotion::listSlide+.001);check(!session.arrangeActive(),"It settles inside the close");}
 }
 int main(int argc,char**argv){try{synthetic();entranceEnd();arrangeMotion();arrangeSession();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

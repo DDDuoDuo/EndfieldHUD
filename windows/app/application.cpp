@@ -2068,8 +2068,16 @@ void Application::Impl::close(double time){
     time=hostTime(time);
     if(!production())std::cout<<"Preview close requested at "<<time<<std::endl;
     if(registry.first(ModuleRegistry::Chain::finishEditing,[&](ModuleOwner&o,const ModuleRouting&){return !o.finishEditing(hostTime(time));},"close")){pendingClose=true;return;}
-    // An Arrange on HUD drag ends without animation (the list snaps).
-    endModuleArrangeDrag(false,false,time);
+    // An Arrange on HUD press ends with the close's exits (d8100a9,
+    // dropArrangePress(closing:)): nothing is saved, the lifted tile and the
+    // tiles that moved aside slide back to the saved order as the HUD folds
+    // (at once under Reduce Motion), and the rest of the press does nothing.
+    // The session's close keeps those slides (setInputEnabled(false) and
+    // close() leave the arrangement alone), so the drop runs here, before the
+    // capture release below, whose synchronous captureLost would otherwise
+    // end the press first.
+    if(arrangeDrag)swallowsArrangePress=true;
+    endModuleArrangeDrag(false,true,time);
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     // The clock's hover plate stays until the first move or the hide (48584b5
     // defers clearControlHighlights: onPointer, concealed()).

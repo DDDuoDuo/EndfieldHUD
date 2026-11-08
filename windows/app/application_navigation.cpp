@@ -312,8 +312,8 @@ void Application::Impl::followArrangeScroll(double time) {
 // Ends a press on a module tile. A lifted drag saves its order (`save`, one
 // write and only if it changed) or the list returns to the saved one; a press
 // without a lift does nothing. The dropped tile settles into its slot, and on
-// a cancel every tile slides back, unless `animated` is false (the HUD is
-// closing) or under Reduce Motion.
+// a cancel every tile slides back, unless `animated` is false (input stopped
+// outside the close) or under Reduce Motion; the close drops it animated.
 void Application::Impl::endModuleArrangeDrag(bool save, bool animated, double time) {
     if (!arrangeDrag) return;
     const auto drag = std::move(*arrangeDrag);
