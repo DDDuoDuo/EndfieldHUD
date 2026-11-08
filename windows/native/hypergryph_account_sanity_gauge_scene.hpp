@@ -46,7 +46,10 @@ public:
     bool requiresFrames(double time) const;
     bool visible() const noexcept;
     void upload(Renderer&); // after the first updatePose()
-    std::span<const LayerCompositionEntry> entries();
+    std::span<const LayerCompositionEntry> entries();        // the wallet stack
+    // The recovery popover (z 10) while it is open or fading out; empty while
+    // shut (so it can park). The host composes it on its top layer.
+    std::span<const LayerCompositionEntry> popoverEntries();
     void collected(Renderer&);
     bool release(Renderer&); // false while still published
     // The HUD closed with the recovery popover shut: release its group

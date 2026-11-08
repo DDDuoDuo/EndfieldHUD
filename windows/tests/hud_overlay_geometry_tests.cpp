@@ -20,9 +20,9 @@ using Placement = OverlayGeometry::Placement;
 namespace {
 unsigned checks{};
 void check(bool value, const std::string& why) { ++checks; if (!value) throw std::runtime_error(why); }
-bool near(double a, double b) { return std::abs(a - b) < 1e-9; }
-bool same(Rect a, Rect b) { return near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height); }
-bool same(const Placement& a, const Placement& b) { return near(a.x, b.x) && near(a.y, b.y) && near(a.size, b.size); }
+bool closeTo(double a, double b) { return std::abs(a - b) < 1e-9; }
+bool same(Rect a, Rect b) { return closeTo(a.x, b.x) && closeTo(a.y, b.y) && closeTo(a.width, b.width) && closeTo(a.height, b.height); }
+bool same(const Placement& a, const Placement& b) { return closeTo(a.x, b.x) && closeTo(a.y, b.y) && closeTo(a.size, b.size); }
 
 void anchors() {
     check(OverlayGeometry::anchor(Element::title) == Point{270, 2}, "The title's top-left is the header's origin");

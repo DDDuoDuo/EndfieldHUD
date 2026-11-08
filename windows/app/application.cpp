@@ -65,6 +65,7 @@ core::Language settingsLanguage(const ehud::data::Settings&value){const auto lan
 gpu::LayerFontLanguage textFontLanguage(core::Language language){return core::regionFor(language,gpu::preferredSystemRegion());}
 double now(){return OverlayHost::clockNow();}
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
+const ehud::data::CharacterPrefix graphemes=[](std::string_view text,std::size_t count){return std::string(native::graphemePrefix(text,count));};
 namespace {
 std::wstring wide(std::string_view value){if(value.empty())return {};const auto count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);need(count>0,"Invalid UTF-8 text");std::wstring out(count,L'\0');need(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),count)==count,"UTF-8 conversion failed");return out;}
 Json loadJSON(const fs::path&file){const auto bytes=ehud::data::detail::readFile(file,32*1024*1024);need(bytes.has_value(),"Explicit reference JSON is missing");return Json::parse(*bytes,32*1024*1024);}
@@ -1020,6 +1021,8 @@ bool Application::Impl::AreaHost::designOwnerOptions(tools::DesignOwnerOptions&o
 void Application::Impl::AreaHost::setDesignScreen(core::Module module){impl_.setDesignScreen(module);}
 const ehud::data::ModuleLayout* Application::Impl::AreaHost::moduleLayout()const noexcept{return &impl_.moduleLayout;}
 std::uint64_t Application::Impl::AreaHost::moduleLayoutRevision()const noexcept{return impl_.moduleLayoutRevision;}
+const ehud::data::OverlayLayout*Application::Impl::AreaHost::overlayLayout()const noexcept{return &impl_.shownOverlayLayout();}
+std::uint64_t Application::Impl::AreaHost::overlayLayoutRevision()const noexcept{return impl_.overlayLayoutRevision;}
 void Application::Impl::AreaHost::publishService(std::string_view key,void*value,const std::type_info&type){
     const auto found=services_.find(key);
     if(!value){if(found!=services_.end())services_.erase(found);return;}
@@ -1629,7 +1632,7 @@ void Application::Impl::constructSettings(){
         if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}}
         },[this]{refresh(now());}},
         // The HUD elements text is cut to 24 Characters (Swift prefix) on save.
-        [](std::string_view text,std::size_t count){return std::string(native::graphemePrefix(text,count));},
+        graphemes,
         // Once, at a normal launch (AppDelegate: never a diagnostic run): a
         // gauge hidden in 1.3.0's Account > Header display starts with Show
         // Sanity off. The account cache is only read.
@@ -2236,6 +2239,11 @@ void Application::Impl::applyConfiguration(double time){
     chromeContent.localizedClose=core::localized("CLICK OUTSIDE TO CLOSE","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::design::asciiUppercase(modules::settingsShortcutTitle(modules::settingsShortcut(configuration)));
     // Display > Close hint: off hides only that line (nothing else moves).
     chromeContent.showsCloseHint=configuration.showsCloseHint();
+    // Display > HUD elements (SystemHUDView.applyOverlayLayout: the layout or
+    // the language changed): the title here, the gauge and the alerts in
+    // their areas through the revision.
+    if(auto layout=configuration.overlayLayout(graphemes);layout!=appliedOverlayLayout){appliedOverlayLayout=std::move(layout);++overlayLayoutRevision;}
+    applyOverlayTitle();
     // The clock's status row shows Recording mode (B2b, HUDClockStyleArtwork.updateStatus).
     chromeContent.recording=configuration.recordingMode();chromeContent.reduceMotion=settings.reduceMotion;
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}
@@ -2334,6 +2342,10 @@ void Application::Impl::publishNative(){
     registry.forEach([&](ModuleOwner&o){if(&o!=notesModuleOwner.get())for(const auto&e:o.floatingEntries())ordered.push_back(e);},"publish");
     if(facilityOwner)(void)registry.guard(*facilityOwner,[&]{for(const auto&e:facilityOwner->modalEntries())ordered.push_back(e);},"publish");
     if(notesModuleOwner)(void)registry.guard(*notesModuleOwner,[&]{for(const auto&e:notesModuleOwner->floatingEntries())ordered.push_back(e);},"publish");
+    // The top layer (SystemHUDView topPlane, b58f2e0): the HUD elements strip
+    // and its marks and the Sanity recovery menu, above the clock, the
+    // footer, the alert banner and pinned notes, below the modal cards.
+    registry.forEach([&](ModuleOwner&o){for(const auto&e:o.topEntries())ordered.push_back(e);},"publish");
     // Modal cards of module areas stay above everything.
     registry.forEach([&](ModuleOwner&o){if(&o!=designOverlay.get()&&&o!=facilityOwner)for(const auto&e:o.modalEntries())ordered.push_back(e);},"publish");
     // A language event can leave equal captions/numbers in retained scenes.

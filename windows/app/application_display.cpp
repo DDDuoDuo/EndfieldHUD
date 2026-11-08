@@ -216,6 +216,46 @@ bool Application::Impl::clockAcceptsInput() const {
         session->phase() == core::VisibilityPhase::visible &&
         !notes->modulePresentation().transitioning && !(designOverlay && designOverlay->capturesPointer());
 }
+
+// --- Display > HUD elements ------------------------------------------------------
+const ehud::data::OverlayLayout& Application::Impl::shownOverlayLayout() const noexcept { return appliedOverlayLayout; }
+// overlayNatural: the title measured as it is drawn at its size (the
+// chrome's measurement), the gauge's 168 x 42, the alert column the facility
+// area publishes (one tag's slot without it).
+core::OverlaySize Application::Impl::overlayNatural(core::OverlayGeometry::Element element, const ehud::data::OverlayLayout& layout) {
+    using G = core::OverlayGeometry;
+    switch (element) {
+    case G::Element::title: {
+        if (!chrome) return {300, G::titleHeight};
+        const double size = layout.title.normalized().size;
+        const auto title = layout.shownTitle(), subtitle = layout.shownSubtitle();
+        if (!titleNatural || titleNatural->title != title || titleNatural->subtitle != subtitle || titleNatural->size != size || titleNatural->language != watchAppearance.language) {
+            const auto r = chrome->titleNatural(title, subtitle, size);
+            titleNatural = TitleNatural{std::string(title), std::string(subtitle), size, watchAppearance.language, {r.width, r.height}};
+        }
+        return titleNatural->natural;
+    }
+    case G::Element::sanity: return G::gauge;
+    case G::Element::alerts:
+        if (areaHost) if (const auto* source = areaHost->find<core::OverlayAlertsSource>(core::overlayAlertsKey); source && source->natural) return source->natural();
+        return {272 * modules::design::geometry::baseUnit, 28 * modules::design::geometry::baseUnit};
+    }
+    return {};
+}
+// applyOverlayLayout for the title: its text, size, Show switch and drawn
+// place on the core plane (the chrome's header surface).
+void Application::Impl::applyOverlayTitle() {
+    if (!chrome) return;
+    using G = core::OverlayGeometry;
+    const auto& layout = shownOverlayLayout();
+    const auto natural = overlayNatural(G::Element::title, layout);
+    const auto placed = G::clamped(G::Element::title, layout.title, natural);
+    const auto frame = G::frame(G::Element::title, placed, natural);
+    auto& title = chromeContent.title;
+    title.title = layout.shownTitle(); title.subtitle = layout.shownSubtitle();
+    title.size = placed.size; title.origin = {frame.x, frame.y}; title.shown = layout.showsTitle;
+    if (chrome->setContent(chromeContent) && ready && !stopping) host.invalidate();
+}
 void Application::Impl::setClockHovered(bool value) {
     if (!chrome || chromeContent.clockHovered == value) return;
     chromeContent.clockHovered = value;

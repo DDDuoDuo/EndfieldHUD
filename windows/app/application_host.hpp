@@ -15,7 +15,7 @@
 #include <typeinfo>
 #include <vector>
 
-namespace ehud::data { struct Settings; struct ModuleLayout; }
+namespace ehud::data { struct Settings; struct ModuleLayout; struct OverlayLayout; }
 namespace endfield::core { class ApplicationEventRecorder; }
 namespace endfield::modules { class WorkModeController; }
 namespace endfield::modules::design { class Context; }
@@ -162,6 +162,18 @@ public:
     // applied record; the revision moves only when the layout changed.
     virtual const ehud::data::ModuleLayout* moduleLayout() const noexcept { return nullptr; }
     virtual std::uint64_t moduleLayoutRevision() const noexcept { return 0; }
+    // Display > HUD elements as the HUD shows them (Mac shownOverlayLayout):
+    // the placement editor's draft while placing, else the applied record's
+    // layout (normalized, the text cut by the host's Character rule). The
+    // revision moves whenever it changes. Null without a host layout: read
+    // settings().overlayLayout() instead (shownOverlayLayout below).
+    virtual const ehud::data::OverlayLayout* overlayLayout() const noexcept { return nullptr; }
+    virtual std::uint64_t overlayLayoutRevision() const noexcept { return 0; }
+    ehud::data::OverlayLayout shownOverlayLayout() const; // app/module_registry.cpp
+    // SystemHUDView.allowsInputBesidePlacement: false while the HUD elements
+    // are being placed. The facility tags and banner, the Sanity gauge and
+    // their screen-reader controls take no input meanwhile.
+    virtual bool allowsInputBesidePlacement() const noexcept { return true; }
 
     // --- Area-to-area services -------------------------------------------------
     // Non-owning, exact-type directory: the publisher keeps the object alive

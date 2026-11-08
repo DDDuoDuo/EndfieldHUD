@@ -194,6 +194,14 @@ bool AccountLinkingOwner::deadline(double t) {
 void AccountLinkingOwner::upload(gpu::Renderer& r) {auto& i=*impl_;i.page->upload(r);i.gauge->upload(r);}
 std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::moduleEntries() {return impl_->page->entries(core::Module::account);}
 std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::headerEntries() {return impl_->gauge->entries();}
+std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::recoveryEntries() {return impl_->gauge->popoverEntries();}
+void AccountLinkingOwner::setHeaderPlacement(core::Point origin,double size,modules::hypergryph::GaugePopoverDirection direction,double t) {
+    auto& i=*impl_;i.advance(t);i.gauge->setPlacement(origin,size,direction,i.time);
+}
+void AccountLinkingOwner::setShowsHeaderGauge(bool value,double t) {
+    auto& i=*impl_;i.advance(t);auto& controller=i.services->controller();if(controller.showsHeaderGauge()==value) return;
+    controller.setShowsHeaderGauge(value);i.syncPage(i.time);i.gauge->contentChanged(i.time);
+}
 void AccountLinkingOwner::collected(gpu::Renderer& r) {auto& i=*impl_;i.page->collected(r);i.gauge->collected(r);}
 void AccountLinkingOwner::release(gpu::Renderer& r) {auto& i=*impl_;i.page->release(r);i.gauge->release(r);}
 bool AccountLinkingOwner::covers(core::Point p) const {const auto& i=*impl_;return i.gauge->covers(p)||i.page->covers(p);}

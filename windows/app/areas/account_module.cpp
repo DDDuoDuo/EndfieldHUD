@@ -5,6 +5,7 @@
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #include "modules/boot_log.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "modules/hypergryph_account_profile_relay.hpp"
@@ -233,6 +234,9 @@ public:
             o.login = &w->login;
         }
         owner_ = std::make_unique<tools::AccountLinkingOwner>(*c.utility, c.rasterizer, std::move(o));
+        // Show Sanity and the gauge's place before the first opening
+        // (SystemHUDView sets showsHeaderGauge as it starts).
+        applyOverlayLayout(clock_ ? clock_() : 0);
         if (const auto* work = host_.workMode()) workRevision_ = work->revision();
         host_.publish<AccountProfileLink>(AccountProfileLink::key, *this);
         // The quit asks only once an open recovery popover is closed (Mac 1.3.0).
@@ -281,6 +285,7 @@ public:
     void setOverlayVisible(bool v, double t) override { visible_ = v; owner_->setOverlayVisible(v, t); }
     void overlayClosing(double t) override { visible_ = false; owner_->overlayClosing(t); }
     void update(const ModuleFrame& f) override {
+        applyOverlayLayout(f.time);
         syncWorkMode(f.time);
         // The wallet follows the header chrome, which fades with the canvas.
         owner_->update(f, f.opacity);
@@ -289,6 +294,7 @@ public:
     // that opening shows Account) is posed hidden, so the host's upload right
     // after this installs its artwork and the first opening frame does not.
     void prewarm(const ModuleFrame& f) override {
+        applyOverlayLayout(f.time);
         (void)syncWorkMode(f.time);
         owner_->prewarm(f);
         if (world_) world_->prewarm.prewarmed = true;
@@ -302,6 +308,9 @@ public:
     }
     Entries entries(core::Module m) override { return m == core::Module::account ? owner_->moduleEntries() : Entries{}; }
     Entries floatingEntries() override { return owner_->headerEntries(); }
+    // The recovery menu draws on the HUD's top layer (b58f2e0), above the
+    // clock and pinned notes, on the gauge's position and size.
+    Entries topEntries() override { return owner_->recoveryEntries(); }
     void collected(native::Renderer& r) override { owner_->collected(r); }
     void release(native::Renderer& r) override { owner_->release(r); }
     bool covers(core::Point p) const override { return owner_->covers(p); }
@@ -332,6 +341,11 @@ public:
             const bool work = syncWorkMode(t);
             return owner_->deadline(t) || work;
         }
+        case K::settingsChanged:
+            // Display > HUD elements (Show Sanity, the gauge's place) is read
+            // again on the next frame.
+            overlayApplied_ = false;
+            return syncWorkMode(t);
         case K::overlayConcealed:
             // The HUD finished closing: a face that is not shown parks its
             // rasters (the next show rebuilds them); the wallet stays.
@@ -386,7 +400,14 @@ public:
     native::AutomationTreeHost automationHost(IRawElementProviderFragmentRoot* root) {
         native::AutomationTreeHost view;
         view.root = root;
-        view.nodes = [this] { return owner_->accessibleNodes(); };
+        view.nodes = [this] {
+            auto nodes = owner_->accessibleNodes();
+            // SystemHUDView.layoutAccountGaugeControls: the gauge's controls
+            // hide while the HUD elements are placed.
+            if (!host_.allowsInputBesidePlacement())
+                std::erase_if(nodes, [](const native::AutomationNode& n) { return n.id.rfind("wallet:", 0) == 0; });
+            return nodes;
+        };
         view.toScreen = [this](core::Rect r, std::uint8_t space) -> std::optional<core::Rect> {
             const auto client = owner_->accessibleClientRect(r, space);
             return client ? screenRect(*client) : std::nullopt;
@@ -410,6 +431,21 @@ public:
     void profileAvatarChanged(const std::optional<std::string>& avatar) override { if (!world_) owner_->profileAvatarChanged(avatar); }
 
 private:
+    // SystemHUDView.applyOverlayLayout for the gauge and Show Sanity
+    // (accountController.showsHeaderGauge): only when the shown layout moved.
+    void applyOverlayLayout(double t) {
+        const auto revision = host_.overlayLayoutRevision();
+        if (overlayApplied_ && revision == overlayRevision_) return;
+        overlayApplied_ = true; overlayRevision_ = revision;
+        using G = core::OverlayGeometry;
+        const auto layout = host_.shownOverlayLayout();
+        const auto placement = G::clamped(G::Element::sanity, layout.sanity, G::gauge);
+        const auto frame = G::frame(G::Element::sanity, placement, G::gauge);
+        owner_->setHeaderPlacement({frame.x, frame.y}, placement.size, h::GaugePopoverLayout::direction(frame, G::plane), t);
+        owner_->setShowsHeaderGauge(layout.showsSanity, t);
+    }
+    bool overlayApplied_{};
+    std::uint64_t overlayRevision_{};
     ApplicationHost& host_;
     void* window_{};
     std::function<double()> clock_;
@@ -865,7 +901,9 @@ private:
         step.check(d.press(d.canvasPoint({segment.x + segment.width / 2, segment.y + segment.height / 2})) && !d.canvas().menuOpen() &&
                    controller().presentation() == w.reference, "The first press outside only closes the menu (the segment behind is not pressed)");
         d.settleAnimations();
-        step.check(d.click("header") && d.canvas().menuOpen() && d.control("header:hidden").has_value(), "The header menu offers every mode");
+        step.check(d.click("header") && d.canvas().menuOpen() && d.control("header:workMode").has_value() && d.control("header:endfield").has_value() &&
+                   d.control("header:arknights").has_value() && !d.control("header:hidden").has_value(),
+                   "The header menu offers the three modes; hiding the gauge is Display > HUD elements");
         step.check(d.keyDown(VK_ESCAPE) && !d.canvas().menuOpen() && controller().presentation() == w.reference, "Escape closes only the menu");
         // Disconnect asks through the shared confirm bar (Mac verification L160-170);
         // Esc cancels without an unlink.

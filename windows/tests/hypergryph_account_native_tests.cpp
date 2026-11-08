@@ -158,7 +158,10 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     tools::AccountSanityGaugePreview gauge(controller,raster,resources,gaugeOptions);gauge.resize({1280,800,96,1,1280,800});gauge.setOverlayVisible(true,time);
     check(gauge.model().value()=="42 / 360"&&gauge.model().canOpen(),"Linked Endfield header shows projected sanity");
     gauge.update({},1,time);gauge.upload(renderer);
-    std::vector<gpu::LayerCompositionEntry> all(gauge.entries().begin(),gauge.entries().end());
+    // The wallet, then the recovery menu (the host's top layer).
+    const auto composed=[&]{std::vector<gpu::LayerCompositionEntry> out(gauge.entries().begin(),gauge.entries().end());
+        out.insert(out.end(),gauge.popoverEntries().begin(),gauge.popoverEntries().end());return out;};
+    auto all=composed();
     composition.setEntries(renderer,all);composition.present(renderer);renderer.draw(false);
     const auto shot=renderer.readback();const auto alphaAt=[&](double x,double y){return shot.pixels[std::size_t(y)*shot.rowBytes+std::size_t(x)*4+3];};
     check(alphaAt(562+100,2+21)>0&&alphaAt(562+30,2+21)>0,"Wallet and sanity icon paint at the header position (562,2)");
@@ -177,14 +180,14 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     check(gauge.model().popoverOpen()&&!gauge.model().tooltip().refreshEnabled,"Refresh disables while syncing; the popover stays open");
     drain(queue);drain(queue);drain(queue);gauge.contentChanged(time+.18);
     check(!controller.hasActiveRequest()&&gauge.model().popoverOpen(),"Manual refresh completes through the owner queue");
-    gauge.update({},1,time+.2);gauge.upload(renderer);all.assign(gauge.entries().begin(),gauge.entries().end());
+    gauge.update({},1,time+.2);gauge.upload(renderer);all=composed();
     composition.setEntries(renderer,all);composition.present(renderer);renderer.draw(false);
     check(gauge.key({app::KeyKind::down,VK_ESCAPE},false,time+.3)&&!gauge.model().popoverOpen(),"Esc dismisses only the recovery popover");
     controller.setShowsHeaderGauge(false);gauge.contentChanged(time+.4);
     check(gauge.model().hidden()&&!gauge.model().canOpen(),"Show Sanity off removes the gauge");
     check(!gauge.covers(wallet)&&!gauge.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},time+.4),"A hidden wallet takes no press");
     controller.setShowsHeaderGauge(true);
-    h::AccountAction work;work.kind=h::AccountAction::Kind::selectHeaderMode;work.headerMode=h::AccountPresentation::HeaderMode::workMode;controller.perform(work);gauge.contentChanged(time+.5);
+    h::AccountAction workHeader;workHeader.kind=h::AccountAction::Kind::selectHeaderMode;workHeader.headerMode=h::AccountPresentation::HeaderMode::workMode;controller.perform(workHeader);gauge.contentChanged(time+.5);
     check(gauge.model().value()=="24 / 25"&&!gauge.model().canOpen(),"Work Mode header shows Work Mode minutes");
     // The shown wallet is a header control whatever it shows: a press on
     // Work Mode minutes is consumed (it never reaches the host's close for a
@@ -199,7 +202,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         clock+=5;gauge.deadline(time+.5);
         const auto minute=gauge.nextWakeTime(time+.5);check(minute&&std::abs(*minute-(time+.5+58.5))<1e-9,"A running Work Mode countdown then wakes once, at the next shown minute");
     }
-    time+=1;gauge.update({},1,time);gauge.upload(renderer);all.assign(gauge.entries().begin(),gauge.entries().end());
+    time+=1;gauge.update({},1,time);gauge.upload(renderer);all=composed();
     composition.setEntries(renderer,all);composition.present(renderer);
     const auto beforeGauge=gauge.sceneStats();allocations=0;counting=true;
     try {for(unsigned n=0;n<120;++n) {auto center=core::Matrix4{};center.values[3]=n*.000001;gauge.update(center,1,time+=1./60);gauge.upload(renderer);composition.present(renderer);}} catch(...) {counting=false;throw;}
@@ -208,7 +211,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     const auto stats=gauge.sceneStats();check(stats.artworkRasters==1&&stats.iconRasters==1,"Wallet artwork and the icon rasterize once per scale");
     // The recovery popover was loaded when it first opened; shut, it is no
     // longer composed, so a closed HUD releases its card (the wallet stays).
-    check(stats.popoverLoads>=1&&stats.popoverUploaded&&gauge.entries().size()==1,"A shut popover is not composed");
+    check(stats.popoverLoads>=1&&stats.popoverUploaded&&gauge.entries().size()==1&&gauge.popoverEntries().empty(),"A shut popover is not composed");
     check(gauge.conceal()&&!gauge.sceneStats().popoverLoaded&&!gauge.sceneStats().popoverUploaded&&gauge.sceneStats().popoverParks==1&&gauge.entries().size()==1,
           "Parking releases the shut popover's card and keeps the wallet");
     check(!gauge.conceal(),"Parking twice changes nothing");
@@ -222,10 +225,17 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         gauge.setDesignScale(2,time);const auto after=gauge.sceneStats();
         check(gauge.model().renderScale()==3&&after.artworkRasters==before.artworkRasters+1&&after.iconRasters==before.iconRasters+1&&after.numberRasters==before.numberRasters+1,
               "A new design scale redraws the artwork, icon and value once");
-        gauge.setSizeFactor(2,time);
+        gauge.setPlacement({562,2},2,{},time);
         check(gauge.model().renderScale()==6&&gauge.sceneStats().iconRasters==before.iconRasters+2,"A larger Sanity size redraws at its size");
         gauge.update({},1,time+=1./60);gauge.upload(renderer);composition.present(renderer);
         check(gauge.sceneStats().groupUploads==after.groupUploads+1,"The wallet's target follows the render scale");
+    }
+    // Display > HUD elements: the wallet is drawn at its placement and size.
+    {
+        gauge.setPlacement({100,300},1,{},time);gauge.update({},1,time+=1./60);gauge.upload(renderer);all=composed();
+        composition.setEntries(renderer,all);composition.present(renderer);renderer.draw(false);
+        const auto moved=renderer.readback();const auto at=[&](double x,double y){return moved.pixels[std::size_t(y)*moved.rowBytes+std::size_t(x)*4+3];};
+        check(at(100+100,300+21)>0&&at(562+100,2+21)==0,"The wallet is drawn at its placement, not at the header");
     }
     // Teardown.
     composition.setEntries(renderer,{});gauge.collected(renderer);gauge.release(renderer);composition.detach(renderer);

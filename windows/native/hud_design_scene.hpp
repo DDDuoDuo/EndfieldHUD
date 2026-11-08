@@ -127,6 +127,11 @@ public:
     bool syncContent(const modules::design::Layer& root, const modules::design::TextServices&, std::uint64_t revision,
         double pixelsPerPoint, double now);
     void setImages(DesignImages);
+    // The tree's on-screen magnification changed (LayerRasterOptions::
+    // magnification, e.g. the facility tags at a Display > HUD elements size):
+    // the next syncContent re-rasterizes every part for it (its density is
+    // then layerContentsScale(s, magnification)).
+    void setMagnification(double);
     void updatePose(const NativeDesignScenePose&);
     // Uploads lazily painted surfaces and group targets (attaches the groups
     // of fades that start, updates their children); releases faded lazy

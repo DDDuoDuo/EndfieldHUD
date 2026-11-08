@@ -360,6 +360,12 @@ NativeDesignScene::NativeDesignScene(LayerRasterizer& r, LayerRasterOptions o, s
 NativeDesignScene::~NativeDesignScene() = default;
 void NativeDesignScene::setImages(DesignImages images) { impl_->images = std::move(images); impl_->imagesDirty = true; }
 
+void NativeDesignScene::setMagnification(double value) {
+    auto& i = *impl_;
+    if (i.options.magnification == value) return;
+    i.options.magnification = value;
+    i.synced = false; i.density = 0; // every part rasterizes again at the next sync
+}
 bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices& text, std::uint64_t revision, double pixelsPerPoint, double now) {
     auto& i = *impl_;
     i.time(now);

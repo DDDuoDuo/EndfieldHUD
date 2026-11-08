@@ -8,6 +8,7 @@
 #include "tools/hud_design_owner.hpp"
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "modules/event_log.hpp"
 #include "modules/work_mode.hpp"
@@ -122,6 +123,31 @@ struct FacilityOwner::Impl {
     // SystemHUDView.allowsModuleInput: interaction enabled (the opening
     // finished, not closing).
     bool allowsInput() const { return visible && interactive; }
+    // SystemHUDView.allowsInputBesidePlacement: the tag and banner actions,
+    // their dismissal and their screen-reader stand-ins wait while the HUD
+    // elements are placed.
+    bool allowsInputBesidePlacement() const { return allowsInput() && host.allowsInputBesidePlacement(); }
+
+    // --- Display > HUD elements: the alert column's place and size ----------
+    // The shown layout's alerts placement, re-read when its revision moves or
+    // the settings change (no per-frame copy of the layout).
+    core::OverlayGeometry::Placement alertsPlacement;
+    std::uint64_t layoutRevision{};
+    bool layoutRead{};
+    double tagMagnification{1};
+    core::OverlayAlertsSource alertsSource{[this] { return alertsNatural(); }};
+    void syncLayout() {
+        const auto revision = host.overlayLayoutRevision();
+        if (layoutRead && revision == layoutRevision) return;
+        layoutRead = true; layoutRevision = revision;
+        alertsPlacement = host.shownOverlayLayout().alerts;
+    }
+    // overlayNatural(.alerts): the column's width and its height (one tag's
+    // slot while none is shown) in core-plane points.
+    core::OverlaySize alertsNatural() const {
+        const double unit = d::geometry::baseUnit;
+        return {f::FacilityTagStack::width * unit, std::max(f::FacilityTagStack::tagHeight, tags.preferredHeight()) * unit};
+    }
 
     // --- The monitor's sources (FacilityAlertSources.system on Windows) --------
     modules::FacilityAlertMonitor::Sources sources() {
@@ -196,7 +222,7 @@ struct FacilityOwner::Impl {
     }
     // openFacilityModule (:3031-3034): opens the module even when it is hidden in Display > Modules.
     void openModule(Kind kind) {
-        if (!allowsInput()) return;
+        if (!allowsInputBesidePlacement()) return;
         host.selectModule(modules::facilityAlertModule(kind));
     }
     void conceal(bool on) {
@@ -266,14 +292,22 @@ struct FacilityOwner::Impl {
     }
 
     // --- Planes -------------------------------------------------------------------
-    void place(Surface& s, const Matrix& world, float opacity, const d::Layer& root, std::uint64_t revision, bool show) {
+    // `magnification`: the tree's on-screen size (the alert column's Display >
+    // HUD elements size); its text and layers raster for it (HUDDesignEnvironment.
+    // applyScale(to:magnification:)).
+    void place(Surface& s, const Matrix& world, float opacity, const d::Layer& root, std::uint64_t revision, bool show, double magnification = 1) {
         if (!metrics.pixelWidth || !metrics.pixelHeight) { s.composed = false; return; }
         s.world = world;
         const auto camera = gpu::layerViewportProjection(metrics.pixelWidth, metrics.pixelHeight) * Matrix::scale(metrics.scale, metrics.scale);
         s.projection = core::Projection::viewport(camera * world, metrics.pixelWidth, metrics.pixelHeight);
         if (!show) { s.composed = false; return; }
         s.synced = revision;
-        s.scene.syncContent(root, context.env().text, revision, std::clamp(context.boxScale(), 1., 4.), time);
+        if (magnification == 1) s.scene.syncContent(root, context.env().text, revision, d::layerContentsScale(context.boxScale()), time);
+        else {
+            auto text = context.env().text;
+            text.magnification = magnification;
+            s.scene.syncContent(root, text, revision, d::layerContentsScale(context.boxScale(), magnification), time);
+        }
         s.scene.updatePose({world, opacity, time, {}, {}});
         s.posed = s.composed = true;
     }
@@ -285,15 +319,15 @@ struct FacilityOwner::Impl {
         return s.projection.unproject({logical.x * metrics.scale, logical.y * metrics.scale});
     }
     d::Control* hit(core::Point logical) const {
-        if (!allowsInput()) return nullptr;
+        if (!allowsInputBesidePlacement()) return nullptr;
         if (banner.isShowing()) if (const auto p = local(bannerSurface, logical)) if (auto* c = bannerRouter.control(*p, banner.layer())) return c;
         if (const auto p = local(tagSurface, logical)) return tagRouter.control(*p, tags.layer());
         return nullptr;
     }
     void hover(std::optional<core::Point> logical) {
         const auto at = [&](const Surface& s) { return logical ? local(s, *logical) : std::nullopt; };
-        d::updateHighlights(banner.layer(), allowsInput() && banner.isShowing() ? at(bannerSurface) : std::nullopt, pressed);
-        d::updateHighlights(tags.layer(), allowsInput() ? at(tagSurface) : std::nullopt, pressed);
+        d::updateHighlights(banner.layer(), allowsInputBesidePlacement() && banner.isShowing() ? at(bannerSurface) : std::nullopt, pressed);
+        d::updateHighlights(tags.layer(), allowsInputBesidePlacement() ? at(tagSurface) : std::nullopt, pressed);
     }
     void cancelPointer() {
         bannerRouter.cancel(); tagRouter.cancel(); tracking = nullptr; pressed = false;
@@ -308,7 +342,7 @@ struct FacilityOwner::Impl {
     }
     std::vector<d::Control*> automationControls() {
         std::vector<d::Control*> out;
-        if (!allowsInput()) return out;
+        if (!allowsInputBesidePlacement()) return out;
         if (banner.isShowing()) out.push_back(&banner.control());
         for (auto* c : tags.controls()) out.push_back(c);
         return out;
@@ -318,10 +352,12 @@ struct FacilityOwner::Impl {
 FacilityOwner::FacilityOwner(app::ApplicationHost& host, d::Context& context, gpu::LayerRasterizer& raster, FacilityOwnerOptions options)
     : impl_(std::make_unique<Impl>(host, context, raster, std::move(options))) {
     host.publish<b::BootLogStage>(b::bootLogStageKey, impl_->stage);
+    host.publish<core::OverlayAlertsSource>(core::overlayAlertsKey, impl_->alertsSource);
 }
 FacilityOwner::~FacilityOwner() {
     impl_->automation.reset();
     impl_->host.withdraw(b::bootLogStageKey);
+    impl_->host.withdraw(core::overlayAlertsKey);
 }
 b::BootLogStage& FacilityOwner::stage() noexcept { return impl_->stage; }
 const modules::FacilityAlertMonitor& FacilityOwner::monitor() const noexcept { return impl_->monitor; }
@@ -386,12 +422,20 @@ void FacilityOwner::update(const app::ModuleFrame& frame) {
     const auto layout = core::source::DesktopChromeLayout::make(frame.chrome, frame.center, Matrix{});
     const double y = (bannerTop - layout.designOrigin.y) / std::max(.01, layout.designScale);
     const auto bannerWorld = layout.designToScreen * Matrix::translation(500, y) * Matrix::scale(unit, unit) * Matrix::translation(-f::FacilityBanner::size.width / 2, 0);
-    // Tags: on the core plane, anchor (1, 0) at (header.minX - 8, header.minY + 50).
-    const auto tagWorld = frame.center * Matrix::translation(layout.header.x - 8, layout.header.y + 50) * Matrix::scale(unit, unit) * Matrix::translation(-f::FacilityTagStack::width, 0);
+    // Tags: on the core plane, anchor (1, 0) at the column's top-right: authored
+    // (header.minX - 8, header.minY + 50), moved and sized by Display > HUD
+    // elements and kept on the plane (a taller column stays where it was moved).
+    i.syncLayout();
+    using G = core::OverlayGeometry;
+    const auto placed = G::clamped(G::Element::alerts, i.alertsPlacement, i.alertsNatural());
+    const auto column = G::frame(G::Element::alerts, placed, i.alertsNatural());
+    if (placed.size != i.tagMagnification) { i.tagMagnification = placed.size; i.tagSurface.scene.setMagnification(placed.size); }
+    const auto tagWorld = frame.center * Matrix::translation(column.x + column.width, column.y) * Matrix::scale(unit * placed.size, unit * placed.size)
+        * Matrix::translation(-f::FacilityTagStack::width, 0);
     // Boot log: the overlay's sublayer at (10, 30) on the content box.
     const auto bootWorld = core::source::designBoxWorld(frame.center) * Matrix::translation(10, 30);
     i.place(i.bannerSurface, bannerWorld, frame.opacity, i.banner.layer(), i.banner.contentRevision(), i.bannerShows());
-    i.place(i.tagSurface, tagWorld, frame.opacity, i.tags.layer(), i.tags.contentRevision(), i.tagsShow());
+    i.place(i.tagSurface, tagWorld, frame.opacity, i.tags.layer(), i.tags.contentRevision(), i.tagsShow(), i.tagMagnification);
     i.place(i.bootSurface, bootWorld, frame.opacity, i.bootLog.layer(), i.bootLog.contentRevision(), i.bootShows());
 }
 bool FacilityOwner::requiresFrames(double t) const {
@@ -461,7 +505,7 @@ bool FacilityOwner::covers(core::Point p) const {
 bool FacilityOwner::capturesPointer() const {
     const auto& i = *impl_;
     if (i.bootShows() || i.tracking) return true;
-    return i.allowsInput() && i.context.overlay().capturesInput() && (i.bannerShows() || i.tagsShow());
+    return i.allowsInputBesidePlacement() && i.context.overlay().capturesInput() && (i.bannerShows() || i.tagsShow());
 }
 bool FacilityOwner::capturesKeys() const { return impl_->bootShows(); }
 bool FacilityOwner::suppressesKeyFilters() const { return impl_->bootShows(); }
@@ -476,7 +520,7 @@ bool FacilityOwner::pointer(const app::PointerEvent& e, double t) {
         if (press) i.bootLog.skip();
         return press || (e.kind == app::PointerKind::up && left);
     }
-    if (!i.allowsInput()) { i.cancelPointer(); return false; }
+    if (!i.allowsInputBesidePlacement()) { i.cancelPointer(); return false; }
     const core::Point p{e.x, e.y};
     switch (e.kind) {
     case app::PointerKind::move:
@@ -504,7 +548,7 @@ bool FacilityOwner::pointer(const app::PointerEvent& e, double t) {
         const auto& root = router == &i.bannerRouter ? i.banner.layer() : i.tags.layer();
         i.tracking = nullptr; i.pressed = false;
         router->pointerUp(i.local(surface, p).value_or(core::Point{-1e6, -1e6}), root);
-        if (i.allowsInput()) i.hover(p);
+        if (i.allowsInputBesidePlacement()) i.hover(p);
         return true;
     }
     case app::PointerKind::leave: case app::PointerKind::captureLost:
@@ -538,6 +582,7 @@ bool FacilityOwner::hostEvent(const app::HostEvent& e, double t) {
     using K = app::HostEvent::Kind;
     switch (e.kind) {
     case K::settingsChanged: {
+        i.layoutRead = false; // Display > HUD elements: read the column's place again
         const bool enabled = i.host.settings().facilityAlerts() && !i.options.diagnostic;
         if (enabled == i.monitor.isEnabled()) return false;
         if (enabled) i.lastRead = i.lastMemory = i.time; // start() samples at once
@@ -570,8 +615,8 @@ bool FacilityOwner::automationRefresh(IRawElementProviderFragmentRoot* root) {
         // Stand-ins for the banner and the tags (SHELL-8, SHELL-21): space 0 the banner, 1 the tags.
         host.nodes = [&i] {
             std::vector<d::AccessibilityItem> banner, tags;
-            if (i.allowsInput() && i.banner.isShowing()) i.bannerRouter.accessibilityItems(i.banner.layer(), banner);
-            if (i.allowsInput()) i.tagRouter.accessibilityItems(i.tags.layer(), tags);
+            if (i.allowsInputBesidePlacement() && i.banner.isShowing()) i.bannerRouter.accessibilityItems(i.banner.layer(), banner);
+            if (i.allowsInputBesidePlacement()) i.tagRouter.accessibilityItems(i.tags.layer(), tags);
             auto nodes = gpu::automationNodes(banner);
             for (auto& node : gpu::automationNodes(tags)) { node.space = 1; nodes.push_back(std::move(node)); }
             return nodes;
@@ -583,7 +628,7 @@ bool FacilityOwner::automationRefresh(IRawElementProviderFragmentRoot* root) {
         };
         // A press exactly as its click (HUDAccessibilityStandIns.onPerform -> activate).
         host.invoke = [&i](std::string_view id) {
-            if (!i.allowsInput()) return false;
+            if (!i.allowsInputBesidePlacement()) return false;
             for (auto* c : i.automationControls())
                 if (c->id() == id && c->enabled()) { c->activate(); return true; }
             return false;

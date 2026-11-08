@@ -1,4 +1,6 @@
 #include "app/module_owner.hpp"
+#include "app/application_host.hpp"
+#include "core/data/data_store.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <stdexcept>
@@ -127,5 +129,11 @@ void ModuleRegistry::releaseAll(native::Renderer& renderer) noexcept {
         try { it->owner->release(renderer); } catch (...) {}
     }
     --iterating_;
+}
+// The layout the HUD shows: the host's (the placement draft while placing),
+// else the applied record's.
+ehud::data::OverlayLayout ApplicationHost::shownOverlayLayout() const {
+    if (const auto* layout = overlayLayout()) return *layout;
+    return settings().overlayLayout();
 }
 } // namespace endfield::app

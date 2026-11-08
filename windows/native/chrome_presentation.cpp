@@ -133,6 +133,8 @@ void validContent(const DesktopChromeContent&c){
     auto valid=[](const std::string&s,std::size_t maximum){return s.size()<=maximum&&Json::validUtf8(s);};
     need(static_cast<unsigned>(c.style)<5&&static_cast<unsigned>(c.workPhase)<3&&valid(c.uppercaseShortcut,256)&&valid(c.localizedClose,512),"Invalid source chrome content");
     need(!c.reading||(valid(c.reading->time,128)&&valid(c.reading->date,256)),"Invalid caller-formatted chrome clock");
+    need(valid(c.title.title,1024)&&valid(c.title.subtitle,1024)&&std::isfinite(c.title.size)&&c.title.size>0&&std::isfinite(c.title.origin.x)&&std::isfinite(c.title.origin.y),
+         "Invalid HUD title");
 }
 DesktopChromeAppearance defaultAppearance(){return {};}
 }
@@ -161,15 +163,38 @@ NativeChromePresentation::NativeChromePresentation(DesktopChromeProjectionPlan&p
     :projection_(&projection),layers_(&layers),options_(std::move(options)),reference_(retainedReference(reference)),
      // NSString.size(withAttributes:) of one clock line: the same descriptor
      // the text is painted from (standard face, weight, tnum).
-     artwork_([this](std::string_view text,double size,int weight,bool tabular){
-         const Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",size},{"font",standardFaceFont(size)},{"fontWeight",weight},
-             {"tabularFigures",tabular},{"wrapped",false},{"runs",Json::Array{}}};
-         return raster_->measureSourceText("hud.clock.measure",descriptor,1e6,options_).width;}),
+     artwork_([this](std::string_view text,double size,int weight,bool tabular){return measureText(text,size,weight,tabular);}),
      raster_(&rasterizer){
     headerID_=reference_["header"]["id"].string();footer_=reference_["footer"]["children"].array()[0];footerID_=footer_["id"].string();statusID_=panel(reference_,false)["id"].string();
     unsigned index=0;for(const auto&id:{headerID_,footerID_,statusID_,std::string(recordDotID)}){const auto surface=layers_->surfaceIndex(id);need(surface.has_value(),"Original chrome surface was not installed in LayerScene");surfaces_[index]=*surface;placements_[index].surface=*surface;++index;}
     for(auto&placement:placements_)placement.opacity=0;
     layers_->setPlacements(placements_);sceneRevision_=layers_->contentRevision();
+}
+double NativeChromePresentation::measureText(std::string_view text,double size,int weight,bool tabular)const{
+    if(text.empty())return 0;
+    const Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",size},{"font",standardFaceFont(size)},{"fontWeight",weight},
+        {"tabularFigures",tabular},{"wrapped",false},{"runs",Json::Array{}}};
+    return raster_->measureSourceText("hud.clock.measure",descriptor,1e6,options_).width;
+}
+Rect NativeChromePresentation::titleNatural(std::string_view title,std::string_view subtitle,double size)const{
+    const double s=std::max(.01,size);
+    const double width=std::max(measureText(title,20*s,600,false),measureText(subtitle,9*s,400,false));
+    return {0,0,std::ceil(width/s),49};
+}
+// applyOverlayLayout: the title at 20 x size and the subtitle at 9 x size
+// (+31 x size), max(300 x size, the drawn width + 4) wide, in the header
+// surface placed at the title's drawn top-left. The retained reference's
+// strings were checked when it was retained (retainedReference).
+Json NativeChromePresentation::titleHeader(const DesktopChromeTitle&t)const{
+    const double size=t.size,width=std::max(300*size,titleNatural(t.title,t.subtitle,size).width*size+4);
+    auto header=reference_["header"];auto lines=header["children"].array();
+    const auto place=[](Json&n,Rect frame){n["frame"]=rectangle(frame);n["bounds"]=Json::Array{0,0,frame.width,frame.height};n["anchorPoint"]=Json::Array{0,0};n["position"]=coordinate(frame.x,frame.y);};
+    const auto line=[&](Json&n,const std::string&text,double fontSize,int weight,Rect frame){
+        auto&style=n["text"];style["string"]=text;style["fontSize"]=fontSize;standardText(n,weight);place(n,frame);};
+    line(lines[0],t.title,20*size,600,{0,0,width,27*size});
+    line(lines[1],t.subtitle,9*size,400,{0,31*size,width,18*size});
+    header["children"]=std::move(lines);place(header,{t.origin.x,t.origin.y,width,49*size});
+    return header;
 }
 // Content event: the clock artwork for the current content and accent.
 void NativeChromePresentation::updateArtwork(){
@@ -213,6 +238,15 @@ bool NativeChromePresentation::setContent(const DesktopChromeContent&content){
         auto footer=footer_;footer["text"]["string"]=DesktopClockArtworkPlan::footerText(content.uppercaseShortcut,content.localizedClose);
         if(layers_->updateLocalContent(footerID_,++footerRevision_,footer,options_)){changed=true;++stats_.footerRasterChanges;}
     }
+    // Display > HUD elements: the title's text, size and place (the header
+    // surface), and Show title (its placement alone).
+    if(!previous||previous->title.title!=content.title.title||previous->title.subtitle!=content.title.subtitle||previous->title.size!=content.title.size){
+        if(layers_->updateLocalContent(headerID_,++headerRevision_,titleHeader(content.title),options_))changed=true;
+    }
+    if(previousWorlds_&&(!previous||previous->title.origin!=content.title.origin||previous->title.shown!=content.title.shown)){
+        placements_[0].world=previousWorlds_->front()=titleWorld_*Matrix4::translation(content.title.origin.x,content.title.origin.y);
+        placements_[0].opacity=headerOpacity(previousOpacity_);layers_->setPlacements(placements_);changed=true;
+    }
     // Close hint (SystemHUDView: hintLabel.isHidden): the footer line is its
     // own surface below the design box, so hiding it is its placement alone;
     // no other surface, raster or bound changes (the Mac's projected raster
@@ -230,21 +264,22 @@ bool NativeChromePresentation::setAppearance(const DesktopChromeAppearance&a){
     auto reference=desktopChromeAppearanceReference(reference_,a);auto footer=reference["footer"]["children"].array()[0];
     appearance_=a;statusStale_=false;auto status=panel(reference,content_&&content_->clockHovered);
     if(content_){updateArtwork();status=statusContent(status,artwork_.artwork(),statusID_);footer["text"]["string"]=DesktopClockArtworkPlan::footerText(content_->uppercaseShortcut,content_->localizedClose);currentPage_=pageOf(status);}
-    bool changed=layers_->updateLocalContent(headerID_,++headerRevision_,reference["header"],options_);
-    changed=layers_->updateLocalContent(statusID_,++statusRevision_,status,options_)||changed;
+    bool changed=layers_->updateLocalContent(statusID_,++statusRevision_,status,options_);
     changed=layers_->updateLocalContent(footerID_,++footerRevision_,footer,options_)||changed;
-    reference_=std::move(reference);footer_=reference_["footer"]["children"].array()[0];++stats_.contentUpdates;++stats_.statusRasterChanges;++stats_.footerRasterChanges;return changed;
+    reference_=std::move(reference);footer_=reference_["footer"]["children"].array()[0];
+    changed=layers_->updateLocalContent(headerID_,++headerRevision_,titleHeader(content_?content_->title:DesktopChromeTitle{}),options_)||changed;++stats_.contentUpdates;++stats_.statusRasterChanges;++stats_.footerRasterChanges;return changed;
 }
 bool NativeChromePresentation::update(const SourceWatchFrame&frame,const CameraFrame&camera,const DesktopChromeSettings&settings,float opacity){
     need(layers_->contentRevision()==sceneRevision_,"Recreate chrome bindings after structural LayerScene reload");
     need(std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid source chrome canvas opacity");if(statusStale_)rasterizeStatus(true);projection_->update(frame.resolved,camera,settings.viewport,settings.contentScale);const auto&projected=projection_->projection();
     if(!projected.center||!projected.status)return false;
     const auto layout=DesktopChromeLayout::make(settings,*projected.center,*projected.status);const auto&dot=artwork_.artwork().recordDot;
-    const std::array<Matrix4,4>worlds{*projected.center*Matrix4::translation(layout.header.x,layout.header.y),layout.designToScreen*Matrix4::translation(layout.footerText.x,layout.footerText.y),
+    titleWorld_=*projected.center;const auto title=content_?content_->title.origin:Point{layout.header.x,layout.header.y};
+    const std::array<Matrix4,4>worlds{*projected.center*Matrix4::translation(title.x,title.y),layout.designToScreen*Matrix4::translation(layout.footerText.x,layout.footerText.y),
         layout.statusToScreen,layout.statusToScreen*Matrix4::translation(dot.x,dot.y)};
     const auto dotOpacity=static_cast<float>(dotOpacity_);
     if(previousWorlds_==worlds&&previousOpacity_==opacity&&placedDot_==dotOpacity)return false;
-    for(unsigned i=0;i<4;++i){placements_[i].world=worlds[i];placements_[i].opacity=i==3?opacity*dotOpacity:i==1?footerOpacity(opacity):opacity;}
+    for(unsigned i=0;i<4;++i){placements_[i].world=worlds[i];placements_[i].opacity=i==3?opacity*dotOpacity:i==1?footerOpacity(opacity):i==0?headerOpacity(opacity):opacity;}
     layers_->setPlacements(placements_);previousWorlds_=worlds;previousOpacity_=opacity;placedDot_=dotOpacity;++stats_.placementUpdates;
     if(transition_)placeTransition();
     return true;

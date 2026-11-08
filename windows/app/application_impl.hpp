@@ -18,6 +18,7 @@
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
 #include "app/hud_button_automation.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #include "app/presentation_priority.hpp"
 #include "app/summon_hotkey.hpp"
 // Host-side contracts of module areas (headers only; no area library link).
@@ -123,6 +124,9 @@ std::string utf8(const fs::path&);
 fs::path utf8Path(std::string_view); // UTF-8 text -> path (replaces the deprecated u8path)
 std::string narrow(std::wstring_view);
 core::Language settingsLanguage(const ehud::data::Settings&);
+// Swift String.prefix(n) for the HUD elements text (OverlayLayout::cleanText):
+// grapheme clusters through ICU, as the profile owner cuts its text.
+extern const ehud::data::CharacterPrefix graphemes;
 double now();
 std::string ownedReaderPDF();
 using Clock = std::chrono::steady_clock;
@@ -284,6 +288,8 @@ struct Application::Impl {
         void setDesignScreen(core::Module) override;
         const ehud::data::ModuleLayout* moduleLayout() const noexcept override;
         std::uint64_t moduleLayoutRevision() const noexcept override;
+        const ehud::data::OverlayLayout* overlayLayout() const noexcept override;
+        std::uint64_t overlayLayoutRevision() const noexcept override;
         bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
         void cancelFileChoice() override;
         std::uint32_t registerMessage() override;
@@ -544,6 +550,19 @@ struct Application::Impl {
     std::optional<SummonChord> lastHookChord;
     std::uintptr_t summonHookGeneration{};
     std::optional<double> lastHookSummon;
+    // --- Display > HUD elements (app/hud_elements_editor.hpp) ----------------------
+    // SystemHUDView.applyOverlayLayout / shownOverlayLayout: the applied
+    // record's layout (normalized, its text cut by the grapheme rule); the
+    // revision moves whenever the shown layout changes
+    // (ApplicationHost::overlayLayout for the account and facility areas).
+    ehud::data::OverlayLayout appliedOverlayLayout;
+    std::uint64_t overlayLayoutRevision{};
+    const ehud::data::OverlayLayout& shownOverlayLayout() const noexcept;
+    void applyOverlayTitle();      // the chrome's title from the shown layout
+    // overlayNatural: an element's size at 100 % in core-plane points.
+    core::OverlaySize overlayNatural(core::OverlayGeometry::Element, const ehud::data::OverlayLayout&);
+    struct TitleNatural { std::string title, subtitle; double size{}; core::Language language{}; core::OverlaySize natural; };
+    std::optional<TitleNatural> titleNatural; // the last measured title (content events only)
     // --- Source navigation UI Automation (app/application_navigation.cpp) ----------
     void constructNavigationAutomation();
     void navigationPeers(std::vector<HudButtonPeer>&);

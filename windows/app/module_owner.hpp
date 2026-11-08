@@ -21,7 +21,7 @@
 //                                       idle after launch (launch prewarm)
 //   requiresFrames(time)                finite animation demand on the shared clock
 //   nextWakeTime(now) / deadline(time)  one shared waitable timer; no module timer
-//   upload / entries(module) / floatingEntries / modalEntries / collected
+//   upload / entries(module) / floatingEntries / topEntries / modalEntries / collected
 //                                       one LayerComposition, ordered by the owner
 //   release(renderer)                   GPU release, reverse registration order
 //   covers / pointerLocked / capturesPointer|Wheel|Keys / pointer / wheel /
@@ -319,6 +319,12 @@ public:
     // charge plane sits inside the canvas, below notesWorkspace).
     virtual std::span<const native::LayerCompositionEntry> planeEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> floatingEntries() { return {}; }
+    // The HUD's top layer (Mac SystemHUDView topPlane, b58f2e0): composed after
+    // the pinned Notes and before the areas' modal cards, so the clock, the
+    // footer, the alert banner and pinned notes never cover it. The owner
+    // poses it with the core plane (the HUD elements placement strip and its
+    // marks, the Sanity recovery menu).
+    virtual std::span<const native::LayerCompositionEntry> topEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> modalEntries() { return {}; }
     virtual void collected(native::Renderer&) {}
     virtual void release(native::Renderer&) {}

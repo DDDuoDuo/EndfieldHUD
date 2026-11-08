@@ -213,9 +213,11 @@ bool NativeSanityGaugeScene::sync(const h::SanityGaugeModel& model,core::Languag
     if(model.popoverOpen()!=i.open) {
         i.open=model.popoverOpen();
         Impl::animate(i.popoverAlpha,i.open?1:0,g::popoverDuration,t,reduced);
-        // Opening slides in from -5; closing drifts to -3 while fading.
-        if(i.open) {i.popoverLift={-5,0,t,reduced?0:g::popoverDuration,!reduced};}
-        else {i.popoverLift={0,-3,t,reduced?0:g::popoverDuration,!reduced};}
+        // Opening slides in from -5; closing drifts to -3 while fading;
+        // both the other way when the menu opens up (away from the wallet).
+        const double away=model.popoverDirection().opensUp?-1:1;
+        if(i.open) {i.popoverLift={-5*away,0,t,reduced?0:g::popoverDuration,!reduced};}
+        else {i.popoverLift={0,-3*away,t,reduced?0:g::popoverDuration,!reduced};}
         changed=true;
     }
     if(model.popoverOpen()) {
@@ -289,12 +291,15 @@ void NativeSanityGaugeScene::upload(Renderer& r) {
 }
 std::span<const LayerCompositionEntry> NativeSanityGaugeScene::entries() {
     auto& i=*impl_;if(i.hidden||!i.walletRegistered) return {};
-    // Wallet stack first, the recovery popover (z 10) above it while it is
-    // open or fading out; a shut popover is not composed (so it can park).
     i.composed[0]={&i.wallet,i.walletOutput};
-    if(!i.popoverUploaded||!(i.open||i.popoverOpacity>0)) return std::span<const LayerCompositionEntry>(i.composed).first(1);
+    return std::span<const LayerCompositionEntry>(i.composed).first(1);
+}
+// The recovery popover (z 10) while it is open or fading out; a shut popover
+// is not composed (so it can park).
+std::span<const LayerCompositionEntry> NativeSanityGaugeScene::popoverEntries() {
+    auto& i=*impl_;if(i.hidden||!i.walletRegistered||!i.popoverUploaded||!(i.open||i.popoverOpacity>0)) return {};
     i.composed[1]=i.popoverGroup->entry();
-    return i.composed;
+    return std::span<const LayerCompositionEntry>(i.composed).subspan(1,1);
 }
 void NativeSanityGaugeScene::collected(Renderer& r) {impl_->wallet.collectRetiredResources(r);}
 bool NativeSanityGaugeScene::release(Renderer& r) {

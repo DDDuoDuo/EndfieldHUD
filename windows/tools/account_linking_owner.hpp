@@ -114,7 +114,14 @@ public:
     bool deadline(double time);                         // true: visible content changed
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> moduleEntries();  // Account page
-    std::span<const native::LayerCompositionEntry> headerEntries();  // wallet + recovery popover (above modules)
+    std::span<const native::LayerCompositionEntry> headerEntries();  // the wallet (above modules)
+    std::span<const native::LayerCompositionEntry> recoveryEntries(); // the open recovery menu (the HUD's top layer)
+    // Display > HUD elements for the gauge (SystemHUDView.applyOverlayLayout):
+    // its drawn top-left on the core plane, its size and the menu's direction
+    // (AccountSanityGaugePreview::setPlacement), and Show Sanity
+    // (HypergryphAccountController::setShowsHeaderGauge; the wallet follows).
+    void setHeaderPlacement(core::Point origin,double size,modules::hypergryph::GaugePopoverDirection,double time);
+    void setShowsHeaderGauge(bool,double time);
     void collected(native::Renderer&);
     void release(native::Renderer&);
 

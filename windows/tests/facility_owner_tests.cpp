@@ -10,6 +10,7 @@
 // composed and pressed through their projections (Storage opens, x dismisses),
 // the settings switch, closing and release. No input injection.
 #include "native/facility_owner.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #ifdef _WIN32
 #include "tools/hud_design_overlay_owner.hpp" // before <windows.h>: rpcndr.h defines `small`
 #include "app/application_host.hpp"
@@ -59,6 +60,13 @@ public:
     a::ClientMetrics metrics_{width, height, 96, 1, width, height};
     unsigned frames{}, settingsUpdates{};
     std::vector<c::Module> chosen;
+    // Display > HUD elements as shown (the placement editor's draft while placing).
+    ehud::data::OverlayLayout layout;
+    std::uint64_t layoutRevision{};
+    bool placing{};
+    const ehud::data::OverlayLayout* overlayLayout() const noexcept override { return &layout; }
+    std::uint64_t overlayLayoutRevision() const noexcept override { return layoutRevision; }
+    bool allowsInputBesidePlacement() const noexcept override { return !placing; }
     a::ApplicationAreaMode mode() const noexcept override { return a::ApplicationAreaMode::hiddenCoverage; }
     double now() const override { return clock; }
     const ehud::data::Settings& settings() const noexcept override { return configuration; }
@@ -241,6 +249,23 @@ void run(const std::filesystem::path& shader) {
     const auto tagWorld = center * c::Matrix4::translation(262, 52) * c::Matrix4::scale(unit, unit) * c::Matrix4::translation(-272, 0);
     const auto tag = owner->tags().tag(m::FacilityAlertKind::disk);
     check(tag && tag->text == "DISK 4% FREE", "The tag shows the disk alert");
+    // Display > HUD elements: the column moves and grows from its top-right
+    // anchor (kept on the plane); while placing it takes no press and lists
+    // no stand-ins; the natural size is published for the host's editor.
+    {
+        const auto* source = host.find<c::OverlayAlertsSource>(c::overlayAlertsKey);
+        const c::OverlaySize natural{272 * unit, std::max(28.0, owner->tags().preferredHeight()) * unit};
+        check(source && source->natural && source->natural() == natural, "The facility area publishes the column's natural size");
+        host.layout.alerts = {-100, 200, 1.5}; ++host.layoutRevision; frame(2.72);
+        const auto column = c::OverlayGeometry::drawnFrame(c::OverlayGeometry::Element::alerts, host.layout.alerts, natural);
+        const auto placed = center * c::Matrix4::translation(column.x + column.width, column.y) * c::Matrix4::scale(unit * 1.5, unit * 1.5) * c::Matrix4::translation(-272, 0);
+        const auto moved = client(placed, {tag->frame.x + tag->frame.width - 14, tag->frame.y + 14});
+        const auto authored = client(tagWorld, {tag->frame.x + tag->frame.width - 14, tag->frame.y + 14});
+        check(moved && owner->covers(*moved) && authored && !owner->covers(*authored), "The tag's x follows the moved, enlarged column");
+        host.placing = true;
+        check(!owner->covers(*moved) && !press(*moved, 2.74) && owner->monitor().alerts().size() == 1, "While placing, the tag takes no press");
+        host.placing = false; host.layout = {}; ++host.layoutRevision; frame(2.76);
+    }
     const auto dismiss = client(tagWorld, {tag->frame.x + tag->frame.width - 14, tag->frame.y + 14});
     check(dismiss && press(*dismiss, 2.8), "x takes the press");
     check(owner->monitor().alerts().empty() && owner->monitor().isStorageLow(), "x dismisses the alert; its condition stays");

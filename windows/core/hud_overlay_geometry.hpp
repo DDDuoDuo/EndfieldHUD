@@ -8,7 +8,9 @@
 #include "core/data/data_store.hpp"
 #include "core/scene.hpp"
 #include <array>
+#include <functional>
 #include <optional>
+#include <string_view>
 
 namespace endfield::core {
 struct OverlaySize {
@@ -52,4 +54,11 @@ struct OverlayGeometry {
     static std::optional<Element> elementAt(const std::array<Rect, 3>& frames, Point) noexcept;
     static std::size_t index(Element element) noexcept { return static_cast<std::size_t>(element); }
 };
+// The alert column's natural size right now (overlayNatural(.alerts): one
+// tag's slot while none is shown), published by the facility area under
+// overlayAlertsKey (ApplicationHost::publish) for the host's placement editor.
+struct OverlayAlertsSource {
+    std::function<OverlaySize()> natural;
+};
+inline constexpr std::string_view overlayAlertsKey{"hud.overlay.alerts"};
 } // namespace endfield::core

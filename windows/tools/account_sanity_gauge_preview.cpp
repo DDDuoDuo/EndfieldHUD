@@ -18,6 +18,9 @@ struct AccountSanityGaugePreview::Impl {
     // SystemHUDView.designScale (DesktopChromeLayout::designScale): the HUD
     // design scale with HUD Scale and the display adaptation, from the frame.
     double designScale{1};
+    // The gauge's drawn top-left on the core plane and its size (Display >
+    // HUD elements; the authored place until the host places it).
+    core::Point origin{g::headerOrigin.x+g::headerPosition.x,g::headerOrigin.y+g::headerPosition.y};double size{1};
     gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
     gpu::LayerRasterizer* raster;
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,std::shared_ptr<const h::GaugeAssets> a,AccountSanityGaugeOptions o)
@@ -79,7 +82,12 @@ void AccountSanityGaugePreview::setDesignScale(double value,double t) {
     auto& i=*impl_;i.advance(t);if(!std::isfinite(value)||!(value>0)||value==i.designScale) return;
     i.designScale=value;i.rescaled(i.model.setScale(i.scale()));
 }
-void AccountSanityGaugePreview::setSizeFactor(double value,double t) {auto& i=*impl_;i.advance(t);i.rescaled(i.model.setSizeFactor(value));}
+void AccountSanityGaugePreview::setPlacement(core::Point origin,double size,h::GaugePopoverDirection direction,double t) {
+    auto& i=*impl_;i.advance(t);need(std::isfinite(origin.x)&&std::isfinite(origin.y),"Invalid gauge placement");
+    i.origin=origin;i.size=std::isfinite(size)&&size>0?size:1;
+    i.rescaled(i.model.setSizeFactor(size));
+    if(i.model.setPopoverDirection(direction).popover) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);
+}
 void AccountSanityGaugePreview::setLanguage(core::Language l,double t) {impl_->advance(t);impl_->options.language=l;impl_->refresh();}
 void AccountSanityGaugePreview::setReduceMotion(bool v) noexcept {impl_->options.reduceMotion=v;}
 void AccountSanityGaugePreview::setOverlayVisible(bool v,double t) {
@@ -90,8 +98,9 @@ void AccountSanityGaugePreview::setOverlayVisible(bool v,double t) {
 void AccountSanityGaugePreview::contentChanged(double t) {impl_->advance(t);impl_->refresh();}
 void AccountSanityGaugePreview::update(const Matrix& center,float opacity,double t) {
     auto& i=*impl_;i.advance(t);need(i.metrics.pixelWidth&&i.metrics.pixelHeight,"Resize the gauge before presentation");
-    // Header frame origin (270,2) plus HUDAccountGauge.headerPosition (292,0).
-    const auto world=center*Matrix::translation(g::headerOrigin.x+g::headerPosition.x,g::headerOrigin.y+g::headerPosition.y);
+    // The placed gauge (authored: header frame origin (270,2) plus
+    // HUDAccountGauge.headerPosition (292,0)), scaled by its size.
+    const auto world=center*Matrix::translation(i.origin.x,i.origin.y)*Matrix::scale(i.size,i.size);
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);
     i.projection=core::Projection::viewport(camera*world,i.metrics.pixelWidth,i.metrics.pixelHeight);i.posed=true;
     i.scene.updatePose(world,opacity,i.time);
@@ -183,6 +192,7 @@ gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexce
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) {impl_->renderer=&r;impl_->scene.upload(r);}}
 bool AccountSanityGaugePreview::conceal() {return impl_->scene.park(impl_->renderer);}
 std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::entries() {return impl_->posed?impl_->scene.entries():std::span<const gpu::LayerCompositionEntry>{};}
+std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::popoverEntries() {return impl_->posed?impl_->scene.popoverEntries():std::span<const gpu::LayerCompositionEntry>{};}
 void AccountSanityGaugePreview::collected(gpu::Renderer& r) {impl_->scene.collected(r);}
 void AccountSanityGaugePreview::release(gpu::Renderer& r) {need(impl_->scene.release(r),"Detach the gauge composition before releasing its resources");}
 }
