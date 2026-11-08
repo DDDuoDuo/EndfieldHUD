@@ -80,7 +80,7 @@ void plan() {
     auto provider = std::make_unique<n::VolumeQueuedIconProvider>(queue.submit(), [&] { ++changed; },
         [&](const n::ShelfIconRequest& r) {
             ++extracted; worker = GetCurrentThreadId(); ++workerCalls;
-            if (r.identity.objectID[0] == 3) { n::ShelfIconPixels none; none.typeFallback = true; none.result = HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND); return none; }
+            if (r.identity.objectID[0] == 3 || r.identity.objectID[0] == 9) { n::ShelfIconPixels none; none.typeFallback = true; none.result = HRESULT_FROM_WIN32(ERROR_RESOURCE_TYPE_NOT_FOUND); return none; }
             return pixels(static_cast<std::uint8_t>(40 * r.identity.objectID[0]));
         });
     const std::array visible{synthetic(1), synthetic(2), synthetic(3)};
@@ -107,17 +107,24 @@ void plan() {
     queue.settle();
     check(extracted == 5 && changed == 2 && provider->stats().published == 4, "A late completion of a hidden plan changes no row but keeps the icon");
     check(provider->setVisible(later) && bound(*provider, later[0])->image && provider->stats().jobs == 3, "Showing again binds the kept icon without a job");
+    // An executable without an icon resource, answered while hidden: showing
+    // it again binds that answer (no icon, no longer waiting) without a job.
+    const std::array quiet{synthetic(9)};
+    check(provider->setVisible(quiet) && provider->stats().inFlight && provider->hide(), "An icon-less row is hidden while its job runs");
+    queue.settle();
+    check(changed == 2 && provider->setVisible(quiet) && bound(*provider, quiet[0])->typeFallback && FAILED(bound(*provider, quiet[0])->result) && provider->stats().jobs == 4,
+        "Showing it again binds its answer, no icon, without a job");
     // A full queue: nothing runs until capacity returns.
     queue.full = true;
     const std::array blocked{synthetic(6)};
     check(provider->setVisible(blocked) && !provider->stats().inFlight && provider->stats().backpressure == 1, "A full queue leaves the request waiting");
     queue.full = false; provider->queueCapacityAvailable();
-    check(provider->stats().inFlight && provider->stats().jobs == 4, "Queue capacity sends the waiting request");
+    check(provider->stats().inFlight && provider->stats().jobs == 5, "Queue capacity sends the waiting request");
     queue.settle();
     check(bound(*provider, blocked[0])->image != nullptr, "The waiting request loads");
     // Retry advances the revision and extracts again.
     const auto old = bound(*provider, blocked[0])->revision;
-    check(provider->setVisible(blocked, true) && bound(*provider, blocked[0])->revision > old && provider->stats().jobs == 5, "An explicit retry loads a new revision");
+    check(provider->setVisible(blocked, true) && bound(*provider, blocked[0])->revision > old && provider->stats().jobs == 6, "An explicit retry loads a new revision");
     queue.settle();
     check(bound(*provider, blocked[0])->image != nullptr && bound(*provider, blocked[0])->image->revision() > old, "The retry's pixels carry the new revision");
     // Destroyed with a job in flight: the completion does nothing.
@@ -125,7 +132,7 @@ void plan() {
     check(provider->setVisible(last) && provider->stats().inFlight, "A job is in flight");
     provider.reset();
     queue.settle();
-    check(workerCalls == 8, "The orphaned job finished on the worker without touching the destroyed provider");
+    check(workerCalls == 9, "The orphaned job finished on the worker without touching the destroyed provider");
     queue.executor.invalidate(queue.route);
     queue.executor.shutdown();
 }
