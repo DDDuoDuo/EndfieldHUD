@@ -267,16 +267,18 @@ inline constexpr core::CubicTiming easeIn = core::DesignEasing::easeIn;
 inline constexpr core::CubicTiming easeOut = core::DesignEasing::easeOut;
 inline constexpr core::CubicTiming easeInOut = core::DesignEasing::easeInOut;
 inline constexpr core::CubicTiming linear{0, 0, 1, 1};
+inline constexpr core::CubicTiming listSlide = core::DesignEasing::listSlide; // the right-hand list's tile slide
 }
 // Durations in seconds (HUDDuration, :351-388). toastOut is .25 as a token;
 // the toast's own hide uses .24 (HUDDesignOverlay.swift HUDToast.hide, LIB-65).
-// entrance, leave and the stagger constants alias core::DesignMotion (the one
+// entrance, leave, listSlide and the stagger constants alias core::DesignMotion (the one
 // definition, shared with the module switch).
 namespace duration {
 inline constexpr double hover = .22, press = .10, sheen = .70;
 inline constexpr double entrance = core::DesignMotion::entrance, staggerStep = core::DesignMotion::staggerStep;
 inline constexpr double staggerBase = core::DesignMotion::staggerBase, leave = core::DesignMotion::leave;
 inline constexpr int staggerCap = core::DesignMotion::staggerCap;
+inline constexpr double listSlide = core::DesignMotion::listSlide;
 inline constexpr double titleWipe = .45, ruleWipe = .42, ruleDelay = .05, menuWipe = .18, tabOn = .20;
 inline constexpr double knob = .18, toggleLabel = .14, caret = .16, accentBar = .14, thumb = .12, bubbleFade = .14, bubbleScale = .18;
 inline constexpr double bandIn = .30, bandOut = .18, confirmText = .30, confirmTextDelay = .12, pillDelay = .16, pillStep = .06;

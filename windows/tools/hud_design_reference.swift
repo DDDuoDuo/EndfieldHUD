@@ -169,10 +169,10 @@ private final class FakeCanvas: HUDDesignCanvas {
         }
         let easings: [String: [Double]] = ["standard": timingJSON(HUDEasing.standard), "snap": timingJSON(HUDEasing.snap),
             "ease": timingJSON(HUDEasing.ease), "easeIn": timingJSON(HUDEasing.easeIn), "easeOut": timingJSON(HUDEasing.easeOut),
-            "easeInOut": timingJSON(HUDEasing.easeInOut), "linear": timingJSON(HUDEasing.linear)]
+            "easeInOut": timingJSON(HUDEasing.easeInOut), "linear": timingJSON(HUDEasing.linear), "listSlide": timingJSON(HUDEasing.listSlide)]
         let d = HUDDuration.self
         let durations: [String: Double] = ["hover": d.hover, "press": d.press, "sheen": d.sheen, "entrance": d.entrance,
-            "staggerStep": d.staggerStep, "staggerBase": d.staggerBase, "staggerCap": Double(d.staggerCap), "leave": d.leave,
+            "staggerStep": d.staggerStep, "staggerBase": d.staggerBase, "staggerCap": Double(d.staggerCap), "leave": d.leave, "listSlide": d.listSlide,
             "titleWipe": d.titleWipe, "ruleWipe": d.ruleWipe, "ruleDelay": d.ruleDelay, "menuWipe": d.menuWipe, "tabOn": d.tabOn,
             "knob": d.knob, "toggleLabel": d.toggleLabel, "caret": d.caret, "accentBar": d.accentBar, "thumb": d.thumb,
             "bubbleFade": d.bubbleFade, "bubbleScale": d.bubbleScale, "bandIn": d.bandIn, "bandOut": d.bandOut,

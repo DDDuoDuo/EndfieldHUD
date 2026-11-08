@@ -116,6 +116,9 @@ struct DesignEasing {
     static constexpr CubicTiming easeIn{.42, 0, 1, 1};
     static constexpr CubicTiming easeOut{0, 0, .58, 1};
     static constexpr CubicTiming easeInOut{.42, 0, .58, 1};
+    // The HUD's right-hand list: a tile sliding to its slot (with
+    // DesignMotion::listSlide).
+    static constexpr CubicTiming listSlide{.20, .75, .30, 1};
 };
 struct DesignMotionSample {
     double opacity{1};
@@ -136,6 +139,8 @@ struct DesignMotionSample {
 struct DesignMotion {
     static constexpr double entrance = .38, leave = .13, staggerBase = .06, staggerStep = .036;
     static constexpr int staggerCap = 14;
+    // With DesignEasing::listSlide: the right-hand list's tile slide.
+    static constexpr double listSlide = .18;
     // .06 + min(max(0, i), 14) x .036 (spec §1.10).
     static double staggerDelay(int index) noexcept;
     static DesignMotionSample enterAt(double elapsed, MotionPoint offset, double opacity = 1, double delay = 0,

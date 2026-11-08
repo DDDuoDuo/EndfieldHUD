@@ -175,6 +175,7 @@ void typeScale() {
     const auto bezier = [](c::CubicTiming t, double a, double b, double x, double y) { return t.x1 == a && t.y1 == b && t.x2 == x && t.y2 == y; };
     check(bezier(d::easing::standard, .2, .8, .2, 1) && bezier(d::easing::snap, .2, .9, .1, 1) && bezier(d::easing::ease, .25, .1, .25, 1), "E, SNAP, ease");
     check(bezier(d::easing::easeIn, .42, 0, 1, 1) && bezier(d::easing::easeOut, 0, 0, .58, 1) && bezier(d::easing::easeInOut, .42, 0, .58, 1) && bezier(d::easing::linear, 0, 0, 1, 1), "easeIn/Out/InOut, linear");
+    check(bezier(d::easing::listSlide, .20, .75, .30, 1) && d::duration::listSlide == .18, "The list slide: .18 s on (.20, .75, .30, 1) (HUDEasing.listSlide, HUDDuration.listSlide)");
     // HUDDuration (:351-388).
     namespace t = d::duration;
     const double durations[]{t::hover, t::press, t::sheen, t::entrance, t::staggerStep, t::staggerBase, t::leave, t::titleWipe, t::ruleWipe, t::ruleDelay, t::menuWipe, t::tabOn,
@@ -573,6 +574,28 @@ void oracle(const char* path) {
             const auto name = "Oracle palette " + v["accent"].string();
             check(close(p.yellow, color(v["yellow"])) && close(p.yellowHigh, color(v["yellowHigh"])) && close(p.yellowLow, color(v["yellowLow"])) && close(p.yellowDeep, color(v["yellowDeep"])) && close(p.ink, color(v["ink"])), name);
         }
+    // HUDEasing and HUDDuration as the oracle exports them (rounded to 1e-6).
+    if (tokens["easings"].isObject()) {
+        const std::pair<const char*, c::CubicTiming> easings[]{{"standard", d::easing::standard}, {"snap", d::easing::snap}, {"ease", d::easing::ease}, {"easeIn", d::easing::easeIn},
+            {"easeOut", d::easing::easeOut}, {"easeInOut", d::easing::easeInOut}, {"linear", d::easing::linear}, {"listSlide", d::easing::listSlide}};
+        for (const auto& [name, e] : easings) {
+            const auto& v = tokens["easings"][name];
+            check(v.isArray() && v.array().size() == 4 && near(v.array()[0].number(), e.x1, 1e-6) && near(v.array()[1].number(), e.y1, 1e-6)
+                && near(v.array()[2].number(), e.x2, 1e-6) && near(v.array()[3].number(), e.y2, 1e-6), std::string("Oracle easing ") + name);
+        }
+    }
+    if (tokens["durations"].isObject()) {
+        namespace t = d::duration;
+        const std::pair<const char*, double> durations[]{{"hover", t::hover}, {"press", t::press}, {"sheen", t::sheen}, {"entrance", t::entrance}, {"staggerStep", t::staggerStep},
+            {"staggerBase", t::staggerBase}, {"staggerCap", double(t::staggerCap)}, {"leave", t::leave}, {"listSlide", t::listSlide}, {"titleWipe", t::titleWipe}, {"ruleWipe", t::ruleWipe},
+            {"ruleDelay", t::ruleDelay}, {"menuWipe", t::menuWipe}, {"tabOn", t::tabOn}, {"knob", t::knob}, {"toggleLabel", t::toggleLabel}, {"caret", t::caret},
+            {"accentBar", t::accentBar}, {"thumb", t::thumb}, {"bubbleFade", t::bubbleFade}, {"bubbleScale", t::bubbleScale}, {"bandIn", t::bandIn}, {"bandOut", t::bandOut},
+            {"confirmText", t::confirmText}, {"confirmTextDelay", t::confirmTextDelay}, {"pillDelay", t::pillDelay}, {"pillStep", t::pillStep},
+            {"confirmCallback", t::confirmCallback}, {"dim", t::dim}, {"dimFilter", t::dimFilter}, {"toastVisible", t::toastVisible}, {"toastOut", t::toastOut},
+            {"pop", t::pop}, {"taskFlip", t::taskFlip}};
+        for (const auto& [name, value] : durations)
+            check(tokens["durations"][name].isNumber() && near(tokens["durations"][name].number(), value, 1e-9), std::string("Oracle duration ") + name);
+    }
     if (tokens["styles"].isObject()) {
         d::Palette p;
         const std::pair<const char*, d::TextStyle> styles[]{{"moduleTitle", d::type::moduleTitle(p)}, {"rowLabel", d::type::rowLabel()}, {"numeral", d::type::numeral(p)}, {"microTag", d::type::microTag()},
