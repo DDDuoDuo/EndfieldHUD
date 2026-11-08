@@ -2079,8 +2079,8 @@ void Application::Impl::close(double time){
     if(arrangeDrag)swallowsArrangePress=true;
     endModuleArrangeDrag(false,true,time);
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
-    // The clock's hover plate stays until the first move or the hide (48584b5
-    // defers clearControlHighlights: onPointer, concealed()).
+    // The clock's hover plate stays until the pointer leaves or the hide
+    // (48584b5 defers clearControlHighlights: onPointer, concealed(), shelfHide).
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();
     // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition();
     // a press on the industry logo or a scroll arrow does nothing more.

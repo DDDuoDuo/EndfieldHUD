@@ -3321,17 +3321,21 @@ int Application::Impl::runHiddenVerification(){
                     };
                     onShelf();
                     if(!args.shelfDataRoot.empty()){need(shelf->importFiles(syntheticShelfFiles(),hostTime(t)),"The drag probe's synthetic files are added to the Shelf");t=run(t,.8);}
-                    const double scrolled=gridOffset();bool retracting{},hidden{};
+                    const double scrolled=gridOffset();bool retracting{},hidden{},hoverCleared{};
                     const bool cancelled=shelfDragOut([&](DWORD&effect){
                         retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
                             session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
+                        // A hover plate kept through the retract (no concealment follows).
+                        setClockHovered(true);
                         t=run(t,1.2);
                         hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
+                        hoverCleared=!chromeContent.clockHovered;
                         // A re-render while the HUD is away (a store refresh) keeps the scroll too.
                         if(auto*c=shelf->canvas())c->rerender();
                         return cancel(effect);},t);
                     dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
                     dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
+                    dragCheck(hoverCleared,"The retracted HUD's hide clears the highlights kept through the retract");
                     dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
                         "A cancelled drag shows the HUD again with its entrance");
                     openingEntrance([&]{return !lifecycle.shelfDragActive();},"The Shelf back after a cancelled drag");

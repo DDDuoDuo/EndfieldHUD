@@ -124,9 +124,17 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     else if(swallowsArrangePress&&e.kind==PointerKind::move&&(e.modifiers&MK_LBUTTON))return true;
     else if(swallowsArrangePress&&e.kind==PointerKind::up&&e.button==PointerButton::left){swallowsArrangePress=false;host.capturePointer(false);host.refreshCursor();refresh(hostTime(time));return true;}
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
-    // During the close every highlight kept from its start (the clock, the
-    // Sanity gauge, the HUD elements strip) clears on the first move.
-    if(e.kind==PointerKind::move||e.kind==PointerKind::leave){clockHover(e);if(closing)clearControlHighlights(hostTime(time));}
+    // S-D4 (Mac parity): during the close a move reaches no highlight (Mac
+    // updateHover returns before updateControlHighlights once
+    // interactionEnabled is off), so every highlight kept from its start (the
+    // clock, the Sanity gauge, the HUD elements strip) stays until the
+    // pointer leaves the HUD (mouseExited) or the hide (concealed,
+    // shelfHide). To clear them on the first move instead, call
+    // clearControlHighlights for a move here too.
+    if(e.kind==PointerKind::move||e.kind==PointerKind::leave){
+        if(!closing)clockHover(e);
+        else if(e.kind==PointerKind::leave)clearControlHighlights(hostTime(time));
+    }
     // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
@@ -402,8 +410,10 @@ void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double
     case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);
         if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});break;
     // stopMotionForConcealment + orderOut: the hidden HUD ends what the
-    // retract's close left playing (overlayRetracted; no overlayConcealed).
-    case K::shelfHide:host.hide();presentationPriority.restore();broadcast(HostEvent::Kind::overlayRetracted,time);break;
+    // retract's close left playing (overlayRetracted; no overlayConcealed)
+    // and clears the highlights kept through it (deactivateModuleInput:
+    // clearControlHighlights).
+    case K::shelfHide:host.hide();presentationPriority.restore();clearControlHighlights(time);broadcast(HostEvent::Kind::overlayRetracted,time);break;
     case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
     default:break;

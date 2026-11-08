@@ -411,10 +411,11 @@ bool HudElementsEditor::pointer(const PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
     if (!i.draft || !i.editor) return false;
-    // The close: no press, drag or release; the first move or a leave clears
-    // the highlights (clearControlHighlights).
+    // The close: no press, drag or release, and a move changes nothing; the
+    // host's leave (the pointer leaving the HUD, or the hide) clears the
+    // highlights (clearControlHighlights).
     if (i.closing) {
-        if (e.kind == PointerKind::move || e.kind == PointerKind::leave) { i.editor->updateHighlights(i.editor->layer(), std::nullopt); i.changed(); }
+        if (e.kind == PointerKind::leave) { i.editor->updateHighlights(i.editor->layer(), std::nullopt); i.changed(); }
         return false;
     }
     const core::Point p{e.x, e.y};

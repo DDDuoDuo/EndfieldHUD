@@ -92,8 +92,9 @@ void AccountSanityGaugePreview::setLanguage(core::Language l,double t) {impl_->a
 void AccountSanityGaugePreview::setReduceMotion(bool v) noexcept {impl_->options.reduceMotion=v;}
 void AccountSanityGaugePreview::setOverlayVisible(bool v,double t) {
     auto& i=*impl_;i.advance(t);if(i.overlayVisible==v) return;i.overlayVisible=v;
-    // The HUD close keeps the hover until the first move (the host's leave)
-    // or the hide (conceal), as the Mac defers clearControlHighlights.
+    // The HUD close keeps the hover until the pointer leaves (the host's
+    // leave) or the hide (conceal, or the host's leave at a File Shelf hide),
+    // as the Mac defers clearControlHighlights.
     if(!v) i.model.dismiss();
     i.refresh();
 }
