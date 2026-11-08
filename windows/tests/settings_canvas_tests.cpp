@@ -67,9 +67,9 @@ struct World {
         hooks0.logoSelection = [this] { hooks.emplace_back("logoSelection"); };
         for (const auto module : modules) canvases[module] = std::make_unique<m::SettingsCanvas>(module, context, *controller, hooks0);
     }
-    void appearance() {
+    void appearance(bool reduceMotion = true) {
         d::Context::Appearance a;
-        a.language = language; a.accentHex = "FAD41F"; a.light = light; a.reduceMotion = true;
+        a.language = language; a.accentHex = "FAD41F"; a.light = light; a.reduceMotion = reduceMotion;
         context.apply(a, now);
     }
     m::SettingsCanvas& operator[](core::Module module) { return *canvases.at(module); }
@@ -523,28 +523,49 @@ void contracts() {
             const auto& controls = w[module].page().controls();
             return std::any_of(controls.begin(), controls.end(), [&](const d::Control* c) { return c->id() == id; });
         };
-        const auto atTop = [&](M module) {
-            const auto areas = w[module].page().scrollAreas();
-            return std::all_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() == 0; });
+        const auto area = [&](M module, std::string_view id) -> const d::ScrollArea* {
+            for (const auto& a : w[module].page().scrollAreas()) if (a->id() == id) return a.get();
+            return nullptr;
+        };
+        // The page show() built is the one the entrance staggers: its rows
+        // enter one after another and activation swaps in nothing else.
+        const auto staggersOnEntrance = [&](M module) {
+            const auto* built = &w[module].page();
+            const std::vector<d::Layer*> rows(built->staggered().begin(), built->staggered().end());
+            if (rows.empty()) return false;
+            w.appearance(false);
+            w[module].playEntrance(d::entranceOffset(M::about, module), w.now);
+            bool entering = true;
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                entering = entering && rows[i]->animating(w.now + d::staggerDelay(int(i)) + .01)
+                    && !rows[i]->animating(w.now + d::staggerDelay(int(i)) + d::duration::entrance + .01);
+            w[module].setActive(true, w.now);
+            const bool kept = &w[module].page() == built;
+            w.appearance();
+            return entering && kept;
         };
         w.show(M::system);
         w.activate(M::system, "modules");
+        check(w[M::system].section() == "modules" && area(M::system, "modules"), "System opens Modules");
         (void)w[M::system].scroll({300, 300}, {0, 240}, w.now);
-        check(w[M::system].section() == "modules", "System opens Modules");
+        check(area(M::system, "modules")->offset() > 0, "The Modules list scrolls");
         leave(M::system);
         w[M::system].show(w.now);
-        check(w[M::system].section() == "main" && onPage(M::system, "modules") && atTop(M::system),
-            "System left on Modules shows its main page, at the top, before the entrance plays");
-        w[M::system].setActive(true, w.now);
-        check(onPage(M::system, "modules"), "Activation keeps that page (nothing left to swap in)");
+        check(w[M::system].section() == "main" && onPage(M::system, "modules"),
+            "System left on Modules shows its main page before the entrance plays");
+        check(staggersOnEntrance(M::system), "System's main page plays the staggered entrance");
+        w.activate(M::system, "modules");
+        check(area(M::system, "modules") && area(M::system, "modules")->offset() == 0, "Modules opens again at the top");
         leave(M::system);
         w.show(M::display);
+        (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
+        check(area(M::display, "display") && area(M::display, "display")->offset() > 0, "The Display list scrolls before App icon");
         w.activate(M::display, "appIcon");
         leave(M::display);
         w[M::display].show(w.now);
-        check(w[M::display].section() == "main" && onPage(M::display, "appIcon") && atTop(M::display),
+        check(w[M::display].section() == "main" && onPage(M::display, "appIcon") && area(M::display, "display") && area(M::display, "display")->offset() == 0,
             "Display left on App icon shows its main page, at the top, before the entrance plays");
-        w[M::display].setActive(true, w.now);
+        check(staggersOnEntrance(M::display), "Display's main page plays the staggered entrance");
         (void)w[M::display].scroll({300, 300}, {0, 240}, w.now);
         check(w[M::display].page().scrollAreas()[0]->offset() > 0, "The Display list scrolls before Battery alert");
         w.activate(M::display, "battery");
