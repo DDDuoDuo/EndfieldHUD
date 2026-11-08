@@ -24,7 +24,7 @@ endif()
 add_library(hud_display_center_logo modules/display_center_logo.cpp)
 target_include_directories(hud_display_center_logo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # The preference's logo choices and UUID rule come from the settings record.
-target_link_libraries(hud_display_center_logo PUBLIC hud_localization hud_data)
+target_link_libraries(hud_display_center_logo PUBLIC hud_localization hud_data PRIVATE hud_artwork_scaling)
 if(WIN32)
   target_sources(hud_display_center_logo PRIVATE native/display_center_logo.cpp)
   target_compile_definitions(hud_display_center_logo PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)

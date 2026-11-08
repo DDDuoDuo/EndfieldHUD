@@ -1,5 +1,6 @@
 #pragma once
 #include "core/scene.hpp"
+#include "modules/artwork_scaling.hpp"
 #include <array>
 #include <filesystem>
 #include <cstdint>
@@ -8,12 +9,8 @@
 #include <vector>
 
 namespace endfield::modules {
-// sRGB RGBA8, top-left rows unless a function says otherwise. Core Graphics
-// bitmap contexts store premultiplied color; CGImage sources may be straight.
-struct ProfileImage {
-    unsigned width{},height{};std::vector<std::uint8_t>rgba;bool premultiplied{};
-    bool operator==(const ProfileImage&)const=default;
-};
+// ProfileImage (sRGB RGBA8) and the Lanczos scaler come from
+// modules/artwork_scaling.hpp, shared with the Now Playing cover decode.
 // Content events only; every function allocates its output once and performs
 // no IO. Dimensions are bounded to the source's 16384 px context limit.
 
@@ -61,8 +58,6 @@ ProfileImage profileResampled(const ProfileImage&,unsigned width,unsigned height
 // worker, so a large avatar never resamples on the owner thread.
 inline constexpr unsigned profileAvatarWorkingPixels=1024;
 ProfileImage profileWorkingCopy(const ProfileImage&,unsigned maximum=profileAvatarWorkingPixels);
-// Unpremultiplied copy (top-left rows kept), e.g. for LayerImageSource.publish.
-ProfileImage profileStraight(const ProfileImage&);
 // windows/resources/profile: the verbatim business card and avatar frame
 // mips (catalog digests verified) decoded to their straight source sprites.
 struct ProfileSourceArtwork {ProfileImage card,frame;std::string defaultBackgroundSHA256;};

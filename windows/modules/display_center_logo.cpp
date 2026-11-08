@@ -1,5 +1,6 @@
 #include "modules/display_center_logo.hpp"
 #include "core/data/data_store.hpp"
+#include "modules/artwork_scaling.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,19 +10,6 @@ namespace endfield::modules {
 namespace {
 constexpr auto& identifiers = ehud::data::SettingsChoices::centerLogos; // CenterLogoChoice order
 void need(bool value, const char* message) { if (!value) throw std::invalid_argument(message); }
-// A normalized 1-D Gaussian (standard deviation sigma, radius ceil(3 sigma)).
-std::vector<double> gaussian(double sigma) {
-    if (!(sigma > 1e-6)) return {1.0};
-    const auto radius = static_cast<int>(std::ceil(3 * sigma));
-    std::vector<double> weights(static_cast<std::size_t>(radius) * 2 + 1);
-    double total = 0;
-    for (int k = -radius; k <= radius; ++k) {
-        const double w = std::exp(-double(k) * k / (2 * sigma * sigma));
-        weights[static_cast<std::size_t>(k + radius)] = w; total += w;
-    }
-    for (auto& w : weights) w /= total;
-    return weights;
-}
 } // namespace
 
 std::optional<CenterLogoChoice> centerLogoChoice(std::string_view value) noexcept {
@@ -89,7 +77,7 @@ std::optional<CenterLogoArtwork> centerLogoArtwork(const CenterLogoBitmap& image
     // variance (b / 2)^2 + 1/2 (tests/display_center_logo_tests.cpp compares
     // the Mac oracle within a few premultiplied levels).
     const double blur = centerLogoShadowBlur(h);
-    const auto kernel = gaussian(std::sqrt(blur * blur / 4 + .5));
+    const auto kernel = artworkGaussian(std::sqrt(blur * blur / 4 + .5));
     const int radius = static_cast<int>(kernel.size() / 2);
     std::vector<double> horizontal(count), shadow(count);
     for (unsigned y = 0; y < h; ++y)
