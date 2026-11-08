@@ -4,8 +4,8 @@
 //
 //   audio_probe                           usage only; touches nothing
 //   audio_probe --live [--seconds N]      READ-ONLY: active output/input
-//                                         endpoints with their Bluetooth and
-//                                         headphone traits, the default devices,
+//                                         endpoints with their headphone
+//                                         trait, the default devices,
 //                                         the default output's volume/mute/
 //                                         balance readback and capabilities,
 //                                         per-app sessions (name, PID, packaged
@@ -58,7 +58,7 @@ double monotonic(){return std::chrono::duration<double>(std::chrono::steady_cloc
 void emit(Json value){value["t"]=std::round(monotonic()*1000)/1000;std::cout<<value.encode()<<std::endl;}
 std::string text(std::wstring_view value){return n::audioUtf8(value).value_or("<invalid UTF-16>");}
 Json endpoints(const std::vector<n::AudioEndpoint>&list,const std::wstring&defaultID){
-    Json::Array out;for(const auto&d:list)out.emplace_back(Json::Object{{"id",text(d.id)},{"name",text(d.name)},{"bluetooth",d.bluetooth},{"headphones",d.headphones},{"default",d.id==defaultID}});return out;
+    Json::Array out;for(const auto&d:list)out.emplace_back(Json::Object{{"id",text(d.id)},{"name",text(d.name)},{"headphones",d.headphones},{"default",d.id==defaultID}});return out;
 }
 Json optional(const std::optional<float>&v){return v?Json(static_cast<double>(*v)):Json{};}
 void report(const n::AudioEndpointSnapshot&s,n::AudioTopologyRecorder&recorder,std::uint64_t&generation){

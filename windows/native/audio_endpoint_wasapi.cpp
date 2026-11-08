@@ -58,7 +58,7 @@ public:
         if((flow==eRender||flow==eCapture)&&role==eConsole)return changed();return S_OK;
     }
     HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR,const PROPERTYKEY key)override{
-        if(sameKey(key,friendlyNameKey)||sameKey(key,formFactorKey)||sameKey(key,enumeratorNameKey))return changed();return S_OK;
+        if(sameKey(key,friendlyNameKey)||sameKey(key,formFactorKey))return changed();return S_OK;
     }
 };
 class VolumeEvents final:public IAudioEndpointVolumeCallback {

@@ -23,7 +23,8 @@ bool audioEndpointHeadphones(std::optional<std::uint32_t> formFactor)noexcept;
 // PKEY_Device_EnumeratorName of the endpoint's audio device. Bluetooth Classic
 // (A2DP/HFP: BTHENUM, BTHHFENUM) and Bluetooth LE Audio (BTHLEDEVICE, BTHLE)
 // buses are recognised case-insensitively; any other or missing value is not
-// Bluetooth (source: transport type Bluetooth or BluetoothLE only).
+// Bluetooth. Only audio_probe --endpoints reports it: the Volume snapshot has
+// no Bluetooth trait (the Mac removed its unused flag in d060bd2).
 bool audioEndpointBluetooth(std::wstring_view enumeratorName)noexcept;
 
 // Raw IAudioEndpointVolume readback of the controlled output, HRESULT-shaped.

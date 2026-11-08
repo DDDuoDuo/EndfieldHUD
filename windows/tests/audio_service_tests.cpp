@@ -165,7 +165,7 @@ void lifecycle(){
         check(h.world->endpointOpens==1&&h.world->binds==0&&h.world->sessionsCreated==0,"Topology tier registers device notifications only (no volume control, no sessions)");
         check(x.paused&&x.applicationsPaused&&!x.available,"Closed-HUD topology watch exposes no controls");
         check(x.outputs.size()==3&&x.outputs[0].name==L"Buds"&&x.outputs[1].name==L"Speakers 2"&&x.outputs[2].name==L"Speakers 10","Outputs follow the source name ordering");
-        check(x.outputs[0].bluetooth&&x.outputs[0].headphones&&!x.outputs[1].bluetooth&&x.outputs[1].headphones&&!x.outputs[2].headphones,"Bluetooth from the BTHENUM enumerator; headphones from the form factor");
+        check(x.outputs[0].headphones&&x.outputs[1].headphones&&!x.outputs[2].headphones,"Headphones from the form factor, whatever the bus");
         check(x.defaultOutputID==speaker&&x.defaultInputID==mic&&x.inputs.size()==1,"Defaults and inputs are read");
     }
     check(h.noticeThread!=std::this_thread::get_id(),"Notice runs on the worker; the owner drains");
@@ -554,7 +554,7 @@ void binding(){
     check(!volume.active()&&!s.stats().workerStarted,"Binding construction votes nothing");
     volume.setVisible(true);callbacks.setActive(true);check(s.votes()==static_cast<unsigned>(n::AudioVoter::volume),"Visible selected Volume casts exactly the volume vote");
     pump([&]{return delivered.canSetVolume&&delivered.outputs.size()==3;},"Binding receives the worker snapshot");
-    check(delivered.outputs[0].bluetooth&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetDefaultOutput&&delivered.canSetDefaultInput,"Bluetooth reaches the UI; a supported selector enables both device menus");
+    check(delivered.outputs[0].headphones&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetDefaultOutput&&delivered.canSetDefaultInput,"Headphones reach the UI; a supported selector enables both device menus");
     check(callbacks.setVolume(delivered.outputID,.25),"A volume write is accepted asynchronously");
     pump([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     check(callbacks.setMute(delivered.outputID,true),"Mute reaches the binding");

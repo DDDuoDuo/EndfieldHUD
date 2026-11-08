@@ -1600,7 +1600,7 @@ void Application::Impl::constructVolume(){
         audio->volume().setReceiver([this](const gpu::VolumeSnapshot&value){if(volumeCanvas)isolate(volumeModuleOwner,"audio",[&]{volumeCanvas->receive(value);});if(ready&&!stopping)host.invalidate();});
     }else{
         auto sample=std::make_shared<gpu::VolumeSnapshot>();
-        sample->outputs={{"test-speaker","测试扬声器"},{"test-headphones","测试耳机",true,false}};
+        sample->outputs={{.id="test-speaker",.name="测试扬声器"},{.id="test-headphones",.name="测试耳机",.headphones=true}};
         sample->inputs={{"test-microphone","测试麦克风"}};sample->outputID="test-speaker";sample->inputID="test-microphone";
         sample->volume=.45;sample->balance=0;sample->muted=false;
         sample->canSetVolume=sample->canSetMute=sample->canSetBalance=sample->canSetDefaultOutput=sample->canSetDefaultInput=true;

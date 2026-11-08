@@ -305,7 +305,7 @@ struct VolumeModel {
     }
     static n::VolumeSnapshot initial() {
         n::VolumeSnapshot s;
-        s.outputs = {{"spk", "Speakers"}, {"hp", "Headphones", true, false, false}}; s.inputs = {{"mic", "Microphone"}};
+        s.outputs = {{.id = "spk", .name = "Speakers"}, {.id = "hp", .name = "Headphones", .headphones = true, .canBeDefaultOutput = false}}; s.inputs = {{"mic", "Microphone"}};
         s.outputID = "spk"; s.inputID = "mic"; s.volume = .55; s.balance = -.2; s.muted = false;
         s.canSetVolume = s.canSetMute = s.canSetBalance = s.canSetDefaultOutput = s.canSetDefaultInput = s.applicationActivitySupported = true;
         for (int i = 1; i <= 5; ++i) { n::VolumeApplication a; a.id = std::to_string(900 + i); a.name = "Player " + std::to_string(i); a.pid = 4100u + unsigned(i); a.available = i != 5; s.applications.push_back(a); }

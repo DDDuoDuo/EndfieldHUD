@@ -249,7 +249,7 @@ public:
                 std::vector<AudioEndpoint>ui;ui.reserve(records.size());std::set<std::wstring>ids;
                 for(const auto&r:records){
                     if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
-                    AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor),audioEndpointBluetooth(r.enumerator)};
+                    AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor)};
                     raw.push_back(e);e.name=audioEndpointLabel(e.name,e.id);ui.push_back(std::move(e));
                 }
                 sortAudioEndpoints(ui,impl.options.order);return ui;

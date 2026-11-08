@@ -29,7 +29,7 @@ void validateVolumeSnapshot(const VolumeSnapshot&s){
     if(s.volume)need(std::isfinite(*s.volume)&&*s.volume>=0&&*s.volume<=1,"Invalid output volume");if(s.balance)need(std::isfinite(*s.balance)&&*s.balance>=-1&&*s.balance<=1,"Invalid output balance");
 }
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&audio){VolumeSnapshot s;s.outputID=utf8(audio.defaultOutputID);s.inputID=utf8(audio.defaultInputID);
-    for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});
+    for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones});
     if(audio.available&&!audio.paused){s.volume=audio.volume?std::optional<double>(*audio.volume):std::nullopt;s.muted=audio.muted;s.balance=audio.balance?std::optional<double>(*audio.balance):std::nullopt;s.canSetVolume=audio.canSetVolume&&s.volume.has_value();s.canSetMute=audio.canSetMute&&s.muted.has_value();s.canSetBalance=audio.canSetBalance&&s.balance.has_value();}
     s.applicationActivitySupported=audio.applicationsSupported&&!audio.applicationsPaused&&!audio.paused;
     for(const auto&a:audio.applications){VolumeApplication app;app.id=a.id;app.name=utf8(a.name);app.pid=a.pid;app.available=a.available&&s.applicationActivitySupported;app.state=a.state==AudioApplicationRouteState::active?VolumeAppState::active:a.state==AudioApplicationRouteState::failed?VolumeAppState::failed:VolumeAppState::direct;if(a.gain)app.gain=*a.gain;app.executable=a.executable;s.applications.push_back(std::move(app));}return s;}

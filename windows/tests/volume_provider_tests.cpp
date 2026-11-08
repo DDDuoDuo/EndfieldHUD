@@ -12,7 +12,7 @@ struct Graph {
     unsigned reads{},activation{},volume{},mute{},balance{},gain{},stop{},stopAll{},output{},input{};
     bool otherOwner{},vote{},asynchronousGain{},deferVote{};std::int32_t error{},openError{};
     std::wstring lastEndpoint;
-    Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false,false},{L"out-b",L"Headphones",true,false}};audio.inputs={{L"in-a",L"Microphone",false,false}};
+    Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false},{L"out-b",L"Headphones",true}};audio.inputs={{L"in-a",L"Microphone",false}};
         audio.defaultOutputID=L"out-一";audio.defaultInputID=L"in-a";
         audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.canSetDefaultOutput=audio.canSetDefaultInput=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
         audio.applications.push_back({"pid:42:creation:1",L"Owned Test App",42,true,gpu::AudioApplicationRouteState::direct,{},{},{},{}});
@@ -155,8 +155,8 @@ void revisit(){Graph graph;graph.deferVote=true;graph.apply();gpu::VolumeProvide
     graph.openError=-77;graph.settle();
     check(graph.audio.paused&&!deliveries.empty()&&!binding.snapshot().canSetVolume&&binding.snapshot().status&&binding.snapshot().status->find("-77")!=std::string::npos,"A worker that could not open the endpoints shows the real paused state and its error");
 }
-void endpointTraits(){Graph graph;graph.audio.outputs.push_back({L"bt-1",L"Synthetic BT",true,true});gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
-    const auto&out=binding.snapshot().outputs;check(out.size()==3&&out[2].bluetooth&&out[2].headphones&&!out[0].bluetooth&&out[1].headphones&&!out[1].bluetooth,"Explicit Bluetooth and headphone traits reach the snapshot");
+void endpointTraits(){Graph graph;graph.audio.outputs.push_back({L"bt-1",L"Synthetic BT",true});gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
+    const auto&out=binding.snapshot().outputs;check(out.size()==3&&out[2].headphones&&!out[0].headphones&&out[1].headphones,"Explicit headphone traits reach the snapshot");
     // Fixed/pass-through output: value stays visible, writes are refused before the provider.
     graph.audio.canSetVolume=false;graph.changed();check(binding.snapshot().volume==.75&&!binding.snapshot().canSetVolume,"Fixed-volume output keeps its readback but disables the slider");
     const auto writes=graph.volume;check(!binding.callbacks().setVolume("out-一",.3)&&graph.volume==writes&&binding.lastFailure()->kind==gpu::VolumeProviderFailureKind::unsupported,"Fixed-volume output never receives a software volume write");

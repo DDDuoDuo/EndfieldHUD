@@ -6,13 +6,13 @@
 #include <vector>
 
 namespace endfield::native {
-// One active Windows audio endpoint (render or capture). Traits come only from
-// documented endpoint properties: PKEY_AudioEndpoint_FormFactor for
-// headphones/headsets and PKEY_Device_EnumeratorName for Bluetooth buses.
-// Nothing is inferred from a device or driver name.
+// One active Windows audio endpoint (render or capture). The headphone trait
+// comes only from the documented PKEY_AudioEndpoint_FormFactor; nothing is
+// inferred from a device or driver name. The Mac dropped its unused Bluetooth
+// flag (d060bd2), so no transport trait is kept here.
 struct AudioEndpoint {
     std::wstring id,name;
-    bool headphones{},bluetooth{};
+    bool headphones{};
     bool operator==(const AudioEndpoint&)const=default;
 };
 // Event Log topology entry (source AudioTopologyWatcher: identity -> label).

@@ -15,7 +15,7 @@
 
 namespace endfield::native {
 struct VolumeDevice {
-    std::string id,name;bool headphones{},bluetooth{},canBeDefaultOutput{true},canBeDefaultInput{true};
+    std::string id,name;bool headphones{},canBeDefaultOutput{true},canBeDefaultInput{true};
     bool operator==(const VolumeDevice&)const=default;
 };
 // PerAppAudioSession.State, with `direct` for an app without a session.
@@ -58,7 +58,7 @@ struct VolumeCallbacks {
 // metadata beyond the retained budgets (16 MiB of names and paths).
 void validateVolumeSnapshot(const VolumeSnapshot&);
 // Pure mapping of the shared Windows provider's supported master, input,
-// balance, headphone/Bluetooth and explicit relative application-route fields.
+// balance, headphone and explicit relative application-route fields.
 // Icons remain asynchronous shared-cache bindings supplied by the presentation
 // owner. Endpoint-control selection is NOT public default-device switching.
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&);
