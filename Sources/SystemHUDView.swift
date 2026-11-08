@@ -1415,35 +1415,55 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func updateModulePresentation(restoreSourceOverview: Bool = true) {
         if restoreSourceOverview { updateSourceOverviewPresentation(stable: sourceOverviewPresented) }
         updateLegacyCenterLogo()
-        fadeModuleContrast(visible: usesSourceShell && selectedModule != .nowPlaying)
+        // The centre's contrast backdrop (none behind Now Playing's own cover).
+        fadeWithModule(moduleContrast, visible: usesSourceShell && selectedModule != .nowPlaying, key: "module.contrast")
+        let color = selectedModule == .power ? currentBatteryTone : currentAccent
         withoutActions {
             self.chargeBadge.layer.position = CGPoint(x: HUDChargeBadge.frame.midX,
                                                        y: HUDChargeBadge.frame.midY + self.chargeSourceOffset)
             self.industryWordmark.backgroundColor = (self.industryWordmark.contents != nil ? NSColor.clear : (self.currentDark ? NSColor.white : NSColor(white: 0.12, alpha: 1))).cgColor
-            let color = self.selectedModule == .power ? self.currentBatteryTone : self.currentAccent
             self.artwork?.update(dark: self.currentDark, chargeColor: color, accentColor: self.currentAccent)
-            self.progress.strokeColor = color.cgColor
-            self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
-            self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
             self.setAccessibilityLabel(L10n.text("System interface", "系统界面") + ", " + self.selectedModule.title)
         }
+        updateLegacyProgress(color: color, animated: true)
         updateMapOcclusionPresentation()
     }
 
-    /// The centre's contrast backdrop (none behind Now Playing's own cover)
-    /// fades with the leaving module instead of switching at the click.
-    private func fadeModuleContrast(visible: Bool) {
+    /// A centre layer that depends on the module fades with the leaving
+    /// module instead of switching at the click.
+    private func fadeWithModule(_ layer: CALayer, visible: Bool, key: String) {
         let target: Float = visible ? 1 : 0
-        guard moduleContrast.opacity != target else { return }
-        let from = moduleContrast.presentation()?.opacity ?? moduleContrast.opacity
+        guard layer.opacity != target else { return }
+        let from = layer.presentation()?.opacity ?? layer.opacity
         // One transaction: a committed end value alone would show for a frame.
         withoutActions {
-            self.moduleContrast.opacity = target
+            layer.opacity = target
             guard self.window != nil, !HUDRuntimeAppearance.reduceMotion else { return }
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = from; fade.toValue = target; fade.duration = HUDDuration.leave
-            self.moduleContrast.add(fade, forKey: "module.contrast")
+            layer.add(fade, forKey: key)
         }
+    }
+
+    /// The fallback shell's centre arc: the battery level in Power, a short
+    /// accent arc elsewhere, none in Work Mode (whose ring replaces it). A
+    /// module switch fades it and moves its length and colour with the leave;
+    /// the source shell never shows it.
+    private func updateLegacyProgress(color: NSColor, animated: Bool) {
+        let end = selectedModule == .power ? CGFloat(snapshot.percentage ?? 0) / 100 : 0.12
+        withoutActions { self.progress.isHidden = self.usesSourceShell }
+        let shown = !progress.isHidden && (progress.presentation()?.opacity ?? progress.opacity) > 0
+        if animated, shown, window != nil {
+            if progress.strokeEnd != end {
+                HUDMotion.animate(progress, "strokeEnd", to: end, duration: HUDDuration.leave, env: designContext.env)
+            }
+            if progress.strokeColor != color.cgColor {
+                HUDMotion.animate(progress, "strokeColor", to: color.cgColor, duration: HUDDuration.leave, env: designContext.env)
+            }
+        } else {
+            withoutActions { self.progress.strokeEnd = end; self.progress.strokeColor = color.cgColor }
+        }
+        fadeWithModule(progress, visible: selectedModule != .workMode, key: "module.progress")
     }
 
     override func updateTrackingAreas() {
@@ -2151,7 +2171,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.navigation.layer.isHidden = overview
             self.navigation.bottomLayer.isHidden = overview
             self.industryWordmark.isHidden = overview
-            self.progress.isHidden = overview || self.selectedModule == .workMode
+            self.progress.isHidden = overview
         }
         updateStatusPanel()
         headerClock.setActive(window != nil && interactionEnabled)
@@ -2874,9 +2894,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.notesCanvas.updateAppearance(style: HUDModuleContentStyle(dark: dark, accent: yellow,
                 contentsScale: self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2))
             self.updateButtonStates()
-            self.progress.strokeColor = (self.selectedModule == .power ? tone : yellow).cgColor
-            self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
-            self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
+            self.updateLegacyProgress(color: self.selectedModule == .power ? tone : yellow, animated: false)
             self.updateWorkPresentation(force: true)
             self.hintLabel.string = "ESC / \(self.configuration.summonShortcut.displayName.uppercased()) / " + L10n.text("CLICK OUTSIDE TO CLOSE", "点击外侧关闭")
             // Display > Close hint. The line sits alone below
