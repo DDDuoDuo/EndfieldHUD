@@ -109,6 +109,14 @@ enum HUDMotion {
         layer.add(group, forKey: key)
     }
 
+    /// The HUD close's fade: as long as the opening's `reveal` (the whole close
+    /// when shorter), timed to end exactly when the close of `length` ends.
+    static func closingFade(ending length: CFTimeInterval, reveal: CFTimeInterval) -> (delay: CFTimeInterval, duration: CFTimeInterval) {
+        let length = length.isFinite ? max(0, length) : 0
+        let duration = min(reveal.isFinite ? max(0, reveal) : 0, length)
+        return (length - duration, duration)
+    }
+
     /// Keeps a layer transparent until the caller removes `key` (a page that
     /// has left and must not return before its entrance). Not motion, so it
     /// also applies with Reduce Motion.

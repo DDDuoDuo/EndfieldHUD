@@ -531,7 +531,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                         self.sourceOverviewPresented = false
                         self.sourceWatch?.conceal()
                         self.updateSourceOverviewPresentation(stable: false)
-                        self.withoutActions { self.canvas.opacity = 0; self.backdrop.opacity = 0; self.blurBackdrop.layer?.opacity = 0; self.notesWorkspace.opacity = 0 }
+                        self.withoutActions {
+                            self.canvas.opacity = 0; self.backdrop.opacity = 0; self.blurBackdrop.layer?.opacity = 0
+                            self.notesWorkspace.opacity = 0; self.topLayout.opacity = 0
+                        }
                     } else { self.showStable() }
                     completion?()
                 }
@@ -763,6 +766,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.blurBackdrop.layer?.opacity = 1
             self.canvas.opacity = 1
             self.notesWorkspace.opacity = 1
+            self.topLayout.opacity = 1
             self.notesWorkspace.transform = CATransform3DIdentity
             self.notesPlane.deployment.opacity = 1
             self.notesPlane.deployment.transform = CATransform3DIdentity
@@ -874,6 +878,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// deployment, and the source shell's canvas fade after its ready.
     private static let coreRevealDelay: CFTimeInterval = 0.32
     private static let sourceRevealDelay: CFTimeInterval = 0.20
+    /// The source canvas fade-in, which the close plays reversed.
+    static let sourceRevealDuration: CFTimeInterval = 0.24
 
     /// The module the HUD opens into enters from the disc centre as the centre
     /// shows (spec §1.10); today's boot log keeps the centre hidden instead and
@@ -899,7 +905,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let token = generation
         guard !HUDRuntimeAppearance.reduceMotion else {
             chargeBadge.setStable(visible: false)
-            withoutActions { self.canvas.opacity = 0; self.backdrop.opacity = 0; self.blurBackdrop.layer?.opacity = 0; self.notesWorkspace.opacity = 0 }
+            withoutActions {
+                self.canvas.opacity = 0; self.backdrop.opacity = 0; self.blurBackdrop.layer?.opacity = 0
+                self.notesWorkspace.opacity = 0; self.topLayout.opacity = 0
+            }
             transitioning = false
             transitionCompletion = nil
             DispatchQueue.main.async { [weak self] in
@@ -921,9 +930,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         CATransaction.setCompletionBlock { shellFinished = true; finish() }
         // Determine the sweep while the scene still has its settled geometry.
         addDeploymentFlicker(opening: false)
+        // The top plane (HUD elements strip, recovery menu) folds with the
+        // core plane whose elements it edits.
         let retraction: [(HUDDepthPlane, Double, Double, CGFloat)] = [
             (glassPlane, 0.12, 0.15, 0.55), (markersPlane, 0.035, 0.18, 0.35),
-            (corePlane, 0.11, 0.20, 0.65),
+            (corePlane, 0.11, 0.20, 0.65), (topPlane, 0.11, 0.20, 0.65),
             (panelsPlane, 0.15, 0.20, 0.88), (notesPlane, 0.15, 0.20, 0.88),
             (innerPlane, 0.065, 0.25, 0.12), (framePlane, 0.075, 0.325, 0.08),
             (secondaryPlane, 0.09, 0.30, 0.08), (rimPlane, 0.09, 0.30, 0.08), (rearPlane, 0.11, 0.29, 0.08),
@@ -983,7 +994,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let readouts = moduleContent.layer.sublayers?.flatMap { wrapper in
             (wrapper.sublayers ?? []).flatMap { $0.sublayers ?? [] }
         } ?? []
+        // The alert tags enter with their own fade; they leave with the lettering.
         let lettering = (header.sublayers ?? []) + (footer.sublayers ?? []) + [industryWordmark]
+            + (opening ? [] : [facilityTags.layer])
         let notes = notesCanvas.deploymentLayers
         HUDDeploymentFlicker.applySweep(to: machinery + cards + readouts + lettering + notes,
                                        in: canvas, opening: opening,
@@ -2070,7 +2083,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         } else {
             transitioning = false
             if wasRetracting {
-                withoutActions { self.canvas.opacity = 0; self.notesWorkspace.opacity = 0; self.backdrop.opacity = 0 }
+                withoutActions { self.canvas.opacity = 0; self.notesWorkspace.opacity = 0; self.topLayout.opacity = 0; self.backdrop.opacity = 0 }
             }
             updateButtonStates()
         }
@@ -2130,8 +2143,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             }
             self.withoutActions { self.canvas.opacity = 1; self.notesWorkspace.opacity = 1 }
             if !HUDRuntimeAppearance.reduceMotion {
-                self.animate(self.canvas, "opacity", from: 0, to: 1, duration: 0.24, delay: Self.sourceRevealDelay)
-                self.animate(self.notesWorkspace, "opacity", from: 0, to: 1, duration: 0.24, delay: Self.sourceRevealDelay)
+                self.animate(self.canvas, "opacity", from: 0, to: 1, duration: Self.sourceRevealDuration, delay: Self.sourceRevealDelay)
+                self.animate(self.notesWorkspace, "opacity", from: 0, to: 1, duration: Self.sourceRevealDuration, delay: Self.sourceRevealDelay)
                 self.playOpeningModuleEntrance(delay: Self.sourceRevealDelay)
                 self.chargeBadge.animateEntrance()
             }
@@ -2149,8 +2162,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func animateSourceExit(completion: @escaping () -> Void) {
-        let canvasOpacity = canvas.presentation()?.opacity ?? canvas.opacity
-        let notesOpacity = notesWorkspace.presentation()?.opacity ?? notesWorkspace.opacity
+        let surfaces = [canvas, notesWorkspace, topLayout].map { ($0, $0.presentation()?.opacity ?? $0.opacity) }
         let heldOpening = sourceWatch?.isPreparingBackdrop == true
         cancelAnimations(preserveClickFeedback: true, preservingPointerMotion: true)
         transitioning = true; retracting = true; transitionCompletion = completion
@@ -2166,7 +2178,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 self.updateButtonStates(); completion()
             }
         }
-        withoutActions { self.blurBackdrop.layer?.opacity = 0; self.canvas.opacity = 0; self.notesWorkspace.opacity = 0 }
+        withoutActions {
+            self.blurBackdrop.layer?.opacity = 0; self.canvas.opacity = 0
+            self.notesWorkspace.opacity = 0; self.topLayout.opacity = 0
+        }
         guard let sourceWatch, sourceWatchFailureReason == nil else { finish(); return }
         if heldOpening {
             // The original exit clip begins from a fully deployed menu. An
@@ -2180,8 +2195,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             animateSourceBlur(sourceWatch.document.blurAnimation.exit)
             // All feature planes already inherit the original center wrapper
             // through the shared homography; another fold would double its tilt.
-            animate(canvas, "opacity", from: canvasOpacity, to: 0, duration: 0.06, delay: 0.35)
-            animate(notesWorkspace, "opacity", from: notesOpacity, to: 0, duration: 0.06, delay: 0.35)
+            // Every native layer (the module, title, gauge, tags, banner, clock,
+            // hint, badge, notes, strip and recovery menu) fades out as the
+            // surface faded in, ending with the Watch exit itself.
+            let fade = HUDMotion.closingFade(ending: sourceWatch.document.animation.exit.lastKeyTime,
+                                             reveal: Self.sourceRevealDuration)
+            for (surface, opacity) in surfaces {
+                animate(surface, "opacity", from: opacity, to: 0, duration: fade.duration, delay: fade.delay,
+                        timing: HUDEasing.easeIn)
+            }
             chargeBadge.animateExit()
         }
         sourceWatch.close(completion: finish)
@@ -2904,14 +2926,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func animate(_ item: CALayer, _ key: String, from: Any, to: Any,
-                         duration: TimeInterval, delay: TimeInterval = 0) {
+                         duration: TimeInterval, delay: TimeInterval = 0, timing: CAMediaTimingFunction? = nil) {
         let animation = CABasicAnimation(keyPath: key)
         // Box transforms explicitly for Core Animation's Objective-C boundary.
         animation.fromValue = (from as? CATransform3D).map { NSValue(caTransform3D: $0) } ?? from
         animation.toValue = (to as? CATransform3D).map { NSValue(caTransform3D: $0) } ?? to
         animation.duration = duration
         animation.beginTime = item.convertTime(CACurrentMediaTime(), from: nil) + delay
-        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.72, 0.22, 1)
+        animation.timingFunction = timing ?? CAMediaTimingFunction(controlPoints: 0.20, 0.72, 0.22, 1)
         animation.fillMode = .backwards
         item.add(animation, forKey: "deployment." + key)
     }
