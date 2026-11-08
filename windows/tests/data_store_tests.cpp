@@ -512,6 +512,18 @@ void overlayLayout131(const std::function<void(const Json&)>& writeSettings, con
         next = store.value();auto placed = defaults;placed.sanity = {40, 10, 1.25};placed.showsTitle = false;next.setOverlayLayout(placed);
         check(store.update(next) && SettingsStore(root).value().overlayLayout() == placed, "A layout round-trips through the store");
     }
+    // The store's Character rule cuts the text on every save, as the Mac
+    // HUDOverlayLayout.save stores cleanText's 24 Characters.
+    const std::string longTitle = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
+    writeSettings(Json::Object{{"hudOverlayLayout", Json::Object{{"titleText", longTitle}, {"subtitleText", " Rhodes \n Island "}}}});
+    {
+        SettingsStore store(root, scalarPrefix);
+        check(settingsFile(root)["settings"]["hudOverlayLayout"]["titleText"] == Json(longTitle), "Loading a long title writes nothing");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root)["settings"]["hudOverlayLayout"]["titleText"] == Json("ABCDEFGHIJKLMNOPQRSTUVWX") &&
+              settingsFile(root)["settings"]["hudOverlayLayout"]["subtitleText"] == Json("Rhodes Island") &&
+              store.value().overlayLayout().titleText == "ABCDEFGHIJKLMNOPQRSTUVWX", "The next save stores the title cut to 24 Characters");
+    }
 }
 void settingsVersion131() {
     Temporary root;

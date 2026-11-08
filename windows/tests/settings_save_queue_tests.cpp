@@ -84,4 +84,13 @@ void inFlightCoalescing(){
     auto restored=data::Settings::defaults();queue.save(restored);check(queue.flush()&&data::SettingsStore(t.root).value()==restored,"Returning to a previous value remains a real ordered save");
 }
 }
-int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// The owner's Character rule reaches the worker's store, which cuts the HUD
+// elements text on save (ASCII here: one byte per Character).
+void characterRule(){
+    Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;
+    app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}},[](std::string_view text,std::size_t count){return std::string(text.substr(0,count));});
+    check(queue.flush(),"Load the synthetic record");
+    data::OverlayLayout layout;layout.titleText="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";loaded.setOverlayLayout(layout);queue.save(loaded);
+    check(queue.flush()&&data::SettingsStore(t.root).value().overlayLayout().titleText=="ABCDEFGHIJKLMNOPQRSTUVWX","The queue's store saves the title cut to 24 Characters");
+}
+int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();characterRule();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}

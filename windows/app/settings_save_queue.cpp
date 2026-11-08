@@ -12,17 +12,18 @@ std::string failureMessage(std::exception_ptr error){
 struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
     struct Worker {
         std::filesystem::path root;
+        ehud::data::CharacterPrefix characters;
         std::unique_ptr<ehud::data::SettingsStore>store;
-        explicit Worker(std::filesystem::path path):root(std::move(path)){}
-        void initialize(){if(!store)store=std::make_unique<ehud::data::SettingsStore>(root);}
+        Worker(std::filesystem::path path,ehud::data::CharacterPrefix rule):root(std::move(path)),characters(std::move(rule)){}
+        void initialize(){if(!store)store=std::make_unique<ehud::data::SettingsStore>(root,characters);}
     };
     UtilityExecutor&executor;SettingsSaveCallbacks callbacks;std::shared_ptr<Worker>worker;
     UtilityExecutor::Route route;
     const std::thread::id owner=std::this_thread::get_id();
     SettingsSaveStatus state;std::shared_ptr<const ehud::data::Settings>baseline,latest;
     bool alive{true},started{};
-    Impl(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks cb)
-        :executor(e),callbacks(std::move(cb)),worker(std::make_shared<Worker>(std::move(root))),route(e.makeRoute()){}
+    Impl(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks cb,ehud::data::CharacterPrefix characters)
+        :executor(e),callbacks(std::move(cb)),worker(std::make_shared<Worker>(std::move(root),std::move(characters))),route(e.makeRoute()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Settings save queue owner-thread operation");}
     void notify(){if(alive&&callbacks.changed)callbacks.changed();}
     void pump(){
@@ -59,13 +60,13 @@ struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
         state.busy=true;
     }
 };
-SettingsSaveQueue::SettingsSaveQueue(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks callbacks){
+SettingsSaveQueue::SettingsSaveQueue(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks callbacks,ehud::data::CharacterPrefix characters){
     // Lexical checks only. Filesystem identity/ordinary-file checks stay in the
     // existing store and run on the worker, including a missing/new root.
     if(root.empty()||!root.is_absolute()||root==root.root_path()||root.lexically_normal()!=root||
        root.native().find(std::filesystem::path::value_type{})!=std::filesystem::path::string_type::npos)
         throw std::invalid_argument("Settings save queue requires an explicit absolute app root");
-    impl_=std::make_shared<Impl>(std::move(root),e,std::move(callbacks));
+    impl_=std::make_shared<Impl>(std::move(root),e,std::move(callbacks),std::move(characters));
 }
 SettingsSaveQueue::~SettingsSaveQueue(){auto i=impl_;i->alive=false;i->executor.invalidate(i->route,false);}
 void SettingsSaveQueue::start(){auto i=impl_;i->onOwner();i->started=true;i->pump();}

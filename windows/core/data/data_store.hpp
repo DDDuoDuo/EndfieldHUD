@@ -85,8 +85,9 @@ struct ProjectionSettings {
 };
 
 // Swift String(prefix(n)): the first n extended grapheme clusters. The owner
-// passes the ICU rule the profile owner uses (native nativeProfileTextRules()
-// .prefix); the data layer has no ICU, and without a rule text is kept whole.
+// passes the ICU rule the profile owner uses (native::graphemePrefix): the
+// app gives it to its SettingsStore, so every save stores the cut text as the
+// Mac does. The data layer has no ICU, and without a rule text is kept whole.
 using CharacterPrefix = std::function<std::string(std::string_view, std::size_t)>;
 // Mac HUDOverlayLayout (Sources/HUDOverlayLayout.swift): Display > HUD
 // elements (the title, the Sanity gauge and the facility alert tags: their
@@ -254,7 +255,9 @@ ProjectionSettings decodeProjectionSettings(const Json&);
 Json encodeProjectionSettings(const ProjectionSettings&);
 class SettingsStore final {
 public:
-    explicit SettingsStore(const std::filesystem::path& appRoot);
+    // `characters` cuts the HUD elements text to OverlayLayout::textLimit
+    // Characters on every save (CharacterPrefix); without it text is kept whole.
+    explicit SettingsStore(const std::filesystem::path& appRoot, CharacterPrefix characters = {});
     const Settings& value() const noexcept { return value_; }
     bool update(const Settings& value); // false for an unchanged record; no write
     const std::filesystem::path& path() const noexcept { return path_; }
@@ -277,6 +280,7 @@ public:
     bool markSanityMigrated(); // false when already set; no write
 private:
     std::filesystem::path path_;
+    CharacterPrefix characters_;
     Settings value_;
     Json envelope_{Json::Object{}};
     std::optional<std::string> persisted_;

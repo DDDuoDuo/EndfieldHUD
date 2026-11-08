@@ -32,8 +32,10 @@ struct SettingsSaveStatus {
 // call flush() during orderly shutdown before destroying the binding/executor.
 class SettingsSaveQueue final {
 public:
+    // `characters` is the store's Character rule for the HUD elements text
+    // (ehud::data::SettingsStore); the app passes native::graphemePrefix.
     SettingsSaveQueue(std::filesystem::path explicitAppRoot,UtilityExecutor&,
-        SettingsSaveCallbacks={});
+        SettingsSaveCallbacks={},ehud::data::CharacterPrefix characters={});
     ~SettingsSaveQueue();
     SettingsSaveQueue(const SettingsSaveQueue&)=delete;
     SettingsSaveQueue&operator=(const SettingsSaveQueue&)=delete;

@@ -12,6 +12,7 @@
 #include "app/areas/calendar_reminder_module.hpp"
 #include "app/areas/update_service.hpp"
 #include "native/archive_password_vault.hpp"
+#include "native/profile_text.hpp"
 #include "native/storage_files.hpp"
 #include <cctype>
 #include "core/application_arguments.hpp"
@@ -1617,7 +1618,9 @@ void Application::Impl::constructSettings(){
         bool failed{};
         {const FatalStage starting("start","settings");try{createSettings(loaded);}catch(const std::exception&e){startFailed("settings",e);failed=true;}}
         if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}}
-        },[this]{refresh(now());}});settingsSaves->start();
+        },[this]{refresh(now());}},
+        // The HUD elements text is cut to 24 Characters (Swift prefix) on save.
+        [](std::string_view text,std::size_t count){return std::string(native::graphemePrefix(text,count));});settingsSaves->start();
     // Hidden integration owns no frame/message loop. This explicit test
     // preparation barrier drains the same asynchronous read before input.
     if(!visibleMode()){utility->waitIdle();utility->drain();need(settingsSaves->status().loaded,"Hidden Settings initial read failed");}

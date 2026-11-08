@@ -220,15 +220,16 @@ std::optional<double> barLength(const Json& value) {return value.isNumber()?barL
 // setting (never on load): chargeBarLength normalized, or removed when nil;
 // showsCloseHint as the Boolean read. Both the file and the store's value
 // hold the result.
-Settings saved(Settings value) {
+Settings saved(Settings value,const CharacterPrefix& characters) {
     // ConfigurationStore.update writes applicationIcon's raw value, so a
     // retired "battery" read as the watch is stored as "watch".
     if(std::as_const(value.fields)["applicationIcon"]==Json("battery")) value.set("applicationIcon",value.applicationIcon());
     if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
     if(!std::as_const(value.fields)["showsCloseHint"].isBool()) value.set("showsCloseHint",value.showsCloseHint());
-    // HUDOverlayLayout.save: written normalized, removed at the defaults (an
-    // undecodable layout read as the defaults, so it is removed too).
-    if(value.fields.contains(OverlayLayout::key)) value.setOverlayLayout(value.overlayLayout());
+    // HUDOverlayLayout.save: written normalized with its text cut to 24
+    // Characters, removed at the defaults (an undecodable layout read as the
+    // defaults, so it is removed too).
+    if(value.fields.contains(OverlayLayout::key)) value.setOverlayLayout(value.overlayLayout(characters),characters);
     return value;
 }
 // D2 downgrade mirror: while the summon hotkey is off the record also carries
@@ -475,7 +476,7 @@ std::string Settings::string(std::string_view key) const {return fields[key].str
 double Settings::number(std::string_view key) const {return fields[key].number();}
 bool Settings::boolean(std::string_view key) const {return fields[key].boolean();}
 void Settings::set(std::string key,Json value) {fields[std::move(key)]=std::move(value);}
-SettingsStore::SettingsStore(const std::filesystem::path& root) {
+SettingsStore::SettingsStore(const std::filesystem::path& root,CharacterPrefix characters):characters_(std::move(characters)) {
     detail::validateRoot(root);path_=root/"settings.json";value_=Settings::defaults();persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
         try {envelope_=parseRecord(*persisted_);version(envelope_);require(envelope_["settings"].isObject(),"Missing saved settings");
@@ -521,8 +522,8 @@ bool SettingsStore::update(const Settings& next) {
     // Unchanged compares as the Mac does (normalized against normalized), so a
     // record loaded with values the next save rewrites is not written by an
     // update that changes nothing.
-    const auto value=saved(next);
-    validateSettings(value);if(value==saved(value_) && persisted_) return false;
+    const auto value=saved(next,characters_);
+    validateSettings(value);if(value==saved(value_,characters_) && persisted_) return false;
     write(envelope_,value);value_=value;return true;
 }
 Profile Profile::defaults() {
