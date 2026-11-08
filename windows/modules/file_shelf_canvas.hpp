@@ -243,6 +243,8 @@ private:
     std::optional<Structure> renderedStructure_;
     std::set<std::string, std::less<>> renderedSelection_;
     std::optional<std::string> renderedCard_;
+    // The page's card started its own selection slide when it was built (:83-84).
+    bool cardSlidIn_{};
     design::Deadlines::Token clearTimer_{};
     // The other layout's tiles (beside the card or without it), transparent
     // in the grid of the current page (buildAlternates).

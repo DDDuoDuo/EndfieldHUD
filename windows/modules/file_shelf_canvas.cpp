@@ -207,10 +207,14 @@ void FileShelfCanvas::resetSession() {
     Canvas::resetSession();
 }
 // The properties card slides in with the page's entrance (:121-128), so a
-// page rebuilt mid-entrance carries it on in phase.
+// page rebuilt mid-entrance carries it on in phase. A card that just slid in
+// for a new selection keeps its own slide: the in-phase replay of an
+// entrance already under way (a negative delay) would cut it short and pop
+// the card in (Mac 9052222).
 void FileShelfCanvas::playPageEntrance(d::Point offset, double delay) {
     Canvas::playPageEntrance(offset, delay);
-    if (card_) d::motion::enter(*card_, {24, 0}, clock(), .3, delay);
+    if (!card_ || (delay < 0 && cardSlidIn_)) return;
+    d::motion::enter(*card_, {24, 0}, clock(), .3, delay);
 }
 void FileShelfCanvas::recordingModeChanged() {
     Canvas::recordingModeChanged();
@@ -241,6 +245,7 @@ void FileShelfCanvas::storeChanged() {
 void FileShelfCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
     tiles_.clear(); parked_.clear(); alternates_.clear(); cardBinder_ = nullptr; card_ = nullptr; grid_ = nullptr; cardRows_.clear();
+    cardSlidIn_ = false;
     const auto previousCard = std::exchange(renderedCard_, std::nullopt);
     auto& add = page.make<d::Button>("shelf.add", text("Add", "添加"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
     add.place({0, 0});
@@ -570,7 +575,9 @@ void FileShelfCanvas::buildCard(const FileShelfItem& value, d::Page& page, doubl
         const ShelfFileProperties* read = it == properties_.end() ? nullptr : &it->second;
         for (const auto& [layer, update] : live) editText(*layer, [&](d::TextBlock& t) { t.setText(update(read)); });
     };
-    if (replaying && isActive()) d::motion::enter(card, {24, 0}, clock(), .3);
+    // The Mac slides a card attached to the window (root.superlayer != nil);
+    // Windows keeps its own attachment test, the active canvas.
+    if (replaying && isActive()) { d::motion::enter(card, {24, 0}, clock(), .3); cardSlidIn_ = true; }
     renderedCard_ = value.id;
     loadProperties(value);
 }

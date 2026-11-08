@@ -323,6 +323,34 @@ void cardEntrance() {
     check(std::abs(enter()[0].start - (w.now + .2)) < 1e-12 && enter()[0].duration == .3 && enter()[1].offset == 24 && std::abs(enter()[1].start - (w.now + .2)) < 1e-12,
         "With the open's delay the card enters .2 s later");
     check(std::abs(card->presented(d::Channel::translateX, w.now + .19) - (card->value(d::Channel::translateX) + 24)) < 1e-9, "Until then it holds its start pose");
+    // Mac 9052222: a file picked mid-entrance rebuilds the page; its card keeps
+    // its own selection slide instead of the entrance's in-phase replay.
+    {
+        m::FileShelfCanvas picked(w.context, store.services());
+        w.show(picked);
+        const double t0 = w.now;
+        picked.playEntrance({0, 24}, t0);
+        w.advance(.15);
+        const auto built = w.context.pagesBuilt();
+        picked.click("id3");
+        const auto* slid = findLayer(picked.root(), "shelf.props");
+        check(w.context.pagesBuilt() > built && slid, "Picking a file mid-entrance rebuilds the page with its card");
+        const auto& slide = slid->tracks().slots[std::size_t(d::MotionSlot::enter)];
+        check(std::abs(slide[0].start - (t0 + .15)) < 1e-9 && slide[0].duration == .3 && slide[1].offset == 24, "The new card slides in from the pick over .3 s");
+        check(std::abs(picked.page().staggered()[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(0))) < 1e-9,
+            "The rows carry the entrance on in phase");
+        // A store change that keeps the selection rebuilds the same card: it carries the entrance on.
+        const double t1 = w.now;
+        picked.playEntrance({0, 24}, t1);
+        w.advance(.1);
+        store.items.push_back(Store::file("id4", "F4.txt"));
+        const auto rebuilt = w.context.pagesBuilt();
+        picked.storeChanged();
+        const auto* kept = findLayer(picked.root(), "shelf.props");
+        check(w.context.pagesBuilt() > rebuilt && kept, "A new file rebuilds the page and its card");
+        const auto& carried = kept->tracks().slots[std::size_t(d::MotionSlot::enter)];
+        check(std::abs(carried[0].start - t1) < 1e-9 && carried[0].duration == .3 && carried[1].offset == 24, "The kept card's slide carries on in phase with the entrance");
+    }
 }
 
 void relinkAndRecording() {
