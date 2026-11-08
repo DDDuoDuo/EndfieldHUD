@@ -188,9 +188,9 @@ void FileShelfCanvas::resetSession() {
     if (storeError_) pendingError_ = storeError_;
     Canvas::resetSession();
 }
-void FileShelfCanvas::playEntrance(d::Point offset, double now) {
-    Canvas::playEntrance(offset, now);
-    if (card_) d::motion::enter(*card_, {24, 0}, clock(), .3);
+void FileShelfCanvas::playEntrance(d::Point offset, double now, double delay) {
+    Canvas::playEntrance(offset, now, delay);
+    if (card_) d::motion::enter(*card_, {24, 0}, clock(), .3, delay);
 }
 void FileShelfCanvas::recordingModeChanged() {
     Canvas::recordingModeChanged();

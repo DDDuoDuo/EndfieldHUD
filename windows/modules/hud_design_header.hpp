@@ -31,8 +31,8 @@ public:
     Control* back() const noexcept { return back_; }
     std::vector<Control*> controls() const;     // back + actions
     // Title group wipe from the left .45 E with a fade from 0; the rule grows
-    // from the left .42 E after .05.
-    void playEntrance(const motion::Clock&);
+    // from the left .42 E after .05. `delay` holds both back (the HUD's open).
+    void playEntrance(const motion::Clock&, double delay = 0);
     // Test hooks (the Mac's ...ForTesting).
     std::pair<std::string, std::string> titleTexts() const;
     std::string counterText() const;

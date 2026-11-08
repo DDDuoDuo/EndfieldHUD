@@ -24,9 +24,14 @@ struct ModulePresentationRegistration {
 // (content px, ShellPosition) starting at `start`; the host only says when.
 // Present from the swap (or beginEntrance) until the next swap or settle; the
 // page decides when its own entrance has ended. Never under Reduce Motion.
+// `delay` (s after `start`) holds the whole entrance back: the HUD's open
+// starts it as the centre starts to show (SystemHUDView
+// playOpeningModuleEntrance, DesktopChromeTiming::openingDelay); swaps and
+// the boot log's entrance carry none. `elapsed` counts from `start`.
 struct ModuleEntrance {
     MotionPoint offset{};
     double start{},elapsed{};
+    double delay{};
 };
 struct ModulePresentationSurface {
     std::uint64_t identity{};
@@ -129,8 +134,9 @@ public:
     // from the disc centre (ShellPosition::entranceOffset(nullopt, module)).
     // Only a settled, attached design screen and never under Reduce Motion.
     // `offset` replaces the disc-centre offset (finishBootLog: from below,
-    // ShellPosition::subpageOffset(0, 1)).
-    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false,std::optional<MotionPoint> offset={});
+    // ShellPosition::subpageOffset(0, 1)). `delay` is kept with the entrance
+    // (ModuleEntrance::delay): the open's wait for the centre to show.
+    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false,std::optional<MotionPoint> offset={},double delay=0);
     // SystemHUDView.playsBootLogOnOpen (moduleContent.layer.opacity 0): every
     // sampled surface is transparent until revealed; nothing else changes.
     void setConcealed(bool concealed) noexcept {concealed_=concealed;}

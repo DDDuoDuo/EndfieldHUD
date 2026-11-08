@@ -146,9 +146,9 @@ std::vector<Control*> ModuleHeader::controls() const {
     return out;
 }
 // playEntrance (:159-162).
-void ModuleHeader::playEntrance(const motion::Clock& clock) {
-    motion::wipe(*titleGroup_, WipeOrigin::left, duration::titleWipe, clock, easing::standard, 0, 0.0);
-    motion::grow(*rule_, duration::ruleWipe, clock, duration::ruleDelay);
+void ModuleHeader::playEntrance(const motion::Clock& clock, double delay) {
+    motion::wipe(*titleGroup_, WipeOrigin::left, duration::titleWipe, clock, easing::standard, delay, 0.0);
+    motion::grow(*rule_, duration::ruleWipe, clock, duration::ruleDelay + delay);
 }
 std::pair<std::string, std::string> ModuleHeader::titleTexts() const { return {textOf(*title_).text(), textOf(*subtitle_).text()}; }
 std::string ModuleHeader::counterText() const { return textOf(*counter_).text(); }

@@ -99,7 +99,8 @@ public:
     // A new HUD session (the Mac's new WorkModeCanvas, :158-159): no laps
     // shown (a running stopwatch keeps running in the controller).
     void resetSession() override;
-    void playEntrance(design::Point offset, double now) override;
+    using Canvas::playEntrance;
+    void playEntrance(design::Point offset, double now, double delay) override;
     void recordingModeChanged() override {}       // nothing is redacted (:245)
     void reduceMotionChanged() override;          // refreshMotionPreference (:212-215)
     bool handleExtraKey(const design::KeyInput&) override;

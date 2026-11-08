@@ -136,9 +136,11 @@ public:
     // HUD deploys (SystemHUDView.animateEntrance -> beginEntrance; nothing
     // for other modules or under Reduce Motion).
     void setDesignScreen(core::Module,bool design);
+    bool isDesignScreen(core::Module)const noexcept;
     // `offset` (content px) replaces the disc-centre offset: the boot log's
-    // end enters from below (SystemHUDView.finishBootLog).
-    void beginEntrance(double time,std::optional<core::MotionPoint> offset={});
+    // end enters from below (SystemHUDView.finishBootLog). `delay` holds the
+    // entrance back (the open's, until the centre starts to show).
+    void beginEntrance(double time,std::optional<core::MotionPoint> offset={},double delay=0);
     // SystemHUDView.playsBootLogOnOpen: the module host stays transparent
     // while the daily boot log plays (ModulePresentation::setConcealed).
     void setCentreConcealed(bool);

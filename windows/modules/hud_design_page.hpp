@@ -391,10 +391,14 @@ public:
     // drafts) and call this.
     virtual void resetSession();
     // HUDDirectionalContent: the entrance after the module swap (header wipe +
-    // stagger from `offset` content px); nothing under Reduce Motion. Virtual
-    // like the Mac's playEntrance(from:), which a sub-page swap also calls
-    // (Work Mode adds its title wipe).
-    virtual void playEntrance(Point offset, double now);
+    // stagger from `offset` content px); nothing under Reduce Motion. The
+    // two-argument form (the Mac's playEntrance(from:), which a sub-page swap
+    // also calls) plays it at once; the virtual one, playEntrance(from:delay:),
+    // holds it back `delay` s (the HUD's open, until the centre shows).
+    // Overrides carry the delay into their own parts (Work Mode's title wipe,
+    // the File Shelf card).
+    void playEntrance(Point offset, double now) { playEntrance(offset, now, 0); }
+    virtual void playEntrance(Point offset, double now, double delay);
     // Before the content leaves: close popups, end editing WITH commit, cancel
     // gestures (sliders without commit), settle a pending swap concealed, willLeave.
     void prepareToLeave(double now);

@@ -610,7 +610,8 @@ bool NotesPreview::dropImage(std::span<const std::uint8_t>data,core::Point logic
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 void NotesPreview::setDesignScreen(core::Module m,bool design){impl_->modules.setDesignScreen(m,design);}
-void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset);}
+bool NotesPreview::isDesignScreen(core::Module m)const noexcept{return impl_->modules.isDesignScreen(m);}
+void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset,double delay){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset,delay);}
 void NotesPreview::setCentreConcealed(bool concealed){impl_->modules.setConcealed(concealed);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}

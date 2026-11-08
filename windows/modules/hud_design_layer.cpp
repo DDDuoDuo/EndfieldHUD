@@ -333,8 +333,8 @@ void enter(Layer& l, Point offset, const Clock& clock, double duration, double d
     }
 }
 // HUDMotion.stagger (:82-84).
-void stagger(std::span<Layer* const> layers, Point offset, const Clock& clock) {
-    for (std::size_t i = 0; i < layers.size(); ++i) enter(*layers[i], offset, clock, duration::entrance, staggerDelay(int(std::min<std::size_t>(i, 1 << 20))));
+void stagger(std::span<Layer* const> layers, Point offset, const Clock& clock, double delay) {
+    for (std::size_t i = 0; i < layers.size(); ++i) enter(*layers[i], offset, clock, duration::entrance, delay + staggerDelay(int(std::min<std::size_t>(i, 1 << 20))));
 }
 // HUDMotion.leave (:88-102): from the presented opacity, holds its end.
 void leave(Layer& l, Point toward, const Clock& clock) {

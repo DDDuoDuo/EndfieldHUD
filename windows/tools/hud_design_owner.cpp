@@ -231,11 +231,16 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         }
         s.input = active && sample.acceptsModuleInput;
         if (!shown) { s.entrance.reset(); continue; }
-        // HUDDirectionalContent.playEntrance(from:) after the swap.
+        // HUDDirectionalContent.playEntrance(from:delay:) after the swap, and
+        // as the HUD opens into the module: its delay counts from the
+        // entrance's start (the open, which also starts the canvas fade), so
+        // the stagger begins with the fade even when this frame lands later.
         if (shown->entrance && s.entrance != shown->entrance->start) {
-            s.entrance = shown->entrance->start;
+            const auto& entrance = *shown->entrance;
+            s.entrance = entrance.start;
             i.bind();
-            s.canvas->playEntrance({shown->entrance->offset.x, shown->entrance->offset.y}, i.time);
+            const double delay = entrance.delay > 0 ? std::max(0.0, entrance.start + entrance.delay - i.time) : 0.0;
+            s.canvas->playEntrance({entrance.offset.x, entrance.offset.y}, i.time, delay);
         }
         i.sync(s);
         s.surface.update(frame.center, frame.chrome, *shown, frame.opacity);

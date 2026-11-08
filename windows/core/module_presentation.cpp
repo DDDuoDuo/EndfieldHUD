@@ -30,7 +30,7 @@ ModulePresentationUpdate ModulePresentation::snapshot(double time)const{
     const auto surface=[&](ModulePresentationSurface&s,const Screen&screen){s.identity=screen.identity;s.module=screen.module;s.contentFrame=moduleLocalContentFrame(screen.module);
         s.designScreen=isDesignScreen(screen.module);s.hostClip=hostClip;s.keepsOwnPlacement=ownPlacement&&!s.designScreen;s.attached=screen.attached;if(!screen.attached)s.opacity=0;};
     surface(frame.current,current_);
-    if(entrance_&&current_.attached)frame.current.entrance=ModuleEntrance{entrance_->offset,entrance_->start,std::max(0.,time-entrance_->start)};
+    if(entrance_&&current_.attached)frame.current.entrance=ModuleEntrance{entrance_->offset,entrance_->start,std::max(0.,time-entrance_->start),entrance_->delay};
     if(incoming_&&transition_&&directional_){
         // The leave moves the wrapper in host (design) units: the switch vector in content px x the content unit.
         if(current_.attached){const auto leave=DesignMotion::leaveAt(time-started_,{leaveOffset_.x*DesignBox::baseUnit,leaveOffset_.y*DesignBox::baseUnit});
@@ -80,8 +80,9 @@ ModulePresentationUpdate ModulePresentation::sample(double time){advance(time);r
 ModulePresentationUpdate ModulePresentation::complete(std::uint64_t generation,double time){
     advance(time);if(transition_&&generation==state_.generation())return run(time);return snapshot(time);
 }
-ModulePresentationUpdate ModulePresentation::beginEntrance(double time,bool reduceMotion,std::optional<MotionPoint> offset){
-    advance(time);if(!transition_&&current_.attached&&isDesignScreen(current_.module)&&!reduceMotion)entrance_=ModuleEntrance{offset.value_or(ShellPosition::entranceOffset(std::nullopt,current_.module)),time,0};
+ModulePresentationUpdate ModulePresentation::beginEntrance(double time,bool reduceMotion,std::optional<MotionPoint> offset,double delay){
+    if(!std::isfinite(delay)||delay<0)throw std::invalid_argument("A module entrance delay is finite and not negative");
+    advance(time);if(!transition_&&current_.attached&&isDesignScreen(current_.module)&&!reduceMotion)entrance_=ModuleEntrance{offset.value_or(ShellPosition::entranceOffset(std::nullopt,current_.module)),time,0,delay};
     return snapshot(time);
 }
 ModulePresentationUpdate ModulePresentation::settleOn(Module module,double time){

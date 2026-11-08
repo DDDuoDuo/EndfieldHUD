@@ -2045,10 +2045,12 @@ void Application::Impl::open(double time){
     // A game keeps the CPU and GPU busy: the shown HUD schedules ahead of it.
     if(visibleMode())presentationPriority.raise(&renderer);
     registry.forEach([&](ModuleOwner&o){o.setOverlayVisible(true,hostTime(time));},"open");
-    // SystemHUDView.animateEntrance: the first module of the session enters
-    // from the disc centre as the HUD deploys (a design screen only; never
-    // under Reduce Motion), unless today's boot log keeps the centre hidden.
-    if(notes&&!deferDeployEntrance)notes->beginEntrance(hostTime(time));
+    // SystemHUDView.playOpeningModuleEntrance: the first module of the session
+    // enters from the disc centre as the centre starts to show, with the
+    // canvas fade's delay (canvasOpacity; a design screen only; never under
+    // Reduce Motion), unless today's boot log keeps the centre hidden (its
+    // own entrance at the end, enterCentre, has no delay).
+    if(notes&&!deferDeployEntrance)notes->beginEntrance(hostTime(time),std::nullopt,source::DesktopChromeTiming::openingDelay);
     quitPromptOpen=false;
     automationChanged();
     if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"open",[&]{audio->volume().setVisible(true);});

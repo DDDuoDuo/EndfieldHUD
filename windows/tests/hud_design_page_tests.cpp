@@ -24,6 +24,7 @@
 #include "modules/hud_design_page.hpp"
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -1050,6 +1051,59 @@ void listsFromTop(RecordedMeasurer& measurer) {
     check(w.context.pagesBuilt() == pages && near(offset(), 120), "A later show of that module keeps its scroll");
 }
 
+// The entrance as the HUD opens into the module (Mac a5d58f1,
+// HUDDirectionalContent.playEntrance(from:delay:)): every staggered row and
+// the header wipe and rule grow start `delay` later; the two-argument form
+// (module swaps, sub-pages) is the same as a zero delay.
+void delayedEntrance(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    const auto offset = d::entranceOffset(std::nullopt, endfield::core::Module::clipboard);
+    const auto enterSlot = [](const d::Layer& l, std::size_t i) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][i]; };
+    const auto starts = [&](FakeCanvas& c) {
+        std::vector<double> out;
+        for (const auto* layer : c.page().staggered()) out.push_back(enterSlot(*layer, 0).start - w.now);
+        return out;
+    };
+    const auto must = [](const d::Layer& root, std::string_view suffix) -> const d::Layer& {
+        const std::function<const d::Layer*(const d::Layer&)> find = [&](const d::Layer& l) -> const d::Layer* {
+            if (std::string_view(l.id()).ends_with(suffix)) return &l;
+            for (const auto* child : l.children()) if (const auto* hit = find(*child)) return hit;
+            return nullptr;
+        };
+        const auto* hit = find(root);
+        if (!hit) throw std::runtime_error("No layer ending in " + std::string(suffix) + " under " + root.id());
+        return *hit;
+    };
+    FakeCanvas plain(endfield::core::Module::clipboard, w.context), opening(endfield::core::Module::clipboard, w.context);
+    for (auto* c : {&plain, &opening}) { c->show(w.now); c->setActive(true, w.now); }
+    plain.playEntrance(offset, w.now);
+    opening.playEntrance(offset, w.now, .2);
+    const auto at = starts(plain), delayed = starts(opening);
+    check(!at.empty() && at.size() == delayed.size(), "Both canvases stagger the same rows");
+    for (std::size_t i = 0; i < at.size(); ++i) {
+        check(near(at[i], d::staggerDelay(int(i))) && near(delayed[i], .2 + d::staggerDelay(int(i))), "Row " + std::to_string(i) + " starts .2 s later with the delay");
+        const auto& row = *opening.page().staggered()[i];
+        check(row.animating(w.now + .19) && near(row.presented(d::Channel::opacity, w.now + .2 + d::staggerDelay(int(i)) - .001), 0)
+            && near(row.presented(d::Channel::translateY, w.now + .2 + d::staggerDelay(int(i)) - .001), row.value(d::Channel::translateY) + offset.y),
+            "Row " + std::to_string(i) + " holds its start pose until its delayed start");
+        check(!row.animating(w.now + .2 + d::staggerDelay(int(i)) + d::duration::entrance + .001) && near(row.presented(d::Channel::opacity, w.now + .2 + d::staggerDelay(int(i)) + d::duration::entrance + .001), row.value(d::Channel::opacity)),
+            "Row " + std::to_string(i) + " settles .2 s later");
+    }
+    const auto slot = [](const d::Layer& l, d::MotionSlot s) -> const auto& { return l.tracks().slots[std::size_t(s)][0]; };
+    const auto& plainTitle = must(plain.header().layer(), "header.title"), &openingTitle = must(opening.header().layer(), "header.title");
+    const auto& plainRule = must(plain.header().layer(), "header.rule"), &openingRule = must(opening.header().layer(), "header.rule");
+    check(near(slot(plainTitle, d::MotionSlot::wipe).start - w.now, 0) && near(slot(openingTitle, d::MotionSlot::wipe).start - w.now, .2)
+        && near(slot(openingTitle, d::MotionSlot::fade).start - w.now, .2), "The header's title wipe and fade start .2 s later");
+    check(near(slot(plainRule, d::MotionSlot::grow).start - w.now, d::duration::ruleDelay) && near(slot(openingRule, d::MotionSlot::grow).start - w.now, d::duration::ruleDelay + .2),
+        "The rule grows after .05 + .2 s");
+    // Reduce Motion: no entrance with or without a delay.
+    w.appearance(Language::english, "FAD41F", false, true);
+    FakeCanvas reduced(endfield::core::Module::clipboard, w.context);
+    reduced.show(w.now); reduced.setActive(true, w.now); reduced.playEntrance(offset, w.now, .2);
+    check(!reduced.page().staggered().empty(), "The reduced canvas staggers rows too");
+    for (const auto* layer : reduced.page().staggered()) check(!layer->animating(w.now), "Reduce Motion plays no delayed entrance");
+}
+
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
 // selection): every page that replaces another while the two are never in
 // the tree together takes its layer ids, so the scene finds unchanged parts
@@ -1269,6 +1323,7 @@ int main(int argc, char** argv) {
         recordingModeWork(measurer);
         keptIds(measurer);
         listsFromTop(measurer);
+        delayedEntrance(measurer);
         focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

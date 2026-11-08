@@ -194,6 +194,18 @@ void directionalEntranceAndReduce(){
     ModulePresentation l(Module::map);check(!l.beginEntrance(0).presentation.current.entrance,"An unported module has no entrance");
     u=p.select(Module::clipboard,1,true,true,4);check(!u.presentation.transitioning&&!u.presentation.current.entrance&&u.completedRequest==4,"Reduce Motion collapses the switch: no leave and no entrance");
     p.setDesignScreen(Module::clipboard,true);u=p.select(Module::notes,2,false);check(u.presentation.current.designScreen&&!u.presentation.current.hostClip&&!u.presentation.current.entrance,"A settle installs without an entrance");
+    // The HUD's open holds its entrance back until the centre starts to show
+    // (SystemHUDView.playOpeningModuleEntrance, DesktopChromeTiming::openingDelay);
+    // swaps and the boot log's offset entrance carry no delay.
+    {ModulePresentation q(Module::notes);q.setDesignScreen(Module::notes,true);q.setDesignScreen(Module::clipboard,true);
+     u=q.beginEntrance(5,false,std::nullopt,.2);const auto&e=u.presentation.current.entrance;
+     check(e&&e->start==5&&e->delay==.2&&e->elapsed==0&&e->offset.x==o.x&&e->offset.y==o.y,"The open's entrance keeps its delay, from the disc centre");
+     u=q.sample(5.3);check(u.presentation.current.entrance&&u.presentation.current.entrance->delay==.2&&std::abs(u.presentation.current.entrance->elapsed-.3)<1e-12,"The delay stays with the entrance; elapsed counts from its start");
+     u=q.select(Module::clipboard,6);u=q.sample(6.13);check(u.presentation.current.entrance&&u.presentation.current.entrance->start==6.13&&u.presentation.current.entrance->delay==0,"A swap's entrance has no delay");
+     const MotionPoint below=ShellPosition::subpageOffset(0,1);u=q.beginEntrance(7,false,below);
+     check(u.presentation.current.entrance&&u.presentation.current.entrance->start==7&&u.presentation.current.entrance->delay==0&&u.presentation.current.entrance->offset==below,"The boot log's entrance from below has no delay");
+     ModulePresentation r(Module::notes);r.setDesignScreen(Module::notes,true);check(!r.beginEntrance(0,true,std::nullopt,.2).presentation.current.entrance,"No delayed entrance under Reduce Motion");
+     bool rejected{};try{(void)r.beginEntrance(1,false,std::nullopt,-.1);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"A negative entrance delay is rejected");}
     const auto before=allocations.load();p.select(Module::clipboard,3);for(unsigned i=0;i<60;++i)(void)p.sample(3+i*.004);p.select(Module::notes,4);p.select(Module::map,4.05);p.sample(4.2);p.sample(4.6);
     check(allocations.load()==before,"Directional switches, leaves, skips and entrances allocate nothing");
 }

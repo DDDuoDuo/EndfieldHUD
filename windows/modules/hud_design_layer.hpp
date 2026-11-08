@@ -280,8 +280,9 @@ void animateTint(Layer&, Color to, double duration, const Clock&, core::CubicTim
 // stIn: opacity [0, o, o] at [0, .6, 1] and additive translation offset -> 0;
 // group timing `timing` over `duration` composes with the translation's own.
 void enter(Layer&, Point offset, const Clock&, double duration = duration::entrance, double delay = 0, core::CubicTiming timing = easing::standard);
-// The list stagger: enter(layers[i], offset, delay staggerDelay(i)).
-void stagger(std::span<Layer* const>, Point offset, const Clock&);
+// The list stagger: enter(layers[i], offset, delay + staggerDelay(i)); `delay`
+// holds the whole stagger back (the HUD's open waits for the centre to show).
+void stagger(std::span<Layer* const>, Point offset, const Clock&, double delay = 0);
 // .13 s ease to opacity 0 and additive -0.6 x offset; holds its end state.
 void leave(Layer&, Point toward, const Clock&);
 // Keeps a layer transparent until released; applies under Reduce Motion too.

@@ -893,6 +893,12 @@ void header() {
         const auto& group = must(header.layer(), "header.title"), &rule = must(header.layer(), "header.rule");
         check(group.wipeOrigin == d::WipeOrigin::left && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].values[0] == 0
             && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .05) && near(rule.anchorPoint().x, 0), "Title wipe .45 with fade; rule grows after .05");
+        // The HUD's open holds the entrance back until the centre shows: the wipe
+        // and its fade by the delay, the rule by .05 + the delay.
+        header.playEntrance(w.env.clock(), .2);
+        check(near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].start - w.env.now, .2) && near(group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - w.env.now, .2)
+            && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .25)
+            && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].duration, .42), "A delayed entrance: the title wipe and fade after .2, the rule after .25");
         header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
         check(!header.back() && header.crumbTexts() == std::vector<std::string>{"// HUD"} && clear.layer().parent() == nullptr && near(must(header.layer(), "header.title").frame().x, 0),
             "Reconfigured: no back, one crumb, actions removed");

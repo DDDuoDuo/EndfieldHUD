@@ -594,13 +594,13 @@ void Canvas::resetSession() {
     const auto areas = page_->scrollAreas();
     if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
 }
-// HUDDirectionalContent.playEntrance(from:) (:249-253).
-void Canvas::playEntrance(Point offset, double now) {
+// HUDDirectionalContent.playEntrance(from:delay:) (:255-262).
+void Canvas::playEntrance(Point offset, double now, double delay) {
     begin(now);
     const auto clock = env().clock();
     if (clock.reduceMotion) return;
-    if (showsHeader_) header().playEntrance(clock);
-    motion::stagger(page_->staggered(), offset, clock);
+    if (showsHeader_) header().playEntrance(clock, delay);
+    motion::stagger(page_->staggered(), offset, clock, delay);
 }
 // prepareToLeave (:255-261).
 void Canvas::prepareToLeave(double now) {

@@ -344,6 +344,20 @@ void workMode(Run& run) {
         }
     };
     for (L language : languages) { WorkWorld w(run.measurer, language); snap("countdownIdle", w, language); }
+    {   // The entrance as the HUD opens into Work Mode (Mac a5d58f1): the inner
+        // title's wipe carries the open's delay, like the header and the column.
+        WorkWorld w(run.measurer);
+        const auto* title = findLayer(w.canvas->root(), "workMode.title");
+        check(title != nullptr, "Work Mode has its inner title group");
+        const auto wipe = [&] { return title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0]; };
+        w.canvas->playEntrance({0, 24}, w.now);
+        check(wipe().present() && wipe().start == w.now && wipe().duration == d::duration::titleWipe, "Without a delay the inner title wipes at once");
+        w.canvas->playEntrance({0, 24}, w.now, .2);
+        check(wipe().present() && std::abs(wipe().start - (w.now + .2)) < 1e-12 && wipe().duration == d::duration::titleWipe
+            && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - (w.now + .2)) < 1e-12, "With the open's delay the inner title wipes and fades .2 s later");
+        const auto staggered = w.canvas->page().staggered();
+        check(!staggered.empty() && std::abs(staggered[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (w.now + .2 + d::staggerDelay(0))) < 1e-12, "The column staggers in after the delay too");
+    }
     { WorkWorld w(run.measurer, L::english, "22A6F2", true); snap("countdownIdle", w, L::english, true); }
     {
         WorkWorld w(run.measurer);

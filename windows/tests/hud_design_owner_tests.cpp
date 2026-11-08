@@ -81,6 +81,15 @@ struct FakeCanvas final : d::Canvas {
     bool handleKey(const d::KeyInput& k) override { if (k.virtualKey == 'K') { ++keys; return true; } return false; }
     bool handleScroll(d::Point, d::Point delta) override { scrolls += delta.y > 0; return true; }
     std::optional<d::Cursor> cursor(std::optional<d::Point> p) const override { return p && p->y > 400 ? std::optional(d::Cursor::openHand) : std::nullopt; }
+    // The entrance the owner plays (HUDDirectionalContent.playEntrance(from:delay:)).
+    unsigned entrances{};
+    d::Point entranceOffset{};
+    double entranceDelay{-1};
+    using d::Canvas::playEntrance;
+    void playEntrance(d::Point offset, double now, double delay) override {
+        ++entrances; entranceOffset = offset; entranceDelay = delay;
+        d::Canvas::playEntrance(offset, now, delay);
+    }
 };
 core::ModulePresentationSample sample(core::Module m, bool attached = true) {
     core::ModulePresentationSample s;
@@ -187,6 +196,24 @@ void run(const std::filesystem::path& shader) {
     ComPtr<IInvokeProvider> invoke;
     unknown.As(&invoke);
     check(SUCCEEDED(invoke->Invoke()) && fake->pressed == 2 && presented == 1, "Invoke presses exactly like a click and presents a frame");
+    // --- the module entrance ----------------------------------------------------------------
+    {
+        // The HUD's open (ModuleEntrance::delay, SystemHUDView.playOpeningModuleEntrance):
+        // the canvas gets the delay, counted from the entrance's start, so a frame that
+        // lands after the open still starts the stagger with the canvas fade.
+        auto entering = sample(core::Module::clipboard);
+        entering.current.entrance = core::ModuleEntrance{{0, 24}, .06, 0, .2};
+        frame(entering, .06);
+        check(fake->entrances == 1 && fake->entranceDelay == .2 && fake->entranceOffset.x == 0 && fake->entranceOffset.y == 24, "The owner passes the open's entrance delay");
+        frame(entering, .065);
+        check(fake->entrances == 1, "An entrance plays once");
+        entering.current.entrance = core::ModuleEntrance{{0, 24}, .07, 0, .2};
+        frame(entering, .08);
+        check(fake->entrances == 2 && std::abs(fake->entranceDelay - .19) < 1e-12, "A frame after the open passes what remains of the delay");
+        entering.current.entrance = core::ModuleEntrance{{24, 0}, .085, 0, 0};
+        frame(entering, .09);
+        check(fake->entrances == 3 && fake->entranceDelay == 0 && fake->entranceOffset.x == 24, "A swap's entrance has no delay");
+    }
     // --- leaving, park and prewarm ----------------------------------------------------------
     auto away = sample(core::Module::clipboard);
     away.requested = core::Module::map;

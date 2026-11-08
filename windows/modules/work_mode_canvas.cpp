@@ -289,9 +289,9 @@ void WorkModeCanvas::resetSession() {
     if (changed && renderedLanguage()) refresh(false);
 }
 // The flick of the inner title; the column staggers in (the ring has no entrance).
-void WorkModeCanvas::playEntrance(Point offset, double now) {
-    Canvas::playEntrance(offset, now);
-    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, env().clock(), d::easing::standard, 0, 0.0);
+void WorkModeCanvas::playEntrance(Point offset, double now, double delay) {
+    Canvas::playEntrance(offset, now, delay);
+    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, env().clock(), d::easing::standard, delay, 0.0);
 }
 
 // --- State (:249-304) -----------------------------------------------------------------

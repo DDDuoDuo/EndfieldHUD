@@ -2984,8 +2984,10 @@ int Application::Impl::runHiddenVerification(){
             // Real event routes (onKey/onPointer) read the host time (here the
             // synthetic clock), so this phase continues on it.
             if(designOverlay&&!quitButtons.empty()){
+                // The end of a frame as the host's frame handler runs it: an opening
+                // completes through the production finishOpening (the S3 checks need it).
                 const auto settle=[&](double t){
-                    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
+                    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(t);if(stopping||concealedBroadcast)return;}
                     if(shelfDragFrame(t,true))return;
                     if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed();}
                 };
@@ -3002,6 +3004,14 @@ int Application::Impl::runHiddenVerification(){
                 double t=std::max(now(),time+2);
                 const auto lifecycleCheck=[&](bool value,const char*why){need(value,why);++lifecycleChecks;};
                 lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"Lifecycle starts closed after the direct coverage close");
+                // The Mac registers a design canvas for every module (SystemHUDView registerModule),
+                // so each one the HUD opens into plays the delayed opening entrance, Home (Power)
+                // included: here every module a registered owner presents is a design screen.
+                {std::string unmarked;
+                 for(unsigned moduleIndex=0;moduleIndex<=static_cast<unsigned>(core::Module::profile);++moduleIndex){const auto presented=static_cast<core::Module>(moduleIndex);
+                     if(registry.presenter(presented)&&!notes->isDesignScreen(presented))unmarked+=" "+std::string(core::moduleIdentifier(presented));}
+                 need(registry.presenter(core::Module::power)&&notes->isDesignScreen(core::Module::power)&&unmarked.empty(),
+                     ("Every presented module is a design screen with an opening entrance, Home included (not:"+unmarked+")").c_str());++hostChecks;}
                 perform(lifecycle.toggle(),t);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::opening&&notes->selected()==core::Module::map,"First summon opens on Map");
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty()&&lifecycle.openOverlay().empty(),"Summons during opening start nothing");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open,"Opening completes through the source session");
@@ -3148,6 +3158,37 @@ int Application::Impl::runHiddenVerification(){
                     // its grid at the scroll it was left at (the Mac keeps the same view; here
                     // the retract's close left the canvas, shelfDragEffect keeps its scroll).
                     const auto gridOffset=[&]{if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid")return area->offset();return 0.;};
+                    // The module the HUD opens into plays its entrance as the centre starts to
+                    // show (Mac a5d58f1, SystemHUDView.playOpeningModuleEntrance): with the canvas
+                    // fade, DesktopChromeTiming::openingDelay after the open, not under the still
+                    // transparent centre; the end of the open (`ended`: finishOpening, which the
+                    // frames' settle runs as the frame handler does, or the drag's restore, Mac
+                    // e15d824) leaves it running. From the open's own
+                    // sample, on the Shelf; returns at the open + 1.2 s at the earliest.
+                    const auto openingEntrance=[&](const std::function<bool()>&openingEnded,const std::string&subject){
+                        const double entranceOpened=canvasOpenedAt,entranceDelay=source::DesktopChromeTiming::openingDelay;
+                        const auto staggeredRows=[&]{auto*shelfCanvas=shelf->canvas();need(shelfCanvas!=nullptr,"The Shelf canvas is built");return shelfCanvas->page().staggered();};
+                        const auto staggeredRow=[&](std::size_t rowIndex)->const modules::design::Layer&{return *staggeredRows()[rowIndex];};
+                        const auto opacityAt=[&](std::size_t rowIndex,double sampleTime){return staggeredRow(rowIndex).presented(modules::design::Channel::opacity,sampleTime);};
+                        const auto restsAt=[&](std::size_t rowIndex,double sampleTime){return !staggeredRow(rowIndex).animating(sampleTime)&&std::abs(opacityAt(rowIndex,sampleTime)-staggeredRow(rowIndex).value(modules::design::Channel::opacity))<1e-9;};
+                        const auto entranceLabel=[&](const std::string&part){return subject+": "+part;};
+                        dragCheck(notes->selected()==core::Module::fileShelf&&!staggeredRows().empty(),entranceLabel("the HUD opens into the Shelf, which staggers its rows").c_str());
+                        t=run(t,.18);
+                        const double beforeShowing=entranceOpened+.19;
+                        dragCheck(hostTime(t)<beforeShowing&&staggeredRow(0).animating(beforeShowing)&&std::abs(opacityAt(0,beforeShowing))<1e-9,
+                            entranceLabel("at the open + .19 s the first row is still at its start pose").c_str());
+                        const std::size_t lastRow=std::min<std::size_t>(staggeredRows().size()-1,14);
+                        const double lastRowSettles=entranceOpened+entranceDelay+modules::design::staggerDelay(int(lastRow))+modules::design::duration::entrance;
+                        while(!openingEnded()&&hostTime(t)<entranceOpened+3)t=run(t+1./60,0);
+                        const double openEnded=hostTime(t);
+                        dragCheck(openingEnded()&&openEnded<lastRowSettles&&staggeredRow(lastRow).animating(openEnded),
+                            entranceLabel("the open ends (at +"+std::to_string(openEnded-entranceOpened)+" s) with its last row still entering").c_str());
+                        t=run(t,lastRowSettles-openEnded+1./60);
+                        const double firstRowSettles=entranceOpened+entranceDelay+modules::design::staggerDelay(0)+modules::design::duration::entrance+1e-6,settledAt=hostTime(t);
+                        dragCheck(settledAt>lastRowSettles&&restsAt(0,firstRowSettles)&&restsAt(lastRow,settledAt),
+                            entranceLabel("the first row has settled at the open + .20 + .06 + .38 s, and the last one after it").c_str());
+                        if(const double rest=entranceOpened+1.2-hostTime(t);rest>0)t=run(t,rest);
+                    };
                     onShelf();
                     if(!args.shelfDataRoot.empty()){need(shelf->importFiles(syntheticShelfFiles(),hostTime(t)),"The drag probe's synthetic files are added to the Shelf");t=run(t,.8);}
                     const double scrolled=gridOffset();bool retracting{},hidden{};
@@ -3163,7 +3204,7 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
                     dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
                         "A cancelled drag shows the HUD again with its entrance");
-                    t=run(t,1.2);
+                    openingEntrance([&]{return !lifecycle.shelfDragActive();},"The Shelf back after a cancelled drag");
                     dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
                         notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
                     if(!args.shelfDataRoot.empty())dragCheck(scrolled>0&&gridOffset()==scrolled,"The restored Shelf keeps its grid's scroll");
@@ -3197,7 +3238,9 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(held,"A forced close during the drag conceals the HUD at once and holds its presentation until the drag ends");
                     dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive()&&!lifecycle.forceCloseAfterShelfDrag(),
                         "The drag's end completes the forced close without restoring");
-                    perform(lifecycle.reopen(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
+                    perform(lifecycle.reopen(),t);
+                    openingEntrance([&]{return lifecycle.phase()==L::open&&!lifecycleOpening&&!transitionDeadline;},"The HUD reopening into the Shelf (finishOpening)");
+                    perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
                     dragCheck(lifecycle.phase()==L::open&&notes->selected()==core::Module::notes,"The HUD reopens normally after the drags");
                 }
                 // Repeated summon cycles retain no extra raster resources,

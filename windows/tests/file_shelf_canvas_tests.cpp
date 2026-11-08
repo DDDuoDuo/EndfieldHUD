@@ -281,6 +281,28 @@ void clearMotion() {
     check(!canvas.clearingForTesting() && store.items.empty() && store.cleared.size() == 2, "Leaving finishes the clear");
 }
 
+// The entrance as the HUD opens into the shelf (Mac a5d58f1): the properties
+// card enters from 24 px to the right over .3 s, held back by the delay as
+// the rows are; without a delay (a module switch) it starts at once.
+void cardEntrance() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Store store;
+    for (int n = 1; n <= 3; ++n) store.items.push_back(Store::file("id" + std::to_string(n), "F" + std::to_string(n) + ".txt"));
+    m::FileShelfCanvas canvas(w.context, store.services());
+    w.show(canvas);
+    canvas.click("id2");
+    const auto* card = findLayer(canvas.root(), "shelf.props");
+    check(canvas.hasPropertiesCardForTesting() && card, "A selection shows the properties card");
+    const auto& enter = [&]() -> const auto& { return card->tracks().slots[std::size_t(d::MotionSlot::enter)]; };
+    canvas.playEntrance({0, 24}, w.now);
+    check(enter()[0].start == w.now && enter()[0].duration == .3 && enter()[1].offset == 24, "Without a delay the card enters at once from 24 px to the right over .3 s");
+    canvas.playEntrance({0, 24}, w.now, .2);
+    check(std::abs(enter()[0].start - (w.now + .2)) < 1e-12 && enter()[0].duration == .3 && enter()[1].offset == 24 && std::abs(enter()[1].start - (w.now + .2)) < 1e-12,
+        "With the open's delay the card enters .2 s later");
+    check(std::abs(card->presented(d::Channel::translateX, w.now + .19) - (card->value(d::Channel::translateX) + 24)) < 1e-9, "Until then it holds its start pose");
+}
+
 void relinkAndRecording() {
     FakeMeasurer measurer;
     World w(measurer); w.appearance(Language::english);
@@ -565,7 +587,7 @@ void shelfOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        formats(); canvasRules(); clearMotion(); relinkAndRecording(); virtualisation(); alternateLayout();
+        formats(); canvasRules(); clearMotion(); cardEntrance(); relinkAndRecording(); virtualisation(); alternateLayout();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"shelf"}, {"text", "layerDefaults", "rules", "formats", "kinds", "home"})) {
             Oracle oracle(*data);
             shelfOracle(oracle);
