@@ -90,10 +90,13 @@ final class VolumeCanvas: HUDDesignCanvas {
         }
     }
 
+    /// Only the App volume tab reads the per-app support flag, which the
+    /// first device read after launch turns on: the Devices page must not
+    /// rebuild under its entrance for it.
     private var structure: Structure {
         let apps = tab == 1 ? listedApplications.map(\.id) : []
         return Structure(language: L10n.resolvedLanguage, tab: tab, apps: apps,
-                         supported: snapshot.applicationActivitySupported, status: tab == 1 && perAppAudio.statusMessage != nil,
+                         supported: tab == 1 && snapshot.applicationActivitySupported, status: tab == 1 && perAppAudio.statusMessage != nil,
                          emptyReason: tab == 1 && apps.isEmpty ? emptyReason : nil)
     }
 
