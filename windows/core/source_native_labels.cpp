@@ -181,6 +181,8 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
         NativeArrangeMark mark{buttonIDs_[i],nativeProjectiveTextTransform(corners,size),size,b.liftedMark,static_cast<float>(alpha.empty()?1:std::clamp(alpha[buttonNodes_[i]],0.,1.)),clips_[i].masks};
         if(mark.world.finite())marks_.push_back(std::move(mark));
     }
+    // The raised tile's marks draw over the others' (the Mac raises their z).
+    if(raised)if(const auto it=std::find_if(marks_.begin(),marks_.end(),[&](const NativeArrangeMark&m){return m.buttonID==buttonIDs_[*raised];});it!=marks_.end())std::rotate(it,it+1,marks_.end());
     const bool marksChanged=marks_!=previousMarks_;
     for(std::size_t i=0;i<bindings_.size();++i){const auto& b=bindings_[i];const auto& c=compiled_[i];const auto& n=nodes[c.node];const auto& button=buttons[c.button];
         auto& out=staged_[i];const auto& old=placements_[i];out.world=old.world;out.contentBounds=old.contentBounds;out.visible=false;out.opacity=0;out.masks.clear();out.clippedPolygon.clear();

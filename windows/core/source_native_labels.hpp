@@ -86,7 +86,8 @@ public:
     bool update(std::span<const ResolvedNode>,std::span<const double> inheritedAlpha,
                 std::span<const NativeLabelButtonState>,const CameraFrame&,const Rect& viewport);
     std::span<const NativeLabelPlacement> placements() const noexcept {return placements_;}
-    // The Arrange on HUD marks of the last update(), one per marked button.
+    // The Arrange on HUD marks of the last update(), one per marked button,
+    // in button order with the raised tile's last (drawn over the others).
     std::span<const NativeArrangeMark> marks() const noexcept {return marks_;}
     // The visible glyph of the icon bound to `surfaceID` in its 32-point box
     // (HUDSourceWatchView.desktopIconGlyphs: the trimmed artwork's

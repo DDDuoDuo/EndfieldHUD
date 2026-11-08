@@ -160,6 +160,10 @@ void arrangeCover(){
      const auto local=[&](double x,double y){const auto&m=hole.worldToLocal.values;const double w=m[3]*x+m[7]*y+m[15];return Point{(m[0]*x+m[4]*y+m[12])/w,(m[1]*x+m[5]*y+m[13])/w};};
      const auto inside=local(100-.6*100+50,100);check(inside.x>0&&inside.x<1&&inside.y>0&&inside.y<1,"The raised tile's centre lies in the hole");
      const auto outside=local(10,100);check(outside.x<0,"The neighbour's far side stays outside it");}
+    // a raised instead: its marks come last, drawn over b's.
+    buttons[1].liftedMark=buttons[1].raised=false;buttons[0].liftedMark=buttons[0].raised=true;plan.update(nodes,alpha,buttons,camera,viewport);
+    check(plan.marks().size()==2&&plan.marks()[0].buttonID=="b"&&plan.marks()[1].buttonID=="a"&&plan.marks()[1].lifted&&excluded(plan.marks()[0].masks)==1,"The raised tile's marks draw last, over its neighbour's");
+    buttons[0].liftedMark=buttons[0].raised=false;buttons[1].liftedMark=buttons[1].raised=true;
     buttons[1].outline=NativeClipPlane{{{1.5,-.5},{1,1}},{}};plan.update(nodes,alpha,buttons,camera,viewport);
     check(excluded(plan.placements()[0].masks)==0,"A raised tile outside the neighbour's clip cuts nothing");
     const auto before=plan.stats();check(!plan.update(nodes,alpha,buttons,camera,viewport)&&plan.stats().unchangedUpdates==before.unchangedUpdates+1,"Unchanged marks and cover skip the projection");
