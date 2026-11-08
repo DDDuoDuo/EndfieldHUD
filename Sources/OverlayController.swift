@@ -1117,7 +1117,11 @@ final class OverlayController: NSObject {
                                preservingNowPlayingPresentation: true)
         let action = systemState.didOpen(token)
         logSystemPhase()
-        systemView?.interactionEnabled = systemState.phase == .open && !documentTerminationInProgress
+        // A close queued during the opening stops input in its own exit,
+        // which leaves every element drawn to fold away with the HUD.
+        if case .close = action {} else {
+            systemView?.interactionEnabled = systemState.phase == .open && !documentTerminationInProgress
+        }
         performSystemAction(action)
         presentPendingShelfDrop()
     }
