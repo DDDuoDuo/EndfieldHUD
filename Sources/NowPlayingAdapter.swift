@@ -30,8 +30,8 @@ struct NowPlayingAdapterState {
         let oldArtwork = artwork
         if !diff || incoming["artworkData"] != nil {
             if let encoded = next["artworkData"] as? String,
-               encoded.utf8.count <= ((NowPlayingArtworkLoader.maximumBytes + 2) / 3) * 4 {
-                artwork = Data(base64Encoded: encoded).flatMap { $0.count <= NowPlayingArtworkLoader.maximumBytes ? $0 : nil }
+               encoded.utf8.count <= ((NowPlayingArtworkLoader.maximumEmbeddedBytes + 2) / 3) * 4 {
+                artwork = Data(base64Encoded: encoded).flatMap { $0.count <= NowPlayingArtworkLoader.maximumEmbeddedBytes ? $0 : nil }
             } else { artwork = nil }
         }
         next.removeValue(forKey: "artworkData") // Keep one decoded compressed payload, not duplicate base64.

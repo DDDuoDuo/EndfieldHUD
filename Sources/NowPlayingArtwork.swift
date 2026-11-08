@@ -49,7 +49,13 @@ private final class NowPlayingArtworkToken {
 final class NowPlayingArtworkLoader {
     typealias Resolve = (NowPlayingApplication, NowPlayingTrack, @escaping () -> Bool) throws -> NowPlayingArtworkPayload?
     typealias Fetch = (URL, @escaping (Data?) -> Void) -> (() -> Void)
+    /// Downloads and a player's scripting reply.
     static let maximumBytes = 8 * 1_024 * 1_024
+    /// Cover bytes a player hands over directly (MediaRemote, the adapter):
+    /// bounded by their pixels (`maximumPixels`, checked from the header) and
+    /// by an uncompressed cover of the largest decode size, so a browser's
+    /// uncompressed TIFF is not dropped for its byte count.
+    static let maximumEmbeddedBytes = maximumPixelSize * maximumPixelSize * 4 + 1_024 * 1_024
     static let maximumPixels = 32_000_000
     /// The decode size until the UI passes its slot's: about the 480-point
     /// slot on the reference display (735 px) without decoding far beyond it.
@@ -245,7 +251,7 @@ final class NowPlayingArtworkLoader {
     /// times its size over a backdrop (`layout`). Runs on the worker.
     static func decode(_ data: Data, pixelSize: Int = defaultPixelSize) -> NowPlayingArtworkImage? {
         let limit = boundedPixelSize(pixelSize)
-        guard !data.isEmpty, data.count <= maximumBytes,
+        guard !data.isEmpty, data.count <= maximumEmbeddedBytes,
               let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
