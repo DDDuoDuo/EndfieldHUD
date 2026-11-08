@@ -1,2 +1,2 @@
-"NSAudioCaptureUsageDescription" = "EndfieldHUD 仅捕获您启用的应用音频，以调整它们的音量。音频只在内存中处理，不会保存。";
-"NSAppleEventsUsageDescription" = "EndfieldHUD 会读取 Music 或 Spotify 的曲目信息、封面和音量，并控制播放。";
+"NSAudioCaptureUsageDescription" = "EndfieldHUD 仅捕获您启用的应用音频，以调整它们的音量。音频只在内存中处理，不会保存";
+"NSAppleEventsUsageDescription" = "EndfieldHUD 会读取 Music 或 Spotify 的曲目信息、封面和音量，并控制播放";

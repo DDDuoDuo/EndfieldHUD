@@ -50,13 +50,13 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>EndfieldHUD captures audio from apps you explicitly enable to adjust their volume. It does not record or save audio. EndfieldHUD 仅捕获您启用的应用音频以调整音量，不会录制或保存音频。</string>
+	<string>EndfieldHUD captures audio from apps you explicitly enable to adjust their volume. It does not record or save audio. EndfieldHUD 仅捕获您启用的应用音频以调整音量，不会录制或保存音频</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>EndfieldHUD reads track information, artwork and volume, and controls playback, in Music or Spotify.</string>
+	<string>EndfieldHUD reads track information, artwork and volume, and controls playback, in Music or Spotify</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 DDDuoDuo. MIT License.</string>
+	<string>Copyright © 2026 DDDuoDuo. MIT License</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUAutomaticallyUpdate</key>
