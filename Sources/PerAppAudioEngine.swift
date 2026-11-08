@@ -130,6 +130,14 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
         startDeadline?.cancel(); startDeadline = nil
         guard !isStopped else { return nil }
         guard !isStopping else { return terminalFailure }
+        beginStopping()
+        let owner = worker
+        owner.queue.async { owner.stop() }
+        return nil
+    }
+    /// The worker is tearing the route down: refuse further gain edits and
+    /// start the independent deadline that reports a blocked HAL release.
+    private func beginStopping() {
         isStopping = true
         let deadline = DispatchWorkItem { [weak self] in
             guard let self, self.isStopping, !self.isStopped else { return }
@@ -140,9 +148,6 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
         }
         stopDeadline = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + stopTimeout, execute: deadline)
-        let owner = worker
-        owner.queue.async { owner.stop() }
-        return nil
     }
 
     private enum Update {
@@ -160,6 +165,12 @@ final class AsyncPerAppAudioRoute: PerAppAudioRoute {
                 guard !isStopping, !worker.cancellation.isCancelled else { return }
                 startDeadline?.cancel(); startDeadline = nil
                 event(.active)
+            case .stopping:
+                guard !isStopped, !isStopping else { return }
+                worker.cancellation.cancel()
+                startDeadline?.cancel(); startDeadline = nil
+                beginStopping()
+                event(.stopping)
             case .failed(let detail):
                 startDeadline?.cancel(); startDeadline = nil
                 stopDeadline?.cancel(); stopDeadline = nil
@@ -601,8 +612,10 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     private func fail(_ error: Error) {
         // Another output took over (a menu pick or macOS switching to newly
         // connected headphones): the route ends like an explicit stop, with
-        // only a cleanup error, if any, to report.
+        // only a cleanup error, if any, to report. It still announces the
+        // teardown first, as below, so a blocked release reaches the facade.
         if case .outputChanged? = error as? PerAppAudioEngineError {
+            event(.stopping)
             event(.stopped(stop())); return
         }
         let detail = describe(error)

@@ -15,7 +15,9 @@ struct PerAppAudioSession: Identifiable, Equatable {
     var icon: NSImage? = nil
 }
 
-enum PerAppAudioRouteEvent { case active; case failed(String); case stopped(String?) }
+/// `stopping` announces a quiet teardown (another output took over) before
+/// its HAL calls, which can block; `stopped` follows when they return.
+enum PerAppAudioRouteEvent { case active; case stopping; case failed(String); case stopped(String?) }
 
 protocol PerAppAudioRoute: AnyObject {
     var isStopped: Bool { get }
@@ -221,6 +223,8 @@ final class PerAppAudioController {
             guard !owned.route.isStopping else { return }
             owned.route.setGain(sessions[index].gain)
             sessions[index].state = .active; statusMessage = nil
+        case .stopping:
+            sessions[index].state = .stopping
         case .failed(let message):
             let cleanup = owned.route.stop()
             if owned.route.isStopped { routes.removeValue(forKey: processID) }
