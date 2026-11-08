@@ -339,9 +339,11 @@ void journal(){
 }
 // Source 74a7935 with the journal: an app that closes its stream but runs on
 // keeps its route; Windows opens its next session at the level written here,
-// the journal restores it and the route attenuates it once.
+// the journal entry moves to it and the route attenuates it once, never
+// writing the original level in between (the source's tap never lets it out).
 void silentApp(){
     Temp temp;const auto path=temp.root/"Audio"/"RouteJournal.json";Harness h(path);auto&s=*h.service;const auto player=std::string("4242:100");
+    std::vector<float>nextWrites;{std::lock_guard l(h.world->m);h.world->beforeSessionWrite=[&nextWrites](std::string_view id,float v){if(id=="{session-player-2}")nextWrites.push_back(v);};}
     s.vote(n::AudioVoter::nowPlaying,true);
     h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2;},"Sessions listed");
     check(s.setApplicationGain(speaker,player,.5f),"Gain accepted");
@@ -353,6 +355,8 @@ void silentApp(){
     h.wake(&World::sessionWake);
     h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->available&&a->state==n::AudioApplicationRouteState::active&&a->gain==.5f;},"The next session joins the route");
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.4f)<1e-6f,"Attenuated once: .8 x .5, not .4 x .5");
+    {std::lock_guard l(h.world->m);check(std::none_of(nextWrites.begin(),nextWrites.end(),[](float v){return std::abs(v-.8f)<1e-6f;}),"The re-joined session is never written at its original level");}
+    h.world_until([&](World&){const auto d=n::AudioRouteJournal::decode(read(path));return d&&d->size()==1&&(*d)[0].session=="{session-player-2}"&&std::abs((*d)[0].original-.8f)<1e-6f&&std::abs((*d)[0].written-.4f)<1e-6f;},"The journal entry follows the next session with the original level");
     check(s.stopApplication(player),"Stop accepted");
     h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::direct;},"Route stopped");
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.8f)<1e-6f,"Stop restores the original level");
@@ -366,6 +370,30 @@ void silentApp(){
     {std::lock_guard l(h.world->m);h.world->runningAfterExpiry.clear();}
     h.wake(&World::sessionWake);
     h.until([&](const auto&x){return !app(x,player)&&x.applications.size()==1;},"The route ends with the process");
+    // Its entry then waits for recovery, as for any vanished session.
+    h.world_until([&](World&){const auto d=n::AudioRouteJournal::decode(read(path));return d&&d->size()==1&&std::abs((*d)[0].original-.8f)<1e-6f;},"The ended route's attenuation stays recoverable");
+    s.stop();
+}
+// A silent app's next session at another level is a later user/app choice:
+// the route re-joins it from that level and the old entry is dropped unwritten.
+void silentAppMoved(){
+    Temp temp;const auto path=temp.root/"Audio"/"RouteJournal.json";Harness h(path);auto&s=*h.service;const auto player=std::string("4242:100");
+    s.vote(n::AudioVoter::nowPlaying,true);
+    h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2;},"Sessions listed");
+    check(s.setApplicationGain(speaker,player,.5f),"Gain accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active&&a->available;},"Route active");
+    {std::lock_guard l(h.world->m);h.world->runningAfterExpiry.insert(player);std::erase_if(h.world->sessions[speaker],[](const auto&r){return r.id=="{session-player}";});}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&!a->available&&a->state==n::AudioApplicationRouteState::active;},"Silent");
+    {std::lock_guard l(h.world->m);n::AudioSessionRecord next{"{session-player-2}",player,L"Player",4242,true,true,.6f,0};next.persistentID=persistent;h.world->sessions[speaker].push_back(next);}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->available&&a->state==n::AudioApplicationRouteState::active;},"The next session joins the route");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.3f)<1e-6f,"The route attenuates the new level once");
+    h.world_until([&](World&){const auto d=n::AudioRouteJournal::decode(read(path));return d&&d->size()==1&&(*d)[0].session=="{session-player-2}"&&std::abs((*d)[0].original-.6f)<1e-6f;},"Only the new session's own entry is kept");
+    check(s.stopApplication(player),"Stop accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::direct;},"Route stopped");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.6f)<1e-6f,"Stop restores the level it found");
+    h.world_until([&](World&){const auto d=n::AudioRouteJournal::decode(read(path));return d&&d->empty();},"Nothing is left to recover");
     s.stop();
 }
 void processExit(){
@@ -703,7 +731,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();silentApp();processExit();hiddenOutputChange();failedRestore();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();silentApp();silentAppMoved();processExit();hiddenOutputChange();failedRestore();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif

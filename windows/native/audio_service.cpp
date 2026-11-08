@@ -52,8 +52,10 @@ struct Signal {
 // same endpoint. Lives and runs only on the worker, wrapping the real backend.
 class JournaledSessions final:public AudioSessionBackend {
 public:
-    JournaledSessions(std::unique_ptr<AudioSessionBackend>inner,AudioRouteJournal*journal,std::function<void()>touched,std::atomic<std::uint64_t>&writes)
-        :inner_(std::move(inner)),journal_(journal),touched_(std::move(touched)),writes_(writes){if(!inner_)throw std::invalid_argument("Missing audio session backend");}
+    // `kept` names the process keys whose route outlives their sessions
+    // (source 74a7935: a silent app keeps its route); empty for a recovery pass.
+    JournaledSessions(std::unique_ptr<AudioSessionBackend>inner,AudioRouteJournal*journal,std::function<void()>touched,std::atomic<std::uint64_t>&writes,std::function<bool(std::string_view)>kept={})
+        :inner_(std::move(inner)),journal_(journal),touched_(std::move(touched)),writes_(writes),kept_(std::move(kept)){if(!inner_)throw std::invalid_argument("Missing audio session backend");}
     std::int32_t open(std::wstring_view endpoint,Wake wake)override{endpoint_.assign(endpoint);identities_.clear();return inner_->open(endpoint,std::move(wake));}
     std::int32_t resume(Wake wake)override{return inner_->resume(std::move(wake));}
     void pause()noexcept override{inner_->pause();}
@@ -63,9 +65,12 @@ public:
         if(journal_){
             // Owned sessions that vanished without a restore become recovery
             // entries, so the app's next session in this run is restored too.
-            std::vector<std::string>missing;
-            for(const auto&e:journal_->live())if(e.endpoint==endpoint_&&!identities_.contains(e.session))missing.push_back(e.session);
-            for(const auto&session:missing)if(journal_->demoteSession(session))touched_();
+            std::vector<AudioRouteJournalEntry>missing;
+            for(const auto&e:journal_->live())if(e.endpoint==endpoint_&&!identities_.contains(e.session))missing.push_back(e);
+            for(const auto&e:missing){
+                if(kept_&&kept_(e.processKey)){if(follow(e,out))touched_();continue;}
+                if(journal_->demoteSession(e.session))touched_();
+            }
             recover(out);
         }
         return hr;
@@ -94,7 +99,25 @@ public:
     const std::wstring&endpoint()const noexcept{return endpoint_;}
 private:
     std::unique_ptr<AudioSessionBackend>inner_;AudioRouteJournal*journal_;std::function<void()>touched_;std::atomic<std::uint64_t>&writes_;
+    std::function<bool(std::string_view)>kept_;
     std::wstring endpoint_;std::map<std::string,std::pair<std::string,std::string>,std::less<>>identities_;
+    // The entry of a kept route's expired session waits, still live, for the
+    // app's next session with the same persistent identity. At the written
+    // level it takes the entry over, so the route re-joins it from its
+    // remembered baseline with no write at the original level in between;
+    // at any other level that is a later user/app choice and the entry is
+    // dropped without a write, as recover() abandons one. Without a durable
+    // record for the new session it falls back to recovery (a restore, then
+    // the route attenuates again).
+    bool follow(const AudioRouteJournalEntry&e,std::vector<AudioSessionRecord>&records){
+        if(e.persistent.empty())return false;
+        const auto next=std::find_if(records.begin(),records.end(),[&](const auto&r){return r.persistentID==e.persistent&&r.processKey==e.processKey&&r.controllable&&r.volume&&!journal_->liveEntry(r.id);});
+        if(next==records.end())return false;
+        if(!same(*next->volume,e.written))return journal_->release(e.session);
+        auto moved=e;moved.session=next->id;++writes_;
+        if(journal_->record(std::move(moved))>=0)return journal_->release(e.session);
+        return journal_->demoteSession(e.session);
+    }
     void recover(std::vector<AudioSessionRecord>&records){
         for(std::size_t n=journal_->recovered().size();n-->0;){
             const auto entry=journal_->recovered()[n];
@@ -201,7 +224,9 @@ public:
             if(sessions)return true;
             try{
                 auto inner=impl.options.sessions();if(!inner)throw std::runtime_error("Missing audio session backend");
-                sessions=std::make_unique<JournaledSessions>(std::move(inner),journalPointer(),[this]{touched();},impl.journalWrites);
+                sessions=std::make_unique<JournaledSessions>(std::move(inner),journalPointer(),[this]{touched();},impl.journalWrites,[this](std::string_view key){
+                    const auto&apps=routes.applications();
+                    return std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==key&&a.state==AudioApplicationRouteState::active;});});
                 return true;
             }catch(...){state.applicationsSupported=false;state.applicationError=unexpected;return false;}
         }
