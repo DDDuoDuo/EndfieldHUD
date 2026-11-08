@@ -363,10 +363,14 @@ void Application::Impl::transitionDeadlineExpired(double time){
 // Frames run inside the OLE drag loop's nested dispatch, so the exit plays
 // and the window hides during the drag; should they not, the state resolves
 // on the frames after the loop returns.
+// The Mac hides and restores the same view without prepareToLeave, so the
+// Shelf keeps its scroll across the drag: the close here left its canvas
+// (which then starts at the top), so the retract keeps that scroll.
 void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double time){
     using K=core::SystemOverlayEffect::Kind;
     switch(e.kind){
-    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
+    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);
+        if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});break;
     case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
     case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;

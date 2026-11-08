@@ -1524,6 +1524,14 @@ int Application::Impl::runHiddenVerification(){
                 recordingToggle=std::move(toggles);
             }
             checkPages("afterRecording");
+            // 24 synthetic files beside this run's own Shelf data root (never a user file).
+            const auto syntheticShelfFiles=[&]{
+                const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
+                std::vector<std::string> paths;
+                for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
+                    {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
+                    const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                return paths;};
             // Action timing (the owner's "slight freeze" on Work Mode start/pause
             // and Shelf selection, and the other in-place changes of a shown
             // canvas): with every module built, each action runs through the path
@@ -1685,11 +1693,7 @@ int Application::Impl::runHiddenVerification(){
                 // File Shelf: synthetic files in this run's own data root (never a user file).
                 if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
                     const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
-                    const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
-                    std::vector<std::string> paths;
-                    for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
-                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
-                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                    const auto paths=syntheticShelfFiles();
                     const std::vector<std::string> seed(paths.begin(),paths.end()-1),last(paths.end()-1,paths.end());
                     // The archive saves an action hands to the utility worker (and makes at once, on this thread).
                     std::int64_t savesQueued{},savesAtOnce{};
@@ -2834,13 +2838,20 @@ int Application::Impl::runHiddenVerification(){
                         need(lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&notes->selected()==core::Module::fileShelf,"The Shelf is open before its drag");};
                     const auto cancel=[](DWORD&effect){effect=DROPEFFECT_NONE;return HRESULT(DRAGDROP_S_CANCEL);};
                     const auto copy=[](DWORD&effect){effect=DROPEFFECT_COPY;return HRESULT(DRAGDROP_S_DROP);};
-                    // Cancelled once hidden: the same presentation comes back with its entrance.
-                    onShelf();bool retracting{},hidden{};
+                    // Cancelled once hidden: the same presentation comes back with its entrance,
+                    // its grid at the scroll it was left at (the Mac keeps the same view; here
+                    // the retract's close left the canvas, shelfDragEffect keeps its scroll).
+                    const auto gridOffset=[&]{if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid")return area->offset();return 0.;};
+                    onShelf();
+                    if(!args.shelfDataRoot.empty()){need(shelf->importFiles(syntheticShelfFiles(),hostTime(t)),"The drag probe's synthetic files are added to the Shelf");t=run(t,.8);}
+                    const double scrolled=gridOffset();bool retracting{},hidden{};
                     const bool cancelled=shelfDragOut([&](DWORD&effect){
                         retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
                             session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
                         t=run(t,1.2);
                         hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
+                        // A re-render while the HUD is away (a store refresh) keeps the scroll too.
+                        if(auto*c=shelf->canvas())c->rerender();
                         return cancel(effect);},t);
                     dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
                     dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
@@ -2849,6 +2860,7 @@ int Application::Impl::runHiddenVerification(){
                     t=run(t,1.2);
                     dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
                         notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
+                    if(!args.shelfDataRoot.empty())dragCheck(scrolled>0&&gridOffset()==scrolled,"The restored Shelf keeps its grid's scroll");
                     // Delivered once hidden: closed without a second animation.
                     const bool delivered=shelfDragOut([&](DWORD&effect){t=run(t,1.2);return copy(effect);},t);
                     dragCheck(delivered&&lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!closing&&unshown()&&!lifecycle.shelfDragActive()&&
