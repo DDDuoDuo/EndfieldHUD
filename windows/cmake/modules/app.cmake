@@ -6,6 +6,12 @@
 add_library(hud_system_overlay core/system_overlay_state.cpp)
 target_include_directories(hud_system_overlay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_system_overlay PUBLIC hud_motion)
+# Display > HUD elements: where the title, the Sanity gauge and the alert tags
+# sit on the core plane (Mac HUDOverlayGeometry), shared by the host and the
+# account and facility areas.
+add_library(hud_overlay_geometry core/hud_overlay_geometry.cpp)
+target_include_directories(hud_overlay_geometry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_overlay_geometry PUBLIC hud_data hud_scene)
 add_library(hud_application_core core/application_arguments.cpp core/application_event_recorder.cpp core/data/application_root.cpp)
 target_include_directories(hud_application_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_application_core PUBLIC hud_system_overlay hud_data hud_event_log hud_work_mode)
@@ -66,10 +72,13 @@ if(BUILD_TESTING)
   target_link_libraries(data_store_tests PRIVATE hud_data)
   add_test(NAME data_store_contracts COMMAND data_store_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/profile-state-source.json")
   # The shared byte codecs: SHA-256 (core/data/sha256) and base64.
+  add_executable(hud_overlay_geometry_tests tests/hud_overlay_geometry_tests.cpp)
+  target_link_libraries(hud_overlay_geometry_tests PRIVATE hud_overlay_geometry)
+  add_test(NAME hud_overlay_geometry_contracts COMMAND hud_overlay_geometry_tests)
   add_executable(data_encoding_tests tests/data_encoding_tests.cpp)
   target_link_libraries(data_encoding_tests PRIVATE hud_data)
   add_test(NAME data_encoding_contracts COMMAND data_encoding_tests)
-  foreach(target json_tests data_store_tests data_encoding_tests)
+  foreach(target json_tests data_store_tests data_encoding_tests hud_overlay_geometry_tests)
     if(MSVC)
       target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)
     else()
