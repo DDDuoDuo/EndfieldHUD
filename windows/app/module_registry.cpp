@@ -110,6 +110,7 @@ std::string_view hostEventName(HostEvent::Kind kind) noexcept {
     case K::utilityCompleted: return "utility completion";
     case K::audioChanged: return "audio change";
     case K::overlayConcealed: return "overlay concealed";
+    case K::overlayRetracted: return "overlay retracted";
     case K::suspended: return "suspend";
     case K::resumed: return "resume";
     case K::timeChanged: return "time change";

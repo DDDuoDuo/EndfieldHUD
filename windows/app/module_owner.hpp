@@ -239,6 +239,9 @@ struct HostEvent {
         utilityCompleted,      // the shared UtilityExecutor drained: completions ran, queue capacity is free
         audioChanged,          // the shared AudioRuntime adopted a publication (flags: Audio bits)
         overlayConcealed,      // the HUD finished closing (or was force-concealed) and is hidden
+        overlayRetracted,      // a File Shelf drag's retract hid the HUD, which stays presented
+                               // (no overlayConcealed): the hidden HUD ends what its close left
+                               // playing, as for overlayConcealed (Mac stopMotionForConcealment)
         suspended, resumed,    // sleep, display off or session lock began / every such reason ended (flags: Suspension reason)
         timeChanged,           // WM_TIMECHANGE: wall clock or time zone
         systemSettingsChanged, // WM_SETTINGCHANGE: theme, locale, work area, ...

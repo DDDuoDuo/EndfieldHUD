@@ -399,7 +399,9 @@ void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double
     switch(e.kind){
     case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);
         if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});break;
-    case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
+    // stopMotionForConcealment + orderOut: the hidden HUD ends what the
+    // retract's close left playing (overlayRetracted; no overlayConcealed).
+    case K::shelfHide:host.hide();presentationPriority.restore();broadcast(HostEvent::Kind::overlayRetracted,time);break;
     case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
     default:break;
