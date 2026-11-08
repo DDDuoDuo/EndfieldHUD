@@ -318,18 +318,19 @@ void HudElementsEditor::update(const ModuleFrame& frame) {
     // an alert arriving or clearing while placing (facilityChanged).
     i.layout();
     // The strip on the content box at its origin (overlayEditorHost in box
-    // coordinates), the marks on the core plane; the top layer is not faded.
+    // coordinates), the marks on the core plane; the top layer fades with the
+    // HUD close as every native layer does (5b2a9d3: topLayout).
     const double density = d::layerContentsScale(i.context.boxScale());
     i.strip.syncContent(i.editor->layer(), i.context.env().text, i.editor->contentRevision(), density, i.time);
     i.stripTree = &i.editor->layer();
     i.collectEditors();
-    i.strip.updatePose({boxWorld * Matrix::translation(i.stripOrigin.x, i.stripOrigin.y), 1.f, i.time, {}, {}});
+    i.strip.updatePose({boxWorld * Matrix::translation(i.stripOrigin.x, i.stripOrigin.y), frame.opacity, i.time, {}, {}});
     const double markDensity = d::layerContentsScale(i.context.boxScale() / d::geometry::baseUnit);
     for (std::size_t n = 0; n < i.markScenes.size(); ++n) {
         const auto& r = i.grownFrames[n];
         if (!(r.width > 0) || !(r.height > 0)) continue;
         i.markScenes[n]->syncContent(*i.markLayers[n], i.context.env().text, i.markRevisions[n], markDensity, i.time);
-        i.markScenes[n]->updatePose({frame.center * Matrix::translation(r.x, r.y), 1.f, i.time, {}, {}});
+        i.markScenes[n]->updatePose({frame.center * Matrix::translation(r.x, r.y), frame.opacity, i.time, {}, {}});
     }
 }
 bool HudElementsEditor::requiresFrames(double t) const {

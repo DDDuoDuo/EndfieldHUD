@@ -2222,7 +2222,10 @@ void Application::Impl::sessionEnding(SessionEnd phase,std::uint32_t reason){
 
 // ---------------------------------------------------------------------------
 // Frame, scheduling and publication
-double Application::Impl::canvasOpacity(double time){return source::DesktopChromeTiming::opacity(!closing,time-(closing?canvasClosedAt:canvasOpenedAt),canvasCapturedOpacity,settings.reduceMotion);}
+// Every native layer (module, title, gauge, tags, banner, clock, close hint,
+// battery bar, notes, the HUD elements strip and the recovery menu) samples
+// this: the close's fade ends with the Watch exit clip (5b2a9d3).
+double Application::Impl::canvasOpacity(double time){return source::DesktopChromeTiming::opacity(!closing,time-(closing?canvasClosedAt:canvasOpenedAt),canvasCapturedOpacity,settings.reduceMotion,chromePlan?chromePlan->exitSeconds():0.);}
 double Application::Impl::backdropOpacity(double time){
     if(session->phase()==core::VisibilityPhase::concealed)return 0.;
     if(settings.reduceMotion)return closing?0.:1.;

@@ -248,8 +248,11 @@ bool DesktopClockArtworkPlan::update(DesktopClockStyle style,const std::optional
     o.recordDotOpacity=status.recording&&int(second)%2!=0?.28:1;
     previous_=std::move(key);return true;
 }
-double DesktopChromeTiming::opacity(bool opening,double elapsed,double captured,bool reduced)noexcept{
-    if(reduced)return opening?1:0;const auto progress=fadeCurve.value((elapsed-(opening?openingDelay:closingDelay))/(opening?openingDuration:closingDuration));return opening?progress:captured*(1-progress);
+double DesktopChromeTiming::opacity(bool opening,double elapsed,double captured,bool reduced,double exitLength)noexcept{
+    if(reduced)return opening?1:0;
+    if(opening)return fadeCurve.value((elapsed-openingDelay)/openingDuration);
+    const auto fade=DesignMotion::closingFade(exitLength,openingDuration);if(!(fade.duration>0))return 0;
+    return captured*(1-DesignEasing::easeIn.value((elapsed-fade.delay)/fade.duration));
 }
 bool DesktopChromeTiming::styleMovesForward(unsigned oldIndex,unsigned newIndex)noexcept{return (newIndex+5-oldIndex)%5<=2;}
 } // namespace endfield::core::source
