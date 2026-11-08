@@ -97,12 +97,12 @@ void run(const std::filesystem::path&referencePath,const std::filesystem::path&p
     // geometry change, every other surface as it was.
     {
         const auto footer=layers.surfaceIndex(reference["footer"]["children"].array()[0]["id"].string());check(footer.has_value(),"The footer line is a surface of its own");
-        const auto shown=layers.prepareDraws();const std::vector<DrawObject> before(shown.begin(),shown.end());const auto r0=raster.stats().rasterizations;
+        const auto shown=layers.prepareDraws();const std::vector<DrawObject> placed(shown.begin(),shown.end());const auto r0=raster.stats().rasterizations;
         content.showsCloseHint=false;check(bridge.setContent(content),"Close hint off is a content event");
         check(raster.stats().rasterizations==r0,"Hiding the close hint rasterizes nothing");
-        const auto hidden=layers.prepareDraws();bool others=hidden.size()==before.size();
-        for(std::size_t i=0;others&&i<hidden.size();++i)if(i!=*footer)others=hidden[i].opacity==before[i].opacity&&hidden[i].world==before[i].world;
-        check(others&&hidden[*footer].opacity==0&&before[*footer].opacity==.75f&&hidden[*footer].world==before[*footer].world,"Only the footer line is hidden; nothing moves");
+        const auto hidden=layers.prepareDraws();bool others=hidden.size()==placed.size();
+        for(std::size_t i=0;others&&i<hidden.size();++i)if(i!=*footer)others=hidden[i].opacity==placed[i].opacity&&hidden[i].world==placed[i].world;
+        check(others&&hidden[*footer].opacity==0&&placed[*footer].opacity==.75f&&hidden[*footer].world==placed[*footer].world,"Only the footer line is hidden; nothing moves");
         check(!bridge.update(frame,cameraFrame,settings,.75f)&&layers.prepareDraws()[*footer].opacity==0,"Placing the same frame keeps it hidden with no scene work");
         cameraFrame.worldRoot.values[12]+=.0001;check(bridge.update(frame,cameraFrame,settings,.5f)&&layers.prepareDraws()[*footer].opacity==0,"A moved frame keeps it hidden");
         content.showsCloseHint=true;check(bridge.setContent(content)&&raster.stats().rasterizations==r0&&layers.prepareDraws()[*footer].opacity==.5f,"Close hint on shows it again at the canvas opacity");
