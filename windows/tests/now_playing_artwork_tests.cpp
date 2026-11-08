@@ -106,9 +106,16 @@ void decode(const Json& j) {
             const unsigned tw = unsigned(std::lround(w * s)), th = unsigned(std::lround(h * s));
             check(row["imageWidth"].integer() == tw && row["imageHeight"].integer() == th, name + ": a cover larger than the slot is scaled down to it");
             // The thumbnail filters differ (ImageIO and WIC Fant): sizes only.
-            const auto result = n::nowPlayingSmallCover(picture(row["kind"].string(), tw, th, 0), w, h, slot);
+            const auto thumbnail = picture(row["kind"].string(), tw, th, 0);
+            const auto result = n::nowPlayingSmallCover(thumbnail, w, h, slot);
             check(result.image && result.image->width == tw && result.image->height == th && bool(result.backdrop) == row["backdropWidth"].isNumber(),
                   name + ": the Mac's foreground size and backdrop presence");
+            if (result.backdrop) {
+                // A small cover already at its drawn size (factor 1): the Mac keeps the decoded picture unfiltered.
+                check(std::max(tw, th) == m::nowPlayingCoverLayout(w, h, slot).side && result.image == thumbnail,
+                      name + ": at factor 1 the foreground is the decoded picture itself, its pixels unchanged");
+                check(result.backdrop->width == 96 && result.backdrop->height == 96, name + ": a 96 px backdrop");
+            }
             continue;
         }
         const auto result = n::nowPlayingSmallCover(source, w, h, slot);
