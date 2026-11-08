@@ -425,7 +425,11 @@ void ProfileCanvas::storeChanged() {
     refreshWorkDuration();
 }
 void ProfileCanvas::imagesChanged() {
-    if (!renderedLanguage()) return;
+    // Never built yet (the first showing after launch): the avatar decode
+    // landed, so its portrait is asked now and the owner's worker has it
+    // ready for the first build, as the Mac builds it synchronously, instead
+    // of landing after the entrance and rebuilding the page.
+    if (!renderedLanguage()) { if (services_.portrait && displayed().avatarFilename) (void)services_.portrait(portraitStep()); return; }
     // A decode landed: the art or the portrait appears (the Mac had it at
     // build time); a prepared zoom step re-lays the portrait in place.
     const bool art = services_.backgroundReady && services_.backgroundReady() && displayed().backgroundFilename;

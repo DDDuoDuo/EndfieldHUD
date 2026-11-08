@@ -368,6 +368,25 @@ void hiddenScaleChange() {
     check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
 }
 
+// The avatar decode lands before the Profile was ever built (the first
+// showing after launch): the portrait is asked at once, so the first build
+// already has it and the page does not rebuild after its entrance.
+void decodeBeforeFirstShow() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner o; auto profile = sample(); profile.avatarFilename = "00000000-0000-4000-8000-000000000001.image"; auto store = o.store(profile);
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get());
+    canvas.imagesChanged();
+    check(o.portraitSteps.empty(), "No avatar decoded yet: no portrait is asked");
+    o.avatar = true; canvas.imagesChanged();
+    check(o.portraitSteps == std::vector<int>{1}, "The decode landing before the first build asks for the portrait");
+    const auto pages = w.context.pagesBuilt();
+    w.show(canvas);
+    check(w.context.pagesBuilt() == pages + 1, "The first showing builds the page once");
+    canvas.imagesChanged(); w.now += 1; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages + 1, "The ready portrait was in that build: nothing rebuilds it");
+}
+
 // The inline editor host: records the open request (its field) and the typed text.
 struct FieldHost final : d::TextEditorHost {
     std::optional<d::TextEditRequest> request; std::string value;
@@ -646,7 +665,7 @@ int main(int argc, char** argv) {
         std::optional<Json> data;
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
-        behaviour(); hiddenScaleChange();
+        behaviour(); hiddenScaleChange(); decodeBeforeFirstShow();
         partsKept(); reopenEditors(); reopenKeepsPage();
         if (data) {
             Oracle oracle(*data);
