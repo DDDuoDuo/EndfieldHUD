@@ -122,7 +122,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         controller.lockSelected()
         Self.owners[ObjectIdentifier(controller)] = ObjectIdentifier(self)
         controller.onChange = { [weak self] in self?.controllerChanged() }
-        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image) }
+        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image, animated: true) }
     }
 
     deinit {
@@ -146,6 +146,8 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         if renderedLanguage != nil, renderedLanguage == L10n.resolvedLanguage, needsRefresh || structure != renderedStructure { rerender() }
         let content = super.makeContent(for: module, style: style)
         bodyArea?.attach()
+        // The list's posters load from now, not from the end of the entrance.
+        loadVisibleThumbnails()
         return content
     }
 
@@ -1319,8 +1321,9 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     // MARK: Gallery thumbnails
 
+    /// From the module's showing until it leaves.
     private func loadVisibleThumbnails() {
-        guard isActive, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
+        guard !leaving, renderedLanguage != nil, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
         let visible = shownDocuments.filter { tiles[$0.id] != nil && !$0.isClassified && $0.mediaCount > 0 }
             .prefix(ArchiveGalleryThumbnails.wantedLimit)
         let ids = Set(visible.map(\.id))
