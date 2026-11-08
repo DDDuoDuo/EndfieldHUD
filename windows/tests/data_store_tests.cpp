@@ -6,6 +6,7 @@
 // directories only; no real profile is read.
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
@@ -14,6 +15,8 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace ehud::data;
 namespace fs = std::filesystem;
@@ -317,9 +320,9 @@ void settingsVersion130() {
               value.dailyBootLogLastDay() == std::optional<std::string>("2026-10-23"), "The boot log plays on the first open of each day");
         value.set("orbipom.bestScore.v1", std::int64_t{42});value.set("storageVolume", "C:");value.set("recordingMode", true);
         value.setProjection({0x22A6F2, 30, true, false});
-        const auto restored = Settings::restoredDefaults(value);
+        const auto restored = value.restoring(Settings::Scope::system).restoring(Settings::Scope::display);
         check(restored.dailyBootLogLastDay() == value.dailyBootLogLastDay() && restored.orbipomBestScore() == 42 && restored.string("storageVolume") == "C:" &&
-              restored.projection() == value.projection() && !restored.recordingMode(), "Restore Defaults resets AppConfiguration and keeps the keys outside it");
+              restored.projection() == value.projection() && !restored.recordingMode(), "System and Display Restores reset AppConfiguration and keep the keys outside it");
     }
     // Battery alert method: false shows as Don't display; any choice turns alerts back on.
     {
@@ -363,6 +366,91 @@ std::string scalarPrefix(std::string_view text, std::size_t count) {
     for (std::size_t seen = 0; end < text.size() && seen < count; ++seen)
         do ++end; while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80);
     return std::string(text.substr(0, end));
+}
+// HUDSettingsScope and AppConfiguration.restoring / the controllers' isDefault
+// (Mac Tests/SettingsTests.swift's scoped Restore and Mirror checks).
+void restoreScopes131() {
+    using S = Settings::Scope;
+    // Every saved key belongs to exactly one of System, Display (HUD elements
+    // inside it) or no Restore, so a new key cannot be forgotten: the list
+    // holds every key of defaults() plus the keys absent while default.
+    const auto defaults = Settings::defaults();
+    const std::vector<std::string_view> absentByDefault{"chargeBarLength", "hudOverlayLayout", "hudModuleOrder", "hudHiddenModules", "windowsDisplayID",
+        "windowsDisplayName", "windowsSummonShortcut", "storageVolume", "projection.settings.v1", "orbipom.bestScore.v1", "dailyBootLogLastDay"};
+    const auto listed = [](std::string_view key) { return std::count_if(scopedSettings.begin(), scopedSettings.end(), [&](const ScopedSetting& s) { return s.key == key; }); };
+    for (const auto& [key, value] : defaults.fields.object()) check(listed(key) == 1, "Every default key is in exactly one scope row: " + key);
+    for (const auto key : absentByDefault) check(listed(key) == 1 && !defaults.fields.contains(key), "Every key absent by default is in one scope row: " + std::string(key));
+    check(scopedSettings.size() == defaults.fields.object().size() + absentByDefault.size(), "The restore scopes cover all saved settings and nothing else");
+    for (const auto scope : {S::system, S::display, S::hudElements}) check(defaults.isDefault(scope) && defaults.restoring(scope) == defaults, "The defaults are at the defaults in every scope");
+
+    // Everything changed (Mac "everything"), plus the Windows-only keys.
+    Settings everything = defaults;
+    for (const auto& [key, value] : std::vector<std::pair<std::string, Json>>{{"displayMode", "never"}, {"displayDuration", 9}, {"accentHex", "6EDFE8"},
+             {"theme", "light"}, {"scale", 1.2}, {"placement", "custom"}, {"customScreenID", 5}, {"customPositionX", .2}, {"customPositionY", .3},
+             {"language", "english"}, {"hudScale", 1.5}, {"hudOffsetX", .1}, {"hudOffsetY", .1}, {"parallaxIntensity", .5}, {"perspectiveIntensity", .5},
+             {"backgroundDarkness", .2}, {"blurAmount", .1}, {"reduceMotion", true}, {"ambientAnimation", false}, {"closeOnFocusLost", false},
+             {"openOnActiveDisplay", false}, {"hudDisplayUUID", makeUUID()}, {"hudDisplayName", "Fixture"}, {"launchAtLogin", false},
+             {"batteryAlertsEnabled", false}, {"lowPowerVisualMode", true}, {"applicationIcon", "babel"}, {"clockFormat", "twelveHour"},
+             {"clockStyle", "dial"}, {"centerLogo", "custom"}, {"centerLogoRevision", makeUUID()}, {"alertMetric", "gpu"}, {"recordingMode", true},
+             {"dailyBootLog", false}, {"facilityAlerts", false}, {"showsCloseHint", false}, {"summonShortcut", Json::Object{{"keyCode", 12}, {"modifiers", 3}}},
+             {"summonHotkeyEnabled", false}, {"devicePopupEnabled", false}, {"windowsDisplayID", "DISPLAY-B"}, {"windowsDisplayName", "Studio"},
+             {"windowsSummonShortcut", Json::Object{{"virtualKey", 0x77}, {"modifiers", 3}}}, {"storageVolume", "D:"}, {"orbipom.bestScore.v1", 71},
+             {"dailyBootLogLastDay", "2026-11-07"}, {"futurePrivatePreference", 42}})
+        everything.set(key, value);
+    everything.setChargeBarLength(.7);everything.setProjection({0x22A6F2, 30, true, false});
+    auto modules = everything.moduleLayout();modules.move(modules.order[0], 1);everything.setModuleLayout(modules);
+    auto overlay = everything.overlayLayout();overlay.showsSanity = false;overlay.openModule = "hotkeys";overlay.title = {30, 4, 1.2};everything.setOverlayLayout(overlay);
+    for (const auto scope : {S::system, S::display, S::hudElements}) check(!everything.isDefault(scope), "Each scope reports settings to restore");
+    // Restoring a scope never touches a key outside it.
+    for (const auto scope : {S::system, S::display, S::hudElements}) {
+        const auto restored = everything.restoring(scope);
+        for (const auto& [key, owner] : scopedSettings) {
+            const bool inside = owner && (*owner == scope || (scope == S::display && *owner == S::hudElements));
+            if (!inside) check(restored.fields[key] == std::as_const(everything.fields)[key], "A Restore keeps every key outside its scope: " + std::string(key));
+        }
+        check(restored.isDefault(scope) && restored.fields["futurePrivatePreference"] == Json(42), "A restored scope is at its defaults; an unknown key is kept");
+    }
+    auto keptOnly = defaults;
+    for (const auto key : {"summonShortcut", "summonHotkeyEnabled", "devicePopupEnabled", "windowsSummonShortcut", "storageVolume", "projection.settings.v1",
+                           "orbipom.bestScore.v1", "dailyBootLogLastDay", "futurePrivatePreference"}) keptOnly.set(key, std::as_const(everything.fields)[key]);
+    check(everything.restoring(S::system).restoring(S::display) == keptOnly,
+          "System and Display together restore every setting except the hotkey, the device popup and the keys outside AppConfiguration");
+    const auto system = everything.restoring(S::system), display = everything.restoring(S::display), elements = everything.restoring(S::hudElements);
+    check(system.string("language") == "system" && system.fields["windowsDisplayID"].isNull() && !system.fields.contains("windowsDisplayName") &&
+          system.fields["hudDisplayUUID"].isNull() && system.moduleLayout() == everything.moduleLayout() && system.string("theme") == "light",
+          "System resets the System page and the Windows display, and keeps Modules and Display");
+    OverlayLayout openOnKept;openOnKept.openModule = "hotkeys";
+    check(elements.overlayLayout() == openOnKept && elements.facilityAlerts() && elements.moduleLayout() == everything.moduleLayout() &&
+          elements.string("theme") == "light" && elements.chargeBarLength() == std::optional(.7) && !elements.showsCloseHint() &&
+          elements.restoring(S::display) == display, "HUD elements keeps Open on, Modules and the rest of Display; it is part of Display");
+    check(!display.fields.contains("hudOverlayLayout") && !display.fields.contains("chargeBarLength") && display.moduleLayout().isDefault() &&
+          !display.fields.contains("hudModuleOrder") && display.applicationIcon() == "endfield" && display.showsCloseHint() && display.facilityAlerts() &&
+          display.string("language") == "english" && display.string("windowsDisplayID") == "DISPLAY-B" &&
+          display.fields["customScreenID"].isNull(), "Display resets Open on, Modules, HUD elements, the bar, the icon and the close hint; System stays");
+    auto onlyOpenOn = defaults;OverlayLayout chosen;chosen.openModule = "map";onlyOpenOn.setOverlayLayout(chosen);
+    check(onlyOpenOn.isDefault(S::hudElements) && !onlyOpenOn.isDefault(S::display), "Open on alone is a Display change, not a HUD elements change");
+
+    // isDefault compares typed values, never JSON tokens.
+    Temporary root;
+    const auto bytes = std::string(R"({"version":1,"settings":{"hudScale":1.0,"backgroundDarkness":0.630,"blurAmount":7.5e-1,"displayDuration":3.00,)"
+                                   R"("customPositionX":5E-1,"scale":1.0,"accentHex":"fad41f","applicationIcon":"endfield","language":"system",)"
+                                   R"("hudModuleOrder":["notes","fileShelf","clipboard","archive","mediaAssembly","minigame","nowPlaying","volume",)"
+                                   R"("projection","reader","workMode","calendar","map","eventLog","profile","account","power"],"hudHiddenModules":[],)"
+                                   R"("hudOverlayLayout":{"title":{"x":0.0,"y":-0,"size":1.00},"titleText":"  ","openModule":"addApp"}}})");
+    std::ofstream(root.path / "settings.json", std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    {
+        const SettingsStore store(root.path);
+        check(store.value().fields["hudScale"] != defaults.fields["hudScale"] && store.value().fields["backgroundDarkness"] != defaults.fields["backgroundDarkness"],
+              "The saved tokens differ from the default tokens");
+        check(store.value().isDefault(S::display) && store.value().isDefault(S::system) && store.value().isDefault(S::hudElements),
+              "Numbers saved as 1.0, 0.630 or 7.5e-1, a lower-case accent, empty module lists and a default layout are at the defaults");
+    }
+    Settings battery = defaults;battery.set("applicationIcon", "battery");
+    check(!battery.isDefault(S::display), "The watch read from \"battery\" is not the default icon");
+    battery.set("applicationIcon", "watch");Settings saved = defaults;saved.set("applicationIcon", "battery");
+    check(battery.restoring(S::display) == defaults && saved.restoring(S::display).string("applicationIcon") == "endfield", "Display restores the Endfield icon");
+    Settings length = defaults;length.set("chargeBarLength", -2);
+    check(length.isDefault(S::display), "An unusable length reads as nil, which is the default");
 }
 // HUDOverlayLayout: Stored decoding, normalization, the default removal.
 void overlayLayout131(const std::function<void(const Json&)>& writeSettings, const fs::path& root) {
@@ -523,6 +611,7 @@ void settingsVersion131() {
         SettingsStore store(root.path);
         check(store.lastOpenedModule() == "map" && store.sanityMigrated() && store.saveLastOpenedModule("map"), "An unknown last module reads as Map and saving Map replaces it; any migration value counts");
     }
+    restoreScopes131();
 }
 }
 

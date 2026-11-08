@@ -129,6 +129,50 @@ struct OverlayLayout {
     bool operator==(const OverlayLayout&) const = default;
 };
 
+// The Restore defaults scopes (Mac HUDSettingsScope, Sources/Models.swift):
+// the System page; the Display page and every page under it (Open on,
+// Modules, HUD elements, App / menu bar icon, Battery alert with the bar);
+// Display > HUD elements alone.
+enum class SettingsScope : std::uint8_t { system, display, hudElements };
+// Every saved key and the Restore that resets it, in one list (Mac
+// HUDSettingsScope.fields and unscopedFields), so a new key joins a Restore by
+// adding one line. hudElements keys are reset by Display's Restore too, and
+// HUD elements keeps hudOverlayLayout's Open on. nullopt: no Restore touches
+// the key (the hotkey has its own Restore; the others are not settings rows).
+// A key not listed here (another build's) is never reset either.
+struct ScopedSetting { std::string_view key; std::optional<SettingsScope> scope; };
+inline constexpr std::array<ScopedSetting, 50> scopedSettings{{
+    // System, plus the Windows display choice beside the Mac one.
+    {"language", SettingsScope::system}, {"launchAtLogin", SettingsScope::system}, {"closeOnFocusLost", SettingsScope::system},
+    {"openOnActiveDisplay", SettingsScope::system}, {"hudDisplayUUID", SettingsScope::system}, {"hudDisplayName", SettingsScope::system},
+    {"windowsDisplayID", SettingsScope::system}, {"windowsDisplayName", SettingsScope::system},
+    // Display
+    {"hudScale", SettingsScope::display}, {"hudOffsetX", SettingsScope::display}, {"hudOffsetY", SettingsScope::display},
+    {"parallaxIntensity", SettingsScope::display}, {"perspectiveIntensity", SettingsScope::display}, {"backgroundDarkness", SettingsScope::display},
+    {"blurAmount", SettingsScope::display}, {"theme", SettingsScope::display}, {"clockFormat", SettingsScope::display},
+    {"clockStyle", SettingsScope::display}, {"centerLogo", SettingsScope::display}, {"centerLogoRevision", SettingsScope::display},
+    {"accentHex", SettingsScope::display}, {"ambientAnimation", SettingsScope::display}, {"reduceMotion", SettingsScope::display},
+    {"lowPowerVisualMode", SettingsScope::display}, {"recordingMode", SettingsScope::display}, {"dailyBootLog", SettingsScope::display},
+    {"showsCloseHint", SettingsScope::display},
+    // App / menu bar icon
+    {"applicationIcon", SettingsScope::display},
+    // Battery alert, with the bar's position, size and length
+    {"alertMetric", SettingsScope::display}, {"displayMode", SettingsScope::display}, {"batteryAlertsEnabled", SettingsScope::display},
+    {"displayDuration", SettingsScope::display}, {"placement", SettingsScope::display}, {"customScreenID", SettingsScope::display},
+    {"customPositionX", SettingsScope::display}, {"customPositionY", SettingsScope::display}, {"scale", SettingsScope::display},
+    {"chargeBarLength", SettingsScope::display},
+    // Modules
+    {"hudModuleOrder", SettingsScope::display}, {"hudHiddenModules", SettingsScope::display},
+    // Open on and HUD elements
+    {"hudOverlayLayout", SettingsScope::hudElements}, {"facilityAlerts", SettingsScope::hudElements},
+    // No Restore: the hotkey (windowsSummonHotkeyDisabled is its derived
+    // mirror, never in the record), the device popup, the Storage disk, the
+    // Projection pen, the minigame best score and the boot log's last day.
+    {"summonShortcut", std::nullopt}, {"summonHotkeyEnabled", std::nullopt}, {"windowsSummonShortcut", std::nullopt},
+    {"devicePopupEnabled", std::nullopt}, {"storageVolume", std::nullopt}, {"projection.settings.v1", std::nullopt},
+    {"orbipom.bestScore.v1", std::nullopt}, {"dailyBootLogLastDay", std::nullopt},
+}};
+
 // One preference record (the Mac AppConfiguration keys plus additive Windows
 // keys). String choices such as displayMode/alertMetric are not closed sets:
 // a value another build wrote loads unchanged and its reader falls back.
@@ -148,10 +192,17 @@ struct OverlayLayout {
 struct Settings {
     Json fields{Json::Object{}};
     static Settings defaults();
-    // Mac restoreDefaults resets AppConfiguration only: keys outside it
-    // (orbipom.bestScore.v1, projection.settings.v1, dailyBootLogLastDay and
-    // the Windows Storage disk choice storageVolume) survive.
-    static Settings restoredDefaults(const Settings& current);
+    using Scope = SettingsScope;
+    // AppConfiguration.restoring(_:): this record with only `scope`'s keys
+    // (scopedSettings) copied from defaults(), a key absent there removed;
+    // HUD elements keeps the layout's Open on. Every other key is kept.
+    Settings restoring(Scope scope) const;
+    // `restoring(scope) == self` on typed values, never JSON tokens: numbers
+    // by value (1 and 1.0 match), the layouts through moduleLayout() and
+    // overlayLayout(), the length and the icon through their accessors
+    // ("battery" is the watch), accentHex in either case, and an absent key
+    // as its default.
+    bool isDefault(Scope scope) const;
     std::string string(std::string_view key) const;
     double number(std::string_view key) const;
     bool boolean(std::string_view key) const;

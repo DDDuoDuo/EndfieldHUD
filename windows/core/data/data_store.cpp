@@ -265,13 +265,42 @@ Settings Settings::defaults() {
         {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true},{"showsCloseHint",true}
     };return result;
 }
-Settings Settings::restoredDefaults(const Settings& current) {
-    auto result=defaults();
-    for(const auto key:{"orbipom.bestScore.v1","projection.settings.v1","dailyBootLogLastDay","storageVolume"}) if(current.fields.contains(key)) result.fields[key]=current.fields[key];
-    return result;
-}
 namespace {
 bool flag(const Json& fields,std::string_view key,bool fallback) {const auto& value=fields[key];return value.isBool()?value.boolean():fallback;}
+const Settings& defaultSettings() {static const auto value=Settings::defaults();return value;}
+bool resets(SettingsScope scope,std::optional<SettingsScope> owner) {
+    return owner&&(*owner==scope||(scope==SettingsScope::display&&*owner==SettingsScope::hudElements));
+}
+std::string uppercase(std::string text) {for(auto& c:text) if(c>='a'&&c<='z') c=static_cast<char>(c-'a'+'A');return text;}
+// One key of two records compared by its typed value (AppConfiguration
+// equality after normalization). An absent key reads as its default.
+bool sameSetting(std::string_view key,const Settings& a,const Settings& b) {
+    if(key==OverlayLayout::key) return a.overlayLayout()==b.overlayLayout();
+    if(key=="hudModuleOrder"||key=="hudHiddenModules") return a.moduleLayout()==b.moduleLayout();
+    if(key=="chargeBarLength") return a.chargeBarLength()==b.chargeBarLength();
+    if(key=="applicationIcon") return a.applicationIcon()==b.applicationIcon();
+    const auto value=[&](const Settings& settings)->const Json& {return settings.fields.contains(key)?settings.fields[key]:defaultSettings().fields[key];};
+    const auto& x=value(a);const auto& y=value(b);
+    if(x.isNumber()&&y.isNumber()) return x.number()==y.number();
+    if(key=="accentHex"&&x.isString()&&y.isString()) return uppercase(x.string())==uppercase(y.string());
+    return x==y;
+}
+}
+Settings Settings::restoring(Scope scope) const {
+    auto result=*this;
+    for(const auto& [key,owner]:scopedSettings) {
+        if(!resets(scope,owner)) continue;
+        if(key==OverlayLayout::key&&scope==Scope::hudElements) {
+            OverlayLayout kept;kept.openModule=overlayLayout().openModule;result.setOverlayLayout(kept);continue;
+        }
+        if(defaultSettings().fields.contains(key)) result.fields[std::string(key)]=defaultSettings().fields[key];
+        else result.fields.erase(key);
+    }
+    return result;
+}
+bool Settings::isDefault(Scope scope) const {
+    const auto restored=restoring(scope);
+    return std::all_of(scopedSettings.begin(),scopedSettings.end(),[&](const ScopedSetting& setting){return !resets(scope,setting.scope)||sameSetting(setting.key,*this,restored);});
 }
 bool Settings::summonHotkeyEnabled() const {return flag(fields,"summonHotkeyEnabled",true);}
 bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);}
