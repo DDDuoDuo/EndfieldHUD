@@ -275,11 +275,14 @@ public:
     motion::Clock clock() const noexcept { return env().clock(); }
     std::string text(std::string_view english, std::string_view simplifiedChinese, std::span<const std::string_view> arguments = {}) const;
     ModuleTitle title(std::string_view english, std::string_view simplifiedChinese) const;
-    // In-place re-render (LIB-75): no entrance, every scroll area keeps its
-    // offset by id, except for a module that was left (showsFromTop), which
-    // comes back at the top; during a sub-page swap the new page starts at
-    // the top and stays held invisible until the swap lands. Text fields that
-    // are not editing are dropped.
+    // In-place re-render (LIB-75): no entrance of its own, every scroll area
+    // keeps its offset by id, except for a module that was left
+    // (showsFromTop), which comes back at the top; during a sub-page swap the
+    // new page starts at the top and stays held invisible until the swap
+    // lands. Text fields that are not editing are dropped. A re-render while
+    // the module entrance still plays (data arriving as the module opens or
+    // switches in) carries that entrance on in phase (playPageEntrance with a
+    // negative delay): rows already shown stay shown, the rest still enter.
     // The new page keeps the replaced page's layer ids unless that page holds
     // an editing field (makePage), so the scene reuses every part whose
     // artwork is unchanged instead of rasterizing the whole page again.
@@ -397,12 +400,18 @@ public:
     // HUDDirectionalContent: the entrance after the module swap (header wipe +
     // stagger from `offset` content px); nothing under Reduce Motion. The
     // two-argument form (the Mac's playEntrance(from:), which a sub-page swap
-    // also calls) plays it at once; the virtual one, playEntrance(from:delay:),
-    // holds it back `delay` s (the HUD's open, until the centre shows).
-    // Overrides carry the delay into their own parts (Work Mode's title wipe,
-    // the File Shelf card).
+    // also calls) plays it at once; playEntrance(from:delay:) holds it back
+    // `delay` s (the HUD's open, until the centre shows). The canvas records
+    // the entrance (offset and start) until the module leaves, so a page
+    // re-rendered in place while it plays carries it on (rerender).
     void playEntrance(Point offset, double now) { playEntrance(offset, now, 0); }
-    virtual void playEntrance(Point offset, double now, double delay);
+    void playEntrance(Point offset, double now, double delay);
+    // HUDDesignCanvas.playPageEntrance(from:delay:): the page's part of the
+    // entrance (the header keeps its own), the row stagger plus a subclass's
+    // extras built with the page (Work Mode's inner title wipe, the File
+    // Shelf card). A page rebuilt mid-entrance replays it with a negative
+    // `delay` (how long ago the entrance began), resuming in phase.
+    virtual void playPageEntrance(Point offset, double delay);
     // Before the content leaves: close popups, end editing WITH commit, cancel
     // gestures (sliders without commit), settle a pending swap concealed, willLeave.
     void prepareToLeave(double now);
@@ -487,6 +496,11 @@ private:
     mutable std::uint64_t revision_{};
     std::optional<double> swapDeadline_;
     Point swapOffset_;
+    // The entrance playing on the page (HUDDesignCanvas.entrance: its offset
+    // and start), until the module leaves; an in-place re-render carries it.
+    struct Entrance { Point offset; double start{}; };
+    std::optional<Entrance> entrance_;
+    static double entranceLength() noexcept;
     Layer* leaving_{};                          // the old page's layer while it leaves
     Deadlines::Token swapToken_{}, collectToken_{};
     std::vector<Deadlines::Token> timerGroups_;

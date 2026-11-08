@@ -279,9 +279,14 @@ void animate(Layer&, Channel, double to, double duration, const Clock&, core::Cu
 void animateTint(Layer&, Color to, double duration, const Clock&, core::CubicTiming = easing::standard, double delay = 0);
 // stIn: opacity [0, o, o] at [0, .6, 1] and additive translation offset -> 0;
 // group timing `timing` over `duration` composes with the translation's own.
+// A positive `delay` holds the start pose until then (fill backwards); a
+// negative one (enter, stagger, wipe with its fade, grow) resumes an entrance
+// that began that long ago, so a page rebuilt mid-entrance carries on in
+// phase (HUDMotion.enter, Mac d03d5b9).
 void enter(Layer&, Point offset, const Clock&, double duration = duration::entrance, double delay = 0, core::CubicTiming timing = easing::standard);
 // The list stagger: enter(layers[i], offset, delay + staggerDelay(i)); `delay`
-// holds the whole stagger back (the HUD's open waits for the centre to show).
+// holds the whole stagger back (the HUD's open waits for the centre to show)
+// or, negative, resumes it in phase.
 void stagger(std::span<Layer* const>, Point offset, const Clock&, double delay = 0);
 // .13 s ease to opacity 0 and additive -0.6 x offset; holds its end state.
 void leave(Layer&, Point toward, const Clock&);

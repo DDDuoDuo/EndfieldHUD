@@ -209,6 +209,37 @@ void verbs() {
     // grow and pop.
     m::grow(row, .42, {90, false, &deadlines}, .05);
     check(row.presented(C::scaleX, 90.02) == 0 && near(row.presented(C::scaleX, 90.26), E.value(.5)), "ruleIn: scaleX 0 -> 1 after its delay");
+    // A negative delay resumes an entrance that began that long ago (Mac
+    // d03d5b9: a page rebuilt mid-entrance carries on in phase): enter, wipe
+    // with its fade, grow and the stagger start in the past, with no
+    // backwards fill, and show what a track started then shows now.
+    {
+        const auto slot = [](const d::Layer& l, d::MotionSlot s) -> const d::Track& { return l.tracks().slots[std::size_t(s)][0]; };
+        auto& resumed = arena.make("resumed"); resumed.setAnimatable(); root.add(resumed);
+        auto& started = arena.make("started"); started.setAnimatable(); root.add(started);
+        resumed.setFrame({0, 0, 200, 50}); started.setFrame({0, 0, 200, 50});
+        const m::Clock now{95, false, &deadlines}, then{94.9, false, &deadlines};
+        m::enter(resumed, {0, 24}, now, d::duration::entrance, -.1);
+        m::enter(started, {0, 24}, then);
+        check(near(slot(resumed, d::MotionSlot::enter).start, 94.9) && !slot(resumed, d::MotionSlot::enter).fillBackwards
+            && near(resumed.presented(C::opacity, 95), started.presented(C::opacity, 95)) && near(resumed.presented(C::translateY, 95.05), started.presented(C::translateY, 95.05)),
+            "enter with delay -.1 is the entrance started .1 s ago");
+        m::wipe(resumed, d::WipeOrigin::left, .45, now, E, -.1, 0.0);
+        m::wipe(started, d::WipeOrigin::left, .45, then, E, 0, 0.0);
+        check(near(slot(resumed, d::MotionSlot::wipe).start, 94.9) && !slot(resumed, d::MotionSlot::wipe).fillBackwards && near(slot(resumed, d::MotionSlot::fade).start, 94.9)
+            && !slot(resumed, d::MotionSlot::fade).fillBackwards && near(resumed.presented(C::wipe, 95), started.presented(C::wipe, 95))
+            && near(resumed.presented(C::opacity, 95.1), started.presented(C::opacity, 95.1)), "wipe and its fade with delay -.1 resume in phase");
+        m::grow(resumed, .42, now, -.1);
+        m::grow(started, .42, then);
+        check(near(slot(resumed, d::MotionSlot::grow).start, 94.9) && !slot(resumed, d::MotionSlot::grow).fillBackwards && near(resumed.presented(C::scaleX, 95), started.presented(C::scaleX, 95)),
+            "grow with delay -.1 resumes in phase");
+        d::Layer* rows[]{&resumed, &started, &second};
+        m::stagger(rows, {0, 24}, now, -.2);
+        for (std::size_t i = 0; i < 3; ++i)
+            check(near(slot(*rows[i], d::MotionSlot::enter).start, 95 - .2 + d::staggerDelay(int(i)))
+                && slot(*rows[i], d::MotionSlot::enter).fillBackwards == (slot(*rows[i], d::MotionSlot::enter).start > 95), "stagger with -.2: row i at t - .2 + staggerDelay(i)");
+        resumed.removeAllMotion(); started.removeAllMotion(); second.removeAllMotion();
+    }
     row.setValue(C::opacity, .8);
     m::pop(row, {100, false, &deadlines});
     const double s = d::easing::snap.value(.5);

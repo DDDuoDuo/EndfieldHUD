@@ -252,6 +252,12 @@ void Canvas::rerender() {
         return;
     }
     install(makePage(showsFromTop_ ? Offsets{} : currentOffsets(), false), false);
+    // A re-render while the entrance still plays carries it on in phase
+    // (:323-330); past its end or under Reduce Motion it is forgotten.
+    if (!entrance_) return;
+    const double now = env().now;
+    if (env().reduceMotion || now >= entrance_->start + entranceLength()) { entrance_.reset(); return; }
+    playPageEntrance(entrance_->offset, entrance_->start - now);
 }
 std::vector<std::pair<std::string, double>> Canvas::currentOffsets() const {
     Offsets offsets;
@@ -580,6 +586,7 @@ void Canvas::setActive(bool active, double now) {
         rerenderIfStale();
         didActivate();
     } else {
+        entrance_.reset();
         willEndInteraction();
         closePopups(); endEditing(true); cancelGestures(); settleSwap(true);
         didDeactivate();
@@ -594,17 +601,28 @@ void Canvas::resetSession() {
     const auto areas = page_->scrollAreas();
     if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
 }
-// HUDDirectionalContent.playEntrance(from:delay:) (:255-262).
+// HUDDirectionalContent.playEntrance(from:delay:) (:258-264): recorded
+// (not under Reduce Motion) so an in-place re-render carries it.
 void Canvas::playEntrance(Point offset, double now, double delay) {
     begin(now);
     const auto clock = env().clock();
     if (clock.reduceMotion) return;
+    entrance_ = Entrance{offset, clock.now + delay};
     if (showsHeader_) header().playEntrance(clock, delay);
-    motion::stagger(page_->staggered(), offset, clock, delay);
+    playPageEntrance(offset, delay);
 }
-// prepareToLeave (:255-261).
+// playPageEntrance(from:delay:) (:268-270).
+void Canvas::playPageEntrance(Point offset, double delay) { motion::stagger(page_->staggered(), offset, clock(), delay); }
+// HUDDesignCanvas.entranceLength (:276): the last row starts at the stagger
+// cap; the title wipe is the longest track.
+double Canvas::entranceLength() noexcept {
+    static const double length = staggerDelay(duration::staggerCap) + std::max(duration::entrance, duration::titleWipe);
+    return length;
+}
+// prepareToLeave (:278-285).
 void Canvas::prepareToLeave(double now) {
     begin(now);
+    entrance_.reset();
     willEndInteraction();
     closePopups();
     endEditing(true);

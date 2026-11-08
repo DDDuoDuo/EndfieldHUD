@@ -433,6 +433,29 @@ void volumeCanvas() {
         canvas.settleSwap();
         w.appearance(Language::english);
     }
+    // A snapshot listing one more app while the module entrance plays
+    // rebuilds the App volume page; the rebuilt rows carry the entrance on
+    // in phase (Mac d03d5b9).
+    {
+        w.appearance(Language::english, false, false);   // motion on
+        const double t0 = w.now;
+        canvas.playEntrance({0, 24}, t0);
+        w.advance(.1);
+        auto more = model.state;
+        n::VolumeApplication added; added.id = "906"; added.name = "Player 6"; added.pid = 4106; added.available = true;
+        more.applications.push_back(added);
+        const d::Page* page = &canvas.page();
+        canvas.receive(more);
+        const auto rows = canvas.page().staggered();
+        check(&canvas.page() != page && rows.size() > 2 && canvas.listedApplications().size() == 5, "A new app rebuilds the entering App volume page");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(rows[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                "Rebuilt App volume row " + std::to_string(i) + " enters in phase");
+        check(rows.back()->presented(d::Channel::opacity, w.now) < .05, "The last row is still entering after the rebuild");
+        w.advance(2);
+        canvas.receive(model.state);
+        w.appearance(Language::english);
+    }
     // Unsupported (:286-295).
     model.state.applicationActivitySupported = false; model.state.applicationMessage.reset(); canvas.receive(model.state);
     check(canvas.listedApplications().empty() && !canvas.hasAdjustableApplication(), "Unsupported: no app is listed");

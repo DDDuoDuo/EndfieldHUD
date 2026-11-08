@@ -1104,6 +1104,113 @@ void delayedEntrance(RecordedMeasurer& measurer) {
     for (const auto* layer : reduced.page().staggered()) check(!layer->animating(w.now), "Reduce Motion plays no delayed entrance");
 }
 
+// A page re-rendered in place while the module entrance plays carries it on
+// in phase (Mac d03d5b9, HUDDesignCanvas.rerender with the recorded
+// entrance): rows already shown stay shown, the rest still enter; past the
+// entrance, after a leave, under Reduce Motion and during a sub-page swap
+// nothing is carried.
+void carriedEntrance(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    const d::Point offset{0, 24};
+    const auto enterSlot = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][0]; };
+    const auto noEnter = [&](FakeCanvas& c) {
+        for (const auto* layer : c.page().staggered()) if (layer->animating(w.now)) return false;
+        return true;
+    };
+    const auto rebuild = [&](FakeCanvas& c) {
+        const auto before = w.context.pagesBuilt();
+        c.rows += 1;                                     // a structural change: one more row
+        c.rerender();
+        check(w.context.pagesBuilt() == before + 1, "One page is built per re-render");
+    };
+    {
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        const double t0 = w.now;
+        c.playEntrance(offset, t0);
+        w.advance(.2);
+        const auto& oldFirst = *c.page().staggered()[0];
+        const double opacity = oldFirst.presented(d::Channel::opacity, w.now), moved = oldFirst.presented(d::Channel::translateY, w.now);
+        rebuild(c);
+        const auto rows = c.page().staggered();
+        check(rows.size() > 3, "The rebuilt page staggers its rows");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (t0 + d::staggerDelay(int(i)))) < 1e-9 && enterSlot(*rows[i]).fillBackwards == (enterSlot(*rows[i]).start > w.now),
+                "Row " + std::to_string(i) + " of the rebuilt page enters at the entrance's start + its stagger (a row not yet started holds its start pose)");
+        check(near(rows[0]->presented(d::Channel::opacity, w.now), opacity) && near(rows[0]->presented(d::Channel::translateY, w.now), moved),
+            "The first row shows what the replaced page showed");
+        check(near(rows.back()->presented(d::Channel::opacity, w.now), 0), "The last row is still at its start pose");
+        // Past the entrance (its last row's start plus the title wipe): nothing is carried.
+        w.advance(1.02 - .2);
+        rebuild(c);
+        check(noEnter(c), "A re-render after the entrance carries nothing");
+        w.advance(.01);
+        rebuild(c);
+        check(noEnter(c), "Nor does a later one");
+    }
+    {
+        // The HUD's open delays the entrance .2 s: a rebuild at +.1 still waits for it.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        const double t0 = w.now;
+        c.playEntrance(offset, t0, .2);
+        w.advance(.1);
+        rebuild(c);
+        const auto rows = c.page().staggered();
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (t0 + .2 + d::staggerDelay(int(i)))) < 1e-9 && enterSlot(*rows[i]).fillBackwards,
+                "Row " + std::to_string(i) + " waits for the delayed entrance");
+        check(near(rows[0]->presented(d::Channel::opacity, w.now), 0), "The first row is still hidden before the delayed start");
+    }
+    {
+        // Left (prepareToLeave, then shown again) or deactivated: no carry.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        c.setActive(false, w.now); c.prepareToLeave(w.now); c.show(w.now);
+        rebuild(c);
+        check(noEnter(c), "A module that left carries no entrance");
+        c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        c.setActive(false, w.now);
+        rebuild(c);
+        check(noEnter(c), "A deactivated module carries no entrance");
+    }
+    {
+        // A sub-page swap under way: the rebuilt page waits for the landing, which plays its own entrance.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.05);
+        c.depth = 1; c.navigate(1);
+        const double landing = w.now + d::duration::leave;
+        w.advance(.05);
+        rebuild(c);
+        w.advance(landing - w.now);
+        check(!c.transitioning(), "The swap landed");
+        const auto rows = c.page().staggered();
+        const auto swap = d::subpageOffset(1);
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (landing + d::staggerDelay(int(i)))) < 1e-9, "Row " + std::to_string(i) + " enters with the landing");
+        check(near(rows.back()->presented(d::Channel::translateX, landing), rows.back()->value(d::Channel::translateX) + swap.x), "From the swap's offset");
+    }
+    {
+        // Reduce Motion: no entrance is recorded, and one recorded before is dropped.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        w.appearance(Language::english, "FAD41F", false, true);
+        rebuild(c);
+        check(noEnter(c), "Reduce Motion carries nothing");
+        w.appearance(Language::english);
+        rebuild(c);
+        check(noEnter(c), "The entrance dropped under Reduce Motion stays dropped");
+    }
+}
+
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
 // selection): every page that replaces another while the two are never in
 // the tree together takes its layer ids, so the scene finds unchanged parts
@@ -1324,6 +1431,7 @@ int main(int argc, char** argv) {
         keptIds(measurer);
         listsFromTop(measurer);
         delayedEntrance(measurer);
+        carriedEntrance(measurer);
         focusMoves(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

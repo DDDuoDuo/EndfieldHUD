@@ -289,9 +289,11 @@ void WorkModeCanvas::resetSession() {
     if (changed && renderedLanguage()) refresh(false);
 }
 // The flick of the inner title; the column staggers in (the ring has no entrance).
-void WorkModeCanvas::playEntrance(Point offset, double now, double delay) {
-    Canvas::playEntrance(offset, now, delay);
-    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, env().clock(), d::easing::standard, delay, 0.0);
+// Part of the page's entrance (:240-243), so a page rebuilt mid-entrance
+// (Start pressed while Work Mode opens) carries the wipe on in phase.
+void WorkModeCanvas::playPageEntrance(Point offset, double delay) {
+    Canvas::playPageEntrance(offset, delay);
+    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, clock(), d::easing::standard, delay, 0.0);
 }
 
 // --- State (:249-304) -----------------------------------------------------------------

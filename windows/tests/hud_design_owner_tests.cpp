@@ -81,14 +81,14 @@ struct FakeCanvas final : d::Canvas {
     bool handleKey(const d::KeyInput& k) override { if (k.virtualKey == 'K') { ++keys; return true; } return false; }
     bool handleScroll(d::Point, d::Point delta) override { scrolls += delta.y > 0; return true; }
     std::optional<d::Cursor> cursor(std::optional<d::Point> p) const override { return p && p->y > 400 ? std::optional(d::Cursor::openHand) : std::nullopt; }
-    // The entrance the owner plays (HUDDirectionalContent.playEntrance(from:delay:)).
+    // The entrance the owner plays (HUDDirectionalContent.playEntrance(from:delay:)),
+    // seen through its page part (no page is rebuilt here, so no carried entrance).
     unsigned entrances{};
     d::Point entranceOffset{};
     double entranceDelay{-1};
-    using d::Canvas::playEntrance;
-    void playEntrance(d::Point offset, double now, double delay) override {
+    void playPageEntrance(d::Point offset, double delay) override {
         ++entrances; entranceOffset = offset; entranceDelay = delay;
-        d::Canvas::playEntrance(offset, now, delay);
+        d::Canvas::playPageEntrance(offset, delay);
     }
 };
 core::ModulePresentationSample sample(core::Module m, bool attached = true) {

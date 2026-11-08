@@ -206,8 +206,10 @@ void FileShelfCanvas::resetSession() {
     if (storeError_) pendingError_ = storeError_;
     Canvas::resetSession();
 }
-void FileShelfCanvas::playEntrance(d::Point offset, double now, double delay) {
-    Canvas::playEntrance(offset, now, delay);
+// The properties card slides in with the page's entrance (:121-128), so a
+// page rebuilt mid-entrance carries it on in phase.
+void FileShelfCanvas::playPageEntrance(d::Point offset, double delay) {
+    Canvas::playPageEntrance(offset, delay);
     if (card_) d::motion::enter(*card_, {24, 0}, clock(), .3, delay);
 }
 void FileShelfCanvas::recordingModeChanged() {

@@ -358,6 +358,25 @@ void workMode(Run& run) {
         const auto staggered = w.canvas->page().staggered();
         check(!staggered.empty() && std::abs(staggered[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (w.now + .2 + d::staggerDelay(0))) < 1e-12, "The column staggers in after the delay too");
     }
+    {   // Start pressed while the entrance plays rebuilds the page (Mac d03d5b9):
+        // the column and the inner title's wipe carry on in phase.
+        WorkWorld w(run.measurer);
+        const double t0 = w.now;
+        w.canvas->playEntrance({0, 24}, t0);
+        w.advance(.2);
+        const auto built = w.harness.context.pagesBuilt();
+        w.canvas->primaryAction();
+        check(w.harness.context.pagesBuilt() == built + 1, "Start rebuilds the Work Mode page");
+        const auto staggered = w.canvas->page().staggered();
+        check(staggered.size() > 3, "The rebuilt column staggers");
+        for (std::size_t i = 0; i < staggered.size(); ++i)
+            check(std::abs(staggered[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                "Rebuilt row " + std::to_string(i) + " enters in phase with the entrance");
+        const auto* title = findLayer(w.canvas->root(), "workMode.title");
+        check(title && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].start - t0) < 1e-9
+            && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - t0) < 1e-9, "The rebuilt inner title's wipe and fade carry on in phase");
+        check(staggered.back()->presented(d::Channel::opacity, w.now) < .05, "The last row is still entering");
+    }
     { WorkWorld w(run.measurer, L::english, "22A6F2", true); snap("countdownIdle", w, L::english, true); }
     {
         WorkWorld w(run.measurer);

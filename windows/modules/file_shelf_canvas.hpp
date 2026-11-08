@@ -192,8 +192,7 @@ public:
     // releases their artwork with the close (a switch inside the open HUD
     // keeps them).
     void overlayClosing();
-    using Canvas::playEntrance;
-    void playEntrance(design::Point, double now, double delay) override;
+    void playPageEntrance(design::Point, double delay) override;
     void recordingModeChanged() override;
     void didInstall(design::Page&) override;      // the rerender override (:510-513)
     bool interceptPointerDown(design::Point, const design::PointerInput&) override;
