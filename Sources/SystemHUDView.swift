@@ -1092,18 +1092,23 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // running under its canvas.
         let openingCanvas = preservingNowPlayingPresentation || preservingModuleEntrance
             ? designCanvases[selectedModule]?.root : nil
-        func remove(_ item: CALayer, keepingEntrance: Bool = false) {
+        // The close keeps a facility banner or tag already leaving on its way out.
+        let overlayLeaves: [ObjectIdentifier: Set<String>] = forRetraction
+            ? [ObjectIdentifier(facilityBanner.layer): HUDFacilityBanner.leaveKeys,
+               ObjectIdentifier(facilityTags.layer): HUDFacilityTagStack.leaveKeys] : [:]
+        func remove(_ item: CALayer, keepingEntrance: Bool = false, keeping leaveKeys: Set<String> = []) {
             if preserveClickFeedback && item === actionFeedback { return }
             if preservingChargeAnimation && item === chargeBadge.layer { return }
             if preservingNowPlayingPresentation && (item === nowPlayingCanvas.root || item === archiveCanvas.root || item === readerCanvas.root
                 || item === mediaAssemblyCanvas.root || item === calendarCanvas.root || item === minigameCanvas.root) { return }
             let keepingEntrance = keepingEntrance || item === openingCanvas
-            if preservingPointerMotion || keepingEntrance {
+            let leaveKeys = overlayLeaves[ObjectIdentifier(item)] ?? leaveKeys
+            if preservingPointerMotion || keepingEntrance || !leaveKeys.isEmpty {
                 for key in item.animationKeys() ?? [] where !(preservingPointerMotion && key.hasPrefix("parallax."))
-                    && !(keepingEntrance && HUDMotion.entranceKeys.contains(key)) { item.removeAnimation(forKey: key) }
+                    && !(keepingEntrance && HUDMotion.entranceKeys.contains(key)) && !leaveKeys.contains(key) { item.removeAnimation(forKey: key) }
             } else { item.removeAllAnimations() }
-            item.sublayers?.forEach { remove($0, keepingEntrance: keepingEntrance) }
-            if let mask = item.mask { remove(mask, keepingEntrance: keepingEntrance) }
+            item.sublayers?.forEach { remove($0, keepingEntrance: keepingEntrance, keeping: leaveKeys) }
+            if let mask = item.mask { remove(mask, keepingEntrance: keepingEntrance, keeping: leaveKeys) }
         }
         if let layer = layer { remove(layer) }
         // cancel() restores the last committed screen. Its host pose must be
