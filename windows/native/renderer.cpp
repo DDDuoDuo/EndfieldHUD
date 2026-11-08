@@ -180,6 +180,8 @@ ObjectUniform uniforms(const DrawObject &object) {
         require(std::isfinite(mask.cornerRadius) && mask.cornerRadius >= 0 &&
                 mask.cornerRadius <= std::min(r.width, r.height) * .5, "Invalid plane-mask corner radius");
         result.masks[i].corners[0] = static_cast<float>(mask.cornerRadius);
+        require(!mask.exclude || mask.cornerRadius == 0, "An excluding plane mask is a rectangle");
+        result.masks[i].corners[1] = mask.exclude ? 1.f : 0.f;
         const std::array<double, 4> bounds{r.x, r.y, r.x + r.width, r.y + r.height};
         for (std::size_t j = 0; j < bounds.size(); ++j) {
             require(std::isfinite(bounds[j]) && std::abs(bounds[j]) <= std::numeric_limits<float>::max(), "Plane-mask extent exceeds GPU range");
@@ -1403,7 +1405,7 @@ bool samePose(const DrawObject& a, const DrawObject& b) noexcept {
     if (!(a.world == b.world && a.linearTint == b.linearTint && a.opacity == b.opacity && a.blend == b.blend &&
           a.shutter == b.shutter && a.alphaMask == b.alphaMask && a.angularMask == b.angularMask && a.masks.size() == b.masks.size())) return false;
     for (std::size_t n = 0; n < a.masks.size(); ++n)
-        if (!(a.masks[n].worldToLocal == b.masks[n].worldToLocal && a.masks[n].bounds == b.masks[n].bounds && a.masks[n].cornerRadius == b.masks[n].cornerRadius)) return false;
+        if (!(a.masks[n].worldToLocal == b.masks[n].worldToLocal && a.masks[n].bounds == b.masks[n].bounds && a.masks[n].cornerRadius == b.masks[n].cornerRadius && a.masks[n].exclude == b.masks[n].exclude)) return false;
     return true;
 }
 // The pose of an object whose identities are unchanged (the same IDs), copied
