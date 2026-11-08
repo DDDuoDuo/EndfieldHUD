@@ -519,10 +519,15 @@ final class HUDArchiveTile: HUDControl {
     }
 
     /// A media thumbnail filling the well in place of the doc glyph (nil
-    /// restores the glyph). `animated`: one arriving on a shown tile fades in.
+    /// restores the glyph). `animated`: one arriving on a shown tile
+    /// cross-fades with the glyph, in one fade of the well.
     func setPoster(_ image: CGImage?, animated: Bool = false) {
         guard style == .standard, image != nil || poster != nil else { return }
-        let appearing = animated && image != nil && poster?.isHidden != false
+        if animated, image != nil, poster?.isHidden != false, !env.reducesMotion {
+            let fade = CATransition()
+            fade.type = .fade; fade.duration = HUDDuration.hover; fade.timingFunction = HUDEasing.easeInOut
+            well.add(fade, forKey: "hud.poster.fade")
+        }
         HUDMotion.perform {
             if poster == nil, image != nil {
                 let layer = HUDLayer.plain("tile.poster")
@@ -532,7 +537,6 @@ final class HUDArchiveTile: HUDControl {
             poster?.contents = image; poster?.isHidden = image == nil
             doc.isHidden = image != nil
         }
-        if appearing, let poster { HUDMotion.enter(poster, from: .zero, duration: HUDDuration.hover, env: env) }
     }
 
     func setSelected(_ selected: Bool, animated: Bool = true) {
