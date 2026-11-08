@@ -760,12 +760,14 @@ void SettingsCanvas::buildOverlay(d::Page& page) {
 // overlayTextRow (:609-629): one line of custom text, for every language.
 // Return or a click elsewhere saves it (cleaned: the field shows the cleaned
 // text when cleaning changed it), and an empty field shows `placeholder`.
+// It reads the saved text as the Mac decodes it (normalized, cut to 24
+// Characters), so a longer stored text is shown cut and never written back.
 d::RowPlate& SettingsCanvas::overlayTextRow(const std::string& id, const std::string& rowTitle, std::string_view placeholder,
     std::string ehud::data::OverlayLayout::* member, d::Page& page) {
     using ehud::data::OverlayLayout;
     d::TextField::Options options;
     options.maximumLength = OverlayLayout::textLimit;
-    auto& field = page.make<d::TextField>(id, rowTitle, config().overlayLayout().*member, std::string(placeholder), d::Size{220, 30}, options);
+    auto& field = page.make<d::TextField>(id, rowTitle, config().overlayLayout(env().characters.prefix).*member, std::string(placeholder), d::Size{220, 30}, options);
     field.onCommit = [this, &field, member](const std::string& typed) {
         const auto value = OverlayLayout::cleanText(typed, env().characters.prefix);
         if (value != typed) field.setText(value);
@@ -773,7 +775,7 @@ d::RowPlate& SettingsCanvas::overlayTextRow(const std::string& id, const std::st
     };
     registerField(field);
     binders_.push_back([this, &field, member] {
-        const auto current = config().overlayLayout().*member;
+        const auto current = config().overlayLayout(env().characters.prefix).*member;
         if (!field.editing() && field.text() != current) field.setText(current);
     });
     return row(id, rowTitle, {&field.layer()}, page, {}, {&field});

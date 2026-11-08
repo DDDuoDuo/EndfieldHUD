@@ -581,6 +581,15 @@ void contracts() {
         check(committed().overlayLayout().titleText == "Typed", "Its commit saves what was typed");
         w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText = "Talos"; s.setOverlayLayout(l); });
         check(field.text() == "Talos", "An idle field shows the saved text");
+        // A longer saved text (no character rule: as a hand-edited file keeps
+        // it) reads as the Mac decodes it, cut to 24, and is not written back.
+        w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"; s.setOverlayLayout(l); });
+        check(field.text() == "ABCDEFGHIJKLMNOPQRSTUVWX" && committed().overlayLayout().titleText == "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123",
+            "An idle field shows a longer saved text cut to 24 characters, and the store keeps it");
+        { const auto back = w[M::display].page().back; back(); }
+        w.activate(M::display, "overlay");
+        check(dynamic_cast<d::TextField&>(w.control(M::display, "overlayTitleText")).text() == "ABCDEFGHIJKLMNOPQRSTUVWX",
+            "The rebuilt page starts the field with the text cut to 24 characters");
         w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText.clear(); s.setOverlayLayout(l); });
         w.context.setEditorHost(nullptr);
     }
