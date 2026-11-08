@@ -175,15 +175,17 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         leaving = true
         finishOpening(announce: false)
         unlocking = nil
-        bodyArea?.suspend()
-        clearMedia()
+        // The text and the picture or frame shown leave drawn with the page;
+        // the picture is released shortly after, with its decoder already gone.
+        bodyArea?.suspend(keepingArtwork: true)
+        presentation?.setVisible(false, preserveArtworkOnHide: true)
         thumbnailGeneration += 1; metadataRequests.removeAll(); thumbnails.clear()
         panel?.cancel(nil); panel = nil; importTicket.cancel(); importTicket = ArchiveImportTicket()
         reportEdits()
         controller.flush()
         // Leaving the module relocks a classified document; its text leaves memory with the editor.
         if controller.selectedClassification != .unclassified, !controller.isSelectedLocked {
-            discardDocument()
+            discardDocument(); clearMedia()
             controller.lockSelected()
         }
     }
@@ -1630,6 +1632,8 @@ final class ArchiveBodyArea: HUDControl {
     weak var formatBar: NotesFormatBar?
     private let forwarder = NotesPressForwarder()
     private var surface: HUDProjectedTextEditor?
+    /// A suspended editor whose last text stays drawn while its module leaves.
+    private var departed: HUDProjectedTextEditor?
     private let placeholder: HUDTextLayer
     var isFocused: Bool { textView.window != nil && textView.window?.firstResponder === textView }
     var isAttached: Bool { surface != nil }
@@ -1683,6 +1687,7 @@ final class ArchiveBodyArea: HUDControl {
         guard layer.bounds.size != size else { return }
         let attached = surface != nil, focused = isFocused
         surface?.dispose(); surface = nil
+        dropDeparted()
         HUDMotion.perform {
             layer.bounds = CGRect(origin: .zero, size: size)
             placeholder.lineFrame = CGRect(x: textRect.minX, y: textRect.minY, width: textRect.width, height: 14 * 1.3)
@@ -1695,6 +1700,7 @@ final class ArchiveBodyArea: HUDControl {
     /// Projects the editor onto the plane; nil hits while the module is not interactive.
     func attach() {
         guard surface == nil, let canvas, let host = canvas.context.host else { return }
+        dropDeparted()
         let editor = HUDProjectedTextEditor(textView: textView, rect: textRect, host: host, parent: layer)
         editor.project = { [weak self] rect in
             guard let self, let canvas = self.canvas else { return rect }
@@ -1711,7 +1717,22 @@ final class ArchiveBodyArea: HUDControl {
         editor.captureVisibleArtwork()
     }
 
-    func suspend() { blur(); surface?.dispose(); surface = nil }
+    /// `keepingArtwork` (the module leaving): the text stays drawn to leave
+    /// with the page until the next attach, suspend or dispose.
+    func suspend(keepingArtwork: Bool = false) {
+        blur()
+        dropDeparted()
+        surface?.dispose(keepingArtwork: keepingArtwork)
+        if keepingArtwork { departed = surface }
+        surface = nil
+    }
+
+    /// Removes text kept drawn by `suspend(keepingArtwork:)`.
+    func dropDeparted() {
+        guard let editor = departed else { return }
+        departed = nil
+        HUDMotion.perform { editor.artwork.removeFromSuperlayer() }
+    }
 
     func dispose() {
         suspend()

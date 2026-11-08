@@ -173,7 +173,8 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     override func didDeactivate() {
         cancelReorder()
         saveNote()
-        noteArea?.suspend()
+        // The text leaves drawn with the page.
+        noteArea?.suspend(keepingArtwork: true)
     }
 
     override func willLeave() { saveNote() }
@@ -535,10 +536,13 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
         return area
     }
 
-    /// Projects the editor while the TEXT tab is on screen and interactive.
+    /// Projects the editor while the TEXT tab is on screen, from before the
+    /// entrance so the text enters with its box; the editor takes input only
+    /// while the module is active.
     private func attachNote() {
-        guard isActive, let area = noteArea, document.tab == .text, !document.isFolded, !context.recordingMode,
-              area.layer.superlayer != nil else { return }
+        guard let area = noteArea else { return }
+        guard document.tab == .text, !document.isFolded, !context.recordingMode,
+              area.layer.superlayer != nil else { area.dropDeparted(); return }
         area.attach()
     }
 

@@ -96,13 +96,17 @@ final class HUDProjectedTextEditor: NSView {
     required init?(coder: NSCoder) { nil }
     deinit { observers.forEach(NotificationCenter.default.removeObserver); artwork.removeFromSuperlayer() }
 
-    func dispose() {
+    /// `keepingArtwork`: the last drawn text stays on the plane (no caret) to
+    /// leave with its page; the owner removes `artwork` (deinit also does).
+    func dispose(keepingArtwork: Bool = false) {
         guard !disposed else { return }; disposed = true
         observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
-        textView.projectionOwner = nil; glyphs.contents = nil; retainedPixelCount = 0
+        textView.projectionOwner = nil
+        if !keepingArtwork { glyphs.contents = nil; retainedPixelCount = 0 }
         caret.removeAllAnimations(); caret.isHidden = true; scrollBar.reset()
         (scrollView as? HUDProjectedTextScrollView)?.projectedFrame = nil
-        artwork.removeFromSuperlayer(); scrollView.removeFromSuperview(); removeFromSuperview()
+        if !keepingArtwork { artwork.removeFromSuperlayer() }
+        scrollView.removeFromSuperview(); removeFromSuperview()
     }
     func setAppearance(background: NSColor, border: NSColor, radius: CGFloat = 3) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
