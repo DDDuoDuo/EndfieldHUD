@@ -165,20 +165,15 @@ void replay(const Json& oracle) {
         } else check(false,"unknown oracle op "+op);
         queue.pump();
         const auto& after=entry["after"];const auto p=controller->presentation();
-        // This trace is the v1.2.0 controller's (pinned oracle); Mac 1.3.0 only
-        // changed the two visible separators " · " -> " / " (role titles,
-        // MODS-872) and ", " (gauge label, MODS-873). Those are compared back
-        // in the v1.2.0 spelling here; the 1.3.0 strings themselves are checked
-        // against the 1.3.0 controller in account_canvas_tests.
-        const auto v120=[](std::string text,std::string_view now){const auto at=text.find(now);if(at!=std::string::npos) text.replace(at,now.size()," \xC2\xB7 ");return text;};
-        Json::Array roles;for(const auto& r:p.roles) roles.push_back(Json::Object{{"id",r.id},{"title",v120(r.title," / ")},{"subtitle",r.subtitle}});
+        // The Mac 1.3.1 controller's trace: role titles " / ", the gauge label ", ".
+        Json::Array roles;for(const auto& r:p.roles) roles.push_back(Json::Object{{"id",r.id},{"title",r.title},{"subtitle",r.subtitle}});
         const Json presentation=Json::Object{{"region",std::string(h::regionChoiceName(p.region))},{"status",std::string(h::statusName(p.status))},{"statusMessage",p.statusMessage},
             {"accountName",p.accountName},{"roles",roles},{"selectedRoleID",optJson(p.selectedRoleID)},{"headerMode",std::string(h::headerModeName(p.headerMode))},
             {"syncProfile",p.syncProfile},{"syncAvatar",p.syncAvatar},{"lastSync",p.lastSync},{"isLinked",p.isLinked}};
         check(sameJson(presentation,after["presentation"]),label+": presentation "+presentation.encode()+" vs "+after["presentation"].encode());
         for(std::size_t n=0;n<work.size();++n) {
             const auto g=controller->gaugeValue(work[n]);const auto& e=after["gauge"].array()[n].array();
-            check(g.value==e[0].string()&&v120(g.accessibilityLabel,", ")==e[1].string()&&g.visible==e[2].boolean(),label+": header gauge "+g.value+" | "+g.accessibilityLabel);
+            check(g.value==e[0].string()&&g.accessibilityLabel==e[1].string()&&g.visible==e[2].boolean(),label+": header gauge "+g.value+" | "+g.accessibilityLabel);
         }
         const auto s=controller->sanityPresentation();const auto& es=after["sanity"];
         check(s.has_value()==!es.isNull(),label+": sanity presence");

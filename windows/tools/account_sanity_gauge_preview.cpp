@@ -15,6 +15,9 @@ void need(bool v,const char* s) {if(!v) throw std::invalid_argument(s);}
 struct AccountSanityGaugePreview::Impl {
     h::HypergryphAccountController& controller;std::shared_ptr<const h::GaugeAssets> assets;h::SanityGaugeModel model;gpu::NativeSanityGaugeScene scene;
     AccountSanityGaugeOptions options;app::ClientMetrics metrics;core::Projection projection;bool overlayVisible{},posed{};double time{};
+    // SystemHUDView.designScale (DesktopChromeLayout::designScale): the HUD
+    // design scale with HUD Scale and the display adaptation, from the frame.
+    double designScale{1};
     gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
     gpu::LayerRasterizer* raster;
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,std::shared_ptr<const h::GaugeAssets> a,AccountSanityGaugeOptions o)
@@ -23,10 +26,9 @@ struct AccountSanityGaugePreview::Impl {
         model.onRefresh=[this]{controller.refresh(true);refresh();};
         // Mac 1.3.0: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)).
         model.onOpenWorkMode=[this]{if(options.openWorkMode) {auto open=options.openWorkMode;open();}};
-        // HUDAccountGauge.Layout measures the menu's text: the source numerals'
-        // advances, else HUDText.width (standard faces, 14.4 medium, the UI
-        // region; a line-box measurement, rounded up to .5). Content events only.
-        model.widths.numerals=[this](std::string_view text){return assets->numerals.width(text,h::GaugePopoverLayout::textSize);};
+        // HUDAccountGauge.Layout measures the menu's text with HUDText.width
+        // (standard faces, 14.4 medium, the UI region; a line-box measurement,
+        // rounded up to .5). Content events only.
         model.widths.standard=[this](std::string_view text){
             const auto region=core::regionFor(options.language,raster->fontLanguage());
             const auto descriptor=ehud::data::Json::Object{{"string",std::string(text)},{"fontSize",h::GaugePopoverLayout::textSize},{"fontWeight",500},
@@ -35,7 +37,11 @@ struct AccountSanityGaugePreview::Impl {
         };
     }
     void advance(double t) {need(std::isfinite(t),"Gauge owner needs a finite clock");time=std::max(time,t);}
-    double scale() const {return std::clamp(metrics.scale>0?metrics.scale:2,1.0,3.0);}
+    // hudRasterScale: the backing scale times the design scale (the model
+    // applies the glyph rule and the Sanity size).
+    double scale() const {return (metrics.scale>0?metrics.scale:2)*designScale;}
+    // A HUD Scale, layout, display or size change between clock ticks.
+    void rescaled(const h::SanityGaugeModel::Changes& c) {if(c.number||c.icon||c.scale||c.tooltip) scene.sync(model,options.language,time,options.reduceMotion);}
     h::WorkModeGaugeInput work() const {return options.workMode?options.workMode():h::WorkModeGaugeInput{};}
     // HUDAccountGauge.update(visible:) follows the header mode only: the
     // wallet stays in the header while the HUD closes and fades out with it
@@ -69,6 +75,11 @@ void AccountSanityGaugePreview::resize(const app::ClientMetrics& m) {
     need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid gauge viewport");
     const bool rescale=impl_->metrics.scale!=m.scale;impl_->metrics=m;if(rescale) impl_->refresh();
 }
+void AccountSanityGaugePreview::setDesignScale(double value,double t) {
+    auto& i=*impl_;i.advance(t);if(!std::isfinite(value)||!(value>0)||value==i.designScale) return;
+    i.designScale=value;i.rescaled(i.model.setScale(i.scale()));
+}
+void AccountSanityGaugePreview::setSizeFactor(double value,double t) {auto& i=*impl_;i.advance(t);i.rescaled(i.model.setSizeFactor(value));}
 void AccountSanityGaugePreview::setLanguage(core::Language l,double t) {impl_->advance(t);impl_->options.language=l;impl_->refresh();}
 void AccountSanityGaugePreview::setReduceMotion(bool v) noexcept {impl_->options.reduceMotion=v;}
 void AccountSanityGaugePreview::setOverlayVisible(bool v,double t) {

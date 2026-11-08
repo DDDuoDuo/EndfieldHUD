@@ -16,7 +16,8 @@ constexpr std::array<Vertex,4> quad{{{{0,0,0},{0,0},{1,1,1,1}},{{1,0,0},{1,0},{1
 constexpr std::array<std::uint32_t,6> quadIndices{0,1,2,0,2,3};
 const std::string quadID="account.gauge.quad";
 const std::string walletGroupID="account.gauge.wallet";
-const std::array<std::string,3> walletIDs{"account.gauge.artwork","account.gauge.number","account.gauge.highlight"};
+// Paint order: the bars, the icon, the value, the hover tint.
+const std::array<std::string,4> walletIDs{"account.gauge.artwork","account.gauge.icon","account.gauge.number","account.gauge.highlight"};
 const std::array<std::string,4> tipIDs{"account.gauge.tip.0","account.gauge.tip.1","account.gauge.tip.2","account.gauge.tip.3"};
 std::vector<std::uint8_t> straight(const h::GaugeImage& image) {
     std::vector<std::uint8_t> out(image.rgba.size());
@@ -55,6 +56,25 @@ Json leaf(std::string id,Json node,Rect frame) {
     node["id"]=std::move(id);node["position"]=Json::Array{0,0};node["anchorPoint"]=Json::Array{0,0};node["opacity"]=1;node["children"]=Json::Array{};
     (void)frame;return node;
 }
+const h::GaugeImage clearImage{1,1,{0,0,0,0}};
+// One raster through the shared cache, copied into a cell and given back.
+h::GaugeImage rasterCell(LayerRasterizer& raster,const std::string& id,const Json& layer,modules::design::Size cell,double scale,double magnification,bool centreOnInk) {
+    LayerRasterOptions options;options.pixelsPerPoint=scale;options.paddingPoints=0;options.magnification=magnification;
+    const auto image=raster.rasterize(id,1,layer,options);
+    need(image&&image->complete()&&image->straightRGBA.size()==std::size_t(image->width)*image->height*4,"Gauge raster is incomplete");
+    auto out=h::cellRaster(image->straightRGBA,image->width,image->height,{image->bounds.x,image->bounds.y},cell,scale,centreOnInk);
+    (void)raster.remove(id);
+    return out;
+}
+}
+h::GaugeImage rasterGaugeText(LayerRasterizer& raster,std::string_view text,const h::GaugeTextStyle& style,modules::design::Size cell,double scale,double magnification,core::TextRegion region) {
+    if(text.empty()) return {};
+    const std::string id="account.gauge.text";
+    return rasterCell(raster,id,h::gaugeTextLayer(id,text,style,cell,region),cell,scale,magnification,true);
+}
+h::GaugeImage rasterSanityIcon(LayerRasterizer& raster,double size,double scale,double magnification) {
+    const std::string id="account.gauge.icon";
+    return rasterCell(raster,id,h::sanityIconLayer(id,size),{size,size},scale,magnification,false);
 }
 struct NativeSanityGaugeScene::Impl {
     struct Track {double from{},target{},start{},duration{};bool active{};};
@@ -62,28 +82,31 @@ struct NativeSanityGaugeScene::Impl {
     // wallet: empty carrier for the encoded wallet group output; popover: the
     // local recovery card, grouped (with the numeral draws inserted last).
     LayerScene wallet,popover;std::unique_ptr<NativeLayerGroup> popoverGroup;
-    std::array<DrawObject,3> walletDraws;std::array<DrawObject,1> walletOutput;std::array<DrawObject,4> tipDraws;std::array<LayerCompositionEntry,2> composed;
+    std::array<DrawObject,4> walletDraws;std::array<DrawObject,1> walletOutput;std::array<DrawObject,4> tipDraws;std::array<LayerCompositionEntry,2> composed;
     bool walletRegistered{},walletLocalDirty{},popoverUploaded{},popoverLocalDirty{};std::uint64_t popoverStructure{},popoverResources{};
+    double walletDensity{}; // the wallet group's configured target density (the render scale)
     Matrix gaugeWorld;double visibleOpacity{},popoverOpacity{},popoverLiftValue{};bool posed{};
-    std::array<h::GaugeImage,3> walletImages;std::array<std::uint64_t,3> walletRevisions{};std::array<bool,3> walletDirty{true,true,true};
+    std::array<h::GaugeImage,4> walletImages;std::array<std::uint64_t,4> walletRevisions{};std::array<bool,4> walletDirty{true,true,true,true};
     std::array<h::GaugeImage,4> tipImages;std::array<std::uint64_t,4> tipRevisions{};std::array<bool,4> tipDirty{true,true,true,true};std::array<Rect,4> tipFrames{};
     std::vector<LayerPlacement> popoverPlacements;std::vector<Rect> popoverFrames;std::vector<std::string> popoverIDs;
-    double scale{};std::string value;bool hidden{true},open{},refreshEnabled{},popoverDirty{true},popoverForce{true},meshDirty{true},uploaded{};
+    // scale: the model's render scale (value, icon, cells and group targets);
+    // iconScale: the icon's; refreshScale and size: the popover's vector parts.
+    double scale{},iconScale{},refreshScale{},size{1};std::string value;bool hidden{true},open{},refreshEnabled{},popoverDirty{true},popoverForce{true},meshDirty{true},uploaded{};
     // The recovery popover is loaded the first time it opens (most HUD
     // sessions never open it) and parked again once the HUD closed with it
     // shut; tipResident: its numeral textures are on the GPU.
     bool popoverLoaded{},tipResident{};
-    std::array<std::string,4> tipText;std::array<bool,4> tipNumerals{};core::Language language{core::Language::english};
+    std::array<std::string,4> tipText;std::array<bool,4> tipShown{};core::Language language{core::Language::english};
     // HUDAccountGauge.Layout of the shown menu (gauge-local frame, popover-local cells).
-    h::GaugePopoverLayout layout;bool sourceLabels{true};
+    h::GaugePopoverLayout layout;
     Track hover,refreshHover,popoverAlpha,popoverLift;std::optional<double> lastTime;Renderer* owner{};
     NativeSanityGaugeStats stats;
     Impl(std::shared_ptr<const h::GaugeAssets> a,LayerRasterizer& r,LayerRasterOptions o):assets(std::move(a)),raster(&r),options(std::move(o)),wallet(r),popover(r) {
         need(assets!=nullptr,"Gauge needs its prepared original assets");
         wallet.load(Json::Object{{"bounds",Json::Array{0,0,168,42}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},options);
-        for(std::size_t i=0;i<3;++i) {walletDraws[i].sourceID=walletIDs[i];walletDraws[i].meshID=quadID;walletDraws[i].textureID=walletIDs[i];walletDraws[i].opacity=0;}
+        for(std::size_t i=0;i<walletDraws.size();++i) {walletDraws[i].sourceID=walletIDs[i];walletDraws[i].meshID=quadID;walletDraws[i].textureID=walletIDs[i];walletDraws[i].opacity=0;}
         for(std::size_t i=0;i<4;++i) {tipDraws[i].sourceID=tipIDs[i];tipDraws[i].meshID=quadID;tipDraws[i].textureID=tipIDs[i];tipDraws[i].opacity=0;}
-        for(auto& image:walletImages) image={1,1,{0,0,0,0}};for(auto& image:tipImages) image={1,1,{0,0,0,0}};
+        for(auto& image:walletImages) image=clearImage;for(auto& image:tipImages) image=clearImage;
         walletOutput[0].masks.reserve(8);
         // Mac sublayers composite in encoded sRGB; group both stacks so hover
         // tints and the popover card blend the same way.
@@ -98,7 +121,7 @@ struct NativeSanityGaugeScene::Impl {
     NativeGroupInsertion insertion() const {
         const auto& b=layout.frame;return {popover.draws().size(),tipDraws,{b.x,b.y,b.width,b.height}};
     }
-    // Gauge-local placements (hover tint, tooltip numerals, popover refresh
+    // Gauge-local placements (hover tint, recovery text, popover refresh
     // feedback). Unchanged values do not dirty the retained group targets.
     void placeLocal(double t) {
         const auto place=[](DrawObject& d,Rect r,double alpha,bool& dirty){
@@ -106,10 +129,11 @@ struct NativeSanityGaugeScene::Impl {
             if(d.world!=world||d.opacity!=a) {d.world=world;d.opacity=a;dirty=true;}
         };
         place(walletDraws[0],g::artwork,1,walletLocalDirty);
-        place(walletDraws[1],g::number,value.empty()?0:1,walletLocalDirty);
-        place(walletDraws[2],g::bar,sample(hover,t),walletLocalDirty);
+        place(walletDraws[1],g::icon,1,walletLocalDirty);
+        place(walletDraws[2],g::number,value.empty()?0:1,walletLocalDirty);
+        place(walletDraws[3],g::bar,sample(hover,t),walletLocalDirty);
         const auto& box=layout.frame;
-        for(unsigned n=0;n<4;++n) {const auto f=layout.cell(n);place(tipDraws[n],{box.x+f.x,box.y+f.y,f.width,f.height},tipNumerals[n]?1:0,popoverLocalDirty);}
+        for(unsigned n=0;n<4;++n) {const auto f=layout.cell(n);place(tipDraws[n],{box.x+f.x,box.y+f.y,f.width,f.height},tipShown[n]?1:0,popoverLocalDirty);}
         bool changed=false;
         for(std::size_t n=0;n<popoverPlacements.size();++n) {
             auto& p=popoverPlacements[n];const auto& f=popoverFrames[n];const auto world=Matrix::translation(f.x,f.y);
@@ -137,19 +161,6 @@ struct NativeSanityGaugeScene::Impl {
         const Rect box=layout.frame,refresh=layout.refresh();
         add("gauge/popover/background",Json::Object{{"kind","layer"},{"bounds",Json::Array{0,0,box.width,box.height}},{"cornerRadius",g::popoverCornerRadius},
             {"backgroundColor",Json::Object{{"sRGB",Json::Array{0.06499998271465302,0.06499998271465302,0.06499998271465302,0.98}}}}},box);
-        for(unsigned i=0;i<4;++i) if(!tipNumerals[i]&&!tipText[i].empty()) {
-            const auto f=layout.cell(i);
-            // HUDAccountGauge.Layout.renderLabel: one line in the standard faces
-            // (HarmonyOS Sans, the UI region's Noto), 14.4 medium white .92,
-            // shrunk to fit down to .6 (never truncated). The Mac centres it on
-            // its ink; this line box centres it on the face's strut (within
-            // about half a point for CJK glyphs).
-            add("gauge/popover/text/"+std::to_string(i),Json::Object{{"kind","text"},{"bounds",Json::Array{0,0,f.width,f.height}},{"text",Json::Object{{"string",tipText[i]},{"fontSize",h::GaugePopoverLayout::textSize},
-                {"fontWeight",500},{"lineHeight",f.height/h::GaugePopoverLayout::textSize},{"maximumLines",1},{"minimumScale",.6},{"truncation","none"},
-                {"language",std::string(core::regionTag(core::regionFor(language,core::TextRegion::simplifiedChinese)))},
-                {"foregroundColor",Json::Object{{"sRGB",Json::Array{.92,.92,.92,1}}}},{"alignment","left"},{"runs",Json::Array{}}}}},
-                {box.x+f.x,box.y+f.y,f.width,f.height});
-        }
         add("gauge/popover/arrow",Json::Object{{"kind","shape"},{"bounds",Json::Array{0,0,22,22}},{"shape",Json::Object{{"path",arrowPath()},
             {"fillColor",Json::Object{{"sRGB",Json::Array{0.9000000357627869,0.9000000357627869,0.9000000357627869,1}}}},{"strokeColor",Json{}},{"lineWidth",1},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},
             {box.x+refresh.x+.5,box.y+refresh.y+1.5,22,22});
@@ -159,11 +170,17 @@ struct NativeSanityGaugeScene::Impl {
         add("gauge/popover/rim",Json::Object{{"kind","shape"},{"bounds",Json::Array{0,0,23,25}},{"shape",Json::Object{{"path",roundedHighlight()},
             {"fillColor",Json{}},{"strokeColor",Json::Object{{"sRGB",Json::Array{.75,.75,.75,1}}}},{"lineWidth",.9},{"lineCap","butt"},{"lineJoin","miter"},{"fillRule","non-zero"}}}},
             {box.x+refresh.x,box.y+refresh.y,23,25});
-        popover.load(Json::Object{{"bounds",Json::Array{0,0,box.width,box.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",std::move(leaves)}},options);
+        // The card and the refresh arrow at the HUD's rule for a layer of the
+        // gauge's size (Mac applyRefreshScale); the text cells are the
+        // inserted draws, and the group target is at the render scale.
+        popover.load(Json::Object{{"bounds",Json::Array{0,0,box.width,box.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",std::move(leaves)}},cardOptions());
         need(popover.report().unsupported.empty(),"Gauge popover contains unsupported raster state");
+        popoverGroup->setDensity(scale);
         popoverPlacements.assign(popoverIDs.size(),{});for(std::size_t i=0;i<popoverPlacements.size();++i) popoverPlacements[i].surface=i;
         popoverDirty=false;popoverForce=true;popoverLoaded=true;++stats.popoverLoads;
     }
+    LayerRasterOptions cardOptions() const {auto o=options;o.pixelsPerPoint=refreshScale;o.magnification=size;return o;}
+    core::TextRegion region() const {return core::regionFor(language,raster->fontLanguage());}
     std::size_t index(std::string_view id) const {for(std::size_t i=0;i<popoverIDs.size();++i) if(popoverIDs[i]==id) return i;return SIZE_MAX;}
 };
 NativeSanityGaugeScene::NativeSanityGaugeScene(std::shared_ptr<const h::GaugeAssets> assets,LayerRasterizer& r,LayerRasterOptions options)
@@ -171,16 +188,26 @@ NativeSanityGaugeScene::NativeSanityGaugeScene(std::shared_ptr<const h::GaugeAss
 NativeSanityGaugeScene::~NativeSanityGaugeScene()=default;
 bool NativeSanityGaugeScene::sync(const h::SanityGaugeModel& model,core::Language language,double t,bool reduced) {
     auto& i=*impl_;i.time(t);bool changed=false;
-    if(model.scale()!=i.scale&&model.scale()>0) {
-        i.scale=model.scale();
-        i.walletImages[0]=h::composeGaugeArtwork(*i.assets,i.scale);i.walletImages[2]=h::composeHighlight(*i.assets,i.scale);
-        i.walletDirty[0]=i.walletDirty[2]=true;++i.stats.artworkRasters;i.value.clear();i.value.push_back('\x01');changed=true;
-        std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));
+    const auto cell=[](Rect r){return modules::design::Size{r.width,r.height};};
+    if(model.renderScale()!=i.scale&&model.renderScale()>0) {
+        // HUDAccountGauge.setScale: the value, icon and recovery text redraw
+        // at the new render scale; the group targets follow it.
+        i.scale=model.renderScale();
+        i.walletImages[0]=h::composeGaugeArtwork(*i.assets,i.scale);i.walletImages[3]=h::composeHighlight(*i.assets,i.scale);
+        i.walletDirty[0]=i.walletDirty[3]=true;++i.stats.artworkRasters;i.value.clear();i.value.push_back('\x01');changed=true;
+        std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));i.popoverDirty=true;
     }
-    if(model.value()!=i.value) {
+    if(model.refreshScale()!=i.refreshScale||model.sizeFactor()!=i.size) {i.refreshScale=model.refreshScale();i.size=model.sizeFactor();i.popoverDirty=true;changed=true;}
+    if(i.scale>0&&i.iconScale!=i.scale) {
+        // drawIcon: only when its render scale changes.
+        i.walletImages[1]=rasterSanityIcon(*i.raster,g::icon.width,i.scale,i.size);i.iconScale=i.scale;
+        i.walletDirty[1]=true;++i.stats.iconRasters;changed=true;
+    }
+    if(model.value()!=i.value&&i.scale>0) {
         i.value=model.value();
-        if(auto image=i.assets->numerals.render(i.value,g::number.width,g::number.height,i.scale)) i.walletImages[1]=std::move(*image);else i.walletImages[1]={1,1,{0,0,0,0}};
-        i.walletDirty[1]=true;++i.stats.numberRasters;changed=true;
+        auto image=rasterGaugeText(*i.raster,i.value,h::gaugeValueText,cell(g::number),i.scale,i.size,core::regionFor(language,i.raster->fontLanguage()));
+        i.walletImages[2]=image.width?std::move(image):clearImage;
+        i.walletDirty[2]=true;++i.stats.numberRasters;changed=true;
     }
     if(model.hidden()!=i.hidden) {i.hidden=model.hidden();changed=true;}
     if(model.popoverOpen()!=i.open) {
@@ -193,20 +220,19 @@ bool NativeSanityGaugeScene::sync(const h::SanityGaugeModel& model,core::Languag
     }
     if(model.popoverOpen()) {
         const auto& tip=model.tooltip();bool structure=false;
-        // A new menu width moves every cell and the refresh button (Layout).
-        const bool relayout=tip.layout!=i.layout||tip.sourceLabels!=i.sourceLabels;
-        if(relayout) {i.layout=tip.layout;i.sourceLabels=tip.sourceLabels;structure=true;}
+        // A new menu width moves every cell and the refresh button (Layout);
+        // a new language draws the cells in its region.
+        const bool relayout=tip.layout!=i.layout;
+        if(relayout) {i.layout=tip.layout;structure=true;}
+        if(language!=i.language) {i.language=language;std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));}
         for(unsigned n=0;n<4;++n) if(relayout||tip.text[n]!=i.tipText[n]) {
             i.tipText[n]=tip.text[n];
-            // Values always use the source numerals; labels only in English.
-            const bool numerals=(n>=2||tip.sourceLabels)&&i.assets->numerals.covers(tip.text[n]);
-            if(numerals!=i.tipNumerals[n]) structure=true;i.tipNumerals[n]=numerals;const auto f=i.layout.cell(n);
-            if(numerals) i.tipImages[n]=*i.assets->numerals.render(tip.text[n],f.width,f.height,i.scale,h::GaugePopoverLayout::textSize,false);
-            else {i.tipImages[n]={1,1,{0,0,0,0}};structure=true;}
+            // HarmonyOS Sans, with the region's Noto for CJK labels; pure white.
+            auto image=rasterGaugeText(*i.raster,tip.text[n],h::gaugeRecoveryText,cell(i.layout.cell(n)),i.scale,i.size,i.region());
+            i.tipShown[n]=image.width>0;i.tipImages[n]=image.width?std::move(image):clearImage;
             i.tipDirty[n]=true;++i.stats.tooltipRasters;changed=true;
         }
         if(tip.refreshEnabled!=i.refreshEnabled) {i.refreshEnabled=tip.refreshEnabled;changed=true;}
-        if(language!=i.language) {i.language=language;structure=true;}
         if(structure) i.popoverDirty=true;
     }
     if(i.popoverDirty&&(i.open||i.popoverLoaded)) {i.loadPopover();changed=true;}
@@ -241,11 +267,14 @@ void NativeSanityGaugeScene::upload(Renderer& r) {
     if(i.meshDirty) {r.setMesh(quadID,1,{quad,quadIndices});i.meshDirty=false;}
     bool walletTextures=false,tipTextures=false;
     // Premultiplied encoded artwork, kept encoded for the encoded-sRGB groups.
-    for(std::size_t n=0;n<3;++n) if(i.walletDirty[n]) {const auto pixels=straight(i.walletImages[n]);r.setTexture(walletIDs[n],++i.walletRevisions[n],{i.walletImages[n].width,i.walletImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.walletDirty[n]=false;walletTextures=true;}
+    for(std::size_t n=0;n<i.walletImages.size();++n) if(i.walletDirty[n]) {const auto pixels=straight(i.walletImages[n]);r.setTexture(walletIDs[n],++i.walletRevisions[n],{i.walletImages[n].width,i.walletImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.walletDirty[n]=false;walletTextures=true;}
     if(i.popoverLoaded) for(std::size_t n=0;n<4;++n) if(i.tipDirty[n]) {const auto pixels=straight(i.tipImages[n]);r.setTexture(tipIDs[n],++i.tipRevisions[n],{i.tipImages[n].width,i.tipImages[n].height,pixels,TextureColorSpace::encodedSRGB});i.tipDirty[n]=false;tipTextures=true;i.tipResident=true;}
     i.wallet.uploadResources(r);
-    if(!i.walletRegistered) {
-        r.configureNativeGroup(walletGroupID,{g::artwork,i.options.pixelsPerPoint,NativeGroupColorSpace::encodedSRGB},i.walletDraws);i.walletRegistered=true;
+    // The wallet's target is at the render scale, so the value and the icon
+    // keep their pixels; a new render scale configures it again.
+    const double density=i.scale>0?i.scale:i.options.pixelsPerPoint;
+    if(!i.walletRegistered||i.walletDensity!=density) {
+        r.configureNativeGroup(walletGroupID,{g::artwork,density,NativeGroupColorSpace::encodedSRGB},i.walletDraws);i.walletRegistered=true;i.walletDensity=density;
         if(i.walletOutput[0].sourceID.empty()) {auto next=r.nativeGroupOutput(walletGroupID);next.masks.reserve(8);i.walletOutput[0]=std::move(next);}
         i.walletLocalDirty=false;++i.stats.groupUploads;
     } else if(walletTextures||i.walletLocalDirty) {r.setNativeGroupDraws(walletGroupID,i.walletDraws);i.walletLocalDirty=false;++i.stats.groupRedraws;}
@@ -277,7 +306,7 @@ bool NativeSanityGaugeScene::release(Renderer& r) {
     for(const auto& id:walletIDs) ok=r.removeTexture(id)&&ok;
     if(i.tipResident) {for(const auto& id:tipIDs) ok=r.removeTexture(id)&&ok;if(ok) i.tipResident=false;}
     ok=r.removeMesh(quadID)&&ok;
-    if(ok) {i.uploaded=false;i.meshDirty=true;i.walletDirty={true,true,true};i.tipDirty={true,true,true,true};i.owner=nullptr;}
+    if(ok) {i.uploaded=false;i.meshDirty=true;i.walletDirty={true,true,true,true};i.tipDirty={true,true,true,true};i.walletDensity=0;i.owner=nullptr;}
     return ok;
 }
 bool NativeSanityGaugeScene::park(Renderer* r) {
@@ -291,11 +320,11 @@ bool NativeSanityGaugeScene::park(Renderer* r) {
         if(i.tipResident) {for(const auto& id:tipIDs) (void)r->removeTexture(id);i.tipResident=false;}
     }
     // An empty load drops the card's leaf rasters (and their rasterizer entries).
-    i.popover.load(Json::Object{{"bounds",Json::Array{0,0,i.layout.frame.width,i.layout.frame.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},i.options);
+    i.popover.load(Json::Object{{"bounds",Json::Array{0,0,i.layout.frame.width,i.layout.frame.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}},i.cardOptions());
     i.popoverPlacements.clear();i.popoverFrames.clear();i.popoverIDs.clear();
     i.popoverLoaded=false;i.popoverDirty=true;i.popoverForce=true;i.popoverLocalDirty=false;i.popoverStructure=i.popoverResources=0;
-    for(auto& image:i.tipImages) image={1,1,{0,0,0,0}};
-    i.tipDirty={true,true,true,true};std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));i.tipNumerals={};
+    for(auto& image:i.tipImages) image=clearImage;
+    i.tipDirty={true,true,true,true};std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));i.tipShown={};
     ++i.stats.popoverParks;return true;
 }
 NativeSanityGaugeStats NativeSanityGaugeScene::stats() const noexcept {auto out=impl_->stats;out.popoverLoaded=impl_->popoverLoaded;out.popoverUploaded=impl_->popoverUploaded;return out;}

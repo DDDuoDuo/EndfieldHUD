@@ -5,6 +5,7 @@
 #endif
 #include <windows.h>
 #include "native/hypergryph_account_services.hpp"
+#include "core/source_desktop_chrome.hpp"
 #ifdef EHUD_HAS_WEBVIEW2
 #include "native/hypergryph_account_webview.hpp"
 #endif
@@ -151,12 +152,15 @@ void AccountLinkingOwner::update(const app::ModuleFrame& frame,float headerOpaci
     auto& i=*impl_;i.advance(frame.time);if(!i.resized) return;
     const bool selected=frame.presentation.requested==core::Module::account;
     if(selected!=i.selected) {i.selected=selected;i.visibility();i.syncPage(i.time);}
-    i.page->update(frame);i.gauge->update(frame.center,headerOpacity,i.time);
+    i.page->update(frame);
+    i.gauge->setDesignScale(core::source::DesktopChromeLayout::make(frame.chrome,{},{}).designScale,i.time);
+    i.gauge->update(frame.center,headerOpacity,i.time);
 }
 void AccountLinkingOwner::prewarm(const app::ModuleFrame& frame) {
     auto& i=*impl_;i.advance(frame.time);if(!i.resized) return;
     // The wallet is on every opening frame (unless the header mode hides it);
     // the hidden scene composes nothing, so posing it only enables upload().
+    i.gauge->setDesignScale(core::source::DesktopChromeLayout::make(frame.chrome,{},{}).designScale,i.time);
     i.gauge->update(frame.center,0,i.time);
     i.page->prewarm(frame);
 }

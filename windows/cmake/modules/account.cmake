@@ -79,7 +79,8 @@ if(WIN32)
     target_compile_definitions(hypergryph_account_native_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(hypergryph_account_native_tests PRIVATE hud_hypergryph_account_scene ole32)
     add_test(NAME hypergryph_account_native_contracts COMMAND hypergryph_account_native_tests
-      ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account)
+      ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
     add_executable(hypergryph_account_platform_tests tests/hypergryph_account_platform_tests.cpp)
     target_compile_definitions(hypergryph_account_platform_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(hypergryph_account_platform_tests PRIVATE hud_hypergryph_account_native windowscodecs ole32)

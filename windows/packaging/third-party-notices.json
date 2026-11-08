@@ -19,7 +19,7 @@
     },
     {
       "name": "Unicode Character Database",
-      "version": "Unicode 17.0 (QuickJS-NG's generated tables); the macOS Foundation/ICU character sets of source authority ca04f142185c7de40acd8523bdb563195d90a1d1",
+      "version": "Unicode 17.0 (QuickJS-NG's generated tables); the macOS Foundation/ICU character sets of source authority 2c047e0024aa337b11ab7d1e2577f7a918bace78",
       "url": "https://www.unicode.org/ucd/",
       "license": "Unicode-3.0",
       "use": "Unicode property tables compiled in: QuickJS-NG's case mapping, normalization, character category and script data for JavaScript strings and regular expressions (third_party/quickjs-ng/libunicode-table.h), and the Hypergryph account module's character sets for identifiers, whitespace and digits (modules/hypergryph_account_unicode.inc, generated from the macOS Foundation/ICU tables).",
@@ -139,16 +139,6 @@
       "ships": ["EndfieldHUD.exe (compiled in)"],
       "paths": ["native/audio_default_device.cpp", "native/audio_default_device_notice.txt"],
       "texts": ["native/audio_default_device_notice.txt"]
-    },
-    {
-      "name": "HarmonyOS Sans SC Medium (glyph subset)",
-      "version": "33 signed-distance-field glyphs from the game's font atlas",
-      "url": "",
-      "license": "HarmonyOS Sans Fonts License Agreement",
-      "use": "The account header's wallet numerals.",
-      "ships": ["resources/account/account-numerals.json"],
-      "paths": ["resources/account/account-numerals.json"],
-      "attribution": "HarmonyOS Sans is a typeface of Huawei Device Co., Ltd., used under Huawei's HarmonyOS Sans Fonts License Agreement. The glyph subset is unchanged game data taken from Arknights: Endfield; its ownership is unchanged."
     },
     {
       "name": "ETOPO 2022 (NOAA National Centers for Environmental Information)",

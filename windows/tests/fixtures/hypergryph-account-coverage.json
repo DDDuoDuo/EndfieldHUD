@@ -221,8 +221,8 @@
  "provenance": {
   "generator": "windows/tools/hypergryph_account_coverage_fixture.py",
   "source": "windows/tests/fixtures/hypergryph-account-source.json",
-  "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
-  "sourceSHA256": "775665fda146832dc6c79d6a07c9e06233ab54d77a810c46408336f6d6322130"
+  "sourceAuthority": "2c047e0024aa337b11ab7d1e2577f7a918bace78",
+  "sourceSHA256": "b09f947eb361d73c1cc750c5f743f2aee501177fd795e91ab109f02417845c0d"
  },
  "responses": {
   "/api/v1/game/endfield/card/detail": {

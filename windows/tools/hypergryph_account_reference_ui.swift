@@ -218,7 +218,8 @@ extension HypergryphAccountReference {
             ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-K"],
             ["op": "resolve", "result": ["ok": ["cred": "SYNTHETIC-CRED-K", "signingToken": "synthetic-token-k", "deviceID": "synthetic-device-k"]]],
             ["op": "resolve", "result": ["ok": [roleSpec("arknights", "5", "5", server: nil, name: nil, region: "global")]]],
-            ["op": "perform", "action": "selectHeaderMode", "value": "hidden"],
+            // Mac 1.3.1 has no "hidden" header mode (Show Sanity in Display >
+            // HUD elements replaced it), so the script no longer selects it.
             ["op": "perform", "action": "selectHeaderMode", "value": "endfield"],
             ["op": "resolve", "result": ["ok": ["stamina": ["current": 1, "maximum": 135, "fullRecoveryAt": t + 9_000.0]]]],
             ["op": "perform", "action": "selectRegion", "value": "china"],
@@ -335,6 +336,43 @@ extension HypergryphAccountReference {
     }
     static func providerBytes(_ image: CGImage) -> Data { image.dataProvider!.data! as Data }
     static func child<T>(_ value: Any, _ label: String) -> T { Mirror(reflecting: value).children.first { $0.label == label }!.value as! T }
+    /// Pixel rows and columns that hold ink (alpha above zero): [minX, minY, maxX, maxY), top-left rows.
+    static func ink(_ image: CGImage) -> [Int] {
+        let pixels = [UInt8](rgba(image)); var box = [image.width, image.height, 0, 0]
+        for y in 0..<image.height { for x in 0..<image.width where pixels[(y * image.width + x) * 4 + 3] > 0 {
+            box = [min(box[0], x), min(box[1], y), max(box[2], x + 1), max(box[3], y + 1)]
+        } }
+        return box[2] > 0 ? box : [0, 0, 0, 0]
+    }
+    /// Every premultiplied pixel is white at its coverage (r = g = b = alpha).
+    static func white(_ image: CGImage) -> Bool {
+        let pixels = [UInt8](rgba(image))
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let alpha: UInt8 = pixels[offset + 3]
+            if pixels[offset] != alpha || pixels[offset + 1] != alpha || pixels[offset + 2] != alpha { return false }
+        }
+        return true
+    }
+    /// The render scale rule (HUDRenderScale.glyphScale with the Sanity size)
+    /// and what a repeated scale redraws, for a fresh gauge per case.
+    static func gaugeScaleRows(at now: Date) -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        for (base, size) in [(1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (1.5, 1.0), (2.3, 1.0), (0.5, 1.0), (6.0, 1.0), (2.0, 0.5), (2.0, 2.0),
+                             (3.0, 2.0), (4.0, 1.5), (2.0, 0.2), (2.0, 9.0), (2.0, Double.nan), (Double.infinity, 1.0)] {
+            let gauge = HUDAccountGauge(); gauge.sizeFactor = CGFloat(size)
+            gauge.update(value: "42 / 360", accessibilityLabel: "x", visible: true, accent: .systemYellow, scale: CGFloat(base), sanity: nil, at: now)
+            let icon: CALayer = child(gauge, "icon"), number: CALayer = child(gauge, "number"), refresh: CAShapeLayer = child(gauge, "refresh")
+            let iconImage = icon.contents as! CGImage, numberImage = number.contents as! CGImage, renders = gauge.numberRenderCount
+            gauge.setScale(CGFloat(base))
+            var row: [String: Any] = ["base": d(base), "size": d(size), "sizeFactor": Double(gauge.sizeFactor), "renderScale": Double(gauge.renderScale),
+                                      "number": [numberImage.width, numberImage.height], "icon": [iconImage.width, iconImage.height],
+                                      "refreshScale": Double(refresh.contentsScale), "sameScaleRedraws": gauge.numberRenderCount - renders,
+                                      "sameScaleKeepsIcon": (icon.contents as! CGImage) === iconImage]
+            if base == 1 && size == 1 { row["iconRGBA"] = rgba(iconImage).base64EncodedString() }
+            rows.append(row)
+        }
+        return rows
+    }
     static func gaugeRows() throws -> [String: Any] {
         let gauge = HUDAccountGauge()
         let now = Date(timeIntervalSinceReferenceDate: 781_000_000)
@@ -347,8 +385,8 @@ extension HypergryphAccountReference {
                 let bytes = providerBytes(image)
                 var row: [String: Any] = ["value": value, "scale": scale, "width": image.width, "height": image.height,
                                           "sha256": SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
-                                          "nonzero": bytes.reduce(0) { $0 + ($1 == 0 ? 0 : 1) }]
-                if scale == 1 { row["base64"] = bytes.base64EncodedString() }
+                                          "nonzero": bytes.reduce(0) { $0 + ($1 == 0 ? 0 : 1) },
+                                          "renderScale": Double(gauge.renderScale), "ink": ink(image), "white": white(image)]
                 numbers.append(row)
             }
         }
@@ -372,7 +410,7 @@ extension HypergryphAccountReference {
                 if language == .simplifiedChinese || name.hasSuffix("Value") || language == .english {
                     let bytes = providerBytes(image)
                     row[name] = ["width": image.width, "height": image.height, "sha256": SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
-                                 "numerals": image.bitsPerPixel == 32 && image.alphaInfo == .premultipliedLast]
+                                 "numerals": image.bitsPerPixel == 32 && image.alphaInfo == .premultipliedLast, "ink": ink(image), "white": white(image)]
                 }
             }
             tooltips.append(row)
@@ -442,7 +480,7 @@ extension HypergryphAccountReference {
         gauge.dismiss(animated: false)
         let wholeGauge = try popoverEncoder.encode(gauge.layer, id: "gauge")
         L10n.language = .english
-        return ["numbers": numbers, "hiddenEmpty": hiddenEmpty, "renders": renders,
+        return ["numbers": numbers, "hiddenEmpty": hiddenEmpty, "renders": renders, "scales": gaugeScaleRows(at: now),
                 "popoverEnabled": popoverEnabled, "popoverDisabled": popoverDisabled, "layer": wholeGauge, "tooltips": tooltips, "refreshing": refreshingRow, "pointer": pointer,
                 "closedWithoutSanity": closedWithoutSanity, "countdowns": countdowns,
                 "artwork": ["back": layerImage("hud.account.stamina.back"), "deco": layerImage("hud.account.stamina.deco"), "icon": layerImage("hud.account.stamina.item_ap"),
@@ -454,7 +492,7 @@ extension HypergryphAccountReference {
                                         "contentsCenter": [mask.contentsCenter.minX, mask.contentsCenter.minY, mask.contentsCenter.width, mask.contentsCenter.height].map(Double.init),
                                         "gravity": mask.contentsGravity.rawValue, "rgba": rgba(image).base64EncodedString()]
                             }()],
-                "constants": ["size": [168.0, 42.0], "popoverRect": [Double(HUDAccountGauge.popoverRect.minX), 40, 224, 65], "refreshRect": [195.0, 19, 23, 25],
+                "constants": ["size": [168.0, 42.0], "popoverRect": [Double(HUDAccountGauge().popoverRect.minX), 40, 224, 65], "refreshRect": [195.0, 19, 23, 25],
                               "headerPosition": [292.0, 0], "font": HUDAccountGauge.sourceNumberFont ?? "", "artworkAvailable": HUDAccountGauge.sourceArtworkAvailable]]
     }
 }

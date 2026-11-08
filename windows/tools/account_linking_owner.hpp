@@ -101,7 +101,7 @@ public:
     void update(const app::ModuleFrame&,float headerOpacity);
     // Launch prewarm (app::ModuleOwner::prewarm), while the HUD is still
     // closed: poses the hidden header wallet at opacity 0 (so the host's
-    // following upload installs its artwork, numerals and group targets) and
+    // following upload installs its artwork, text and group targets) and
     // builds and rasterizes the page when the first opening shows Account.
     // Nothing becomes visible, no request starts and no provider opens.
     void prewarm(const app::ModuleFrame&);

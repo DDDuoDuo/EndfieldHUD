@@ -248,7 +248,7 @@ int main(int argc,char** argv) {
         check(argc==2,"Pass tests/fixtures/hypergryph-account-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
-        check(fixture["provenance"]["modifications"].array().empty()&&fixture["provenance"]["sourceAuthority"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Oracle executed unchanged pinned Mac sources");
+        check(fixture["provenance"]["modifications"].array().empty()&&fixture["provenance"]["sourceAuthority"].string()=="2c047e0024aa337b11ab7d1e2577f7a918bace78","Oracle executed unchanged pinned Mac sources");
         crypto();unicode(fixture["unicode"]);identity(fixture["identity"]);sanity(fixture["sanity"]);signatures(fixture["signature"]);
         decode(fixture["decode"]);api(fixture["api"]);cancellation();redaction(fixture["redaction"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account API checks\n";return 0;

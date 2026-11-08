@@ -1,20 +1,22 @@
-// Header sanity gauge: original SDF numerals (bit-exact against the unchanged
-// Mac HUDAccountGauge), recovery countdowns, popover/pointer behaviour and the
-// wallet artwork composition against the Mac layer rendering. Synthetic
-// values only; no account, clock or window is used.
+// Header sanity gauge: the render scale rule (the HUD's glyph rule with the
+// Sanity size), the value and recovery text and the vector icon as Mac 1.3.1
+// draws them, recovery countdowns, popover/pointer behaviour and the wallet
+// artwork composition against the Mac layer rendering. Synthetic values only;
+// no account, clock or window is used.
 #include "modules/hypergryph_account_sanity_gauge.hpp"
 #include "modules/hypergryph_account_crypto.hpp"
 #include "core/data/file_io.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 
 namespace h=endfield::modules::hypergryph;
+namespace d=endfield::modules::design;
 using ehud::data::Json;
 namespace {
 std::size_t checks{};
 void check(bool value,const std::string& why) {++checks;if(!value) throw std::runtime_error(why);}
-std::string digest(const std::vector<std::uint8_t>& bytes) {const auto d=h::sha256(std::span<const std::uint8_t>(bytes.data(),bytes.size()));return h::lowercaseHex(std::span<const std::uint8_t>(d.data(),d.size()));}
 std::vector<std::uint8_t> decode64(const std::string& text) {
     std::vector<std::uint8_t> out;std::uint32_t buffer{};int bits{};
     for(const char c:text) {int v;if(c>='A'&&c<='Z') v=c-'A';else if(c>='a'&&c<='z') v=c-'a'+26;else if(c>='0'&&c<='9') v=c-'0'+52;else if(c=='+') v=62;else if(c=='/') v=63;else continue;
@@ -22,22 +24,98 @@ std::vector<std::uint8_t> decode64(const std::string& text) {
     return out;
 }
 double num(const Json& v) {return v.isString()?std::strtod(v.string().c_str(),nullptr):v.number();}
-void numerals(const h::GaugeAssets& assets,const Json& g) {
-    check(assets.numerals.family()=="HarmonyOS Sans SC"&&assets.numerals.style()=="Medium"&&g["constants"]["font"].string()=="HarmonyOS Sans SC Medium","Original source wallet font");
-    for(const auto& row:g["numbers"].array()) {
-        const auto image=assets.numerals.render(row["value"].string(),121,30,row["scale"].number());
-        check(image&&image->width==row["width"].integer()&&image->height==row["height"].integer(),"Numeral raster size for "+row["value"].string());
-        if(row.contains("base64")&&digest(image->rgba)!=row["sha256"].string()) {
-            const auto mac=decode64(row["base64"].string());std::size_t diff{},maximum{};
-            for(std::size_t i=0;i<mac.size()&&i<image->rgba.size();++i) {const auto d=std::abs(int(mac[i])-int(image->rgba[i]));if(d) ++diff;maximum=std::max<std::size_t>(maximum,d);}
-            std::cerr<<row["value"].string()<<" scale "<<row["scale"].number()<<": "<<diff<<" differing bytes, max "<<maximum<<"\n";
-        }
-        check(digest(image->rgba)==row["sha256"].string(),"SDF numerals are bit-identical to the Mac raster: "+row["value"].string()+" @"+std::to_string(row["scale"].number()));
+const double now=781000000;
+// HUDAccountGauge.targetScale = HUDRenderScale.glyphScale(baseScale:
+// magnification: sizeFactor) for the value, icon and recovery text; the
+// refresh arrow at contentScale (Mac 795b5cd, 51d9dac, c005cd0, a9971ec).
+// Cell rasters are ceil(size x scale) pixels.
+void scaleRule(const Json& g) {
+    for(const auto& row:g["scales"].array()) {
+        const double base=num(row["base"]),size=num(row["size"]);const auto where=row["base"].string()+" x "+row["size"].string();
+        h::SanityGaugeModel model;(void)model.setSizeFactor(size);
+        const auto first=model.update("42 / 360","x",true,base,std::nullopt,now,endfield::core::Language::english);
+        check(model.sizeFactor()==row["sizeFactor"].number(),"The size clamps to 0.25...4, non-finite 1: "+where);
+        check(model.renderScale()==row["renderScale"].number()&&first.number&&first.icon,"Render scale = glyphScale(base, size): "+where);
+        check(model.refreshScale()==row["refreshScale"].number(),"The refresh arrow rasters at contentScale(base, size): "+where);
+        using namespace h::gauge_geometry;const auto& n=row["number"].array();const auto& i=row["icon"].array();
+        check(h::cellPixels(number.width,model.renderScale())==n[0].integer()&&h::cellPixels(number.height,model.renderScale())==n[1].integer(),"Value raster size: "+where);
+        check(h::cellPixels(icon.width,model.renderScale())==i[0].integer()&&h::cellPixels(icon.height,model.renderScale())==i[1].integer(),"Icon raster size: "+where);
+        const auto renders=model.numberRenders(),icons=model.iconRenders();const auto again=model.setScale(base);
+        check(!again.number&&!again.icon&&model.numberRenders()-renders==std::size_t(row["sameScaleRedraws"].integer())&&model.iconRenders()==icons&&row["sameScaleKeepsIcon"].boolean(),
+              "An unchanged scale redraws nothing: "+where);
     }
-    check(!assets.numerals.render("",121,30,2)&&!assets.numerals.render("42 / 36A",121,30,2)&&!assets.numerals.covers("復"),"Unknown glyphs fall back to native text");
+    // Before the first update a scale change draws nothing (renderScale 0).
+    h::SanityGaugeModel fresh;const auto early=fresh.setScale(3);
+    check(!early.number&&!early.icon&&fresh.renderScale()==0&&fresh.numberRenders()==0,"setScale before the first update draws nothing");
+    // The icon redraws only when its render scale changes.
+    h::SanityGaugeModel icon;(void)icon.update("1","x",true,2,std::nullopt,now,endfield::core::Language::english);
+    (void)icon.update("2","x",true,2,std::nullopt,now,endfield::core::Language::english);
+    check(icon.iconRenders()==1&&icon.numberRenders()==2,"A new value redraws the value, not the icon");
+    auto changed=icon.setScale(3);check(changed.icon&&changed.number&&changed.scale&&icon.iconRenders()==2&&icon.renderScale()==4,"A HUD Scale or display change redraws the value and icon at once");
+    changed=icon.setSizeFactor(2);check(changed.icon&&icon.iconRenders()==3&&icon.renderScale()==8&&icon.refreshScale()==6,"A larger Sanity size redraws at its size");
+    changed=icon.setSizeFactor(2);check(!changed.icon&&!changed.number&&!changed.scale&&icon.iconRenders()==3,"The same size changes nothing");
+    changed=icon.setScale(3.2);check(!changed.icon&&!changed.number&&changed.scale&&icon.refreshScale()==6.4&&icon.iconRenders()==3,"A base change that keeps the glyph scale moves only the arrow's");
 }
-void tooltips(const h::GaugeAssets& assets,const Json& g) {
-    const double now=781000000;
+// The value: real text, 18 points medium, right-aligned, shrunk to fit down to
+// 4/18, white, centred on its ink (Mac renderText). The Mac rows are its own
+// rasters: the ink reaches the right edge and the long value fills the cell.
+void valueText(const Json& g) {
+    using namespace h::gauge_geometry;
+    const auto node=h::gaugeTextLayer("v","42 / 360",h::gaugeValueText,{number.width,number.height},endfield::core::TextRegion::simplifiedChinese);
+    const auto& t=node["text"];const auto& bounds=node["bounds"].array();
+    check(node["kind"].string()=="text"&&bounds[2].number()==121&&bounds[3].number()==30&&t["string"].string()=="42 / 360","The value is a text leaf of the value cell");
+    check(t["fontSize"].number()==18&&t["fontWeight"].integer()==500&&t["alignment"].string()=="right"&&t["minimumScale"].number()==4.0/18&&t["truncation"].string()=="none"&&t["maximumLines"].integer()==1,
+          "18 points medium, right-aligned, shrunk to 4/18, never truncated");
+    const auto& white=t["foregroundColor"]["sRGB"].array();check(white[0].number()==1&&white[1].number()==1&&white[2].number()==1&&white[3].number()==1&&t["language"].string()=="zh-Hans","Pure white, in the given region");
+    for(const auto& row:g["numbers"].array()) {
+        h::SanityGaugeModel model;(void)model.update(row["value"].string(),"x",true,row["scale"].number(),std::nullopt,now,endfield::core::Language::english);
+        check(model.renderScale()==row["renderScale"].number()&&h::cellPixels(number.width,model.renderScale())==row["width"].integer()&&h::cellPixels(number.height,model.renderScale())==row["height"].integer(),
+              "Value raster size from the Mac: "+row["value"].string());
+        const auto& ink=row["ink"].array();
+        // Right-aligned by advance: the ink ends within a glyph's side bearing (at most 4 points) of the right edge.
+        check(row["white"].boolean()&&double(ink[2].integer())>=row["width"].number()-4*model.renderScale(),"The Mac value is white and right-aligned: "+row["value"].string());
+        check(std::abs((ink[1].integer()+ink[3].integer())-row["height"].integer())<=2,"The Mac value is centred on its ink: "+row["value"].string());
+    }
+    const auto recovery=h::gaugeTextLayer("r","Next recovery:",h::gaugeRecoveryText,{99,25},endfield::core::TextRegion::japanese);
+    check(recovery["text"]["fontSize"].number()==14.4&&recovery["text"]["alignment"].string()=="left"&&recovery["text"]["minimumScale"].number()==.6&&recovery["text"]["language"].string()=="ja",
+          "Recovery cells: 14.4 points, left-aligned, down to 0.6");
+    const auto& cellWhite=recovery["text"]["foregroundColor"]["sRGB"].array();
+    check(cellWhite[0].number()==1&&cellWhite[1].number()==1&&cellWhite[2].number()==1&&cellWhite[3].number()==1,"Recovery cells are pure white (the CJK labels used to be 0.92)");
+}
+// cellRaster: whole pixels, the ink centred vertically for text, premultiplied.
+void inkCentre() {
+    std::vector<std::uint8_t> raster(12*10*4,0);
+    const auto ink=[&](unsigned x,unsigned y,std::uint8_t r,std::uint8_t a){auto* p=&raster[(y*12+x)*4];p[0]=r;p[1]=255;p[2]=255;p[3]=a;};
+    ink(3,1,255,255);ink(4,2,255,128);ink(5,3,0,64);
+    const auto cell=h::cellRaster(raster,12,10,{-1,-1},{8,8},1,true);
+    check(cell.width==8&&cell.height==8,"The cell is ceil(size x scale)");
+    // Ink rows 1...3 (3 rows) centre in 8: top at round(2.5) = 3; x moves by -1.
+    const auto at=[&](unsigned x,unsigned y){return &cell.rgba[(y*8+x)*4];};
+    check(at(2,3)[3]==255&&at(2,3)[0]==255&&at(3,4)[3]==128&&at(3,4)[0]==128&&at(4,5)[3]==64&&at(4,5)[0]==0&&at(4,5)[1]==64,"Ink moves whole pixels to the centre, premultiplied");
+    std::size_t inked{};for(std::size_t i=3;i<cell.rgba.size();i+=4) if(cell.rgba[i]) ++inked;check(inked==3,"Nothing else is drawn");
+    const std::vector<std::uint8_t> clear(4*4*4,0);const auto empty=h::cellRaster(clear,4,4,{0,0},{3.5,2.2},2,true);
+    const auto placed=h::cellRaster(raster,12,10,{-1,-1},{8,8},1,false);
+    check(placed.rgba[(0*8+2)*4+3]==255&&placed.rgba[(1*8+3)*4+3]==128&&placed.rgba[(2*8+4)*4+3]==64,"Without ink centring the raster keeps its place (the icon)");
+    check(empty.width==7&&empty.height==5&&std::all_of(empty.rgba.begin(),empty.rgba.end(),[](auto v){return v==0;}),"No ink gives a clear cell");
+}
+// HUDApplicationIcon.sanityImage: three filled polygons in the 80-unit frame.
+void sanityIcon(const Json& g) {
+    const auto& polygons=h::sanityIconPolygons();
+    check(polygons[0].points.size()==23&&polygons[1].points.size()==31&&polygons[2].points.size()==8,"The outline, the head and the bolt");
+    check(polygons[0].white==1&&polygons[1].white==101.0/255&&polygons[2].white==1,"White outline and bolt, a 101/255 grey head");
+    const auto layer=h::sanityIconLayer("icon",54);const auto& children=layer["children"].array();
+    check(layer["bounds"].array()[2].number()==54&&children.size()==3,"One 54-point layer of three shapes");
+    for(std::size_t n=0;n<3;++n) {
+        const auto& shape=children[n]["shape"];const auto& fill=shape["fillColor"]["sRGB"].array();
+        check(children[n]["kind"].string()=="shape"&&fill[0].number()==polygons[n].white&&shape["fillRule"].string()=="non-zero"&&shape["strokeColor"].isNull(),"Filled, not stroked");
+        const auto& path=shape["path"].array();check(path.size()==polygons[n].points.size()+1&&path.back()["op"].string()=="close","A closed polygon");
+        const auto& first=path.front()["points"].array()[0].array();
+        check(std::abs(first[0].number()-polygons[n].points[0].x*54/80)<1e-9&&std::abs(first[1].number()-polygons[n].points[0].y*54/80)<1e-9,"Traced top-down in the 80-unit frame, scaled to the icon");
+    }
+    const auto& artwork=g["artwork"]["icon"];const auto& frame=artwork["frame"].array();
+    check(frame[0].number()==h::gauge_geometry::icon.x&&frame[1].number()==h::gauge_geometry::icon.y&&frame[2].number()==54&&artwork["gravity"].string()=="resizeAspect","The icon keeps the sprite's frame");
+}
+void tooltips(const Json& g) {
     for(const auto& row:g["tooltips"].array()) {
         const auto language=row["language"].string()=="simplifiedChinese"?endfield::core::Language::simplifiedChinese:endfield::core::Language::english;
         h::SanityGaugeModel model;
@@ -56,19 +134,13 @@ void tooltips(const h::GaugeAssets& assets,const Json& g) {
         for(std::size_t i=0;i<mine.size();++i) {const auto& r=actions[i]["rect"].array();
             check(mine[i].id==actions[i]["id"].string()&&mine[i].enabled==actions[i]["enabled"].boolean()&&mine[i].rect.x==r[0].number()&&mine[i].rect.y==r[1].number()&&mine[i].rect.width==r[2].number()&&mine[i].rect.height==r[3].number(),"Accessible gauge action geometry");
             if(i>0) check(mine[i].label==actions[i]["label"].string(),"Refresh accessibility label");}
-        const std::pair<const char*,std::pair<std::size_t,std::array<double,2>>> items[]{{"nextLabel",{0,{99,25}}},{"fullLabel",{1,{99,25}}},{"nextValue",{2,{83,25}}},{"fullValue",{3,{83,25}}}};
-        for(const auto& [name,item]:items) {
-            const auto& expected=row[name];if(expected.isNull()) continue;
-            const auto& text=model.tooltip().text[item.first];
-            check(assets.numerals.covers(text)==expected["numerals"].boolean(),std::string("Tooltip glyph coverage: ")+name);
-            const auto image=assets.numerals.render(text,item.second[0],item.second[1],2,14.4,false);
-            check(image&&image->width==expected["width"].integer()&&image->height==expected["height"].integer()&&digest(image->rgba)==expected["sha256"].string(),
-                  std::string("Tooltip numerals bit-identical: ")+name+" "+text);
-        }
+        // The Mac draws every recovery cell pure white (the CJK labels used to
+        // be white at 0.92); the Windows rasters are compared with these rows
+        // by hypergryph_account_native_tests.
+        for(const char* name:{"nextLabel","fullLabel","nextValue","fullValue"}) if(!row[name].isNull()) check(row[name]["white"].boolean(),std::string("The Mac recovery cells are white: ")+name);
     }
 }
-void behaviour(const Json& g,const h::GaugeAssets& assets) {
-    const double now=781000000;
+void behaviour(const Json& g) {
     // Refreshing presentation: no countdowns; refresh disabled.
     h::SanityGaugeModel model;int refreshed{};model.onRefresh=[&]{++refreshed;};
     h::SanityPresentation refreshing{h::Game::arknights,5,135,now,std::nullopt,std::nullopt,true,true};
@@ -94,7 +166,7 @@ void behaviour(const Json& g,const h::GaugeAssets& assets) {
     check(model.popoverOpen()==c["open"].boolean()&&model.canOpen()==c["canOpen"].boolean()&&model.opensWorkMode()&&model.mouseDown(endfield::core::Point{90,20}),"No sanity: the press is the Work Mode link, no popover");
     const auto& hidden=g["hiddenEmpty"];h::SanityGaugeModel fresh;
     (void)fresh.update("","",false,2,std::nullopt,now,endfield::core::Language::english);
-    check(fresh.hidden()==hidden["hidden"].boolean()&&!fresh.canOpen()&&hidden["contents"].string()=="nil"&&fresh.value().empty()&&!assets.numerals.render(fresh.value(),121,30,2),"Hidden empty gauge keeps no contents (empty raster)");
+    check(fresh.hidden()==hidden["hidden"].boolean()&&!fresh.canOpen()&&hidden["contents"].string()=="nil"&&fresh.value().empty(),"Hidden empty gauge keeps no contents (empty raster)");
     for(const auto& row:g["countdowns"].array()) {
         const std::optional<double> offset=row["offset"].isNull()?std::nullopt:std::optional<double>(num(row["offset"]));
         check(h::gaugeCountdown(offset?std::optional<double>(now+*offset):std::nullopt,now,row["hours"].boolean())==row["text"].string(),"Countdown text matches Mac: "+row["text"].string());
@@ -124,12 +196,11 @@ endfield::core::Language language(std::string_view name) {
 }
 endfield::core::Rect rect(const Json& j) {const auto& a=j.array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
 void same(endfield::core::Rect a,const Json& j,const std::string& why) {const auto b=rect(j);check(a.x==b.x&&a.y==b.y&&a.width==b.width&&a.height==b.height,why);}
-void menuOracle(const h::GaugeAssets& assets,const Json& shell) {
-    const double now=781000000;const auto& gauge=shell["gauge"];
+void menuOracle(const Json& shell) {
+    const auto& gauge=shell["gauge"];
     for(const auto& row:gauge["menus"].array()) {
         const auto where=row["language"].string()+" "+row["case"].string();std::size_t misses{};
         h::SanityGaugeModel model;
-        model.widths.numerals=[&](std::string_view text){return assets.numerals.width(text,h::GaugePopoverLayout::textSize);};
         model.widths.standard=[&](std::string_view text){const auto& w=row["standardWidths"];if(!w.contains(std::string(text))) {++misses;return 0.0;}return w[std::string(text)].number();};
         const auto offset=[&](const char* key)->std::optional<double>{return row[key].isNull()?std::nullopt:std::optional<double>(now+row[key].number());};
         h::SanityPresentation s{h::Game::endfield,42,360,now,offset("next"),offset("full"),false,true};
@@ -137,7 +208,6 @@ void menuOracle(const h::GaugeAssets& assets,const Json& shell) {
         check(model.perform("toggle")&&model.popoverOpen(),"The recovery menu opens: "+where);
         const auto& tip=model.tooltip();const auto& texts=row["texts"].array();
         for(unsigned i=0;i<4;++i) check(tip.text[i]==texts[i].string(),"Menu text (colon rule): "+where+" "+tip.text[i]);
-        check(tip.sourceLabels==(row["language"].string()=="english"),"English labels use the source numerals, others the standard faces: "+where);
         same(model.popoverRect(),row["popover"],"Menu frame sized to its text: "+where);
         for(unsigned i=0;i<4;++i) same(tip.layout.cell(i),row["cells"].array()[i],"Menu cell "+std::to_string(i)+": "+where);
         const auto actions=model.accessibleActions(language(row["language"].string()));const auto& expected=row["actions"].array();
@@ -170,23 +240,26 @@ void menuOracle(const h::GaugeAssets& assets,const Json& shell) {
 void artwork(const h::GaugeAssets& assets,const Json& g) {
     for(const auto& render:g["renders"].array()) {
         const double scale=render["scale"].number();
-        auto image=h::composeGaugeArtwork(assets,scale);
-        const auto number=assets.numerals.render("42 / 360",121,30,scale);h::composeNumber(image,*number,scale);
+        const auto image=h::composeGaugeArtwork(assets,scale);
         const auto mac=decode64(render["rgba"].string());
         check(image.width==render["width"].integer()&&image.height==render["height"].integer()&&mac.size()==image.rgba.size(),"Composed wallet covers the Mac layer area");
+        // The Mac render holds the vector icon and the value text too; they are
+        // the gauge's own draws here, so their area is left out: the icon's
+        // frame and the value's ink (its Mac raster at that update's scale).
+        const auto& value=*std::find_if(g["numbers"].array().begin(),g["numbers"].array().end(),[&](const Json& row){return row["value"].string()=="42 / 360"&&row["scale"].number()==scale;});
+        const auto& ink=value["ink"].array();const double rs=value["renderScale"].number();using namespace h::gauge_geometry;
+        const endfield::core::Rect text{number.x+ink[0].number()/rs-1,number.y+ink[1].number()/rs-1,(ink[2].number()-ink[0].number())/rs+2,(ink[3].number()-ink[1].number())/rs+2};
         // CALayer.render(in:) resamples with CoreGraphics' CPU filter; the GPU
-        // compositor (and this port) samples bilinearly. Geometry (nine-slice
-        // caps, icon aspect fit, numeral placement) must match; only edge
-        // filtering may differ, mostly inside the minified/magnified icon.
-        double iconTotal{},restTotal{};std::size_t iconCount{},restCount{},restLarge{};int worst{};
+        // compositor (and this port) samples bilinearly. The nine-slice caps
+        // and bars must match; only edge filtering may differ.
+        double total{};std::size_t count{},large{};int worst{};
         for(std::size_t i=0;i<mac.size();++i) {
-            const int d=std::abs(int(mac[i])-int(image.rgba[i]));worst=std::max(worst,d);
-            const double x=double((i/4)%image.width)/scale;
-            if(x>=3&&x<57) {iconTotal+=d;++iconCount;} else {restTotal+=d;++restCount;if(d>24) ++restLarge;}
+            const double x=(double((i/4)%image.width)+.5)/scale+h::gauge_geometry::artwork.x,y=(double((i/4)/image.width)+.5)/scale+h::gauge_geometry::artwork.y;
+            if(endfield::core::Rect{icon.x-1,icon.y-1,icon.width+2,icon.height+2}.contains({x,y})||text.contains({x,y})) continue;
+            const int diff=std::abs(int(mac[i])-int(image.rgba[i]));worst=std::max(worst,diff);total+=diff;++count;if(diff>24) ++large;
         }
-        std::cout<<"wallet composite @"<<scale<<": icon mean "<<iconTotal/iconCount<<", wallet mean "<<restTotal/restCount<<", wallet >24: "<<restLarge<<", worst "<<worst<<"\n";
-        check(restTotal/restCount<.25&&restLarge*200<restCount,"Nine-slice wallet bars and numerals match the Mac layer rendering");
-        check(iconTotal/iconCount<2.5,"Aspect-fit sanity icon matches the Mac layer rendering within filtering tolerance");
+        std::cout<<"wallet bars @"<<scale<<": mean "<<total/count<<", >24: "<<large<<" of "<<count<<", worst "<<worst<<"\n";
+        check(count>image.rgba.size()/4&&total/count<.25&&large*200<count,"Nine-slice wallet bars match the Mac layer rendering");
     }
     const auto highlight=h::composeHighlight(assets,2);
     check(highlight.width==336&&highlight.height==60,"Hover silhouette covers the wallet bar");
@@ -201,8 +274,9 @@ int main(int argc,char** argv) {
         const auto fixture=Json::parse(*bytes,4*1024*1024);
         const auto assets=h::GaugeAssets::load(std::filesystem::absolute(argv[2]).lexically_normal());
         const auto& g=fixture["gauge"];
-        numerals(assets,g);tooltips(assets,g);behaviour(g,assets);artwork(assets,g);
-        const auto shell=ehud::data::detail::readFile(argv[3],4*1024*1024);check(shell.has_value(),"Read the shell redesign oracle");menuOracle(assets,Json::parse(*shell,4*1024*1024));
+        check(g["constants"]["font"].string()=="HarmonyOS Sans Medium","The Mac draws the gauge's text in HarmonyOS Sans Medium");
+        scaleRule(g);valueText(g);inkCentre();sanityIcon(g);tooltips(g);behaviour(g);artwork(assets,g);
+        const auto shell=ehud::data::detail::readFile(argv[3],4*1024*1024);check(shell.has_value(),"Read the shell redesign oracle");menuOracle(Json::parse(*shell,4*1024*1024));
         std::cout<<"PASS "<<checks<<" sanity gauge checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

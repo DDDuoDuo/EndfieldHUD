@@ -9,10 +9,8 @@ root, out, pin = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[
 reference = json.loads((out / 'reference.json').read_text(encoding='utf-8'))
 sources = ['Sources/HypergryphAccountAPI.swift', 'Sources/HypergryphAccountController.swift', 'Sources/HypergryphAccountKeychain.swift',
            'Sources/HypergryphAccountLogin.swift', 'Sources/HypergryphAccountModels.swift', 'Sources/HypergryphAvatarLoader.swift',
-           'Sources/HUDAccountCanvas.swift', 'Sources/HUDAccountGauge.swift', 'Sources/HUDAccountInteraction.swift',
+           'Sources/HUDAccountCanvas.swift', 'Sources/HUDAccountGauge.swift', 'Sources/HUDApplicationIcon.swift',
            'Sources/HUDControlHighlightLayer.swift', 'Sources/UserProfileStore.swift', 'Sources/WorkModeController.swift',
-           'Resources/WatchSource/Scene/account-numerals.json',
-           'Resources/WatchSource/Scene/sprites/source-textures/item_ap--2524b69d--8210737671276829403.png',
            'Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_1--cfe92272--8572312840272182184.png',
            'Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_2--cfe92272--7683125525266349835.png']
 tools = ['windows/tools/hypergryph_account_reference.sh', 'windows/tools/hypergryph_account_reference.py',
@@ -56,14 +54,16 @@ reference['provenance'] = {'sourceAuthority': pin, 'sourceSHA256': {p: sha(p) fo
 
 # Gauge artwork prepared by the unchanged HUDAccountGauge.Artwork (CoreGraphics
 # crop + sourceIn tint), stored as premultiplied RGBA so Windows needs no PNG
-# decoder or colour-management guesswork. The numerals JSON is copied verbatim.
+# decoder or colour-management guesswork. The value, the recovery text and the
+# Sanity icon are drawn at run time (HarmonyOS Sans text and a vector icon), so
+# neither the SDF numerals nor the item_ap sprite ships any more.
 import base64
 assets = root / 'windows/resources/account'
 assets.mkdir(parents=True, exist_ok=True)
-numerals = root / 'Resources/WatchSource/Scene/account-numerals.json'
-(assets / 'account-numerals.json').write_bytes(numerals.read_bytes())
+for retired in ('account-numerals.json', 'item-ap.rgba'):
+    (assets / retired).unlink(missing_ok=True)
 images = []
-for name, key in [('wallet-back', 'back'), ('wallet-deco', 'deco'), ('item-ap', 'icon'), ('wallet-silhouette', 'silhouette')]:
+for name, key in [('wallet-back', 'back'), ('wallet-deco', 'deco'), ('wallet-silhouette', 'silhouette')]:
     a = reference['gauge']['artwork'][key]
     data = base64.b64decode(a['rgba'])
     assert len(data) == a['width'] * a['height'] * 4
@@ -72,11 +72,9 @@ for name, key in [('wallet-back', 'back'), ('wallet-deco', 'deco'), ('item-ap', 
                    'sha256': hashlib.sha256(data).hexdigest(), 'frame': a['frame'], 'contentsCenter': a['contentsCenter'], 'gravity': a['gravity']})
 manifest = {'format': 'endfield-account-gauge-assets', 'schemaVersion': 1, 'sourceCommit': pin,
             'pixelFormat': 'premultiplied-RGBA8-sRGB-top-left',
-            'numerals': {'file': 'account-numerals.json', 'sha256': hashlib.sha256(numerals.read_bytes()).hexdigest(),
-                         'source': 'Resources/WatchSource/Scene/account-numerals.json'},
             'images': images,
             'sourcePins': {p: sha(p) for p in sources if p.startswith('Resources/') or p == 'Sources/HUDAccountGauge.swift'},
-            'notice': 'Original-game wallet sprites, sanity icon and HarmonyOS Sans SC Medium SDF numeral subset, unchanged ownership; prepared by the unchanged Mac gauge artwork code.'}
+            'notice': 'Original-game wallet sprites, unchanged ownership; prepared by the unchanged Mac gauge artwork code.'}
 (assets / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 for a in reference['gauge']['artwork'].values():
     a.pop('rgba', None)

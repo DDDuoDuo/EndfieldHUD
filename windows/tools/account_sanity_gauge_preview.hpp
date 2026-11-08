@@ -28,6 +28,13 @@ public:
         const std::filesystem::path& accountResources,AccountSanityGaugeOptions);
     ~AccountSanityGaugePreview();
     void resize(const app::ClientMetrics&);
+    // SystemHUDView.designScale (DesktopChromeLayout::designScale of the
+    // frame's chrome): with the client's DPI scale it is the gauge's base
+    // scale (hudRasterScale). A change redraws the value, icon and recovery
+    // text at once when their render scale changes.
+    void setDesignScale(double,double time);
+    // HUDAccountGauge.sizeFactor (a Display > HUD elements Sanity size).
+    void setSizeFactor(double,double time);
     void setLanguage(core::Language,double time);
     void setReduceMotion(bool) noexcept;
     void setOverlayVisible(bool,double time);

@@ -7,12 +7,16 @@
 #include "native/module_scene.hpp"
 #include "core/module_presentation.hpp"
 #include <objbase.h>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <new>
 namespace {std::atomic<bool> counting{};std::atomic<std::size_t> allocations{};}
 void* operator new(std::size_t n) {if(counting) ++allocations;if(auto* p=std::malloc(n?n:1)) return p;throw std::bad_alloc();}
@@ -58,7 +62,84 @@ struct Immediate:h::AccountWorkQueue {
 };
 void drain(std::deque<std::function<void()>>& q) {while(!q.empty()) {auto f=std::move(q.front());q.pop_front();f();}}
 std::size_t painted(const gpu::Readback& r) {std::size_t n{};for(std::size_t i=3;i<r.pixels.size();i+=4) if(r.pixels[i]) ++n;return n;}
-void run(const std::filesystem::path& shader,const std::filesystem::path& resources) {
+// Pixel rows and columns holding ink: [minX, minY, maxX, maxY).
+std::array<long,4> ink(const h::GaugeImage& image) {
+    std::array<long,4> box{long(image.width),long(image.height),0,0};
+    for(unsigned y=0;y<image.height;++y) for(unsigned x=0;x<image.width;++x) if(image.rgba[(std::size_t(y)*image.width+x)*4+3])
+        box={std::min(box[0],long(x)),std::min(box[1],long(y)),std::max(box[2],long(x)+1),std::max(box[3],long(y)+1)};
+    return box;
+}
+std::vector<std::uint8_t> decode64(const std::string& text) {
+    std::vector<std::uint8_t> out;std::uint32_t buffer{};int bits{};
+    for(const char c:text) {int v;if(c>='A'&&c<='Z') v=c-'A';else if(c>='a'&&c<='z') v=c-'a'+26;else if(c>='0'&&c<='9') v=c-'0'+52;else if(c=='+') v=62;else if(c=='/') v=63;else continue;
+        buffer=(buffer<<6)|static_cast<std::uint32_t>(v);bits+=6;if(bits>=8) {bits-=8;out.push_back(static_cast<std::uint8_t>((buffer>>bits)&0xff));}}
+    return out;
+}
+// The value and the icon as the Mac draws them (Mac 795b5cd, 51d9dac): the
+// same raster sizes, right-aligned and shrunk the same way, pure white, and
+// the vector icon's shape, through the shared rasterizer.
+void macRasters(gpu::LayerRasterizer& raster,const Json& g) {
+    for(const auto& row:g["numbers"].array()) {
+        const double scale=row["renderScale"].number();const auto& value=row["value"].string();
+        const auto image=gpu::rasterGaugeText(raster,value,h::gaugeValueText,{121,30},scale,1,core::TextRegion::simplifiedChinese);
+        check(image.width==row["width"].integer()&&image.height==row["height"].integer(),"The value raster has the Mac's size");
+        const auto mine=ink(image);const auto& mac=row["ink"].array();const double unit=scale;
+        std::cout<<"value '"<<value<<"' @"<<scale<<": ink "<<mine[0]<<","<<mine[1]<<","<<mine[2]<<","<<mine[3]<<" Mac "<<mac[0].integer()<<","<<mac[1].integer()<<","<<mac[2].integer()<<","<<mac[3].integer()<<"\n";
+        check(std::abs(mine[2]-mac[2].integer())<=1.5*unit+1,"Right-aligned like the Mac");
+        check(std::abs((mine[1]+mine[3])-(mac[1].integer()+mac[3].integer()))<=2*unit+1&&std::abs((mine[3]-mine[1])-(mac[3].integer()-mac[1].integer()))<=2*unit+1,"Centred on its ink at the Mac's size");
+        check(std::abs(mine[0]-mac[0].integer())<=2*unit+.04*double(image.width),"The same advance, shrunk to fit like the Mac");
+        bool white=true;for(std::size_t i=0;i<image.rgba.size();i+=4) white=white&&image.rgba[i]==image.rgba[i+3]&&image.rgba[i+1]==image.rgba[i+3]&&image.rgba[i+2]==image.rgba[i+3];
+        check(white,"The value is pure white");
+    }
+    check(gpu::rasterGaugeText(raster,"",h::gaugeValueText,{121,30},2,1,core::TextRegion::simplifiedChinese).width==0,"No value draws nothing");
+    // The recovery cells (Mac renderTooltip): each label and countdown in the
+    // cell of the menu Windows lays out (measured like the gauge owner does),
+    // drawn the way the scene draws them: the Mac's raster size, left-aligned,
+    // centred on its ink and pure white (the CJK labels used to be 0.92 white).
+    for(const auto& row:g["tooltips"].array()) {
+        const auto language=row["language"].string()=="simplifiedChinese"?core::Language::simplifiedChinese:core::Language::english;
+        const auto region=core::regionFor(language,raster.fontLanguage());
+        h::SanityGaugeModel model;
+        model.widths.standard=[&](std::string_view text){
+            const auto descriptor=Json::Object{{"string",std::string(text)},{"fontSize",h::GaugePopoverLayout::textSize},{"fontWeight",500},
+                {"lineHeight",1},{"maximumLines",1},{"language",std::string(core::regionTag(region))}};
+            return raster.measureSourceText("account.gauge.label",descriptor,1e6).width;
+        };
+        const double at=781000000;
+        h::SanityPresentation s{h::Game::endfield,42,360,at,at+row["next"].number(),at+row["full"].number(),false,true};
+        (void)model.update("42 / 360","Sanity 42 of 360",true,2,s,at,language);model.perform("toggle");
+        check(model.popoverOpen(),"The recovery menu opens");
+        const auto& tip=model.tooltip();const double scale=model.renderScale();
+        const char* names[]{"nextLabel","fullLabel","nextValue","fullValue"};
+        for(unsigned n=0;n<4;++n) {
+            const auto& mac=row[names[n]];if(mac.isNull()) continue;
+            const auto box=tip.layout.cell(n);
+            const auto image=gpu::rasterGaugeText(raster,tip.text[n],h::gaugeRecoveryText,{box.width,box.height},scale,1,region);
+            const auto mine=ink(image);const auto& macInk=mac["ink"].array();
+            std::cout<<names[n]<<" '"<<tip.text[n]<<"' @"<<scale<<": "<<image.width<<"x"<<image.height<<" ink "<<mine[0]<<","<<mine[1]<<","<<mine[2]<<","<<mine[3]
+                     <<" Mac "<<mac["width"].integer()<<"x"<<mac["height"].integer()<<" ink "<<macInk[0].integer()<<","<<macInk[1].integer()<<","<<macInk[2].integer()<<","<<macInk[3].integer()<<"\n";
+            // The measured label column may differ by a point between the text engines (99 for 100 in English).
+            check(image.height==mac["height"].integer()&&std::abs(long(image.width)-long(mac["width"].integer()))<=long(scale),"A recovery cell has the Mac's raster size");
+            check(std::abs(mine[0]-macInk[0].integer())<=2*scale+1,"A recovery cell is left-aligned like the Mac");
+            check(std::abs(mine[2]-macInk[2].integer())<=2*scale+.04*double(image.width),"A recovery cell has the Mac's advance");
+            check(std::abs((mine[1]+mine[3])-(macInk[1].integer()+macInk[3].integer()))<=2*scale+1&&std::abs((mine[3]-mine[1])-(macInk[3].integer()-macInk[1].integer()))<=2*scale+1,
+                  "A recovery cell is centred on its ink at the Mac's size");
+            bool white=true;for(std::size_t i=0;i<image.rgba.size();i+=4) white=white&&image.rgba[i]==image.rgba[i+3]&&image.rgba[i+1]==image.rgba[i+3]&&image.rgba[i+2]==image.rgba[i+3];
+            check(white&&mac["white"].boolean(),"Every recovery cell is pure white");
+        }
+    }
+    for(const auto& row:g["scales"].array()) {
+        if(!row.contains("iconRGBA")) continue;
+        const double scale=row["renderScale"].number();const auto mac=decode64(row["iconRGBA"].string());
+        const auto icon=gpu::rasterSanityIcon(raster,54,scale,1);
+        check(icon.width==row["icon"].array()[0].integer()&&icon.height==row["icon"].array()[1].integer()&&icon.rgba.size()==mac.size(),"The icon raster has the Mac's size");
+        double difference{},macAlpha{},alpha{};
+        for(std::size_t i=0;i<mac.size();++i) {difference+=std::abs(int(mac[i])-int(icon.rgba[i]));if(i%4==3) {macAlpha+=mac[i];alpha+=icon.rgba[i];}}
+        std::cout<<"icon @"<<scale<<": mean difference "<<difference/double(mac.size())<<", coverage "<<alpha/macAlpha<<"\n";
+        check(difference/double(mac.size())<4&&std::abs(alpha/macAlpha-1)<.02,"The vector icon matches the Mac drawing");
+    }
+}
+void run(const std::filesystem::path& shader,const std::filesystem::path& resources,const Json& oracle) {
     Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});
     renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;
     std::deque<std::function<void()>> queue;double clock=812692800;Service service(queue,clock);h::MemoryCredentialVault vault;Immediate work(queue);
@@ -123,22 +204,42 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     try {for(unsigned n=0;n<120;++n) {auto center=core::Matrix4{};center.values[3]=n*.000001;gauge.update(center,1,time+=1./60);gauge.upload(renderer);composition.present(renderer);}} catch(...) {counting=false;throw;}
     counting=false;check(allocations==0,"120 changing-tilt gauge frames allocate nothing");
     check(gauge.sceneStats().groupUploads==beforeGauge.groupUploads&&gauge.sceneStats().groupRedraws==beforeGauge.groupRedraws,"Tilt never redraws the retained gauge group targets");
-    const auto stats=gauge.sceneStats();check(stats.artworkRasters==1,"Wallet artwork rasterizes once per scale");
+    const auto stats=gauge.sceneStats();check(stats.artworkRasters==1&&stats.iconRasters==1,"Wallet artwork and the icon rasterize once per scale");
     // The recovery popover was loaded when it first opened; shut, it is no
     // longer composed, so a closed HUD releases its card (the wallet stays).
     check(stats.popoverLoads>=1&&stats.popoverUploaded&&gauge.entries().size()==1,"A shut popover is not composed");
     check(gauge.conceal()&&!gauge.sceneStats().popoverLoaded&&!gauge.sceneStats().popoverUploaded&&gauge.sceneStats().popoverParks==1&&gauge.entries().size()==1,
           "Parking releases the shut popover's card and keeps the wallet");
     check(!gauge.conceal(),"Parking twice changes nothing");
+    // HUD Scale, layout or display (HUDAccountGauge.setScale): the same design
+    // scale redraws nothing; a new one redraws the artwork, the icon and the
+    // value once at the new render scale, and the wallet's target follows.
+    {
+        const auto before=gauge.sceneStats();gauge.setDesignScale(1,time);
+        check(gauge.sceneStats().artworkRasters==before.artworkRasters&&gauge.sceneStats().iconRasters==before.iconRasters&&gauge.sceneStats().numberRasters==before.numberRasters,
+              "An unchanged design scale redraws nothing");
+        gauge.setDesignScale(2,time);const auto after=gauge.sceneStats();
+        check(gauge.model().renderScale()==3&&after.artworkRasters==before.artworkRasters+1&&after.iconRasters==before.iconRasters+1&&after.numberRasters==before.numberRasters+1,
+              "A new design scale redraws the artwork, icon and value once");
+        gauge.setSizeFactor(2,time);
+        check(gauge.model().renderScale()==6&&gauge.sceneStats().iconRasters==before.iconRasters+2,"A larger Sanity size redraws at its size");
+        gauge.update({},1,time+=1./60);gauge.upload(renderer);composition.present(renderer);
+        check(gauge.sceneStats().groupUploads==after.groupUploads+1,"The wallet's target follows the render scale");
+    }
     // Teardown.
     composition.setEntries(renderer,{});gauge.collected(renderer);gauge.release(renderer);composition.detach(renderer);
     check(!IsWindowVisible(window.hwnd),"Fixture never shows UI");
     renderer.reset();
+    macRasters(raster,oracle["gauge"]);
 }
 }
 int wmain(int argc,wchar_t** argv) {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {check(SUCCEEDED(hr)&&argc==3,"Pass shader and windows/resources/account");run(argv[1],std::filesystem::absolute(argv[2]).lexically_normal());CoUninitialize();std::cout<<"PASS "<<checks<<" Account native checks\n";return 0;}
+    try {
+        check(SUCCEEDED(hr)&&argc==4,"Pass shader, windows/resources/account and hypergryph-account-source.json");
+        std::ifstream file(std::filesystem::path(argv[3]),std::ios::binary);check(bool(file),"Read the account oracle");
+        const std::string bytes((std::istreambuf_iterator<char>(file)),{});
+        run(argv[1],std::filesystem::absolute(argv[2]).lexically_normal(),Json::parse(bytes,4*1024*1024));CoUninitialize();std::cout<<"PASS "<<checks<<" Account native checks\n";return 0;}
     catch(const std::exception& e) {counting=false;if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
 #endif

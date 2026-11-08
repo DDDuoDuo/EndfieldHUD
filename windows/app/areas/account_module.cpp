@@ -452,7 +452,7 @@ private:
     // (HUD concealed) and at the first opening frame's upload.
     std::uint64_t gaugeWork() const {
         const auto s = owner_->gauge().sceneStats();
-        return s.artworkRasters + s.numberRasters + s.tooltipRasters + s.popoverLoads + s.groupUploads + s.groupRedraws;
+        return s.artworkRasters + s.iconRasters + s.numberRasters + s.tooltipRasters + s.popoverLoads + s.groupUploads + s.groupRedraws;
     }
     void observePrewarm() {
         auto& p = world_->prewarm;
@@ -1048,7 +1048,7 @@ private:
 };
 std::unique_ptr<ModuleOwner> buildAccountModule(const ApplicationModuleContext& c) {
     if (!c.host || !c.utility || !c.window || !c.clock) throw std::invalid_argument("The account area needs the shared host, executor, HWND and clock");
-    // The header wallet's pinned sprites and numerals (resources/account).
+    // The header wallet's pinned sprites (resources/account).
     // Without the verified package (development previews) the area is absent.
     const auto resources = c.resource ? c.resource(gaugeResource) : fs::path{};
     if (resources.empty()) return nullptr;
