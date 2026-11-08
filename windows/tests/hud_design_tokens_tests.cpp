@@ -648,6 +648,10 @@ void oracle(const char* path) {
     }
     // HUDMotion.closingFade and SystemHUDView.sourceRevealDuration as the
     // oracle exports them (present from the fixture regenerated with them).
+    // The guard is temporary: the committed fixture predates the export, and
+    // it is regenerated once, with the batch 5 library changes (E, B5-2, B5-4
+    // and C1/C2). The commit that regenerates hud-design-source.json drops
+    // this `if`, so a fixture without these keys fails.
     if (tokens["closingFade"].isArray()) {
         const auto number = [](const J& v) {
             if (v.isNumber()) return v.number();
