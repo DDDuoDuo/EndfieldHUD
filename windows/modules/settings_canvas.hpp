@@ -2,8 +2,8 @@
 // Settings on the redesign: the port of Sources/HUDSettingsCanvas.swift
 // (HUDSettingsCanvas, HUDIconTile) over the shared design library
 // (modules/hud_design_page.hpp). Four canvases (System, Display with its
-// Modules, Battery alert and App icon pages, Hotkeys, About with its Credits
-// page) share one SettingsController (modules/settings.hpp), which
+// Modules, HUD elements, Battery alert and App icon pages, Hotkeys, About
+// with its Credits page) share one SettingsController (modules/settings.hpp), which
 // keeps the preference transactions; this canvas presents and edits them.
 //
 // What stays on the host side (tools/settings_preview.hpp): the platform
@@ -49,6 +49,10 @@ struct SettingsCanvasHooks {
     // HUDSettingsInteraction: the colour wheel (seeded with the current
     // accent), the logo import panel, and a preset pick that cancels an import.
     std::function<void()> chooseColor,chooseLogo,logoSelection;
+    // onEditOverlay: Display > HUD elements > Edit position and size places
+    // the HUD's title, Sanity gauge and alert tags on the HUD itself. Unset,
+    // the row does nothing (the placement editor is not ported yet).
+    std::function<void()> editOverlay;
     // The logo as the centre shows it, fitted into `fitting` (logoArtwork:
     // presets by id, "custom" with its revision); nullopt while it is not
     // decoded yet or unreadable (the tile stays empty, the field shows the
@@ -90,14 +94,11 @@ public:
     void showImportError(std::string);
     bool capturingShortcut()const noexcept;
     void cancelCapture();
-    std::string_view section()const noexcept;  // "main", "battery", "icons", "credits", "modules" (tests)
+    std::string_view section()const noexcept;  // "main", "overlay", "battery", "icons", "credits", "modules" (tests)
     // Display > Modules > Arrange on HUD (isArrangingModules): never saved;
     // it turns off on Back, on leaving the page or the HUD, and in buildPage
     // whenever the section is not Modules.
     bool arrangingModules()const noexcept{return arranging_;}
-    // Test hook: a scoped Restore's confirm, also for HUD elements before its
-    // page (and so its Restore row) is ported.
-    void confirmRestoreForTesting(ehud::data::SettingsScope scope){confirmRestore(scope);}
     // Keycap labels: CTRL, ALT, SHIFT, WIN, then the key (HUDSettingsCanvas.keycaps).
     static std::vector<std::string> keycaps(SettingsShortcut);
 
@@ -120,7 +121,7 @@ public:
     std::optional<double> nextWakeTime(double)const override;
     void wake(double)override;
 private:
-    enum class Section:std::uint8_t{main,battery,icons,credits,modules};
+    enum class Section:std::uint8_t{main,overlay,battery,icons,credits,modules};
     struct Structure {
         Section section;core::Language language;std::string languageSetting;std::vector<SettingsDisplay> displays;
         bool capturing;std::string icon,accent;SettingsUpdatePhase updatePhase;std::string latest;
@@ -165,7 +166,10 @@ private:
     void buildModules(design::Page&);void renderModuleStates();void layoutModuleRows(const std::vector<std::string>&order,bool animated);
     void moveModule(const std::string&,int offset);void dragModule(const std::string&,design::DragGrip::Phase,design::Point);void confirmModulesReset();
     design::RowPlate& openModuleRow(design::Page&);std::string openModuleTitle(const std::optional<std::string>&)const;void openModuleMenu(const design::Control&);
-    void buildDisplay(design::Page&);void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);
+    void buildDisplay(design::Page&);
+    void buildOverlay(design::Page&);
+    design::RowPlate& overlayTextRow(const std::string& id,const std::string& title,std::string_view placeholder,std::string ehud::data::OverlayLayout::* member,design::Page&);
+    void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);
     design::RowPlate& paletteRow(design::Page&);
     void buildBattery(design::Page&);std::string shownDisplayMode()const;
     design::RowPlate& logoRow(design::Page&);void openLogoMenu(const design::Dropdown&);

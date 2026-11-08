@@ -65,6 +65,7 @@ struct World {
         callbacks.openLink = [this](std::string_view url) { links.emplace_back(url); };
         callbacks.checkUpdates = [this] { hooks.emplace_back("checkUpdates"); };
         callbacks.editBatteryPosition = [this] { hooks.emplace_back("editPosition"); };
+        hooks0.editOverlay = [this] { hooks.emplace_back("editOverlay"); };
         controller = std::make_unique<m::SettingsController>(initial, callbacks, L::english);
         controller->setUpdateStatus(update);
         hooks0.chooseColor = [this] { hooks.emplace_back("chooseColor"); };
@@ -201,14 +202,6 @@ void replay(const Json& data, const Json& manifest) {
         if (local.empty()) pendingMatched.insert(key);
         pendingFailures.insert(pendingFailures.end(), local.begin(), local.end());
     };
-    // A recorded Mac page on a Settings page Windows has not ported yet
-    // (Display > HUD elements comes with its page): consumed in order,
-    // compared later.
-    std::vector<std::string> notReplayed;
-    const auto skipRow = [&](core::Module module, std::string_view state) {
-        check(page < pages.size() && pages[page]["module"].string() == moduleName(module) && pages[page]["state"].string() == state, "Replay order: " + std::string(state));
-        notReplayed.push_back(std::string(moduleName(module)) + "/" + std::string(state)); ++page;
-    };
     const auto ask = [&](std::string_view name) {
         check(asked < requests.size() && requests[asked]["name"].string() == name, "Request order: " + std::string(name));
         compareRequest(w, requests[asked++], failures);
@@ -280,16 +273,16 @@ void replay(const Json& data, const Json& manifest) {
     w.update([](Settings& s) { s.setModuleLayout({}); });
     { const auto back = w[M::display].page().back; back(); }
     row(M::display, "main.back");
-    // Display > HUD elements comes with its page; its Facility alerts switch
-    // asks as Display's does now.
-    skipRow(M::display, "overlay");
+    // Display > HUD elements: its Restore asks, enabled once the page differs from its defaults.
+    w.activate(M::display, "overlay"); row(M::display, "overlay");
     w.activate(M::display, "facility");
-    check(dynamic_cast<d::Toggle&>(w.control(M::display, "facility")).isOn(), "Turning Facility alerts off keeps the switch on while it asks");
+    check(dynamic_cast<d::Toggle&>(w.control(M::display, "facility")).isOn(), "Turning Show facility alerts off keeps the switch on while it asks");
     ask("facilityOff"); w.clear();
-    skipRow(M::display, "overlay.changed");
-    // HUD elements' Restore confirm (restoreCopy(.hudElements)); its row
-    // comes with the page.
-    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements); ask("overlayRestore"); w.clear();
+    w.update([](Settings& s) { auto l = s.overlayLayout(); l.showsTitle = false; s.setOverlayLayout(l); });
+    row(M::display, "overlay.changed");
+    w.activate(M::display, "overlayRestore"); ask("overlayRestore"); w.clear();
+    w.update([](Settings& s) { s.setOverlayLayout({}); });
+    { const auto back = w[M::display].page().back; back(); }
     // Display's Restore confirmed during a scale preview: the defaults written
     // at once, no countdown, the button disabled.
     w.update([](Settings& s) { s.set("recordingMode", false); s.set("clockStyle", "dial"); });
@@ -326,9 +319,7 @@ void replay(const Json& data, const Json& manifest) {
     w.activate(M::about, "credits"); row(M::about, "credits");
     w.hide(M::about);
     check(page == pages.size() && asked == requests.size(), "Every recorded Mac state replayed");
-    std::cerr << "  Not ported yet: " << pendingFailures.size() << " differences on " << pendingPages.size() << " pages; not replayed:";
-    for (const auto& n : notReplayed) std::cerr << ' ' << n;
-    std::cerr << '\n';
+    std::cerr << "  Not ported yet: " << pendingFailures.size() << " differences on " << pendingPages.size() << " pages\n";
     for (const auto& key : pendingMatched) failures.push_back(key + " now matches the Mac: take it off the pending list");
     for (const auto& f : failures) std::cerr << "  " << f << '\n';
     if (!measurer.misses.empty()) { std::cerr << "  unrecorded widths: " << measurer.misses.size() << '\n'; for (std::size_t i = 0; i < std::min<std::size_t>(measurer.misses.size(), 12); ++i) std::cerr << "    " << measurer.misses[i] << '\n'; }
@@ -537,15 +528,79 @@ void contracts() {
     w.clear();
     w.controller->wake(w.now + 1);
     check(!overlay.toastState().current(), "The controller's restore status is not toasted again");
+    check(std::none_of(w[M::display].page().controls().begin(), w[M::display].page().controls().end(), [](const d::Control* c) { return c->id() == "facility"; }),
+        "Facility alerts is no longer a Display row");
+    // --- Display > HUD elements (buildOverlay) ---------------------------------
+    w.activate(M::display, "overlay");
+    check(w[M::display].section() == "overlay", "HUD elements opens from Display");
+    {
+        std::vector<std::string> ids;
+        for (auto* c : w[M::display].page().controls()) if (dynamic_cast<d::RowPlate*>(c)) ids.push_back(c->id());
+        check(ids == std::vector<std::string>{"row:overlayTitle", "row:overlayTitleText", "row:overlaySubtitleText", "row:overlaySanity", "row:facility", "overlayEdit", "row:overlayRestore"}
+            && w[M::display].header().counterText() == "07", "HUD elements: seven rows in the Mac order, counter 07");
+    }
+    check(!w.control(M::display, "overlayRestore").enabled(), "Its Restore is disabled at the defaults");
+    w.activate(M::display, "overlayTitle");
+    check(!committed().overlayLayout().showsTitle && committed().fields["hudOverlayLayout"]["showsTitle"] == Json(false) && w.control(M::display, "overlayRestore").enabled(),
+        "Show title off saves hudOverlayLayout.showsTitle and enables Restore");
+    w.activate(M::display, "overlaySanity");
+    check(!committed().overlayLayout().showsSanity && committed().fields["hudOverlayLayout"]["showsSanity"] == Json(false), "Show Sanity off saves hudOverlayLayout.showsSanity");
+    w.activate(M::display, "overlayTitle"); w.activate(M::display, "overlaySanity");
+    check(!committed().fields.contains("hudOverlayLayout") && !w.control(M::display, "overlayRestore").enabled(), "Both on again: the layout key is removed");
+    // The text fields: 220 x 30, at most 24 characters, the default text as
+    // the placeholder; a commit is cleaned and the field shows what was kept.
+    {
+        struct Host final : d::TextEditorHost {
+            std::string typed;
+            bool begin(const d::TextEditRequest&) override { return true; }
+            void end(d::TextField&) override {}
+            std::string text(const d::TextField&) const override { return typed; }
+            std::optional<std::pair<std::uint32_t, std::uint32_t>> selection(const d::TextField&) const override { return std::nullopt; }
+            bool hasMarkedText(const d::TextField&) const override { return false; }
+            void setText(d::TextField&, std::string_view) override {}
+            void reproject(d::TextField&, d::Rect) override {}
+        } host;
+        w.context.setEditorHost(&host);
+        auto& field = dynamic_cast<d::TextField&>(w.control(M::display, "overlayTitleText"));
+        check(field.layer().bounds().width == 220 && field.layer().bounds().height == 30 && field.options().maximumLength == std::optional<std::size_t>(24)
+            && field.idleText() == "ENDFIELDHUD", "Title text: 220 x 30, 24 characters, ENDFIELDHUD as the placeholder");
+        {
+            std::vector<d::AccessibilityItem> items; w[M::display].accessibilityItems(items);
+            check(std::count_if(items.begin(), items.end(), [](const auto& i) { return i.id == "overlayTitleText"; }) == 1, "The field is listed once, in its row");
+        }
+        field.beginEditing(); host.typed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; field.endEditing(true);
+        check(committed().overlayLayout().titleText == "ABCDEFGHIJKLMNOPQRSTUVWX" && field.text() == "ABCDEFGHIJKLMNOPQRSTUVWX", "A commit keeps 24 characters");
+        auto& subtitle = dynamic_cast<d::TextField&>(w.control(M::display, "overlaySubtitleText"));
+        check(subtitle.idleText() == "SYSTEM INTERFACE", "Subtitle text shows SYSTEM INTERFACE as its placeholder");
+        // The one-line field already joined pasted lines with spaces (joinedLines).
+        subtitle.beginEditing(); host.typed = "  Rhodes Island  "; subtitle.endEditing(true);
+        check(committed().overlayLayout().subtitleText == "Rhodes Island" && subtitle.text() == "Rhodes Island",
+            "Cleaned: spaces trimmed, and the field shows the cleaned text");
+        subtitle.beginEditing(); host.typed = "   "; subtitle.endEditing(true);
+        check(committed().overlayLayout().subtitleText.empty() && subtitle.idleText() == "SYSTEM INTERFACE", "An empty field brings the default back");
+        field.beginEditing();
+        w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText = "Elsewhere"; s.setOverlayLayout(l); });
+        check(field.editing() && field.text() == "ABCDEFGHIJKLMNOPQRSTUVWX", "A field being edited is not refreshed under the typing");
+        host.typed = "Typed"; field.endEditing(true);
+        check(committed().overlayLayout().titleText == "Typed", "Its commit saves what was typed");
+        w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText = "Talos"; s.setOverlayLayout(l); });
+        check(field.text() == "Talos", "An idle field shows the saved text");
+        w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText.clear(); s.setOverlayLayout(l); });
+        w.context.setEditorHost(nullptr);
+    }
+    w.activate(M::display, "overlayEdit");
+    check(w.hooks.back() == "editOverlay", "Edit position and size calls onEditOverlay");
     w.activate(M::display, "facility");
-    check(overlay.confirmState().request()->cancelPillConfirms && overlay.decide(d::ConfirmState::Decision::cancel) && committed().facilityAlerts(), "Esc / outside keeps Facility alerts on");
+    check(overlay.confirmState().request()->cancelPillConfirms && overlay.decide(d::ConfirmState::Decision::cancel) && committed().facilityAlerts(), "Esc / outside keeps facility alerts on");
     w.activate(M::display, "facility");
     check(overlay.decide(d::ConfirmState::Decision::confirm), "Either pill disables them");
     (void)w.context.advance(w.now + 1);
-    check(!committed().facilityAlerts(), "Facility alerts are off");
+    check(!committed().facilityAlerts() && w.control(M::display, "overlayRestore").enabled(), "Facility alerts are off, and HUD elements differs from its defaults");
     w.activate(M::display, "facility");
     check(committed().facilityAlerts() && !overlay.confirmState().isOpen(), "Turning them on needs no confirmation");
     w.clear();
+    { const auto back = w[M::display].page().back; back(); }
+    check(w[M::display].section() == "main", "Back returns to Display");
     w.activate(M::display, "customColor");
     check(w.hooks.back() == "chooseColor", "The custom swatch opens the colour wheel");
     w[M::display].setCustomColor({1, .5, 0});
@@ -697,23 +752,31 @@ void contracts() {
     check(!w.control(M::system, "restore").enabled() && committed().isDefault(Settings::Scope::system), "At its defaults, System's Restore is disabled");
     w.update([](Settings& s) { s.set("launchAtLogin", false); }); w.loginError = "Synthetic login failure";
     w.hide(M::system);
-    // HUD elements' Restore (restoreCopy(.hudElements); its row comes with
-    // the page): its own question, message and toast, and only its scope.
+    // HUD elements' Restore (restoreRow(.hudElements), its last row): its own
+    // question, message and toast, and only its scope (Open on is kept).
     w.show(M::display);
-    w.update([](Settings& s) { s.set("facilityAlerts", false); s.set("reduceMotion", true); s.set("closeOnFocusLost", false); });
+    w.activate(M::display, "overlay");
+    w.update([](Settings& s) {
+        s.set("facilityAlerts", false); s.set("reduceMotion", true); s.set("closeOnFocusLost", false);
+        auto l = s.overlayLayout(); l.showsSanity = false; l.openModule = "map"; s.setOverlayLayout(l);
+    });
     check(!committed().isDefault(Settings::Scope::hudElements), "Facility alerts off differs from HUD elements' defaults");
-    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements);
+    w.activate(M::display, "overlayRestore");
     check(overlay.confirmState().request()->id == "overlayRestore" && overlay.confirmState().request()->title == "Restore HUD elements?"
         && overlay.confirmState().request()->message == "Only this page's settings change." && overlay.confirmState().request()->confirmTitle == "Restore"
         && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore asks with its own copy");
     (void)w.context.advance(w.now + 1);
     check(toastTitle() == "HUD elements restored" && committed().facilityAlerts() && committed().isDefault(Settings::Scope::hudElements),
         "Confirmed: HUD elements is at its defaults, with its own toast");
-    check(committed().boolean("reduceMotion") && !committed().boolean("closeOnFocusLost"), "Display and System are kept");
+    check(committed().boolean("reduceMotion") && !committed().boolean("closeOnFocusLost") && committed().overlayLayout().openModule == std::optional<std::string>("map")
+        && committed().overlayLayout().showsSanity, "Display, System and Open on are kept");
+    check(!w.control(M::display, "overlayRestore").enabled(), "At its defaults, HUD elements' Restore is disabled");
+    w.update([](Settings& s) { auto l = s.overlayLayout(); l.openModule.reset(); s.setOverlayLayout(l); });
     w.clear();
     w.language = L::korean; w.appearance(); w.controller->setLanguage(w.language);
     w.update([](Settings& s) { s.set("facilityAlerts", false); });
-    w[M::display].confirmRestoreForTesting(Settings::Scope::hudElements);
+    check(w[M::display].section() == "overlay", "A language change keeps HUD elements shown");
+    w.activate(M::display, "overlayRestore");
     check(overlay.confirmState().request()->title == "HUD 요소를 기본값으로 복원할까요?" && overlay.confirmState().request()->message == "이 페이지의 설정만 복원됩니다."
         && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore copy comes from the catalog");
     (void)w.context.advance(w.now + 1);

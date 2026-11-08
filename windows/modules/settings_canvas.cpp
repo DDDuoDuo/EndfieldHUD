@@ -31,14 +31,25 @@ int indexOf(std::string_view value, std::span<const std::string_view> values) {
     return found == values.end() ? 0 : int(found - values.begin());
 }
 std::string stringOr(const Settings& s, std::string_view key) { const auto& v = s.fields[key]; return v.isString() ? v.string() : std::string(); }
+// The HUD elements switches (\.overlayLayout.showsTitle / .showsSanity),
+// named by their place in the record: fields of the hudOverlayLayout object.
+constexpr std::string_view overlayShowsTitle{"hudOverlayLayout.showsTitle"}, overlayShowsSanity{"hudOverlayLayout.showsSanity"};
 // AppConfiguration's Bool keys (the 1.3.0 ones through their typed readers).
 bool flag(const Settings& s, std::string_view key) {
+    if (key == overlayShowsTitle) return s.overlayLayout().showsTitle;
+    if (key == overlayShowsSanity) return s.overlayLayout().showsSanity;
     if (key == "summonHotkeyEnabled") return s.summonHotkeyEnabled();
     if (key == "recordingMode") return s.recordingMode();
     if (key == "dailyBootLog") return s.dailyBootLog();
     if (key == "facilityAlerts") return s.facilityAlerts();
     const auto& v = s.fields[key];
     return v.isBool() && v.boolean();
+}
+void setFlag(Settings& s, std::string_view key, bool on, const ehud::data::CharacterPrefix& characters) {
+    if (key != overlayShowsTitle && key != overlayShowsSanity) { s.set(std::string(key), on); return; }
+    auto layout = s.overlayLayout(characters);
+    (key == overlayShowsTitle ? layout.showsTitle : layout.showsSanity) = on;
+    s.setOverlayLayout(layout, characters);
 }
 // URL.host / URL.path of an explicit https link (SettingsController::openLink refuses others).
 std::pair<std::string, std::string> hostAndPath(std::string_view url) {
@@ -289,6 +300,7 @@ void SettingsCanvas::setCustomLogo(std::string revision) {
 void SettingsCanvas::showImportError(std::string error) { toast(d::Icon::warn, "Import failed", "导入失败", std::move(error)); }
 std::string_view SettingsCanvas::section() const noexcept {
     switch (section_) {
+    case Section::overlay: return "overlay";
     case Section::battery: return "battery";
     case Section::icons: return "icons";
     case Section::credits: return "credits";
@@ -310,6 +322,7 @@ void SettingsCanvas::buildPage(d::Page& page) {
     case core::Module::display:
         switch (section_) {
         case Section::modules: buildModules(page); break;
+        case Section::overlay: buildOverlay(page); break;
         case Section::battery: buildBattery(page); break;
         case Section::icons: buildIcons(page); break;
         default: buildDisplay(page); break;
@@ -696,6 +709,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     rows.push_back(&logoRow(page));
     rows.push_back(&openModuleRow(page));
     rows.push_back(&modulesRow(page));
+    rows.push_back(&navRow("overlay", text("HUD elements", "界面元素"), page, [this] { go(Section::overlay, true); }));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
     const auto metric = std::string(knownOr(stringOr(c, "alertMetric"), metrics));
@@ -716,11 +730,51 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
         else toast(d::Icon::eye, "Recording mode off", "私密内容已恢复");
     }));
     rows.push_back(&toggleRow("bootLog", text("Daily boot log", "每日启动日志"), "dailyBootLog", page));
-    rows.push_back(&toggleRow("facility", text("Facility alerts", "设施警报"), "facilityAlerts", page, [this](std::function<void()> commit) { confirmFacilityOff(std::move(commit)); }));
     rows.push_back(&restoreRow(Settings::Scope::display, page));
     scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
     page.restoreOffset(scroll);
     header().configure({"DISPLAY"}, "SYS-02", title("Display", "显示"), d::format::pad2(std::int64_t(rows.size())), false);
+}
+// MARK: HUD elements (Display > HUD elements, :583-629)
+// The HUD's title, Sanity gauge and facility alert tags: whether each shows,
+// the title's text, their places and sizes (set on the HUD itself), and a
+// Restore for this page only.
+void SettingsCanvas::buildOverlay(d::Page& page) {
+    auto& scroll = page.scrollArea("overlay", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
+    std::vector<d::RowPlate*> rows;
+    rows.push_back(&toggleRow("overlayTitle", text("Show title", "显示标题"), std::string(overlayShowsTitle), page));
+    rows.push_back(&overlayTextRow("overlayTitleText", text("Title text", "标题文字"), ehud::data::OverlayLayout::defaultTitle, &ehud::data::OverlayLayout::titleText, page));
+    rows.push_back(&overlayTextRow("overlaySubtitleText", text("Subtitle text", "副标题文字"), ehud::data::OverlayLayout::defaultSubtitle, &ehud::data::OverlayLayout::subtitleText, page));
+    rows.push_back(&toggleRow("overlaySanity", text("Show Sanity", "显示理智"), std::string(overlayShowsSanity), page));
+    // The former Display > Facility alerts switch: off also stops the monitor.
+    rows.push_back(&toggleRow("facility", text("Show facility alerts", "显示设施警报"), "facilityAlerts", page, [this](std::function<void()> commit) { confirmFacilityOff(std::move(commit)); }));
+    rows.push_back(&navRow("overlayEdit", text("Edit position and size", "编辑位置和大小"), page, [this] { if (hooks_.editOverlay) hooks_.editOverlay(); }, "↗"));
+    rows.push_back(&restoreRow(Settings::Scope::hudElements, page));
+    scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
+    page.restoreOffset(scroll);
+    header().configure({"DISPLAY", "HUD ELEMENTS"}, "SYS-02", title("HUD elements", "界面元素"), d::format::pad2(std::int64_t(rows.size())), true);
+    wireBack(page, [this] { go(Section::main, false); });
+}
+// overlayTextRow (:609-629): one line of custom text, for every language.
+// Return or a click elsewhere saves it (cleaned: the field shows the cleaned
+// text when cleaning changed it), and an empty field shows `placeholder`.
+d::RowPlate& SettingsCanvas::overlayTextRow(const std::string& id, const std::string& rowTitle, std::string_view placeholder,
+    std::string ehud::data::OverlayLayout::* member, d::Page& page) {
+    using ehud::data::OverlayLayout;
+    d::TextField::Options options;
+    options.maximumLength = OverlayLayout::textLimit;
+    auto& field = page.make<d::TextField>(id, rowTitle, config().overlayLayout().*member, std::string(placeholder), d::Size{220, 30}, options);
+    field.onCommit = [this, &field, member](const std::string& typed) {
+        const auto value = OverlayLayout::cleanText(typed, env().characters.prefix);
+        if (value != typed) field.setText(value);
+        update([&](Settings& s) { auto layout = s.overlayLayout(env().characters.prefix); layout.*member = value; s.setOverlayLayout(layout, env().characters.prefix); });
+    };
+    registerField(field);
+    binders_.push_back([this, &field, member] {
+        const auto current = config().overlayLayout().*member;
+        if (!field.editing() && field.text() != current) field.setText(current);
+    });
+    return row(id, rowTitle, {&field.layer()}, page, {}, {&field});
 }
 // openModuleRow (:631-640): Display > Open on, the module a new HUD opens on
 // (hudOverlayLayout.openModule; nil is Last opened).
@@ -1213,7 +1267,7 @@ d::RowPlate& SettingsCanvas::row(const std::string& id, const std::string& title
     return row(id, title, {&field.layer()}, page, {}, {&field});
 }
 double SettingsCanvas::rowWidth() const {
-    return (module() == core::Module::display && section_ == Section::main) || section_ == Section::modules ? d::metric::boxWidth - 10 : d::metric::boxWidth;
+    return (module() == core::Module::display && (section_ == Section::main || section_ == Section::overlay)) || section_ == Section::modules ? d::metric::boxWidth - 10 : d::metric::boxWidth;
 }
 d::RowPlate& SettingsCanvas::navRow(const std::string& id, const std::string& title, d::Page& page, std::function<void()> action, std::string chevron,
     std::vector<d::Layer*> cluster) {
@@ -1231,10 +1285,10 @@ d::RowPlate& SettingsCanvas::toggleRow(const std::string& id, const std::string&
     toggle.onChange = [this, &toggle, key, confirmOff, changed](bool on) {
         if (!on && confirmOff) {
             toggle.setOn(true, true);
-            confirmOff([this, key] { update([&](Settings& s) { s.set(key, false); }); });
+            confirmOff([this, key] { update([&](Settings& s) { setFlag(s, key, false, env().characters.prefix); }); });
             return;
         }
-        update([&](Settings& s) { s.set(key, on); });
+        update([&](Settings& s) { setFlag(s, key, on, env().characters.prefix); });
         if (changed) changed(flag(config(), key));
     };
     binders_.push_back([this, &toggle, key] { toggle.setOn(flag(config(), key), true); });
