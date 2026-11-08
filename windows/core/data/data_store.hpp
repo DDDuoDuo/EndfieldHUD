@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -37,9 +38,26 @@ std::string makeWindowsMediaReference(std::string path, std::string displayName,
 // appended in default order (modules a later version adds), hidden is kept in
 // list order, and when all are hidden the first of the order is shown again.
 // Add App is not configurable. No UI state (drag, scroll) lives here.
+template <std::size_t A, std::size_t B>
+constexpr std::array<std::string_view, A + B> joinedModules(const std::array<std::string_view, A>& first, const std::array<std::string_view, B>& second) {
+    std::array<std::string_view, A + B> out{};
+    for (std::size_t i = 0; i < A; ++i) out[i] = first[i];
+    for (std::size_t i = 0; i < B; ++i) out[A + i] = second[i];
+    return out;
+}
 struct ModuleLayout {
     static constexpr std::array<std::string_view, 17> configurable{"notes", "fileShelf", "clipboard", "archive", "mediaAssembly",
         "minigame", "nowPlaying", "volume", "projection", "reader", "workMode", "calendar", "map", "eventLog", "profile", "account", "power"};
+    // HUDDesktopWatchNavigation.fixedModules (Sources/HUDNavigationTarget.swift:59):
+    // the modules outside Display > Modules, always in the navigation.
+    static constexpr std::array<std::string_view, 6> fixed{"system", "display", "hotkeys", "about", "storage", "activityMonitor"};
+    // HUDOverlayLayout.openableModules: every module the navigation can open,
+    // in navigation order (fixed, then configurable). Add App is an action,
+    // never a place to open on.
+    static constexpr auto openable = joinedModules(fixed, configurable);
+    static bool isOpenable(std::string_view module) noexcept;
+    // A HUDModule raw value: an openable module or Add App.
+    static bool isModule(std::string_view module) noexcept;
     std::vector<std::string> order{configurable.begin(), configurable.end()}, hidden;
     static ModuleLayout normalized(std::vector<std::string> order, std::vector<std::string> hidden);
     std::vector<std::string> visible() const;
@@ -64,6 +82,51 @@ struct ProjectionSettings {
     double width{12};
     bool erasing{}, background{true};
     bool operator==(const ProjectionSettings&) const = default;
+};
+
+// Swift String(prefix(n)): the first n extended grapheme clusters. The owner
+// passes the ICU rule the profile owner uses (native nativeProfileTextRules()
+// .prefix); the data layer has no ICU, and without a rule text is kept whole.
+using CharacterPrefix = std::function<std::string(std::string_view, std::size_t)>;
+// Mac HUDOverlayLayout (Sources/HUDOverlayLayout.swift): Display > HUD
+// elements (the title, the Sanity gauge and the facility alert tags: their
+// place, size, Show switches and the title's text) and Display > Open on.
+// Stored as one object under "hudOverlayLayout", removed while it holds the
+// defaults. Reading mirrors Swift JSONDecoder on its Stored form: every field
+// is optional and null reads as missing, but a field of the wrong type (or a
+// stored value that is not an object) drops the WHOLE layout to the defaults;
+// an unknown openModule is no error and reads as nil. The rest of the
+// settings record always loads (validateSettings never checks this key).
+struct OverlayLayout {
+    enum class Element : std::uint8_t { title, sanity, alerts };
+    // An offset in core-plane points (the 1000 x 640 plane, y down) from the
+    // element's authored anchor, and its size (1 = as designed). Normalized:
+    // x and y clamp to -1000...1000 (non-finite 0), size to 0.5...2 (non-finite 1).
+    struct Placement {
+        double x{}, y{}, size{1};
+        Placement normalized() const noexcept;
+        bool operator==(const Placement&) const = default;
+    };
+    static constexpr std::string_view key{"hudOverlayLayout"};
+    static constexpr double minimumSize{.5}, maximumSize{2}, offsetLimit{1000};
+    static constexpr std::size_t textLimit{24};
+    static constexpr std::string_view defaultTitle{"ENDFIELDHUD"}, defaultSubtitle{"SYSTEM INTERFACE"};
+    Placement title, sanity, alerts;
+    bool showsTitle{true}, showsSanity{true};
+    std::string titleText, subtitleText; // one string for every language; empty shows the default
+    std::optional<std::string> openModule; // nil opens on the module last opened
+    Placement& operator[](Element) noexcept;
+    const Placement& operator[](Element) const noexcept;
+    std::string_view shownTitle() const noexcept { return titleText.empty() ? defaultTitle : std::string_view(titleText); }
+    std::string_view shownSubtitle() const noexcept { return subtitleText.empty() ? defaultSubtitle : std::string_view(subtitleText); }
+    bool isDefault() const { return *this == OverlayLayout{}; }
+    // cleanText: split on newlines, trim each line's spaces, drop empty lines,
+    // join with one space, keep at most textLimit Characters.
+    static std::string cleanText(std::string_view, const CharacterPrefix& prefix = {});
+    OverlayLayout normalized(const CharacterPrefix& prefix = {}) const; // openModule outside ModuleLayout::openable is nil
+    static std::optional<OverlayLayout> decode(const Json&); // nullopt where JSONDecoder throws
+    Json encode() const; // every field, except a nil openModule
+    bool operator==(const OverlayLayout&) const = default;
 };
 
 // One preference record (the Mac AppConfiguration keys plus additive Windows
@@ -115,6 +178,9 @@ struct Settings {
     std::optional<double> chargeBarLength() const;
     void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
     bool showsCloseHint() const;
+    // The decoded and normalized layout (the defaults when absent or invalid).
+    OverlayLayout overlayLayout(const CharacterPrefix& prefix = {}) const;
+    void setOverlayLayout(const OverlayLayout&, const CharacterPrefix& prefix = {}); // normalized; removed at the defaults
     // The Battery alert method menu (SHELL-99): a saved batteryAlertsEnabled
     // = false shows as "never" (Don't display); choosing any method stores it
     // and turns batteryAlertsEnabled back on.

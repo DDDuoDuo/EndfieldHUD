@@ -218,6 +218,9 @@ std::optional<double> barLength(const Json& value) {return value.isNumber()?barL
 // Both the file and the store's value hold the result.
 Settings saved(Settings value) {
     if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
+    // HUDOverlayLayout.save: written normalized, removed at the defaults (an
+    // undecodable layout read as the defaults, so it is removed too).
+    if(value.fields.contains(OverlayLayout::key)) value.setOverlayLayout(value.overlayLayout());
     return value;
 }
 // D2 downgrade mirror: while the summon hotkey is off the record also carries
@@ -291,6 +294,8 @@ ModuleLayout ModuleLayout::normalized(std::vector<std::string> order,std::vector
     if(value.hidden.size()==configurable.size()) value.hidden.erase(value.hidden.begin());
     return value;
 }
+bool ModuleLayout::isOpenable(std::string_view module) noexcept {return std::find(openable.begin(),openable.end(),module)!=openable.end();}
+bool ModuleLayout::isModule(std::string_view module) noexcept {return module=="addApp"||isOpenable(module);}
 std::vector<std::string> ModuleLayout::visible() const {std::vector<std::string> out;for(const auto& name:order) if(!contains(hidden,name)) out.push_back(name);return out;}
 std::string ModuleLayout::restorable(std::string_view module) const {return isHidden(module)?visible().front():std::string(module);}
 bool ModuleLayout::isDefault() const {return hidden.empty()&&std::equal(order.begin(),order.end(),configurable.begin(),configurable.end());}
@@ -319,6 +324,83 @@ void Settings::setModuleLayout(const ModuleLayout& layout) {
     else {Json::Array names;for(const auto& name:value.order) names.emplace_back(name);fields["hudModuleOrder"]=std::move(names);}
     if(value.hidden.empty()) fields.erase("hudHiddenModules");
     else {Json::Array names;for(const auto& name:value.hidden) names.emplace_back(name);fields["hudHiddenModules"]=std::move(names);}
+}
+OverlayLayout::Placement OverlayLayout::Placement::normalized() const noexcept {
+    return {bound(x,-offsetLimit,offsetLimit,0),bound(y,-offsetLimit,offsetLimit,0),bound(size,minimumSize,maximumSize,1)};
+}
+OverlayLayout::Placement& OverlayLayout::operator[](Element element) noexcept {
+    return element==Element::title?title:element==Element::sanity?sanity:alerts;
+}
+const OverlayLayout::Placement& OverlayLayout::operator[](Element element) const noexcept {
+    return element==Element::title?title:element==Element::sanity?sanity:alerts;
+}
+// components(separatedBy: .newlines), each trimmed of .whitespaces, empty
+// lines dropped, joined by one space, then prefix(textLimit) Characters.
+std::string OverlayLayout::cleanText(std::string_view value,const CharacterPrefix& prefix) {
+    std::string line;std::size_t start=0;
+    const auto append=[&](std::size_t end) {
+        const auto part=trimmed(value.substr(start,end-start),[](char32_t c){return swiftWhitespace(c);});
+        if(part.empty()) return;
+        if(!line.empty()) line+=' ';
+        line+=part;
+    };
+    for(const auto& scalar:scalars(value)) if(swiftNewline(scalar.value)) {append(scalar.offset);start=scalar.offset+scalar.size;}
+    append(value.size());
+    return prefix?prefix(line,textLimit):line;
+}
+OverlayLayout OverlayLayout::normalized(const CharacterPrefix& prefix) const {
+    auto result=*this;
+    for(const auto element:{Element::title,Element::sanity,Element::alerts}) result[element]=(*this)[element].normalized();
+    result.titleText=cleanText(titleText,prefix);result.subtitleText=cleanText(subtitleText,prefix);
+    if(result.openModule&&!ModuleLayout::isOpenable(*result.openModule)) result.openModule.reset();
+    return result;
+}
+// JSONDecoder().decode(Stored.self): each field decodeIfPresent (absent or
+// null = missing), any other type mismatch throws for the whole layout.
+std::optional<OverlayLayout> OverlayLayout::decode(const Json& stored) {
+    if(!stored.isObject()) return std::nullopt;
+    const auto present=[](const Json& object,std::string_view name){return object.contains(name)&&!object[name].isNull();};
+    OverlayLayout value;
+    for(const auto& [name,element]:{std::pair{"title",Element::title},{"sanity",Element::sanity},{"alerts",Element::alerts}}) {
+        if(!present(stored,name)) continue;
+        const auto& object=stored[name];
+        if(!object.isObject()) return std::nullopt;
+        auto& placement=value[element];
+        for(const auto& [field,target]:{std::pair{"x",&placement.x},{"y",&placement.y},{"size",&placement.size}}) {
+            if(!present(object,field)) continue;
+            if(!object[field].isNumber()) return std::nullopt;
+            *target=object[field].number();
+        }
+    }
+    for(const auto& [name,target]:{std::pair{"showsTitle",&value.showsTitle},{"showsSanity",&value.showsSanity}}) {
+        if(!present(stored,name)) continue;
+        if(!stored[name].isBool()) return std::nullopt;
+        *target=stored[name].boolean();
+    }
+    for(const auto& [name,target]:{std::pair{"titleText",&value.titleText},{"subtitleText",&value.subtitleText}}) {
+        if(!present(stored,name)) continue;
+        if(!stored[name].isString()) return std::nullopt;
+        *target=stored[name].string();
+    }
+    if(present(stored,"openModule")) {
+        if(!stored["openModule"].isString()) return std::nullopt;
+        value.openModule=stored["openModule"].string();
+    }
+    return value;
+}
+Json OverlayLayout::encode() const {
+    const auto placement=[](const Placement& value){return Json(Json::Object{{"x",value.x},{"y",value.y},{"size",value.size}});};
+    Json::Object out{{"title",placement(title)},{"sanity",placement(sanity)},{"alerts",placement(alerts)},
+        {"showsTitle",showsTitle},{"showsSanity",showsSanity},{"titleText",titleText},{"subtitleText",subtitleText}};
+    if(openModule) out["openModule"]=*openModule;
+    return out;
+}
+OverlayLayout Settings::overlayLayout(const CharacterPrefix& prefix) const {
+    return OverlayLayout::decode(fields[OverlayLayout::key]).value_or(OverlayLayout{}).normalized(prefix);
+}
+void Settings::setOverlayLayout(const OverlayLayout& layout,const CharacterPrefix& prefix) {
+    const auto value=layout.normalized(prefix);
+    if(value.isDefault()) fields.erase(OverlayLayout::key);else fields[std::string(OverlayLayout::key)]=value.encode();
 }
 std::string Settings::batteryAlertMethod() const {
     if(!flag(fields,"batteryAlertsEnabled",true)) return "never";

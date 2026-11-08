@@ -356,6 +356,75 @@ void settingsVersion130() {
 // accessors read a missing or wrong-typed value as its default and only a save
 // rewrites what the Mac's next save rewrites.
 Json settingsFile(const fs::path& root) { return Json::parse(*detail::readFile(root / "settings.json", 1024 * 1024)); }
+// A stand-in for String(prefix(n)) counting UTF-8 scalars (the owner passes
+// the ICU grapheme rule; these strings have one scalar per Character).
+std::string scalarPrefix(std::string_view text, std::size_t count) {
+    std::size_t end = 0;
+    for (std::size_t seen = 0; end < text.size() && seen < count; ++seen)
+        do ++end; while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80);
+    return std::string(text.substr(0, end));
+}
+// HUDOverlayLayout: Stored decoding, normalization, the default removal.
+void overlayLayout131(const std::function<void(const Json&)>& writeSettings, const fs::path& root) {
+    using L = OverlayLayout;
+    check(ModuleLayout::openable.size() == 23 && ModuleLayout::openable[0] == "system" && ModuleLayout::openable[5] == "activityMonitor" &&
+          ModuleLayout::openable[6] == "notes" && ModuleLayout::openable.back() == "power" && !ModuleLayout::isOpenable("addApp") &&
+          ModuleLayout::isModule("addApp") && ModuleLayout::isOpenable("hotkeys") && !ModuleLayout::isModule("clock"),
+          "Openable modules: the fixed six, then the configurable list; Add App is a module but never openable");
+    const L defaults;
+    check(Settings::defaults().overlayLayout() == defaults && defaults.isDefault() && !Settings::defaults().fields.contains("hudOverlayLayout") &&
+          defaults.shownTitle() == "ENDFIELDHUD" && defaults.shownSubtitle() == "SYSTEM INTERFACE" && !defaults.openModule &&
+          defaults.title == L::Placement{0, 0, 1} && defaults.showsTitle && defaults.showsSanity, "The layout's defaults; no key");
+    // cleanText: one line, trimmed, at most 24 Characters.
+    check(L::cleanText("  Rhodes \n\n\t Island  \r\n") == "Rhodes Island" && L::cleanText(" \n \u3000") == "" &&
+          L::cleanText("a\xE2\x80\xA8" "b\xC2\x85" "c") == "a b c" && L::cleanText("\xC2\xA0x\xC2\xA0") == "x",
+          "Lines split on Swift newlines, trimmed of Swift whitespace, joined by one space");
+    check(L::cleanText("ABCDEFGHIJKLMNOPQRSTUVWXYZ", scalarPrefix) == "ABCDEFGHIJKLMNOPQRSTUVWX" &&
+          L::cleanText("ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "ABCDEFGHIJKLMNOPQRSTUVWXYZ" &&
+          L::cleanText("\xE7\xBB\x88\xE6\x9C\xAB\xE5\x9C\xB0\n\xE5\x9C\xB0", [](std::string_view t, std::size_t n) { return scalarPrefix(t, n == 24 ? 2 : n); }) == "\xE7\xBB\x88\xE6\x9C\xAB",
+          "The 24-Character cut goes through the owner's prefix rule");
+    // Decoding mirrors JSONDecoder: missing and null read as defaults.
+    Settings value = Settings::defaults();
+    const auto read = [&](const Json& stored) { value.set("hudOverlayLayout", stored); return value.overlayLayout(scalarPrefix); };
+    auto expected = defaults;expected.title = {12, -8, 1};expected.sanity = {0, 0, 1.5};expected.showsSanity = false;expected.titleText = "Talos II";expected.openModule = "hotkeys";
+    check(read(Json::Object{{"title", Json::Object{{"x", 12}, {"y", -8}}}, {"sanity", Json::Object{{"size", 1.5}, {"x", nullptr}}}, {"alerts", nullptr},
+                             {"showsSanity", false}, {"showsTitle", nullptr}, {"titleText", " Talos II "}, {"openModule", "hotkeys"}, {"future", 7}}) == expected,
+          "Missing and null fields read as defaults; unknown members are ignored; text is cleaned");
+    check(read(Json::Object{{"title", Json::Object{{"x", 5000}, {"y", -4000}, {"size", .1}}}, {"alerts", Json::Object{{"size", 9}}}}).title == L::Placement{1000, -1000, .5} &&
+          value.overlayLayout().alerts.size == 2, "Offsets clamp to 1000 and sizes to 0.5...2");
+    check(!read(Json::Object{{"openModule", "addApp"}}).openModule && !read(Json::Object{{"openModule", "teleporter"}}).openModule &&
+          read(Json::Object{{"openModule", "activityMonitor"}}).openModule == std::optional<std::string>("activityMonitor"),
+          "Open on keeps an openable module; Add App and unknown names read as Last opened");
+    for (const auto& bad : {Json(Json::Object{{"showsTitle", 1}}), Json(Json::Object{{"title", Json::Object{{"x", "4"}}}}), Json(Json::Object{{"sanity", 2}}),
+                            Json(Json::Object{{"titleText", Json::Array{}}}), Json(Json::Object{{"openModule", 3}}), Json("layout"), Json(Json::Array{})}) {
+        auto mixed = bad;if (mixed.isObject()) mixed["showsSanity"] = false;
+        check(read(mixed) == defaults, "A wrong-typed field drops the whole layout to the defaults");
+    }
+    // Writing: normalized; removed while it holds the defaults.
+    auto layout = defaults;layout.alerts = {-20, 30, 3};layout.subtitleText = "\n  RHODES  ";layout.openModule = "addApp";
+    value.setOverlayLayout(layout);
+    check(value.fields["hudOverlayLayout"] == Json(Json::Object{{"title", Json::Object{{"x", 0}, {"y", 0}, {"size", 1}}}, {"sanity", Json::Object{{"x", 0}, {"y", 0}, {"size", 1}}},
+              {"alerts", Json::Object{{"x", -20}, {"y", 30}, {"size", 2}}}, {"showsTitle", true}, {"showsSanity", true}, {"titleText", ""}, {"subtitleText", "RHODES"}}),
+          "Every field is written normalized, except a nil Open on");
+    layout.openModule = "map";value.setOverlayLayout(layout);
+    check(value.fields["hudOverlayLayout"]["openModule"] == Json("map"), "Open on is written when chosen");
+    auto blank = defaults;blank.titleText = " \n ";blank.title.size = std::nan("");
+    value.setOverlayLayout(blank);
+    check(!value.fields.contains("hudOverlayLayout"), "A layout that normalizes to the defaults leaves no key");
+    // A wrong-typed layout leaves the rest of settings.json loading; the
+    // next save removes it (the Mac saves the defaults it read).
+    writeSettings(Json::Object{{"theme", "light"}, {"hudOverlayLayout", Json::Object{{"showsSanity", "off"}}}});
+    {
+        SettingsStore store(root);
+        check(store.value().string("theme") == "light" && store.value().overlayLayout() == defaults &&
+              settingsFile(root)["settings"]["hudOverlayLayout"]["showsSanity"] == Json("off"), "A bad layout reads as the defaults and loads the record unchanged");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && !settingsFile(root)["settings"].contains("hudOverlayLayout") && !store.value().fields.contains("hudOverlayLayout"),
+              "The next save removes the unusable layout");
+        next = store.value();auto placed = defaults;placed.sanity = {40, 10, 1.25};placed.showsTitle = false;next.setOverlayLayout(placed);
+        check(store.update(next) && SettingsStore(root).value().overlayLayout() == placed, "A layout round-trips through the store");
+    }
+}
 void settingsVersion131() {
     Temporary root;
     const auto writeSettings = [&](const Json& settings) {
@@ -407,6 +476,7 @@ void settingsVersion131() {
     }
     writeSettings(Json::Object{{"showsCloseHint", "no"}});
     rejects([&] { SettingsStore invalid(root.path); }, "A non-Boolean close hint is invalid, like the other 1.3.0 switches");
+    overlayLayout131(writeSettings, root.path);
 }
 }
 

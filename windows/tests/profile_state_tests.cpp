@@ -1,6 +1,7 @@
 #include "modules/profile_state.hpp"
 #include "modules/profile_events.hpp"
 #include "native/profile_text.hpp"
+#include "core/data/data_store.hpp"
 #include "core/data/json.hpp"
 #include <cmath>
 #include <fstream>
@@ -138,6 +139,9 @@ void native(){
     const auto text=n::nativeProfileTextRules();
     check(text.characters("é̂")==1&&text.characters("👍🏽🇯🇵")==2&&text.characters("가각")==2&&text.characters("각")==1,"Extended grapheme clusters, not UTF16 or bytes");
     check(text.prefix("😀😀😀",2)=="😀😀","Character prefix");
+    // Display > HUD elements text keeps 24 Characters through this same rule.
+    std::string flags;for(unsigned k=0;k<30;++k)flags+="🇯🇵";
+    check(ehud::data::OverlayLayout::cleanText(" é̂ \n"+flags,text.prefix)=="é̂ "+flags.substr(0,22*8),"HUD elements text is cut at 24 extended grapheme clusters");
     // The same segmentation without Profile's payload bound (the design
     // library's CharacterRules): 100,001 clusters in 300,004 bytes.
     std::string longText;for(unsigned k=0;k<100000;++k)longText+="e\xcc\x81";longText+="👍🏽";
