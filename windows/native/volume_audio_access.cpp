@@ -15,6 +15,8 @@ VolumeProviderAccess volumeProviderAccess(AudioService&service){
     a.setAppGain=[&service](std::string_view id,float value){return accepted(service.setApplicationGain(std::string(id),value));};
     a.stopApp=[&service](std::string_view id){return accepted(service.stopApplication(std::string(id)));};
     a.stopAllApps=[&service]{return accepted(service.stopApplications());};
+    a.setDefaultOutput=[&service](std::wstring_view endpoint){return accepted(service.setDefaultEndpoint(AudioFlow::output,std::wstring(endpoint)));};
+    a.setDefaultInput=[&service](std::wstring_view endpoint){return accepted(service.setDefaultEndpoint(AudioFlow::input,std::wstring(endpoint)));};
     return a;
 }
 } // namespace endfield::native

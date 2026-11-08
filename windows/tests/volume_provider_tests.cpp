@@ -14,7 +14,7 @@ struct Graph {
     std::wstring lastEndpoint;
     Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false,false},{L"out-b",L"Headphones",true,false}};audio.inputs={{L"in-a",L"Microphone",false,false}};
         audio.defaultOutputID=L"out-一";audio.defaultInputID=L"in-a";
-        audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
+        audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.canSetDefaultOutput=audio.canSetDefaultInput=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
         audio.applications.push_back({"pid:42:creation:1",L"Owned Test App",42,true,gpu::AudioApplicationRouteState::direct,{},{},{},{}});
     }
     void changed(){if(binding)binding->receive(gpu::ServiceChange::audio);}
@@ -44,7 +44,7 @@ void lifecycle(){Graph graph;gpu::VolumeProviderBinding binding(graph.access());
     callbacks.setActive(true);check(graph.activation==0&&!binding.active(),"Selecting Volume while concealed cannot register audio listeners");
     binding.setVisible(true);check(graph.activation==1&&binding.active()&&graph.vote,"Visible selected Volume acquires one shared activation vote");
     check(binding.snapshot().canSetVolume&&binding.snapshot().canSetMute&&binding.snapshot().canSetBalance,"Known native master capabilities are enabled");
-    check(!binding.snapshot().canSetDefaultOutput&&!binding.snapshot().canSetDefaultInput,"No native default-device interop means no invented routing capability");
+    check(!binding.snapshot().canSetDefaultOutput&&!binding.snapshot().canSetDefaultInput,"Without setter operations the device menus stay disabled, whatever the service reports");
     check(binding.snapshot().outputs[1].headphones&&binding.snapshot().inputID=="in-a","Explicit headphone and input identity are preserved");
     const auto baselineReads=graph.reads,baselineDeliveries=deliveries;
     for(unsigned i=0;i<1000;++i){binding.receive(gpu::ServiceChange::battery);binding.receive(gpu::ServiceChange::clipboard);callbacks.setActive(true);binding.setVisible(true);}
@@ -96,6 +96,12 @@ void selection(){Graph graph;gpu::VolumeProviderBinding binding(graph.access(tru
     check(binding.callbacks().setDefaultInput("in-a")&&graph.input==1,"Input selection has its own supported routing operation");
     const auto callbacks=binding.callbacks();check(!callbacks.setDefaultOutput("removed")&&graph.output==1,"A removed device is rejected against latest topology");
     graph.error=-77;check(!callbacks.setDefaultInput("in-a")&&binding.lastFailure()->status==-77,"Native selector failure is preserved instead of claiming success");
+    // The service turned switching off (no IPolicyConfig, or a failed switch).
+    graph.error=0;graph.audio.canSetDefaultOutput=graph.audio.canSetDefaultInput=false;graph.changed();
+    check(!controller.snapshot().canSetDefaultOutput&&!controller.snapshot().canSetDefaultInput,"The service's capability disables both menus even with setters");
+    check(!callbacks.setDefaultOutput("out-一")&&!callbacks.setDefaultInput("in-a")&&graph.output==1&&graph.input==2,"A choice reaching a disabled menu is refused before the setter");
+    graph.audio.canSetDefaultInput=true;graph.changed();
+    check(!controller.snapshot().canSetDefaultOutput&&controller.snapshot().canSetDefaultInput,"Each direction follows its own capability");
 }
 void lifetime(){Graph graph;gpu::VolumeCallbacks retained;{
     auto binding=std::make_unique<gpu::VolumeProviderBinding>(graph.access());graph.binding=binding.get();retained=binding->callbacks();binding->setVisible(true);retained.setActive(true);

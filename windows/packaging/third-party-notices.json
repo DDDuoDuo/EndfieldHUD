@@ -131,6 +131,16 @@
       "texts": ["packaging/licenses/cppwinrt-LICENSE.txt"]
     },
     {
+      "name": "EarTrumpet (interface declarations)",
+      "version": "commit 154980811087fb7c423d806e2d9816733db6a7a5",
+      "url": "https://github.com/File-New-Project/EarTrumpet",
+      "license": "MIT, with EarTrumpet's excluded-entities clause",
+      "use": "Adapted declarations of the undocumented IPolicyConfig interface (EarTrumpet/Interop/MMDeviceAPI/IPolicyConfig.cs and PolicyConfigClient.cs), with which the Volume Output and Input menus change the Windows default playback and recording device.",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["native/audio_default_device.cpp", "native/audio_default_device_notice.txt"],
+      "texts": ["native/audio_default_device_notice.txt"]
+    },
+    {
       "name": "HarmonyOS Sans SC Medium (glyph subset)",
       "version": "33 signed-distance-field glyphs from the game's font atlas",
       "url": "",
@@ -161,14 +171,5 @@
       "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
     }
   ],
-  "notShipped": [
-    {
-      "path": "native/audio_default_device_notice.txt",
-      "reason": "EarTrumpet's interop declarations in native/audio_default_device.cpp compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
-    },
-    {
-      "path": "native/audio_default_device.cpp",
-      "reason": "Its EarTrumpet-derived declarations compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
-    }
-  ]
+  "notShipped": []
 }

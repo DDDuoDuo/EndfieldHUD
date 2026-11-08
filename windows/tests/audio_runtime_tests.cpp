@@ -34,7 +34,19 @@ struct World {
     n::AudioEndpointBackend::Wake topologyWake,volumeWake;bool endpointOpen{};std::wstring bound;
     std::vector<n::AudioSessionRecord>sessions;n::AudioSessionBackend::Wake sessionWake;
     unsigned endpointsCreated{},sessionsCreated{};
+    // Injected default-device selector: every role of a direction is kept
+    // together in the default the endpoint backend reports.
+    unsigned defaultWrites{};
 };
+n::AudioDefaultDeviceAccess defaults(std::shared_ptr<World>w){
+    const auto listed=[](const std::vector<n::AudioEndpointRecord>&list,std::wstring_view id){return std::any_of(list.begin(),list.end(),[&](const auto&r){return r.id==id;});};
+    n::AudioDefaultDeviceAccess a;
+    a.capability=[]{return n::AudioDefaultDeviceCapability{true,10,0,26100,0};};
+    a.validateEndpoint=[w,listed](std::wstring_view id,n::AudioDefaultFlow flow){std::lock_guard l(w->m);return listed(flow==n::AudioDefaultFlow::input?w->inputs:w->outputs,id)?0:-1;};
+    a.current=[w](n::AudioDefaultFlow flow,n::AudioDefaultRole,std::wstring&out){std::lock_guard l(w->m);out=flow==n::AudioDefaultFlow::input?w->defaultInput:w->defaultOutput;return 0;};
+    a.select=[w,listed](std::wstring_view id,n::AudioDefaultRole){std::lock_guard l(w->m);++w->defaultWrites;(listed(w->inputs,id)?w->defaultInput:w->defaultOutput)=id;return 0;};
+    return a;
+}
 class Endpoints final:public n::AudioEndpointBackend {
     std::shared_ptr<World>w;
 public:
@@ -73,6 +85,7 @@ struct Harness {
     std::function<n::AudioRuntimeChanges()>message=[this]{auto changes=runtime->drain();if(changes.snapshot)changes.volume|=runtime->volume().receive();return changes;};
     explicit Harness(c::Language language=c::Language::english){
         n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<Endpoints>(w);};o.sessions=[w=world]{return std::make_unique<Sessions>(w);};o.topologySettleSeconds=.02;
+        o.defaults=[w=world]{return std::make_unique<n::AudioDefaultDeviceSelector>(defaults(w));};
         runtime=std::make_unique<n::AudioRuntime>(std::move(o),language,[this]{{std::lock_guard l(nm);++notices;}ncv.notify_all();});
     }
     // Owner message loop: drain once per notice until the predicate holds.
@@ -144,7 +157,7 @@ void volume(){
     h.runtime->volume().setVisible(true);callbacks.setActive(true);
     h.until([&]{return delivered.canSetVolume&&delivered.outputs.size()==2;},"Volume content arrives through the binding");
     check(h.seen.volume&&received>0,"The owner message reports and delivers Volume content");
-    check(delivered.outputs[1].headphones&&!delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput,"Headset traits reach the UI; default-device switching stays unavailable");
+    check(delivered.outputs[1].headphones&&delivered.canSetDefaultOutput&&delivered.canSetDefaultInput,"Headset traits reach the UI; both device menus are enabled");
     check(callbacks.setVolume(delivered.outputID,.25),"Slider write accepted");
     h.until([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
@@ -156,6 +169,10 @@ void volume(){
     check(delivered.status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
     {std::lock_guard l(h.world->m);check(std::abs(h.world->master-.25f)<1e-6f,"The refused gesture never reached a device");}
     check(h.runtime->language()==c::Language::simplifiedChinese,"Language is retained");
+    // The Output menu switches the default device through the runtime's binding.
+    check(callbacks.setDefaultOutput("{0.0.0.00000000}.{speaker}"),"The Output menu's choice is accepted");
+    h.until([&]{return delivered.outputID=="{0.0.0.00000000}.{speaker}"&&!delivered.status;},"The switched default reaches the Volume UI and clears the status");
+    {std::lock_guard l(h.world->m);check(h.world->defaultOutput==speaker&&h.world->defaultWrites==3&&h.world->bound==speaker,"Each of the three roles is written; the controls follow");}
     bool threw{};try{h.runtime->setLanguage(c::Language::system);}catch(const std::invalid_argument&){threw=true;}check(threw,"System must be resolved by the caller");
     h.runtime->volume().setVisible(false);
     h.until([&]{return h.runtime->snapshot().paused;},"Concealing releases the endpoint controls");

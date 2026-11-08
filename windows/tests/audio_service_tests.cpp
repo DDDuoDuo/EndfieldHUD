@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #endif
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -43,6 +44,20 @@ struct World {
     // NativeBackend contract: a terminated process's sessions are reported
     // once with `exited`, then released by the next read.
     std::set<std::string>exitReported;bool failSessionWrites{};
+    // Default-device selector fake (the IPolicyConfig access): the console
+    // role is the default the endpoint backend reports; multimedia and
+    // communications are kept beside it. No real default device is touched.
+    std::wstring multimediaOutput{speaker},communicationsOutput{speaker},multimediaInput{mic},communicationsInput{mic};
+    struct DefaultWrite{std::wstring id;n::AudioDefaultRole role;};std::vector<DefaultWrite>defaultWrites;
+    unsigned selectorsCreated{},failDefaultWriteAt{};bool defaultsSupported{true},throwDefaults{},nullDefaults{},failDefaultReads{};
+    // Another mixer (or Windows) takes the default over right after a write.
+    std::wstring raceDefault;
+    std::wstring&role(bool input,n::AudioDefaultRole r){
+        if(r==n::AudioDefaultRole::console)return input?defaultInput:defaultOutput;
+        if(r==n::AudioDefaultRole::multimedia)return input?multimediaInput:multimediaOutput;
+        return input?communicationsInput:communicationsOutput;
+    }
+    bool listed(bool input,std::wstring_view id){const auto&list=input?inputs:outputs;return std::any_of(list.begin(),list.end(),[&](const auto&r){return r.id==id;});}
     void thread(){const auto id=std::this_thread::get_id();if(worker==std::thread::id{})worker=id;else if(worker!=id)violation=true;}
     World(){
         n::AudioSessionRecord app{"{session-player}","4242:100",L"Player",4242,true,true,.8f,0};app.persistentID=persistent;app.appUserModelID="Synthetic.Player_8wekyb3d8bbwe!App";
@@ -93,12 +108,31 @@ public:
     void close()noexcept override{std::lock_guard l(w->m);w->thread();if(open_)++w->sessionCloses;open_=false;w->sessionWake={};}
 };
 
+// Every call records the worker thread, like the backends.
+n::AudioDefaultDeviceAccess fakeDefaults(std::shared_ptr<World>w){
+    n::AudioDefaultDeviceAccess a;
+    a.capability=[w]{std::lock_guard l(w->m);w->thread();return n::AudioDefaultDeviceCapability{w->defaultsSupported,10,0,26100,w->defaultsSupported?0:notImplemented};};
+    a.validateEndpoint=[w](std::wstring_view id,n::AudioDefaultFlow flow){std::lock_guard l(w->m);w->thread();return w->listed(flow==n::AudioDefaultFlow::input,id)?0:deviceChanged;};
+    a.current=[w](n::AudioDefaultFlow flow,n::AudioDefaultRole r,std::wstring&out){std::lock_guard l(w->m);w->thread();if(w->failDefaultReads)return static_cast<std::int32_t>(0x80004005u); // E_FAIL
+        out=w->role(flow==n::AudioDefaultFlow::input,r);return 0;};
+    a.select=[w](std::wstring_view id,n::AudioDefaultRole r){std::lock_guard l(w->m);w->thread();w->defaultWrites.push_back({std::wstring(id),r});
+        if(w->defaultWrites.size()==w->failDefaultWriteAt)return static_cast<std::int32_t>(0x80004005u); // E_FAIL
+        w->role(w->listed(true,id),r)=w->raceDefault.empty()?std::wstring(id):w->raceDefault;return 0;};
+    return a;
+}
+std::function<std::unique_ptr<n::AudioDefaultDeviceSelector>()>defaultsFactory(std::shared_ptr<World>w){
+    return [w]()->std::unique_ptr<n::AudioDefaultDeviceSelector>{
+        bool raise{},none{};{std::lock_guard l(w->m);w->thread();++w->selectorsCreated;raise=w->throwDefaults;none=w->nullDefaults;}
+        if(raise)throw std::runtime_error("Synthetic CoCreateInstance failure");if(none)return nullptr;
+        return std::make_unique<n::AudioDefaultDeviceSelector>(fakeDefaults(w));};
+}
 struct Harness {
     std::shared_ptr<World>world=std::make_shared<World>();
     std::mutex nm;std::condition_variable ncv;unsigned notices{};std::thread::id noticeThread;
     std::unique_ptr<n::AudioService>service;
-    explicit Harness(std::optional<fs::path>journal={}){
+    explicit Harness(std::optional<fs::path>journal={},bool defaults=false){
         n::AudioServiceOptions o;o.endpoints=[w=world]{return std::make_unique<FakeEndpoints>(w);};o.sessions=[w=world]{return std::make_unique<FakeSessions>(w);};
+        if(defaults)o.defaults=defaultsFactory(world);
         o.journal=std::move(journal);o.journalFlushSeconds=.05;o.topologySettleSeconds=.05;
         service=std::make_unique<n::AudioService>(std::move(o),[this]{{std::lock_guard l(nm);++notices;noticeThread=std::this_thread::get_id();}ncv.notify_all();});
     }
@@ -353,6 +387,130 @@ void renderingAndRelease(){
     check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f&&s.stats().sessionReleases==2,"The original level is restored before the release");
     s.stop();
 }
+// The Volume Output and Input menus (IPolicyConfig on Windows, injected
+// here): the selector is created once, on the worker, when Volume first
+// shows; a switch writes every role, the device list is read again and the
+// controls and sessions follow. No real default device is touched.
+void defaultDevices(){
+    const std::wstring headset=L"{0.0.1.00000000}.{headset-mic}",gone=L"{0.0.0.00000000}.{gone}";
+    {
+        Harness h({},true);auto&s=*h.service;
+        {std::lock_guard l(h.world->m);h.world->inputs.push_back({headset,L"Headset Microphone",L"USB",5u});}
+        check(s.vote(n::AudioVoter::eventLog,true)==0,"Device list vote");
+        h.until([](const auto&x){return x.topologyActive&&x.topologyListed;},"Device list published");
+        {std::lock_guard l(h.world->m);check(h.world->selectorsCreated==0&&!s.snapshot().canSetDefaultOutput,"The device list alone never creates the selector");}
+        check(s.vote(n::AudioVoter::volume,true)==0,"Volume shows");
+        h.until([](const auto&x){return x.available&&x.canSetDefaultOutput&&x.canSetDefaultInput;},"A supported selector enables both menus");
+        {std::lock_guard l(h.world->m);check(h.world->selectorsCreated==1&&h.world->defaultWrites.empty(),"The selector is created once, on the worker, and writes nothing");}
+        check(!s.setDefaultEndpoint(n::AudioFlow::output,L""),"An empty identity is refused before the queue");
+        check(s.setDefaultEndpoint(n::AudioFlow::output,usb),"Output switch accepted");
+        h.until([](const auto&x){return x.defaultOutputID==usb&&x.commandError==0;},"The published default output follows the switch");
+        {std::lock_guard l(h.world->m);const auto&w=*h.world;
+            check(w.defaultWrites.size()==3&&w.defaultOutput==usb&&w.multimediaOutput==usb&&w.communicationsOutput==usb,"Console, multimedia and communications are all set");
+            check(w.defaultInput==mic&&w.multimediaInput==mic&&w.communicationsInput==mic,"An output switch leaves the input defaults");}
+        h.world_until([](World&w){return w.bound==usb&&w.sessionOpens==2;},"The volume control and per-app sessions follow the new output");
+        check(s.snapshot().canSetDefaultOutput&&!s.snapshot().routesStoppedByDeviceChange,"Switching stays available; a switch alone shows no routing notice");
+        check(s.setDefaultEndpoint(n::AudioFlow::input,headset),"Input switch accepted");
+        h.until([&](const auto&x){return x.defaultInputID==headset;},"The published default input follows the switch");
+        {std::lock_guard l(h.world->m);const auto&w=*h.world;check(w.defaultWrites.size()==6&&w.defaultInput==headset&&w.multimediaInput==headset&&w.communicationsInput==headset&&w.defaultOutput==usb,"Every input role is set; the output stays");}
+        // Listed in the snapshot but gone before the switch: nothing is
+        // written, the device change is reported and the list is read again.
+        {std::lock_guard l(h.world->m);std::erase_if(h.world->outputs,[](const auto&r){return r.id==buds;});}
+        check(s.setDefaultEndpoint(n::AudioFlow::output,buds),"Accepted for worker validation");
+        h.until([](const auto&x){return x.commandError==deviceChanged&&x.outputs.size()==2;},"A device that left reports the change and the list is read again");
+        check(s.setDefaultEndpoint(n::AudioFlow::output,gone)&&s.setDefaultEndpoint(n::AudioFlow::input,usb),"Unlisted and wrong-direction choices are accepted for validation");
+        check(s.setVolume(usb,.33f),"A later command marks the queue");
+        h.until([](const auto&x){return x.volume&&std::abs(*x.volume-.33f)<1e-6f&&x.commandError==0;},"Commands run in order");
+        {std::lock_guard l(h.world->m);check(h.world->defaultWrites.size()==6&&h.world->defaultOutput==usb&&h.world->defaultInput==headset&&!h.world->violation,"No write reached a device that is not listed; every call ran on the one worker");}
+        check(s.snapshot().canSetDefaultOutput&&s.snapshot().canSetDefaultInput,"A device that left does not turn switching off");
+        s.stop();
+    }
+    {
+        // A write fails (a future Windows changed the interface): the written
+        // role is rolled back and switching turns off quietly for the run.
+        Harness h({},true);auto&s=*h.service;
+        n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeSnapshot delivered=volume.snapshot();
+        volume.setReceiver([&](const auto&v){delivered=v;});
+        const auto pump=[&](auto&&p,const char*what){h.until([&](const auto&){return volume.receive(),p();},what);};
+        volume.setVisible(true);callbacks.setActive(true);
+        pump([&]{return delivered.canSetDefaultOutput&&delivered.canSetDefaultInput;},"Both menus enabled");
+        {std::lock_guard l(h.world->m);h.world->failDefaultWriteAt=2;}
+        check(callbacks.setDefaultOutput("{0.0.0.00000000}.{usb}"),"The Output menu's choice is accepted");
+        pump([&]{return !delivered.canSetDefaultOutput&&!delivered.canSetDefaultInput;},"A failed write disables both menus");
+        {std::lock_guard l(h.world->m);const auto&w=*h.world;
+            check(w.defaultWrites.size()==3&&w.defaultWrites[2].id==speaker&&w.defaultWrites[2].role==n::AudioDefaultRole::console,"The console role written before the failure is rolled back");
+            check(w.defaultOutput==speaker&&w.multimediaOutput==speaker&&w.communicationsOutput==speaker,"Every role is back on the previous output");}
+        check(!delivered.status&&!volume.lastFailure()&&delivered.outputID=="{0.0.0.00000000}.{speaker}","Quiet: no status line or toast, the previous output stays");
+        const auto reads=s.stats().topologyReads;h.wake(&World::topologyWake);
+        h.world_until([&](World&){return h.service->stats().topologyReads>reads;},"A later device event is processed");
+        pump([&]{return true;},"Republished");
+        check(!delivered.status&&!delivered.canSetDefaultOutput,"Later snapshots stay quiet and keep the menus off (no toast loop)");
+        const auto wakes=s.stats().wakes;
+        check(s.setDefaultEndpoint(n::AudioFlow::input,mic),"A direct command is still accepted by the queue");
+        h.world_until([&](World&){return h.service->stats().wakes>wakes;},"Processed");
+        {std::lock_guard l(h.world->m);check(h.world->defaultWrites.size()==3&&h.world->selectorsCreated==1,"Once off, nothing is written and no selector is created again");}
+        volume.close();s.stop();
+    }
+    {
+        // A read fails (GetDefaultAudioEndpoint through the interface): nothing
+        // is written and switching turns off quietly, like a failed write.
+        Harness h({},true);auto&s=*h.service;
+        check(s.vote(n::AudioVoter::volume,true)==0,"Volume shows");
+        h.until([](const auto&x){return x.available&&x.canSetDefaultOutput&&x.canSetDefaultInput;},"Both menus enabled");
+        {std::lock_guard l(h.world->m);h.world->failDefaultReads=true;}
+        check(s.setDefaultEndpoint(n::AudioFlow::output,usb),"Output switch accepted");
+        h.until([](const auto&x){return !x.canSetDefaultOutput&&!x.canSetDefaultInput;},"A failed read disables both menus");
+        check(s.snapshot().commandError==0&&s.snapshot().defaultOutputID==speaker,"Quiet: no status, the previous output stays");
+        {std::lock_guard l(h.world->m);h.world->failDefaultReads=false;}
+        const auto wakes=s.stats().wakes;
+        check(s.setDefaultEndpoint(n::AudioFlow::input,mic),"A later command is accepted by the queue");
+        h.world_until([&](World&){return h.service->stats().wakes>wakes;},"Processed");
+        s.drain();
+        {std::lock_guard l(h.world->m);check(h.world->defaultWrites.empty()&&h.world->selectorsCreated==1&&s.snapshot().commandError==0,"Once off, nothing is written, reported or created again");}
+        s.stop();
+    }
+    {
+        // Another mixer takes the default over between the write and its
+        // readback: every call succeeded, so the change is reported once and
+        // switching stays on. The rollback leaves the other mixer's choice.
+        Harness h({},true);auto&s=*h.service;
+        check(s.vote(n::AudioVoter::volume,true)==0,"Volume shows");
+        h.until([](const auto&x){return x.available&&x.canSetDefaultOutput;},"Both menus enabled");
+        {std::lock_guard l(h.world->m);h.world->raceDefault=buds;}
+        check(s.setDefaultEndpoint(n::AudioFlow::output,usb),"Output switch accepted");
+        h.until([](const auto&x){return x.commandError==deviceChanged&&x.defaultOutputID==buds;},"The concurrent change is reported and the real default published");
+        check(s.snapshot().canSetDefaultOutput&&s.snapshot().canSetDefaultInput,"A concurrent change does not turn switching off");
+        {std::lock_guard l(h.world->m);const auto&w=*h.world;check(w.defaultWrites.size()==1&&w.multimediaOutput==speaker&&w.communicationsOutput==speaker,"The switch stops at the mismatch and overwrites nothing");}
+        {std::lock_guard l(h.world->m);h.world->raceDefault.clear();}
+        check(s.setDefaultEndpoint(n::AudioFlow::output,usb),"The same choice again");
+        h.until([](const auto&x){return x.commandError==0&&x.defaultOutputID==usb;},"The next switch succeeds");
+        {std::lock_guard l(h.world->m);const auto&w=*h.world;check(w.defaultWrites.size()==4&&w.multimediaOutput==usb&&w.communicationsOutput==usb&&!w.violation,"Every role is set on the worker");}
+        s.stop();
+    }
+    // The interface is missing (E_NOTIMPL, a failed CoCreateInstance) or no
+    // selector could be made: both menus stay disabled, nothing is written.
+    for(unsigned kind=0;kind<3;++kind){
+        Harness h({},true);auto&s=*h.service;
+        {std::lock_guard l(h.world->m);if(kind==0)h.world->defaultsSupported=false;else if(kind==1)h.world->throwDefaults=true;else h.world->nullDefaults=true;}
+        check(s.vote(n::AudioVoter::volume,true)==0,"Volume shows");
+        h.until([](const auto&x){return x.available&&x.applicationsSupported;},"Volume controls");
+        check(!s.snapshot().canSetDefaultOutput&&!s.snapshot().canSetDefaultInput&&s.snapshot().commandError==0,"An unavailable selector leaves both menus disabled, quietly");
+        const auto wakes=s.stats().wakes;
+        check(s.setDefaultEndpoint(n::AudioFlow::output,usb),"Accepted by the queue");
+        h.world_until([&](World&){return h.service->stats().wakes>wakes;},"Processed");
+        s.drain();check(s.snapshot().defaultOutputID==speaker&&s.snapshot().commandError==0,"Nothing switches and nothing is reported");
+        check(s.vote(n::AudioVoter::volume,false)==0&&s.vote(n::AudioVoter::volume,true)==0,"Volume shows again");
+        h.until([](const auto&x){return x.available;},"Volume controls again");
+        {std::lock_guard l(h.world->m);check(h.world->defaultWrites.empty()&&h.world->selectorsCreated==1&&!h.world->violation,"The selector is tried once per run, on the worker");}
+        s.stop();
+    }
+    {
+        Harness h;auto&s=*h.service;s.vote(n::AudioVoter::volume,true);
+        h.until([](const auto&x){return x.available;},"Volume controls");
+        check(!s.snapshot().canSetDefaultOutput&&!s.snapshot().canSetDefaultInput,"Without a selector both menus stay disabled");
+        s.stop();
+    }
+}
 #ifdef _WIN32
 // This process's thread IDs (Toolhelp; read-only). Compared as sets, so a
 // loader or pool thread that exits meanwhile cannot disturb the count.
@@ -369,18 +527,25 @@ void oneWorker(){
 }
 #endif
 void binding(){
-    Harness h;auto&s=*h.service;
+    Harness h({},true);auto&s=*h.service;
     n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeSnapshot delivered=volume.snapshot();
     volume.setReceiver([&](const auto&v){delivered=v;});
     const auto pump=[&](auto&&p,const char*what){h.until([&](const auto&){return volume.receive(),p();},what);};
     check(!volume.active()&&!s.stats().workerStarted,"Binding construction votes nothing");
     volume.setVisible(true);callbacks.setActive(true);check(s.votes()==static_cast<unsigned>(n::AudioVoter::volume),"Visible selected Volume casts exactly the volume vote");
     pump([&]{return delivered.canSetVolume&&delivered.outputs.size()==3;},"Binding receives the worker snapshot");
-    check(delivered.outputs[0].bluetooth&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&!delivered.canSetDefaultOutput,"Bluetooth reaches the UI; default-device switching stays unavailable (platform gap)");
+    check(delivered.outputs[0].bluetooth&&delivered.outputID=="{0.0.0.00000000}.{speaker}"&&delivered.canSetDefaultOutput&&delivered.canSetDefaultInput,"Bluetooth reaches the UI; a supported selector enables both device menus");
     check(callbacks.setVolume(delivered.outputID,.25),"A volume write is accepted asynchronously");
     pump([&]{return delivered.volume&&std::abs(*delivered.volume-.25)<1e-6;},"Readback reaches the Volume snapshot");
     check(callbacks.setMute(delivered.outputID,true),"Mute reaches the binding");
     pump([&]{return delivered.muted==true;},"Mute readback");
+    // The Output menu (VolumeCanvas.openDeviceMenu): stop the routes, then switch.
+    callbacks.stopAllApps();check(callbacks.setDefaultOutput("{0.0.0.00000000}.{usb}"),"The Output menu's choice is accepted");
+    pump([&]{return delivered.outputID=="{0.0.0.00000000}.{usb}"&&delivered.canSetVolume;},"The new default output reaches the Volume UI with its controls");
+    check(!delivered.status&&delivered.routingStopped,"Switching to another output shows the routing notice, as the source's stopAll(reason:) does with no owned route");
+    callbacks.stopAllApps();check(callbacks.setDefaultOutput("{0.0.0.00000000}.{speaker}"),"Switching back");
+    pump([&]{return delivered.outputID=="{0.0.0.00000000}.{speaker}";},"The previous output is the default again");
+    {std::lock_guard l(h.world->m);check(h.world->defaultWrites.size()==6&&h.world->communicationsOutput==speaker&&!h.world->violation,"Each switch wrote the three roles on the worker");}
     const auto appID=std::string("app:4242:100");
     pump([&]{return delivered.applicationActivitySupported&&delivered.applications.size()==2;},"App rows");
     check(callbacks.setAppGain(appID.substr(4),.5),"App slider");
@@ -399,6 +564,6 @@ int main(){
 #ifdef _WIN32
         oneWorker();
 #endif
-        binding();std::cout<<"PASS "<<checks<<" injected audio service checks (one sleeping worker; no native audio accessed)\n";return 0;}
+        binding();defaultDevices();std::cout<<"PASS "<<checks<<" injected audio service checks (one sleeping worker; no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

@@ -8,7 +8,9 @@ namespace endfield::native {
 // Log) vote independently on the same service. Writes are asynchronous: an
 // accepted command returns S_OK and the confirmed readback arrives through
 // the service's next snapshot (call binding.receive() after drain()).
-// Default-device switching stays absent: Windows offers no public API for it.
+// The Output and Input menus switch the Windows default device through the
+// service's default-device selector; snapshot.canSetDefault* says whether it
+// is available (off without the interface or after one of its calls failed).
 // Construction performs no API call. The service outlives the binding.
 VolumeProviderAccess volumeProviderAccess(AudioService&);
 } // namespace endfield::native

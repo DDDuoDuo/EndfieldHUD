@@ -166,6 +166,7 @@ AudioNameOrder nativeAudioNameOrder(){
 }
 AudioServiceOptions nativeAudioServiceOptions(std::optional<std::filesystem::path>dataRoot){
     AudioServiceOptions o;o.endpoints=nativeAudioEndpointBackendFactory();o.sessions=nativeAudioSessionBackendFactory();o.order=nativeAudioNameOrder();
+    o.defaults=[]{return std::make_unique<AudioDefaultDeviceSelector>(nativeAudioDefaultDeviceAccess());};
     if(dataRoot)o.journal=*dataRoot/L"Audio"/L"RouteJournal.json";
     return o;
 }

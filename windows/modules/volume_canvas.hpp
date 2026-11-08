@@ -12,11 +12,12 @@
 // chooser sub-page and its paging, the Headphones / Bluetooth list, the
 // header subtitle, the page-reveal depth motion, the 2 px indicator, the
 // projected NSButton/NSSlider stand-ins with their help strings.
-// Windows: the default device cannot be switched (no public API,
-// WINDOWS-MIGRATION.md section 6): the runtime reports canSetDefaultOutput /
-// canSetDefaultInput false, so both dropdowns show the current device and
-// are disabled. Where switching is available the menus list every device,
-// the ones that cannot become the default disabled, as on the Mac.
+// Windows: the runtime switches the default device through IPolicyConfig
+// (native/audio_default_device.hpp). The menus list every device, the ones
+// that cannot become the default disabled, as on the Mac. Where the
+// interface is missing, or after one of its calls failed, the runtime reports
+// canSetDefaultOutput / canSetDefaultInput false: both dropdowns then show
+// the current device and are disabled.
 #include "modules/hud_design_page.hpp"
 #include "native/volume_snapshot.hpp"
 

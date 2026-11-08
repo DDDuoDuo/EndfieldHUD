@@ -71,8 +71,8 @@ struct VolumeProviderBinding::State {
         next.canSetVolume=next.canSetVolume&&live&&bool(access.setVolume);
         next.canSetMute=next.canSetMute&&live&&bool(access.setMute);
         next.canSetBalance=next.canSetBalance&&live&&bool(access.setBalance);
-        next.canSetDefaultOutput=live&&bool(access.setDefaultOutput);
-        next.canSetDefaultInput=live&&bool(access.setDefaultInput);
+        next.canSetDefaultOutput=live&&s.canSetDefaultOutput&&bool(access.setDefaultOutput);
+        next.canSetDefaultInput=live&&s.canSetDefaultInput&&bool(access.setDefaultInput);
         next.applicationActivitySupported=next.applicationActivitySupported&&live&&bool(access.setAppGain);
         for(std::size_t n=0;n<next.applications.size();++n){auto&app=next.applications[n];app.available=app.available&&next.applicationActivitySupported;if(failed(s.applications[n].error))app.error=message({Kind::native,s.applications[n].error});}
         if(failed(s.error))next.status=message(volumeProviderFailure(s.error));
@@ -129,7 +129,7 @@ struct VolumeProviderBinding::State {
     }
     bool select(std::string_view id,bool input){
         if(!ready())return false;const auto&s=access.readSnapshot();if(s.paused)return awaiting(s)?false:reject(Kind::unavailable);
-        const auto&operation=input?access.setDefaultInput:access.setDefaultOutput;if(!operation)return reject(Kind::unsupported);
+        const auto&operation=input?access.setDefaultInput:access.setDefaultOutput;if(!operation||!(input?s.canSetDefaultInput:s.canSetDefaultOutput))return reject(Kind::unsupported);
         const auto&devices=input?s.inputs:s.outputs;const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto&d){return sameText(d.id,id);});
         if(found==devices.end())return reject(Kind::deviceChanged);
         // Snapshot storage may change synchronously inside the native operation.

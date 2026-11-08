@@ -261,7 +261,8 @@ void VolumeCanvas::openDeviceMenu(bool input, const d::Dropdown& anchor) {
             .enabled = input ? device.canBeDefaultInput : device.canBeDefaultOutput});
     openMenu(input ? "input" : "output", std::move(items), anchor, std::nullopt, [this, input](const d::Menu::Item& item) {
         if (input) { if (actions_.setDefaultInput) (void)actions_.setDefaultInput(item.id); return; }
-        // "App routing stopped because the output device changed." (the runtime reports it as routingStopped).
+        // "App routing stopped because the output device changed.": stopAllApps carries this reason (the runtime
+        // reports it as routingStopped, whether or not a route was owned).
         if (item.id != snapshot_.outputID && actions_.stopAllApps) actions_.stopAllApps();
         if (actions_.setDefaultOutput) (void)actions_.setDefaultOutput(item.id);
     });

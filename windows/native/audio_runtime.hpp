@@ -36,9 +36,10 @@ struct AudioRuntimeChanges {
 // at most one message is outstanding until the owner calls drain(). Every
 // other method belongs to the constructing thread.
 // Writes are asynchronous; confirmed readback arrives through a later drain.
-// Default-device switching is never offered: Windows has no public API for it
-// (platform gap), so the Volume chooser rows stay disabled as in the source
-// when the default device is not settable.
+// The Volume Output and Input menus switch the default device through the
+// options' default-device selector (IPolicyConfig in production). Without it,
+// or after one of its calls failed, the menus stay disabled as in the source when the
+// default device is not settable.
 class AudioRuntime final {
 public:
     using Notice=std::function<void()>;

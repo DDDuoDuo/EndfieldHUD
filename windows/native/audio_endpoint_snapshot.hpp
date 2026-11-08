@@ -36,6 +36,9 @@ struct AudioEndpointSnapshot {
     std::optional<float>volume,balance;
     std::optional<bool>muted;
     bool canSetVolume{},canSetMute{},canSetBalance{};
+    // The default output / input can be switched: the default-device
+    // selector is available and no switch has failed during this run.
+    bool canSetDefaultOutput{},canSetDefaultInput{};
     // HRESULT-shaped: endpoint read, capture enumeration, last explicit command.
     std::int32_t error{},inputError{},commandError{};
     // Application tier.

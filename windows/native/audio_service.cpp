@@ -115,7 +115,7 @@ private:
 };
 
 struct Command {
-    enum class Kind {volume,mute,balance,gain,stopApplication,stopApplications,suspend,resume,recover} kind;
+    enum class Kind {volume,mute,balance,gain,stopApplication,stopApplications,suspend,resume,recover,defaultEndpoint} kind;
     std::wstring endpoint;std::string id;float value{};bool flag{};
 };
 }
@@ -151,6 +151,8 @@ public:
                 queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==c.kind;}),queue.end());
             else if(c.kind==K::gain)
                 queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==K::gain&&q.id==c.id;}),queue.end());
+            else if(c.kind==K::defaultEndpoint)
+                queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==K::defaultEndpoint&&q.flag==c.flag;}),queue.end());
             if(queue.size()>=maximumQueue)return false;
             queue.push_back(std::move(c));ensureThread();signal->flags|=commandBit;
         }
@@ -171,6 +173,11 @@ public:
         AudioSessionRoutes routes;std::vector<AudioSessionRecord>records;
         std::optional<AudioRouteJournal>journal;std::optional<Clock::time_point>flushAt,topologyAt;
         std::optional<std::vector<AudioTopologyDevice>>pendingTopology;
+        // Default-device switching (Volume's Output and Input menus): created
+        // here the first time Volume shows and kept for the run. A missing
+        // interface or a failing call switches it off quietly for the rest of
+        // the run: the menus go grey, as without the interface, with no status.
+        std::unique_ptr<AudioDefaultDeviceSelector>defaults;bool defaultsChecked{};
         unsigned demand{};
         explicit Worker(Impl&i):impl(i){
             if(impl.options.journal){
@@ -272,9 +279,43 @@ public:
             state.available=c.available;state.volume=c.volume;state.balance=c.balance;state.muted=c.muted;
             state.canSetVolume=c.canSetVolume;state.canSetMute=c.canSetMute;state.canSetBalance=c.canSetBalance;state.error=c.error;
         }
+        void defaultsAvailable(bool value){state.canSetDefaultOutput=state.canSetDefaultInput=value;}
+        void ensureDefaults(){
+            if(defaultsChecked||!impl.options.defaults)return;defaultsChecked=true;
+            bool supported{};
+            try{defaults=impl.options.defaults();supported=defaults&&defaults->capability().supported;}catch(...){}
+            if(!supported)defaults.reset();
+            defaultsAvailable(supported);
+        }
+        // A failed switch that is about the device, not the interface: reported
+        // once as a device change, switching stays on. One rule per line so
+        // each is easy to change.
+        static bool defaultMoved(const AudioDefaultDeviceResult&r){
+            // Another mixer or Windows changed the default between the write
+            // and its readback (or the readback lags); every call succeeded.
+            if(r.raced())return true;
+            // Nothing was written: the device left (not connected, not found)
+            // or changed direction (E_INVALIDARG) first.
+            return !r.writes&&r.rollbackStatus>=0&&(r.status==deviceChanged||r.status==notFound||r.status==invalidValue);
+        }
+        void defaultCommand(const Command&c){
+            if(!defaults)return; // Switched off: the menus are grey already.
+            const auto&devices=c.flag?state.inputs:state.outputs;
+            if(std::none_of(devices.begin(),devices.end(),[&](const auto&d){return d.id==c.endpoint;})){state.commandError=deviceChanged;return;}
+            AudioDefaultDeviceResult result;
+            try{result=defaults->select(c.flag?AudioDefaultFlow::input:AudioDefaultFlow::output,c.endpoint);}catch(...){result.status=unexpected;result.writes=1;}
+            if(result.succeeded())state.commandError=0;
+            else if(defaultMoved(result))state.commandError=deviceChanged;
+            // Any other failing call (a read, a write or a rollback; rolled back
+            // where it could be): the interface is not dependable on this
+            // Windows. Off for the run, without a status (the menus go grey).
+            else{defaults.reset();defaultsAvailable(false);}
+            // Publish the real defaults (Windows also notifies, later).
+            refreshTopology();
+        }
         void syncVolume(bool want){
             const std::wstring target=want&&endpointsOpen?state.defaultOutputID:std::wstring{};
-            if(want&&endpointsOpen)state.paused=false;
+            if(want&&endpointsOpen){state.paused=false;ensureDefaults();}
             if(target==bound&&volumeBound==!target.empty()){if(!want){state.paused=true;clearControls();}return;}
             if(endpointsOpen){
                 const auto hr=call([&]{return endpoints->bind(target,wake(volumeBit));});
@@ -366,8 +407,12 @@ public:
                 state.routesStoppedByDeviceChange=false;
                 if(!sessions)return;state.applicationError=call([&]{return routes.stop(c.id,*sessions);});
             }else{
+                // stopApplications is the Output menu's stop before it switches
+                // to another device (source VolumeCanvas.openDeviceMenu:
+                // stopAll(reason: "App routing stopped because the output
+                // device changed."), shown whether or not a route was owned).
+                if(c.kind==K::stopApplications)state.routesStoppedByDeviceChange=true;
                 if(!sessions)return;const auto hr=call([&]{return routes.stopAll(*sessions);});
-                if(c.kind==K::stopApplications)state.routesStoppedByDeviceChange=false;
                 state.applicationError=hr;
             }
             touched();
@@ -407,9 +452,10 @@ public:
             syncVolume((demand&tierEndpoints)!=0);
             if((flags&volumeBit)&&volumeBound)readVolume();
             syncSessions((demand&tierApplications)!=0);
-            bool sessionsRead=(flags&sessionsBit)!=0;
+            bool sessionsRead=(flags&sessionsBit)!=0,switched{};
             for(const auto&c:commands){
                 switch(c.kind){
+                case K::defaultEndpoint:defaultCommand(c);switched=true;break;
                 case K::volume:case K::mute:case K::balance:endpointCommand(c);break;
                 case K::gain:case K::stopApplication:case K::stopApplications:applicationCommand(c);sessionsRead=true;break;
                 case K::suspend:{const Command all{K::suspend,{},{},0,false};applicationCommand(all);sessionsRead=true;break;}
@@ -417,6 +463,11 @@ public:
                 case K::recover:recover();sessionsRead=true;break;
                 }
             }
+            // Commands keep their order (the Output menu stops the routes
+            // first); the controls and sessions then follow a new default.
+            // Binding the new output clears stale command errors; the switch's
+            // own outcome (a concurrent change) is kept.
+            if(switched){const auto error=state.commandError;syncVolume((demand&tierEndpoints)!=0);syncSessions((demand&tierApplications)!=0);state.commandError=error;}
             if(sessionsRead&&resumed)readSessions();
             // Nobody shows per-app audio and no route is owned: release the
             // session manager and every session object (an exited app's
@@ -432,6 +483,7 @@ public:
             if(!resumed&&!(demand&tierApplications))state.applicationsSupported=false;
         }
         void shutdown()noexcept{
+            defaults.reset();
             try{
                 if(sessions){sessions->pause();(void)call([&]{return routes.stopAll(*sessions);});sessions->close();sessions.reset();}
                 flush(true);
@@ -485,6 +537,7 @@ unsigned AudioService::votes()const noexcept{return impl_->votes;}
 bool AudioService::setVolume(std::wstring endpoint,float value){if(!endpointToken(endpoint)||!unit(value))return false;return impl_->enqueue({Command::Kind::volume,std::move(endpoint),{},value,false});}
 bool AudioService::setMute(std::wstring endpoint,bool value){if(!endpointToken(endpoint))return false;return impl_->enqueue({Command::Kind::mute,std::move(endpoint),{},0,value});}
 bool AudioService::setBalance(std::wstring endpoint,float value){if(!endpointToken(endpoint)||!std::isfinite(value)||value< -1||value>1)return false;return impl_->enqueue({Command::Kind::balance,std::move(endpoint),{},value,false});}
+bool AudioService::setDefaultEndpoint(AudioFlow flow,std::wstring endpoint){if(!endpointToken(endpoint)||(flow!=AudioFlow::output&&flow!=AudioFlow::input))return false;return impl_->enqueue({Command::Kind::defaultEndpoint,std::move(endpoint),{},0,flow==AudioFlow::input});}
 bool AudioService::setApplicationGain(std::string id,float value){if(!applicationToken(id)||!unit(value))return false;return impl_->enqueue({Command::Kind::gain,{},std::move(id),value,false});}
 bool AudioService::stopApplication(std::string id){if(!applicationToken(id))return false;return impl_->enqueue({Command::Kind::stopApplication,{},std::move(id),0,false});}
 bool AudioService::stopApplications(){return impl_->enqueue({Command::Kind::stopApplications,{},{},0,false});}

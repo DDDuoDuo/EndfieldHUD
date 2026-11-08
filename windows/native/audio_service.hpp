@@ -1,4 +1,5 @@
 #pragma once
+#include "native/audio_default_device.hpp"
 #include "native/audio_endpoint_model.hpp"
 #include "native/audio_session_worker.hpp"
 #include <cstdint>
@@ -60,6 +61,11 @@ struct AudioServiceOptions {
     // for 0.12 s before the Event Log list is published (the Volume lists
     // refresh immediately, as the source AudioDeviceController does).
     double topologySettleSeconds{.12};
+    // Default-device switching for the Volume Output and Input menus. The
+    // worker calls this once, the first time Volume shows, and keeps the
+    // selector (its native access belongs to the creating thread). Empty, a
+    // null selector or an unsupported capability leaves switching off.
+    std::function<std::unique_ptr<AudioDefaultDeviceSelector>()>defaults;
 };
 struct AudioServiceStats {
     std::uint64_t wakes{},topologyReads{},volumeReads{},sessionReads{},published{},journalWrites{};
@@ -94,8 +100,18 @@ public:
     bool setVolume(std::wstring endpoint,float);
     bool setMute(std::wstring endpoint,bool);
     bool setBalance(std::wstring endpoint,float);
+    // Makes the endpoint the Windows default for its direction (every role).
+    // Runs on the worker through the selector's guarded write, readback and
+    // rollback, then re-reads the device list. A failing call turns switching
+    // off for the rest of the run without a status (the menus go grey); a
+    // device that left first, or a default another mixer changed during the
+    // switch, reports ERROR_DEVICE_NOT_CONNECTED and switching stays on.
+    bool setDefaultEndpoint(AudioFlow,std::wstring endpoint);
     bool setApplicationGain(std::string application,float);
     bool stopApplication(std::string application);
+    // The Output menu's stop before it switches to another device: restores
+    // every owned route and reports routesStoppedByDeviceChange (source
+    // stopAll(reason:)), whether or not a route was owned.
     bool stopApplications();
     // System suspend: restore every owned route (source: sleep stops routes).
     // Resume re-reads the device list once.
@@ -121,7 +137,8 @@ std::function<std::unique_ptr<AudioEndpointBackend>()>nativeAudioEndpointBackend
 // CompareStringEx(LOCALE_NAME_USER_DEFAULT, LINGUISTIC_IGNORECASE |
 // SORT_DIGITSASNUMBERS): the closest Windows equivalent of Finder ordering.
 AudioNameOrder nativeAudioNameOrder();
-// Production options: native backends, native ordering and the journal at
+// Production options: native backends, native ordering, the IPolicyConfig
+// default-device selector and the journal at
 // <data root>/Audio/RouteJournal.json when a data root is supplied.
 AudioServiceOptions nativeAudioServiceOptions(std::optional<std::filesystem::path> dataRoot);
 #endif

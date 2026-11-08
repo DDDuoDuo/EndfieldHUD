@@ -31,11 +31,10 @@ struct VolumeProviderAccess {
     std::function<std::int32_t(std::string_view,float)>setAppGain;
     std::function<std::int32_t(std::string_view)>stopApp;
     std::function<std::int32_t()>stopAllApps;
-    // A real routing/default-device setter only. Selecting the endpoint whose
-    // volume SystemServices controls is NOT a substitute. Missing operations
-    // disable the corresponding chooser instead of claiming routing support.
-    // Windows has no public API for this (see WINDOWS-MIGRATION.md platform
-    // gaps), so production leaves both empty.
+    // A real default-device setter only (production: the audio service's
+    // IPolicyConfig selector). A missing operation, or the snapshot's
+    // canSetDefaultOutput / canSetDefaultInput false, disables that chooser
+    // instead of claiming routing support.
     std::function<std::int32_t(std::wstring_view)>setDefaultOutput,setDefaultInput;
 };
 

@@ -1559,7 +1559,8 @@ void Application::Impl::constructVolume(){
     if(args.nativeVolume){
         // The shared AudioRuntime binding: Volume's vote (reveal/conceal and the
         // controller's own selection) observes endpoints and per-app sessions
-        // only while Volume is presented; nothing switches the default device.
+        // only while Volume is presented. Its Output and Input menus switch the
+        // default device on the audio worker (off without IPolicyConfig).
         // Without the runtime Volume stays absent (never the synthetic fixture).
         need(bool(audio),"Volume needs the shared audio runtime");
         // The executables' own icon resources, opened by their file identity.
