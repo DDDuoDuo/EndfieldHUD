@@ -237,7 +237,7 @@ final class VolumeCanvas: HUDDesignCanvas {
             guard let self, let id = UInt32(item.id) else { return }
             if input { _ = self.controller.setDefaultInput(id); return }
             if id != self.snapshot.defaultOutputID {
-                self.perAppAudio.stopAll(reason: L10n.text("App routing stopped because the output device changed.", "输出设备已更改，应用混音已停止。"))
+                self.perAppAudio.stopAll()
             }
             _ = self.controller.setDefaultOutput(id)
         }

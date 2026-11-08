@@ -18,9 +18,12 @@ struct CorePerAppAudioFactory: PerAppAudioRouteFactory {
 
 enum PerAppAudioEngineError: LocalizedError {
     case message(String)
+    /// The route's output is no longer the current default output or is gone.
+    /// A start reports it; a running route ends quietly, without a message.
+    case outputChanged(String)
     var errorDescription: String? {
         switch self {
-        case .message(let message): return message
+        case .message(let message), .outputChanged(let message): return message
         }
     }
 }
@@ -453,12 +456,9 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     }
 
     private func validatePhysicalRoute() throws {
-        let current: UInt32 = try read(property(UInt32(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice))
-        let alive: UInt32 = try read(property(output.id, kAudioDevicePropertyDeviceIsAlive))
+        try validateOutputUnchanged()
         let transport: UInt32 = try read(property(output.id, kAudioDevicePropertyTransportType))
-        let uid = try hal.string(property(output.id, kAudioDevicePropertyDeviceUID))
-        guard current == output.id, alive == 1, uid == output.uid, !uid.isEmpty,
-              transport == kAudioDeviceTransportTypeBuiltIn || transport == kAudioDeviceTransportTypeUSB,
+        guard transport == kAudioDeviceTransportTypeBuiltIn || transport == kAudioDeviceTransportTypeUSB,
               try channels(output.id, scope: kAudioDevicePropertyScopeInput) == 0,
               try channels(output.id, scope: kAudioDevicePropertyScopeOutput) == 2 else {
             throw message("This experimental route requires the current built-in or USB stereo output, with no input channels. The device may have changed.",
@@ -469,6 +469,16 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             throw message("This experimental route requires the device's standard left/right stereo channel mapping.", "此实验性路由需要设备使用标准左右双声道映射。")
         }
         try validateProcess()
+    }
+    /// The default output is read first: once the device is gone, its own
+    /// properties no longer read and would hide the change behind a HAL error.
+    private func validateOutputUnchanged() throws {
+        let current: UInt32 = try read(property(UInt32(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice))
+        let alive = try? read(property(output.id, kAudioDevicePropertyDeviceIsAlive)) as UInt32
+        let uid = try? hal.string(property(output.id, kAudioDevicePropertyDeviceUID))
+        guard current == output.id, alive == 1, uid == output.uid, uid?.isEmpty == false else {
+            throw PerAppAudioEngineError.outputChanged(localized("The output device changed. Try again", "输出设备已更改，请重试"))
+        }
     }
     private func waitUntilAggregateReady() throws {
         // Aggregate creation may finish before its device becomes alive. A
@@ -532,7 +542,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
                     if address.object == self.output.id || address.object == self.aggregate || self.formatProperties.contains(address) {
                         throw self.message("The audio device format changed. Start this route again if needed.", "音频设备格式已更改，如有需要请重新启动此路由。")
                     }
-                } catch { self.fail(self.describe(error)) }
+                } catch { self.fail(error) }
                 }
             }
             listeners.append(listener)
@@ -555,12 +565,12 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             guard !stopping, let state = renderState else { return }
             guard cancellation?.isCancelled != true else { _ = stop(); return }
             if PerAppAudioPCM.load(state, PerAppAudioPCM.faultSlot) != 0 {
-                self.fail(self.message("The audio callback format changed. Stopping processing and restoring direct playback.", "音频回调格式已更改，正在停止处理并恢复原始播放。").localizedDescription); return
+                self.fail(self.message("The audio callback format changed. Stopping processing and restoring direct playback.", "音频回调格式已更改，正在停止处理并恢复原始播放。")); return
             }
             let ticks = PerAppAudioPCM.load(state, PerAppAudioPCM.tickSlot)
             if ticks != self.lastTicks { self.lastTicks = ticks; self.lastCallback = now }
             if self.activated {
-                if now - self.lastCallback > 1 { self.fail(self.message("Audio processing stopped responding. Stopping this route.", "音频处理停止响应，正在停止此路由。").localizedDescription) }
+                if now - self.lastCallback > 1 { self.fail(self.message("Audio processing stopped responding. Stopping this route.", "音频处理停止响应，正在停止此路由。")) }
             } else if PerAppAudioPCM.load(state, PerAppAudioPCM.signalSlot) != 0 {
                 do {
                     try self.validatePhysicalRoute()
@@ -580,13 +590,20 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
                         guard cancellation.performUnlessCancelled(arm) else { try self.checkCancellation(); return }
                     } else { arm(self.requestedGain) }
                     self.event(.active)
-                } catch { self.fail(self.describe(error)) }
+                } catch { self.fail(error) }
             } else if now - self.primingStarted > 60 {
                 self.fail(self.message("No usable app audio arrived. Allow System Audio Recording, play audio, and try again. The app's original output was not muted.",
-                    "未收到可用的应用音频。请允许系统音频录制、播放音频后重试，应用原始输出未被静音。").localizedDescription)
+                    "未收到可用的应用音频。请允许系统音频录制、播放音频后重试，应用原始输出未被静音。"))
             }
     }
-    private func fail(_ detail: String) {
+    private func fail(_ error: Error) {
+        // Another output took over (a menu pick or macOS switching to newly
+        // connected headphones): the route ends like an explicit stop, with
+        // only a cleanup error, if any, to report.
+        if case .outputChanged? = error as? PerAppAudioEngineError {
+            event(.stopped(stop())); return
+        }
+        let detail = describe(error)
         // Publish intent before any potentially blocking HAL teardown so the
         // facade can disable controls and start its independent stop deadline.
         event(.failed(detail))

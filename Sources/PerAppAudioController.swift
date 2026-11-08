@@ -155,7 +155,7 @@ final class PerAppAudioController {
         notify()
     }
 
-    func stopAll(reason: String? = nil) {
+    func stopAll() {
         requireMain()
         var errors: [String] = []
         for id in Array(routes.keys) {
@@ -168,7 +168,7 @@ final class PerAppAudioController {
             sessions[index].state = routes[sessions[index].processID]?.route.isStopping == true ? .stopping : .failed
             sessions[index].error = errors.first
         }
-        statusMessage = errors.first ?? reason
+        statusMessage = errors.first
         notify()
     }
 
