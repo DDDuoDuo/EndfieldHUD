@@ -383,7 +383,9 @@ void Canvas::refreshRouter() {
     std::vector<Control*> controls;
     if (showsHeader_ && currentHeader()) controls = currentHeader()->controls();
     controls.insert(controls.end(), page_->controls().begin(), page_->controls().end());
-    controls.insert(controls.end(), fields_.begin(), fields_.end());
+    // A field placed in its row keeps that place; others follow the page.
+    for (TextField* field : fields_)
+        if (std::find(controls.begin(), controls.end(), field) == controls.end()) controls.push_back(field);
     if (popover_) {
         controls.insert(controls.end(), popoverControls_.begin(), popoverControls_.end());
         if (Control* close = popover_->closeButton()) controls.push_back(close);

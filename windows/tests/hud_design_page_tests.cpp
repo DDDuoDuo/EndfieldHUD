@@ -1044,6 +1044,13 @@ void focusMoves(RecordedMeasurer& measurer) {
     FieldHost host; w.context.setEditorHost(&host);
     FieldCanvas a(endfield::core::Module::system, w.context), b(endfield::core::Module::profile, w.context);
     for (auto* c : {&a, &b}) { c->show(w.now); c->setActive(true, w.now); }
+    // HUDDesignCanvas.refreshRouter: a registered field that the page also
+    // lists keeps its page place and is routed (and spoken) once.
+    {
+        std::vector<d::AccessibilityItem> items; a.accessibilityItems(items);
+        check(std::count_if(items.begin(), items.end(), [](const d::AccessibilityItem& i) { return i.id == "field.name"; }) == 1,
+            "A field in the page controls is listed once");
+    }
     w.context.editorFocusMoved();
     check(host.ends == 0 && a.commits.empty(), "Nothing editing: a focus move changes nothing");
     a.field->beginEditing();
