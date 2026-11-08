@@ -268,7 +268,9 @@ final class HUDFacilityBanner {
     /// the next queued alert, or idle.
     private func leave(animated: Bool) {
         guard isShowing, !leaving else {
-            if leaving, !animated { finishLeaving() }
+            // A leave whose motion was stripped (the HUD close's cancel) ends
+            // now instead of showing the plate again until its removal.
+            if leaving, !animated || plate.animation(forKey: "hud.leave") == nil { finishLeaving() }
             return
         }
         leaving = true
