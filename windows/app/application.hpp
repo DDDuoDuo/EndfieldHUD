@@ -220,10 +220,6 @@ public:
     int runHiddenVerification();
     // Second-launch activation forwarded by the single-instance guard.
     void activate(std::span<const std::string> arguments);
-    // After run() returned: the work of an accepted DataRootRestart
-    // (app/areas/mac_import_handoff.hpp), returned once; empty otherwise.
-    // The host runs it with this Application destroyed, then a fresh run.
-    std::function<void()> takeRestartWork();
     // After run() returned: set when a lost GPU device ended the run; the
     // module to reopen (the HUD's module when it was open, else none).
     std::optional<std::optional<core::Module>> takeDeviceRecovery();

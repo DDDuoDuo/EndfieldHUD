@@ -156,9 +156,4 @@ std::optional<AccountCache> decodeCacheBytes(std::string_view bytes) {
     try {return decodeCache(Json::parse(bytes,maximumCacheBytes));} catch(const std::exception&) {return std::nullopt;}
 }
 std::string encodeCacheBytes(const AccountCache& c) {return encodeCache(c).encode(maximumCacheBytes);}
-std::optional<AccountCache> importMacAccountCache(std::string_view bytes) {
-    auto cache=decodeCacheBytes(bytes);if(!cache) return std::nullopt;
-    for(auto& [key,record]:cache->records) if(record.linked) record.requiresReconnect=true;
-    return cache;
-}
 }

@@ -76,8 +76,8 @@ struct ProjectionSettings {
 // present; dailyBootLogLastDay (local yyyy-MM-dd) and projection.settings.v1
 // live outside AppConfiguration, so Restore Defaults keeps them. Windows
 // stores "never"/"gpu" in displayMode/alertMetric directly: its file is never
-// read by a Mac, so the Mac's displayModeExtension/alertMetricExtension pair
-// exists only in the Mac import. Windows 1.2.0 round-trips every new key.
+// read by a Mac, so it never writes the Mac's displayModeExtension/
+// alertMetricExtension pair. Windows 1.2.0 round-trips every new key.
 // D2: summonHotkeyEnabled is the switch; the store migrates a 1.2.0
 // windowsSummonHotkeyDisabled on load (the Mac key wins when both exist) and,
 // for Windows 1.2.0 readers, writes it back as a mirror (true while the hotkey
@@ -116,8 +116,7 @@ struct Settings {
     std::int64_t orbipomBestScore() const;         // "orbipom.bestScore.v1", absent/invalid = 0
     bool operator==(const Settings&) const = default;
 };
-// Mac ProjectionSettings.init's reading of a stored dictionary (also used by
-// the Mac import with the plist coerced to these JSON types).
+// Mac ProjectionSettings.init's reading of a stored dictionary.
 ProjectionSettings decodeProjectionSettings(const Json&);
 Json encodeProjectionSettings(const ProjectionSettings&);
 class SettingsStore final {
@@ -128,7 +127,7 @@ public:
     const std::filesystem::path& path() const noexcept { return path_; }
     // AppDelegate's separate "hasLaunched" defaults key. It is kept in the
     // envelope beside (never inside) the preference record, so Restore
-    // Defaults cannot repeat first-run onboarding and Mac import can map it.
+    // Defaults cannot repeat first-run onboarding.
     bool hasLaunched() const noexcept { return launched_; }
     bool markLaunched(); // false when already marked; no write
 private:

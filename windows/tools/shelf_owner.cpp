@@ -382,7 +382,7 @@ struct ShelfService::Impl {
                 *result = mig::MacRelinkLedger(root).unresolved(mig::relinkShelfItem); },
             [this, read, result](std::exception_ptr error) {
                 if (read != relinkReads) return; // a newer read follows
-                std::vector<mig::MacRelinkItem> open; if (!error) open = std::move(*result); // an unreadable ledger lists nothing; the import card keeps it
+                std::vector<mig::MacRelinkItem> open; if (!error) open = std::move(*result); // an unreadable ledger lists nothing and is kept as it is
                 std::erase_if(open, [&](const auto& item) { return onShelf(item.recordID) || dismissing.contains(item.recordID) || !item.macReference["createdAt"].isNumber(); });
                 if (open == pendingRelinks) return;
                 pendingRelinks = std::move(open);

@@ -71,9 +71,4 @@ std::string Sha256::hex() noexcept {
     return result;
 }
 std::string Sha256::hex(std::string_view bytes) { Sha256 hash; hash.update(bytes); return hash.hex(); }
-bool validSha256Hex(std::string_view value) noexcept {
-    if (value.size() != 64) return false;
-    for (const char c : value) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
-    return true;
-}
 }

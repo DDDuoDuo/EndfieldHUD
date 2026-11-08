@@ -167,15 +167,6 @@ RelinkRecordCheck macRelinkMediaCheck(const MacRelinkItem&, std::span<const data
 // Identity, order, title, progress, bookmarks and unknown fields are kept; the
 // opaque Mac locator is replaced by the explicit additive Windows locator.
 endfield::modules::ReaderBook relinkedReaderBook(const endfield::modules::ReaderBook&, std::string windowsPath);
-struct WindowsMediaDescriptor {
-    std::string windowsPath, displayName, kind{"image"};
-    int pixelWidth{}, pixelHeight{};
-    std::optional<double> duration;
-    int frameCount{1};
-};
-// Notes media payload (JSON text) and Archive attachment (JSON object).
-std::string relinkedNoteMedia(std::string_view macMediaJSON, const WindowsMediaDescriptor&);
-data::Json relinkedMediaObject(const data::Json& macMedia, const WindowsMediaDescriptor&);
 // Lets FileShelfStore::add keep the imported item's identifier and date.
 data::FileShelfStore::Creation shelfRelinkCreation(const MacRelinkItem&);
 // The shelf owner builds its one FileShelfStore with slot.creation(). While an

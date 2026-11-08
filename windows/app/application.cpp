@@ -626,9 +626,6 @@ void Application::Impl::constructAreas(){
         calendarReminderRefresh=[this](double){if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});};
         areaHost->publish<endfield::areas::CalendarReminderActivationSink>(endfield::areas::calendarReminderActivationKey,calendarReminderRefresh);
     }
-    // Committing a Mac import needs every store closed: the accepted-quit
-    // teardown, then a fresh run (main.cpp). Production only.
-    if(production())areaHost->publish<DataRootRestart>(dataRootRestartService,restart);
     // Read-only Event Log for areas: systemProviders hidden coverage checks every host action hook's recorded vocabulary.
     if(eventOwner)areaHost->publish<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey,*eventOwner);
     // The one design Context for redesigned area modules (ApplicationHost::designContext).
@@ -724,8 +721,8 @@ void Application::Impl::connectAreas(){
     // position editor is open.
     if(auto*p=powerArea())p->setEditingObserver([this](bool editing){lifecycle.setEditingPosition(editing);});
     lifecycle.setModuleRestore([this](core::Module last){return restorableModule(last);}); // reopen fallback (B2b)
-    // Areas are constructed after Settings: the System page's area rows
-    // ("Import macOS data…") appear now.
+    // Areas are constructed after Settings: its views render again now that
+    // the area services its hooks read exist.
     if(settingsUI)settingsUI->refreshViews(areaClock());
     // The windowsUpdates area owns About's update rows and the tray item
     // (AppDelegate.configureUpdater); its observer runs after any change.
@@ -1681,10 +1678,6 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
 #if defined(EHUD_APP_VERSION_NAME)&&defined(EHUD_APP_BUILD_NUMBER)
     options.hooks.about.version=std::string(EHUD_APP_VERSION_NAME)+" ("+EHUD_APP_BUILD_NUMBER+")"; // HUDAboutInformation: "<version> (<build>)"
 #endif
-    // System page "Import macOS data…" (Windows only; the macImport area's entry).
-    options.hooks.macImportTitle=[this](core::Language l)->std::optional<std::string>{
-        auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr;if(!e)return std::nullopt;return e->title(l);};
-    options.hooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)isolateService(macImportEntryService,"mac import",[&]{(void)e->present(areaClock());});};
     // Display > Theme color / Center logo (HUDSettingsInteraction.chooseColor,
     // chooseLogo; a logo selection invalidates a pending import).
     options.hooks.language=[](const ehud::data::Settings&value){return settingsLanguage(value);};
@@ -2100,7 +2093,6 @@ bool Application::Impl::flushDocuments(double time,bool reopenOnFailure){
 }
 void Application::Impl::reopenAfterSaveFailure(core::Module module,double time){
     quitRequested=false;
-    declineRestart(); // a failed save cancels a pending restart as it cancels the quit
     perform(lifecycle.cancelTermination(),time);
     // Windows keeps the failing module visible (Mac only re-enables input):
     // a silent no-op quit would hide the unsaved record from the user.
@@ -2109,8 +2101,6 @@ void Application::Impl::reopenAfterSaveFailure(core::Module module,double time){
 }
 void Application::Impl::finishQuit(double time){
     if(!flushDocuments(time,true))return;
-    // An accepted DataRootRestart: the work runs after this owner is gone.
-    if(restartPending){restartPending=false;restartAccepted=true;restartDeclined={};}
     projectionHandoff.cancel();(void)projectionCall("quit",[&]{projection->close(hostTime(time));});
     stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
 }
@@ -2157,9 +2147,6 @@ void Application::Impl::sessionEnding(SessionEnd phase,std::uint32_t reason){
     // stops. The user-quit cancel-on-failure path is not used: Windows ends
     // the session regardless, and every failed record stays on disk unchanged.
     if(!ready||sessionEnded||phase==SessionEnd::cancelled)return;
-    // A session end never runs a pending restart's work (Mac import commit);
-    // its decline runs now, on this UI thread, before the loop stops.
-    declineRestart();runRestartDeclined();
     const auto time=now();const auto window=static_cast<HWND>(host.hwnd());
     // The shutdown-block reason Windows lists while the records save (no Mac
     // counterpart): Windows-only text in the five source languages.
@@ -2337,7 +2324,7 @@ void Application::Impl::publishNative(){
     registry.forEach([&](ModuleOwner&o){if(&o!=notesModuleOwner.get())for(const auto&e:o.floatingEntries())ordered.push_back(e);},"publish");
     if(facilityOwner)(void)registry.guard(*facilityOwner,[&]{for(const auto&e:facilityOwner->modalEntries())ordered.push_back(e);},"publish");
     if(notesModuleOwner)(void)registry.guard(*notesModuleOwner,[&]{for(const auto&e:notesModuleOwner->floatingEntries())ordered.push_back(e);},"publish");
-    // Windows-only modal cards (the Mac import) stay above everything.
+    // Modal cards of module areas stay above everything.
     registry.forEach([&](ModuleOwner&o){if(&o!=designOverlay.get()&&&o!=facilityOwner)for(const auto&e:o.modalEntries())ordered.push_back(e);},"publish");
     // A language event can leave equal captions/numbers in retained scenes.
     // Refresh only an older font generation; group carriers forward this to
@@ -2853,25 +2840,7 @@ std::optional<std::intptr_t> Application::Impl::automationObject(const NativeMes
 }
 
 // ---------------------------------------------------------------------------
-// DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss
-bool Application::Impl::requestRestart(std::function<void()> work,std::function<void()> declined){
-    // Production only; hidden coverage opens it for its own restart checks.
-    if(!(production()||restartVerification)||!ready||stopping||quitRequested||sessionEnded||restartPending||restartAccepted||deviceLost||!work)return false;
-    restartWork=std::move(work);restartDeclined=std::move(declined);restartPending=true;
-    // The red power button's confirmed quit, outside the area's own call.
-    if(!PostMessageW(static_cast<HWND>(host.hwnd()),restartMessage,serviceGeneration,0)){restartPending=false;restartWork={};restartDeclined={};return false;}
-    return true;
-}
-void Application::Impl::declineRestart(){
-    if(!restartPending)return;
-    restartPending=false;restartWork={}; // destroyed unrun
-    if(restartDeclined&&!restartDeclinePosted&&ready&&host.hwnd())restartDeclinePosted=PostMessageW(static_cast<HWND>(host.hwnd()),restartDeclinedMessage,serviceGeneration,0)!=FALSE;
-}
-void Application::Impl::runRestartDeclined(){
-    restartDeclinePosted=false;
-    if(auto declined=std::exchange(restartDeclined,{}))try{declined();}catch(const std::exception&e){
-        const auto line=std::string("EndfieldHUD restart decline failed (")+typeid(e).name()+")\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());}
-}
+// GPU device loss
 bool Application::Impl::recoverDevice(const std::exception&e,double time){
     // DXGI device removal/reset (driver update or reset, adapter change,
     // TDR): a fresh run creates a new device and re-uploads everything
@@ -2893,7 +2862,6 @@ bool Application::Impl::restartDisplay(const std::string&reason,double time){
     if(deviceLost||stopping)return true;
     deviceLost=true;
     if(notes&&session->phase()!=core::VisibilityPhase::concealed&&!closing)deviceLostModule=notes->selected();
-    declineRestart();runRestartDeclined();
     const auto line="EndfieldHUD "+reason+"; restarting the display\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     // The session-end drain: no animation, editors committed, every save queue flushed.
     (void)lifecycle.forceClose();forceConceal(time);broadcast(HostEvent::Kind::quitting,time);

@@ -60,14 +60,6 @@ std::string_view stateName(RelinkState state) {
     }
     return "unresolved";
 }
-Json mergeUnknown(const Json& original, Json replacement) {
-    static const std::set<std::string, std::less<>> locator{"version", "kind", "bookmark", "isSecurityScoped", "lastKnownPath", "displayName",
-        "pixelWidth", "pixelHeight", "frameCount", "duration", "referencePlatform", "windowsPath"};
-    if (original.isObject())
-        for (const auto& [key, value] : original.object())
-            if (!locator.contains(key) && !replacement.contains(key)) replacement[key] = value;
-    return replacement;
-}
 }
 bool validMacRelinkTarget(std::string_view store, std::string_view target) noexcept {
     if (!knownStore(store)) return false;
@@ -304,17 +296,6 @@ endfield::modules::ReaderBook relinkedReaderBook(const endfield::modules::Reader
     result.originalFields = book.originalFields;     // excludes the Mac locator keys by construction
     result.originalNumbers = book.originalNumbers;
     return result;
-}
-std::string relinkedNoteMedia(std::string_view macMediaJSON, const WindowsMediaDescriptor& descriptor) {
-    const auto original = Json::parse(macMediaJSON, 16 * 1024 * 1024);
-    const auto replacement = Json::parse(data::makeWindowsMediaReference(descriptor.windowsPath, descriptor.displayName,
-        descriptor.pixelWidth, descriptor.pixelHeight, descriptor.kind, descriptor.duration, descriptor.frameCount));
-    return mergeUnknown(original, replacement).encode(16 * 1024 * 1024);
-}
-Json relinkedMediaObject(const Json& macMedia, const WindowsMediaDescriptor& descriptor) {
-    const auto replacement = Json::parse(data::makeWindowsMediaReference(descriptor.windowsPath, descriptor.displayName,
-        descriptor.pixelWidth, descriptor.pixelHeight, descriptor.kind, descriptor.duration, descriptor.frameCount));
-    return mergeUnknown(macMedia, replacement);
 }
 data::FileShelfStore::Creation shelfRelinkCreation(const MacRelinkItem& item) {
     need(item.store == relinkShelfItem && item.macReference["createdAt"].isNumber(), "Not an imported shelf item");

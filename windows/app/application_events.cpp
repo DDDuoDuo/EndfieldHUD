@@ -531,13 +531,6 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(idCard&&!stopping&&session->phase()==core::VisibilityPhase::concealed)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
             return 0;}
         if(m.message==themeColorMessage){chooseThemeColor();return 0;}
-        if(m.message==restartMessage){
-            // DataRootRestart: the red power button's confirmed quit (close, the
-            // flush chain, every save queue), then a fresh run (main.cpp).
-            if(restartPending&&!stopping&&!quitRequested)perform(lifecycle.requestQuit(),now());
-            return 0;
-        }
-        if(m.message==restartDeclinedMessage){runRestartDeclined();refresh(now());return 0;}
         // The hand-offs of a close that finished inside its request (finishConcealment);
         // a summon that opened the HUD again meanwhile keeps them for its close.
         if(m.message==afterCloseMessage){afterCloseQueued=false;if(hudClosed())openAfterConcealed();return 0;}

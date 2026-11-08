@@ -4,8 +4,8 @@
 #include "app/utility_executor.hpp"
 #include "core/data/file_io.hpp"
 #include "core/localization.hpp"
-#include "core/migration/mac_import_native.hpp"
 #include "core/migration/relink_ledger.hpp"
+#include "modules/app_shortcut_model.hpp"
 #include "modules/app_shortcut_navigation.hpp"
 #include "modules/app_shortcut_canvas.hpp"
 #include "modules/app_shortcut_tasks.hpp"
@@ -1052,7 +1052,7 @@ struct AppShortcutArea::Driver {
         a.setOverlayVisible(true, t);frames(.4);
         step.check(canvas().isActive() && !a.launch_, "+ Add App is interactive again after the handoff");
     }
-    // Migration/relink.json as the import card reads it, and the rows the
+    // Migration/relink.json as the seed wrote it, and the rows the
     // factory seeded: [0] the imported shortcut, [1] a shortcut the user had
     // already removed, [2] a Reader row with the same record id.
     std::vector<mig::MacRelinkItem> seededRows() const {
@@ -1439,13 +1439,22 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
         directory = relinkRoot / "AppShortcuts";
         seed.archive = archive.encode(m::shortcutMaximumBytes);
         ehud::data::detail::replaceFile(directory / "shortcuts.json", std::nullopt, seed.archive, m::shortcutMaximumBytes);
-        // The import's own ledger rows for that archive (validateStagedShortcuts,
-        // as the offline import writes Migration/relink.json), one row whose
-        // shortcut the user already removed and one Reader row with the same
-        // record id, which only the Reader decides.
-        auto rows = mig::validateStagedShortcuts(directory, g::nativeShortcutTextRules());
-        need(rows.size() == 1, "the import lists the seeded Mac shortcut for relinking");
-        rows[0].id = ehud::data::makeUUID();
+        // The ledger rows an earlier Mac import wrote to Migration/relink.json
+        // for that archive (each record without a Windows target, with its
+        // name and opaque Mac locator), one row whose shortcut the user
+        // already removed and one Reader row with the same record id, which
+        // only the Reader decides.
+        std::vector<mig::MacRelinkItem> rows;
+        for (const auto& record : m::ShortcutRepository(directory, g::nativeShortcutTextRules()).load().items) {
+            if (record.native()) continue;
+            mig::MacRelinkItem item;
+            item.id = ehud::data::makeUUID();item.store = std::string(mig::relinkAppShortcut);item.recordID = record.id;
+            item.displayName = record.name;item.kind = "app";item.macReference = record.locator;
+            if (record.locator["lastKnownPath"].isString()) item.lastKnownPath = record.locator["lastKnownPath"].string();
+            if (record.bundleIdentifier) item.macReference["bundleIdentifier"] = *record.bundleIdentifier;
+            rows.push_back(std::move(item));
+        }
+        need(rows.size() == 1, "the seeded Mac shortcut is listed for relinking");
         auto removed = rows[0];removed.id = ehud::data::makeUUID();removed.recordID = "abcdef00-0000-4000-8000-0000000000ff";removed.displayName = "Removed";
         auto book = rows[0];book.id = ehud::data::makeUUID();book.store = std::string(mig::relinkReaderBook);book.kind = "book";
         rows.push_back(std::move(removed));rows.push_back(std::move(book));

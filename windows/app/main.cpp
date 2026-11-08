@@ -33,7 +33,6 @@
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_work.hpp"
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
 #include "native/font_resources.hpp"
@@ -261,8 +260,7 @@ int run(const std::vector<std::string>& values) {
         return 1;
     }
     reportDisabled(package);
-    // Each run opens the root again: an accepted restart (the Mac import
-    // commit between two runs) or a GPU device loss ends a run with every
+    // Each run opens the root again: a GPU device loss ends a run with every
     // store closed, then a fresh owner runs under the same instance guard.
     auto startup = arguments.startup;
     std::optional<core::Module> reopen;
@@ -271,12 +269,6 @@ int run(const std::vector<std::string>& values) {
     std::vector<std::chrono::steady_clock::time_point> recoveries;
     for (;;) {
         const auto base = isolated.empty() ? ehud::data::localApplicationDataBase() : isolated;
-        // A Mac import activation interrupted between its two renames (the
-        // previous root moved to its backup, the staged root not yet in place)
-        // is rolled back before any owner opens the root. Never replaces an
-        // existing root and never deletes anything (core/migration/README.md).
-        (void)ehud::migration::recoverMacImportWork((base / std::string(ehud::data::applicationRootDataDirectory)).lexically_normal(),
-            std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
         const auto root = openRoot(base);
         if (!root) return 1;
         fatalDataFolder = root->data;
@@ -326,7 +318,6 @@ int run(const std::vector<std::string>& values) {
         // Areas join the module owner only with Notes (module selection, TSF).
         if (package.modules) app::appendRegisteredAreas(options.modules, false);
         int code{};
-        std::function<void()> work;
         std::optional<std::optional<core::Module>> recovered;
         {
             // Declared before the owner: the teardown stage covers its destructor.
@@ -336,18 +327,8 @@ int run(const std::vector<std::string>& values) {
             stage.emplace("application run");
             code = application.run();
             instance.setHandler({});
-            work = application.takeRestartWork();
             recovered = application.takeDeviceRecovery();
             stage.emplace("application teardown");
-        }
-        if (work) {
-            // Every owner and store of the finished run is closed: the area's
-            // work (e.g. the Mac import commit) runs exactly once, then the HUD
-            // opens again on System over the same root.
-            const app::FatalStage stage("restart work");
-            work(); work = {};
-            startup = {}; startup.settings = true; reopen.reset();
-            continue;
         }
         if (recovered) {
             // A lost GPU device: a fresh owner creates a new device and

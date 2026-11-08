@@ -377,7 +377,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     check(RevokeDragDrop(hwnd) == DRAGDROP_E_NOTREGISTERED && !IsWindowVisible(hwnd), "Teardown revokes the drop target; nothing was shown");
 }
 
-// Mac-imported Shelf items (Migration/relink.json written by the import area):
+// Mac-imported Shelf items (Migration/relink.json written by an earlier import):
 // unavailable tiles until the user picks the file on this PC.
 void relink(HWND hwnd, gpu::Renderer& renderer) {
     Temp temp; std::vector<Recorded> events;

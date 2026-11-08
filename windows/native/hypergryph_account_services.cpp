@@ -75,9 +75,9 @@ HypergryphAccountServices::HypergryphAccountServices(app::UtilityExecutor& execu
     // Cache writes leave the UI thread; a failed write surfaces the Mac status text.
     i.cache=std::make_unique<QueuedAccountCacheFile>(i.options.accountDirectory/L"profile-cache.json",executor,
         [impl=impl_.get()]{if(impl->controller) impl->controller->cacheWriteFailed();});
-    // After the Mac import's restart the controller reads the imported cache
-    // (requiresReconnect, no credentials); the file it committed with
-    // inherited security gets the owner-only DACL (Mac 0600) in place.
+    // A cache an earlier Mac import wrote (requiresReconnect, no credentials)
+    // was committed with inherited security; it gets the owner-only DACL
+    // (Mac 0600) in place.
     i.cache->secureExisting();
     auto post=poster();
     i.queue=std::make_unique<UtilityAccountWorkQueue>(executor,post);

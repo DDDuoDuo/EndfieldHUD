@@ -347,9 +347,6 @@ void SettingsCanvas::buildSystem(d::Page& page) {
     restore.place({0, 0});
     restore.onActivate = [this] { confirmRestore(); };
     rows.push_back(&row("restore", text("Restore default settings", "恢复默认设置"), {&restore.layer()}, page, {}, {&restore}));
-    // Windows only: the macImport area's entry, as a nav row.
-    if (hooks_.macImportTitle) if (auto title = hooks_.macImportTitle(env().language))
-        rows.push_back(&navRow("macImport", *title, page, [this] { if (hooks_.macImport) hooks_.macImport(); }));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"SYSTEM"}, "SYS-01", title("System", "系统设置"), d::format::pad2(std::int64_t(rows.size())), false);
 }

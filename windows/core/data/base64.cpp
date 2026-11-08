@@ -20,12 +20,11 @@ std::string base64Encode(std::string_view bytes) {
     }
     return out;
 }
-std::optional<std::string> base64Decode(std::string_view text, bool allowWhitespace, bool strictTail) {
+std::optional<std::string> base64Decode(std::string_view text, bool strictTail) {
     std::string out;
     out.reserve(text.size() / 4 * 3);
     std::uint32_t buffer{}; unsigned bits{}, symbols{}, padding{};
     for (const char c : text) {
-        if (allowWhitespace && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) continue;
         int v;
         if (c >= 'A' && c <= 'Z') v = c - 'A';
         else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;

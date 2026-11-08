@@ -22,7 +22,6 @@
 #include "app/summon_hotkey.hpp"
 // Host-side contracts of module areas (headers only; no area library link).
 #include "app/areas/app_shortcut_navigation.hpp"
-#include "app/areas/mac_import_handoff.hpp"
 #include "app/areas/power_module.hpp"
 #include "app/areas/update_service.hpp"
 #include "native/id_card_presenter.hpp"
@@ -484,10 +483,7 @@ struct Application::Impl {
     void refreshAutomation();
     HudAutomationSource automationSource();
     std::optional<std::intptr_t> automationObject(const NativeMessage&);
-    // DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss.
-    bool requestRestart(std::function<void()> work, std::function<void()> declined);
-    void declineRestart();
-    void runRestartDeclined();
+    // GPU device loss.
     bool recoverDevice(const std::exception&, double time);
     bool restartDisplay(const std::string& reason, double time);
     void checkAdapter(double time);
@@ -916,21 +912,8 @@ struct Application::Impl {
     std::optional<source::SourceDesktopFrameSettings> idCardBaseline;
     std::unique_ptr<gpu::IdCardPresenter> idCard;
     bool idCardQueued{}; // an idCardMessage is posted (a feed change while concealed)
-    // DataRootRestart: the accepted-quit teardown, then a fresh run (main.cpp).
-    class Restart final : public DataRootRestart {
-    public:
-        explicit Restart(Impl& impl) noexcept : impl_(impl) {}
-        bool restartWith(std::function<void()> work, std::function<void()> declined) override { return impl_.requestRestart(std::move(work), std::move(declined)); }
-    private:
-        Impl& impl_;
-    };
-    Restart restart{*this};
-    std::function<void()> restartWork, restartDeclined;
-    bool restartPending{}, restartAccepted{}, restartDeclinePosted{};
-    bool restartVerification{}; // hidden coverage only: the restart checks may request it
-    std::function<void()> takeRestartWork();
-    // GPU device loss ends this run like an accepted restart (main.cpp builds
-    // a fresh owner with a new device); the HUD reopens on its last module.
+    // GPU device loss ends this run (main.cpp builds a fresh owner with a new
+    // device); the HUD reopens on its last module.
     bool deviceLost{};
     std::optional<core::Module> deviceLostModule;
     // Explicit long area jobs (Media Assembly exports) on their own executor.
@@ -1072,8 +1055,8 @@ struct Application::Impl {
         if (owner && registry.contains(*owner)) { (void)registry.guard(*owner, std::forward<F>(f), operation); return; }
         f();
     }
-    // Services published by a module area (Power, updates, app shortcuts,
-    // Mac import) run under that area owner's isolation; a disabled area's
+    // Services published by a module area (Power, updates, app shortcuts)
+    // run under that area owner's isolation; a disabled area's
     // service is skipped (false).
     ModuleOwner* serviceOwner(std::string_view key) const noexcept;
     template <class F> bool isolateService(std::string_view key, const char* operation, F&& f) {
@@ -1119,7 +1102,7 @@ struct Application::Impl {
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,archiveMediaMessage=WM_APP+221,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,afterCloseMessage=WM_APP+241,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;

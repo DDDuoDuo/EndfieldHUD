@@ -23,7 +23,8 @@ void sha256() {
 void base64() {
     check(d::base64Encode("") == "" && d::base64Encode("f") == "Zg==" && d::base64Encode("fo") == "Zm8=" && d::base64Encode("foobar") == "Zm9vYmFy", "Base64 vectors");
     check(d::base64Decode("Zm9vYmE=") == std::optional<std::string>("fooba") && !d::base64Decode("Zm9vYmE") && !d::base64Decode("Zg=a") && !d::base64Decode("Zh=="), "Strict canonical base64");
-    check(d::base64Decode(" Zm9v\n YmFy\t", true) == std::optional<std::string>("foobar") && !d::base64Decode(" Zm9v", false), "Whitespace only where allowed");
+    check(!d::base64Decode(" Zm9v") && !d::base64Decode("Zm9v\nYmFy"), "Whitespace is refused");
+    check(d::base64Decode("Zh==", false) == std::optional<std::string>("f") && !d::base64Decode("Zh=="), "Non-zero unused bits only when the tail is not strict");
 }
 }
 int main() {

@@ -278,10 +278,6 @@ void contracts() {
     hooks.icons = {{"endfield", "Endfield", {d::ImageSource::Kind::asset, "application-icons/endfield-app.png", std::string(64, '0'), 0}},
                    {"babel", "Babel", {d::ImageSource::Kind::asset, "application-icons/babel-app.png", std::string(64, '0'), 0}}};
     hooks.about.repository = "https://github.com/DDDuoDuo/EndfieldHUD";
-    std::optional<std::string> importTitle;
-    std::vector<std::string> imports;
-    hooks.macImportTitle = [&](L l) { return importTitle ? std::optional(core::localized(*importTitle, *importTitle, l)) : std::nullopt; };
-    hooks.macImport = [&] { imports.emplace_back("import"); };
     m::SettingsUpdateStatus update;
     update.canCheck = true; update.canSetAutomatic = true; update.releaseURL = "https://github.com/DDDuoDuo/EndfieldHUD/releases";
     World w(measurer, hooks, update);
@@ -398,11 +394,6 @@ void contracts() {
     (void)w.context.advance(w.now + 1);
     check(committed().moduleLayout().isDefault() && toastTitle() == "Layout restored" && !w.control(M::system, "modulesReset").enabled(), "Confirmed: the default layout, a toast, the button disabled");
     { const auto back = w[M::system].page().back; back(); }
-    importTitle = "Import macOS data…";
-    w[M::system].rerender();
-    check(w[M::system].page().controls().back()->id() == "macImport" && w[M::system].header().counterText() == "07", "Windows: Import macOS data is the last System row");
-    w.activate(M::system, "macImport");
-    check(imports.size() == 1, "and runs the import entry");
     w.activate(M::system, "restore");
     check(overlay.confirmState().request()->id == "restore" && overlay.decide(d::ConfirmState::Decision::confirm), "Restore default settings asks");
     (void)w.context.advance(w.now + 1);

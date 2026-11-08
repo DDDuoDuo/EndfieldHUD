@@ -91,7 +91,7 @@ if(WIN32 AND TARGET hud_app_shortcut_canvas AND TARGET hud_app_shortcut_tasks AN
   target_include_directories(hud_app_shortcut_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_app_shortcut_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_app_shortcut_area PUBLIC hud_module_registry hud_utility hud_app_shortcut_canvas hud_design_native hud_app_shortcut_tasks hud_app_shortcut_icons hud_data hud_localization
-    PRIVATE hud_relink_ledger hud_mac_import_native user32 ole32 oleaut32 uiautomationcore)
+    PRIVATE hud_relink_ledger user32 ole32 oleaut32 uiautomationcore)
   if(MSVC)
     target_compile_options(hud_app_shortcut_area PRIVATE /W4 /permissive- /EHsc)
   endif()

@@ -36,8 +36,7 @@ const std::vector<std::string_view>& archiveExtensions() {
     return list;
 }
 // Windows-only text: English, Simplified Chinese, Traditional Chinese,
-// Japanese, Korean (Windows Explorer's names; the relink wording of the Mac
-// import card).
+// Japanese, Korean (Windows Explorer's names; the relink wording).
 struct TextRow { std::string_view en, zhHans, zhHant, ja, ko; };
 constexpr std::array<TextRow, 15> windowsText{{
     {"Reveal in File Explorer", "在文件资源管理器中显示", "在檔案總管中顯示", "エクスプローラーで表示", "파일 탐색기에서 보기"},

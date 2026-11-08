@@ -14,12 +14,11 @@
 // change notification out to the four canvases.
 //
 // Windows additions, restyled in the library's rows (no Mac counterpart):
-// System > "Import macOS data…" (the macImport area's nav row, shown while
-// its title hook returns one); the Display menu lists Windows monitors by
-// their persistent id (windowsDisplayID / windowsDisplayName instead of the
-// Mac's hudDisplayUUID / hudDisplayName); the About update row and toggle are
-// the windowsUpdates area's (SettingsUpdateStatus: its toggle title, whether a
-// check or the toggle is available). Shortcut keycaps name the Windows
+// the Display menu lists Windows monitors by their persistent id
+// (windowsDisplayID / windowsDisplayName instead of the Mac's hudDisplayUUID /
+// hudDisplayName); the About update row and toggle are the windowsUpdates
+// area's (SettingsUpdateStatus: its toggle title, whether a check or the
+// toggle is available). Shortcut keycaps name the Windows
 // modifiers (CTRL, ALT, SHIFT, WIN) in that order.
 //
 // Deliberately not here (Mac 1.3.0 removed them): the System "Battery alerts"
@@ -55,9 +54,6 @@ struct SettingsCanvasHooks {
     // decoded yet or unreadable (the tile stays empty, the field shows the
     // title). The host calls SettingsCanvas::artworkChanged when one arrives.
     std::function<std::optional<SettingsLogoImage>(std::string_view logo,std::string_view revision,design::Size fitting)> logoArtwork;
-    // Windows only: System > Import macOS data… (title in a language, or none).
-    std::function<std::optional<std::string>(core::Language)> macImportTitle;
-    std::function<void()> macImport;
     // The language the host applies with a record (its next appearance, the
     // overlay's Context first): a change of it re-renders the shown page once,
     // in that language, when it arrives, instead of first in the old one.

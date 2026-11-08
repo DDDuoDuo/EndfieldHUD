@@ -89,7 +89,6 @@ std::string encodeNotesCentre(const NotesCentreDocument&d){
     if(d.richText){Json::Array runs;runs.reserve(d.richText->runs.size());for(const auto&r:d.richText->runs)runs.push_back(Json::Object{{"location",r.location},{"length",r.length},{"style",runStyle(r.style)}});root["richText"]=Json::Object{{"version",d.richText->version},{"runs",std::move(runs)}};}
     try{return Json(std::move(root)).encode(notesCentreMaximumBytes);}catch(const std::exception&){throw StoreError(StoreErrorCode::tooLarge,"The centre notes are too large to save");}
 }
-NotesCentreDocument validatedNotesCentre(std::string_view bytes){auto d=decodeNotesCentre(bytes);need(d.valid());return d;}
 NotesCentreStore::NotesCentreStore(std::optional<std::filesystem::path> root,std::function<double()> unixNow){
     if(!root)return;detail::validateRoot(*root);path_=*root/"Notes"/"centre.json";
     std::optional<std::string> bytes;bool oversized{};

@@ -2177,18 +2177,10 @@ int Application::Impl::runHiddenVerification(){
                 if(notes&&notes->selected()!=before)(void)showModule(before);}
                 actionTiming=std::move(timings);
             }
-            // Host integration over the same owner: the restart service is
-            // production-only, the System row of the macImport area, the UI
-            // Automation root over the Volume fragments and the OLE drop
-            // route's Shelf navigation hit test.
+            // Host integration over the same owner: the UI Automation root
+            // over the Volume fragments and the OLE drop route's Shelf
+            // navigation hit test.
             {
-                hostCheck(!restart.restartWith([]{},[]{})&&!restartPending,"A data-root restart cannot be requested outside production");
-                if(settingsUI&&areaHost&&areaHost->find<MacImportEntry>(macImportEntryService)){
-                    settingsUI->refreshViews(time);
-                    const auto&system=settingsUI->canvas(core::Module::system);
-                    if(system.renderedLanguage()&&system.section()=="main")
-                        hostCheck(std::any_of(system.page().controls().begin(),system.page().controls().end(),[](const auto*c){return c->id()=="macImport";}),"System lists Import macOS data from the macImport area");
-                }
                 if(volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
                     selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
@@ -2890,19 +2882,6 @@ int Application::Impl::runHiddenVerification(){
                     perform(lifecycle.reopen(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
                     dragCheck(lifecycle.phase()==L::open&&notes->selected()==core::Module::notes,"The HUD reopens normally after the drags");
                 }
-                // DataRootRestart through the host's own members (a gate opened
-                // for hidden coverage only): a failed save declines it.
-                const auto restartCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
-                restartVerification=true;
-                {auto ran=std::make_shared<unsigned>(0),declined=std::make_shared<unsigned>(0);auto token=std::make_shared<int>(0);const std::weak_ptr<int>alive=token;
-                 restartCheck(restart.restartWith([ran,token]{++*ran;},[declined]{++*declined;})&&restartPending,"A data-root restart is requested through the host");
-                 token.reset();reopenAfterSaveFailure(core::Module::notes,t);
-                 restartCheck(!restartPending&&alive.expired()&&*ran==0&&restartDeclinePosted&&*declined==0,"A failed save destroys the pending restart work unrun and posts its decline");
-                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
-                 restartCheck(*declined==1&&!restartDeclinePosted,"The decline runs once from its notice");
-                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
-                 restartCheck(*declined==1,"A repeated notice runs no second decline");
-                 t=run(t,.3);}
                 // Repeated summon cycles retain no extra raster resources,
                 // handles or threads once the first cycles have warmed caches.
                 const auto handles=[]{DWORD count{};need(GetProcessHandleCount(GetCurrentProcess(),&count)!=FALSE,"Read own handle count");return count;};
@@ -2958,13 +2937,10 @@ int Application::Impl::runHiddenVerification(){
                 press(t+1.1);t=run(t+1.1,.4);
                 // The bar captures everything: a press outside the circle stays with it.
                 (void)onPointer({PointerKind::down,PointerButton::left,2,metrics.height*.5});(void)onPointer({PointerKind::up,PointerButton::left,2,metrics.height*.5});t=run(t,.2);
-                restartCheck(overlay.capturesInput()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit bar is up stays with the bar");
+                need(overlay.capturesInput()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit bar is up stays with the bar");++hostChecks;
                 const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The bar consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The bar consumes the release");};
                 click(pill("quit:cancel"));t=run(t,.4);lifecycleCheck(!overlay.capturesInput()&&!quitPromptOpen&&!quitRequested,"Projected Cancel dismisses the bar");
-                // A restart pending at the confirmed quit is accepted: its work is handed out once.
-                auto restartRuns=std::make_shared<unsigned>(0);
                 press(t+1.1);t=run(t+1.1,.4);
-                restartCheck(restart.restartWith([restartRuns]{++*restartRuns;},[]{})&&restartPending,"A data-root restart can be requested while the bar is up");
                 key(VK_RETURN);key(VK_ESCAPE);
                 lifecycleCheck(!quitRequested&&lifecycle.phase()==core::SystemOverlayPhase::open&&overlay.capturesInput(),"Return answers Quit; the quit waits for the bar's 120 ms press and a second answer is swallowed");
                 t=run(t,.1);lifecycleCheck(!quitRequested,"Nothing quits before 120 ms");
@@ -2975,8 +2951,6 @@ int Application::Impl::runHiddenVerification(){
                 {const auto state="The ordered drain runs after concealment, then the owner stops (stopping="+std::to_string(stopping)+" phase="+std::to_string(int(lifecycle.phase()))+
                     " bar="+std::to_string(overlay.capturesInput())+" quit="+std::to_string(quitRequested)+")";
                  lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!overlay.capturesInput(),state.c_str());}
-                {auto work=takeRestartWork();restartCheck(restartAccepted==false&&work&&!takeRestartWork(),"The accepted restart's work is handed out exactly once");
-                 work();restartCheck(*restartRuns==1,"The handed-out work is the requested one");}
                 }
             }
         }

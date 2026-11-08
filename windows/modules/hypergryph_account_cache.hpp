@@ -56,9 +56,4 @@ Json encodeCache(const AccountCache&);
 std::optional<AccountCache> decodeCache(const Json&);
 std::optional<AccountCache> decodeCacheBytes(std::string_view);
 std::string encodeCacheBytes(const AccountCache&);
-// Offline import of a Mac Account/profile-cache.json (no credentials exist in
-// it; Keychain items are never read). Every linked region is marked
-// requiresReconnect, keeping cached roles, sanity and the profile sync lock
-// while the user signs in again on Windows.
-std::optional<AccountCache> importMacAccountCache(std::string_view bytes);
 }

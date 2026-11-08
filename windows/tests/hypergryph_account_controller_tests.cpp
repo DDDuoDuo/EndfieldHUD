@@ -4,7 +4,6 @@
 #include "modules/hypergryph_account_controller.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_codecs.hpp"
 #include <algorithm>
 #include <cmath>
 #include <ctime>
@@ -381,14 +380,11 @@ void identitySync() {
     h::GameProfileUpdate bad;bad.gamePlayerID="1";bad.tag="12 3";bool rejected{};try {h::applyGameProfileUpdate(p,bad,d::portableCharacterRules());} catch(const std::invalid_argument&) {rejected=true;}
     check(rejected&&p.tag=="0042","Invalid synced values are rejected without partial changes");
 }
-void importCache() {
+void cacheFields() {
     h::AccountCache c;c.syncProfile=true;h::RegionRecord linked;linked.linked=true;linked.selectedRoleID="x";c.records["mainland"]=linked;
     h::RegionRecord unlinked;c.records["global"]=unlinked;
     auto bytes=h::encodeCacheBytes(c);
-    const auto imported=h::importMacAccountCache(bytes);
-    check(imported&&imported->records.at("mainland").requiresReconnect&&imported->records.at("mainland").linked&&!imported->records.at("global").requiresReconnect,
-          "Mac cache import keeps cached roles but requires a fresh Windows sign-in");
-    check(!h::importMacAccountCache("{\"version\":1}")&&!h::importMacAccountCache(std::string(h::maximumCacheBytes+1,' ')),"Incomplete or oversized caches are rejected");
+    check(!h::decodeCacheBytes("{\"version\":1}")&&!h::decodeCacheBytes(std::string(h::maximumCacheBytes+1,' ')),"Incomplete or oversized caches are rejected");
     auto json=h::encodeCache(c);json["futureField"]=Json::Object{{"kept",true}};json["records"]["mainland"]["extra"]=7;
     const auto decoded=h::decodeCache(json);check(decoded&&h::encodeCache(*decoded)==json,"Unknown additive cache fields survive a rewrite");
     check(bytes.find("cred")==std::string::npos&&bytes.find("signingToken")==std::string::npos,"Cache never contains credentials");
@@ -460,15 +456,6 @@ void perFieldSync() {
           !sink.profile.playerIDOverride,"With every field synced again the file is a plain v1.2.0 sync-on cache");
     h::AccountAction off;off.kind=h::AccountAction::Kind::setSyncProfile;off.enabled=false;c.perform(off);
     check(sink.locked==Fields{}&&!c.gameSyncActive(),"Sync off unlocks every field");
-    // Mac import of the partial cache: sync counts as on; both keys travel.
-    cache.records["mainland"].linked=true;const auto macBytes=h::encodeCacheBytes(cache);
-    const auto imported=ehud::migration::importMacAccountCache(macBytes);
-    const auto restored=h::decodeCacheBytes(imported.bytes);
-    check(imported.profileSyncLocked&&restored&&restored->syncProfile&&restored->unsyncedFields==cache.unsyncedFields&&restored->records.at("mainland").requiresReconnect,
-          "The Mac import reads a partial sync as on and keeps the excluded fields");
-    auto broken=Json::parse(macBytes);broken["unsyncedFields"]="name";bool refused{};
-    try {(void)ehud::migration::importMacAccountCache(broken.encode());} catch(const std::exception&) {refused=true;}
-    check(refused,"A malformed unsyncedFields fails the account import like the Mac decoder");
     // ProfileStore: only locked fields refuse local edits.
     const auto root=std::filesystem::canonical(std::filesystem::temp_directory_path())/("ehud-account-sync-"+ehud::data::makeUUID());std::filesystem::create_directories(root);
     {
@@ -483,15 +470,13 @@ void perFieldSync() {
     std::error_code ignored;std::filesystem::remove_all(root,ignored);
 }
 }
-// The Mac import, then the restart the host performs for it (DataRootRestart:
-// every owner is destroyed, the import commits, a fresh run reads the root).
-// The import tool's Account/profile-cache.json is the Mac controller's own
-// cache (oracle trace) with every linked region marked requiresReconnect and
-// credential-like keys stripped. A fresh controller over it shows the same
-// roles, header wallet and sanity as over the Mac bytes, asks for a new
-// Windows sign-in, requests nothing and keeps the profile lock the import
-// reported; a new sign-in resumes syncing.
-void macImportRestart(const Json& oracle) {
+// A cache an earlier Windows version imported from a Mac: the Mac
+// controller's own cache (oracle trace) with every linked region marked
+// requiresReconnect. A fresh controller over it shows the same roles, header
+// wallet and sanity as over the Mac bytes, asks for a new Windows sign-in,
+// requests nothing, keeps the Mac's profile lock and rewrites nothing; a new
+// sign-in resumes syncing.
+void importedCache(const Json& oracle) {
     const Json* mac=nullptr;
     for(const auto& entry:oracle["trace"].array()) {
         const auto& cache=entry["after"]["cache"];
@@ -500,13 +485,8 @@ void macImportRestart(const Json& oracle) {
         if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&cache["syncProfile"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
     }
     check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
-    Json withSecret=*mac;withSecret["records"]["mainland"]["cred"]="SYNTHETIC-LEAK";
-    const auto macBytes=withSecret.encode();
-    const auto imported=ehud::migration::importMacAccountCache(macBytes);
-    check(imported.bytes.find("SYNTHETIC-LEAK")==std::string::npos&&!imported.strippedKeys.empty()&&imported.disconnectedRegions==std::vector<std::string>{"mainland"},
-          "The import strips credential-like keys and disconnects the linked region");
-    const auto decoded=h::decodeCacheBytes(imported.bytes);
-    check(decoded&&decoded==h::importMacAccountCache(mac->encode()),"The import tool's cache is the Mac cache with the linked region disconnected, nothing else");
+    Json disconnected=*mac;disconnected["records"]["mainland"]["requiresReconnect"]=true;
+    const auto importedBytes=disconnected.encode();
     double now{};
     for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,num(snapshot["observedAt"]));
     h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
@@ -517,18 +497,18 @@ void macImportRestart(const Json& oracle) {
     // Reference: the same cache as the Mac wrote it (linked, as on the Mac).
     FakeAPI macAPI;FakeVault macVault;ManualQueue macQueue;MemoryFile macFile;ProfileSink macSink;macFile.bytes=mac->encode();
     const auto reference=open(macAPI,macVault,macQueue,macFile,macSink,nullptr);
-    // The restarted Windows owner over the committed import.
+    // A Windows owner over the imported cache.
     struct Presenter:h::AccountLoginPresenter {
         bool presenting{};std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> done;
         void present(h::Region,std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> c) override {presenting=true;done=std::move(c);}
         void cancel() override {}
         bool isPresenting() const override {return presenting;}
     } presenter;
-    FakeAPI api;FakeVault vault;ManualQueue queue;MemoryFile file;ProfileSink sink;file.bytes=imported.bytes;
+    FakeAPI api;FakeVault vault;ManualQueue queue;MemoryFile file;ProfileSink sink;file.bytes=importedBytes;
     const auto restarted=open(api,vault,queue,file,sink,&presenter);
     const auto& record=restarted->record();
     check(record.linked&&record.requiresReconnect&&record.roles==reference->record().roles&&record.snapshots==reference->record().snapshots&&
-          record.selectedRoleID==reference->record().selectedRoleID,"The restarted owner reads the imported roles and snapshots");
+          record.selectedRoleID==reference->record().selectedRoleID,"The owner reads the imported roles and snapshots");
     const auto p=restarted->presentation();
     check(p.isLinked&&p.statusMessage=="Sign in again to continue syncing."&&p.roles.size()==reference->presentation().roles.size()&&
           p.headerMode==reference->presentation().headerMode,"The face lists the cached roles and asks for a new Windows sign-in");
@@ -537,10 +517,10 @@ void macImportRestart(const Json& oracle) {
               "The header wallet shows the cached sanity exactly as before the import");
     const auto s=restarted->sanityPresentation(),r=reference->sanityPresentation();
     check(s&&r&&s->current==r->current&&s->maximum==r->maximum&&s->nextRecoveryAt==r->nextRecoveryAt&&s->fullRecoveryAt==r->fullRecoveryAt,"Sanity recovery projects identically");
-    check(restarted->gameSyncActive()==imported.profileSyncLocked&&bool(sink.locked)==imported.profileSyncLocked,"The profile lock is the one the import reported");
+    check(restarted->gameSyncActive()==reference->gameSyncActive()&&bool(sink.locked)==reference->gameSyncActive(),"The profile lock is the Mac's");
     restarted->setVisible(true,true);restarted->tick();now+=3600;restarted->tick();queue.pump();
     check(api.calls.empty()&&api.pending.empty()&&!restarted->hasActiveRequest(),"Nothing is requested without a Windows credential");
-    check(file.bytes==std::optional<std::string>(imported.bytes),"Reading the import rewrites nothing");
+    check(file.bytes==std::optional<std::string>(importedBytes),"Reading the imported cache rewrites nothing");
     // A fresh sign-in on Windows resumes syncing for the same region.
     h::AccountAction connect;connect.kind=h::AccountAction::Kind::connect;connect.region=h::AccountPresentation::RegionChoice::china;restarted->perform(connect);
     check(presenter.presenting&&restarted->presentation().status==h::AccountPresentation::Status::connecting,"Connect opens the official login");
@@ -553,8 +533,8 @@ int main(int argc,char** argv) {
         check(argc==2,"Pass tests/fixtures/hypergryph-account-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
-        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();importCache();perFieldSync();
-        macImportRestart(fixture["controller"]);
+        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();cacheFields();perFieldSync();
+        importedCache(fixture["controller"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account controller checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

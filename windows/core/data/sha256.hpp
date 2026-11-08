@@ -24,5 +24,4 @@ private:
     bool finished_{};
     void compress(const std::uint8_t* block) noexcept;
 };
-bool validSha256Hex(std::string_view) noexcept;
 }

@@ -97,7 +97,7 @@ std::string archivePasswordAccount(std::string_view document,std::string_view ke
 std::string archiveBase64(std::string_view bytes){return ehud::data::base64Encode(bytes);}
 // Foundation Data(base64Encoded:) (JSONDecoder's Data strategy): no
 // whitespace, padding required, unused tail bits tolerated.
-std::optional<std::string>archiveBase64Decoded(std::string_view text){return ehud::data::base64Decode(text,false,false);}
+std::optional<std::string>archiveBase64Decoded(std::string_view text){return ehud::data::base64Decode(text,false);}
 std::optional<std::string>archivePBKDF2(std::string_view password,std::string_view salt,std::uint32_t iterations,std::size_t length){
     std::string out(length,'\0');if(!iterations||!length)return {};
 #ifdef _WIN32

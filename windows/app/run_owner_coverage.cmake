@@ -92,8 +92,7 @@ endif()
 # Host integration: the UI Automation root over every module group and the
 # local peers, keyboard focus (GetFocus), the source navigation buttons, the
 # Power entry, area services, the center logo, the clock, the I-beam cursor
-# route, the restart handoff and the drop route (HOST_CHECKS: the expected
-# minimum).
+# route and the drop route (HOST_CHECKS: the expected minimum).
 string(JSON host_checks GET "${report}" hostIntegrationChecks)
 if(NOT HOST_CHECKS)
   set(HOST_CHECKS 7)

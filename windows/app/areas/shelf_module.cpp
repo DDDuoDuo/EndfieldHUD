@@ -236,7 +236,7 @@ void ShelfCoverageArea::coverage(app::ModuleCoverage& step) {
     step.check(s.item("Renamed report.txt") && s.item("Renamed report.txt")->availabilityError, "A deleted original becomes unavailable");
     step.check(s.canvas().sizeTag(*s.item("Renamed report.txt"), language_) == std::optional<std::string>(core::localized("Unavailable", "不可用", language_)), "Its tile says Unavailable");
 
-    // A Mac-imported Shelf item (the import area's Migration/relink.json) is an
+    // A Mac-imported Shelf item (its Migration/relink.json row) is an
     // unavailable tile until a file on this PC is chosen for it.
     const auto recordID = data::makeUUID();
     mig::MacRelinkItem imported;

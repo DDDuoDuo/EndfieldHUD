@@ -37,8 +37,8 @@ J executable(std::string path) { return J::Object{{"kind", "executable"}, {"appl
 J shellLink(std::string path) { return J::Object{{"kind", "shellLink"}, {"applicationKey", "path:synthetic-link"}, {"path", std::move(path)}}; }
 J packaged(std::string aumid) { return J::Object{{"kind", "packagedApp"}, {"applicationKey", "package:" + aumid}, {"appUserModelID", std::move(aumid)}}; }
 
-// One ledger row as the import writes it (core/migration/mac_import_native
-// validateStagedShortcuts): the record, its name and opaque Mac locator.
+// One ledger row as an earlier Mac import wrote it: the record, its name and
+// opaque Mac locator.
 mig::MacRelinkItem row(std::string_view store, std::string recordID, std::string name) {
     mig::MacRelinkItem item;
     item.id = ehud::data::makeUUID();item.store = std::string(store);item.recordID = std::move(recordID);

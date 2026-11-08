@@ -5,17 +5,17 @@
 // WARP target. No network request, login page, browser, real account, token,
 // profile or visible window is used.
 //
-// Then the Mac import followed by a Windows sign-in: the import tool's codec
-// turns the Mac oracle cache into the committed Account/profile-cache.json,
-// and a fresh owner over it (the hidden-coverage community host replaying the
-// oracle envelopes, an in-memory vault and the fake official-site host that
-// runs the real login policy) reconnects through its accessibility peer.
+// Then a Windows sign-in over a cache an earlier Windows version imported from
+// the Mac (the Mac oracle cache with its linked region marked
+// requiresReconnect): a fresh owner over it (the hidden-coverage community
+// host replaying the oracle envelopes, an in-memory vault and the fake
+// official-site host that runs the real login policy) reconnects through its
+// accessibility peer.
 #ifdef _WIN32
 #include "tools/account_linking_owner.hpp"
 #include "tools/hud_design_overlay_owner.hpp"
 #include "app/areas/account_coverage.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_codecs.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "native/hud_design_text_metrics.hpp"
 #include "native/hypergryph_account_vault.hpp"
@@ -360,7 +360,7 @@ void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem:
     check(!IsWindowVisible(window.hwnd),"Nothing was shown");
     executor.shutdown();CloseHandle(utilityEvent);renderer.reset();
 }
-// Mac import -> restart -> Windows sign-in through the production owner.
+// Imported Mac cache -> Windows sign-in through the production owner.
 void reconnectAfterImport(const std::filesystem::path& resources,const std::filesystem::path& oracle,const std::filesystem::path& coverage) {
     namespace areas=endfield::app::areas;
     // The linked Mac cache with both header games, as the controller contract picks it.
@@ -373,18 +373,25 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&cache["syncProfile"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
     }
     check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
-    const auto imported=ehud::migration::importMacAccountCache(mac->encode());
-    check(imported.disconnectedRegions==std::vector<std::string>{"mainland"}&&imported.roles>0&&imported.snapshots==2,"The import tool disconnects the linked region and keeps its roles and snapshots");
+    // As an earlier Mac import wrote it: the Mac cache, its linked region
+    // marked requiresReconnect (no credentials).
+    Json disconnected=*mac;disconnected["records"]["mainland"]["requiresReconnect"]=true;
+    const auto decoded=h::decodeCacheBytes(disconnected.encode());check(decoded.has_value(),"The imported cache decodes");
+    const auto& importedRecord=decoded->records.at("mainland");
+    const struct {std::string bytes;std::size_t roles{};bool profileSyncLocked{};} imported{disconnected.encode(),importedRecord.roles.size(),
+        decoded->syncProfile&&importedRecord.linked&&std::any_of(importedRecord.roles.begin(),importedRecord.roles.end(),
+            [&](const h::Role& role){return importedRecord.selectedRoleID==role.id()&&role.game==h::Game::endfield;})};
+    check(imported.roles>0&&importedRecord.snapshots.size()==2,"The imported cache keeps its roles and both snapshots");
     double now{};
     for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,snapshot["observedAt"].isString()?std::strtod(snapshot["observedAt"].string().c_str(),nullptr):snapshot["observedAt"].number());
     TempDirectory temp;
     {
-        // The import's commit: ordinary file, inherited permissions.
+        // The import's file: ordinary, inherited permissions.
         std::filesystem::create_directories(temp.path/L"Account");
         std::ofstream file(temp.path/L"Account"/L"profile-cache.json",std::ios::binary);file<<imported.bytes;
     }
     const auto cacheFile=temp.path/L"Account"/L"profile-cache.json";
-    check(!gpu::ownerOnly(cacheFile),"The committed import inherits its folder's permissions");
+    check(!gpu::ownerOnly(cacheFile),"The imported cache inherits its folder's permissions");
     ehud::data::ProfileStore store(temp.path);h::ProfileStoreAccountSink sink(store,gpu::nativeCharacterRules());
     const auto f=areas::loadAccountCoverageFixture(coverage);
     areas::SyntheticCommunityHost community(f.responses);areas::SyntheticAvatarLoader avatar(community);areas::SyntheticLoginHost login(community,f.nonce);
@@ -412,10 +419,10 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         };
         {
             const auto& record=controller.record();
-            check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The restarted owner reads the imported roles and snapshots");
+            check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The owner reads the imported roles and snapshots");
         }
-        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock is the one the import reported");
-        // The page and wallet as the HUD shows them after the restart.
+        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock is the Mac's");
+        // The page and wallet as the HUD shows them over the imported cache.
         owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);
         core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
         modules.setDesignScreen(core::Module::account,true);
