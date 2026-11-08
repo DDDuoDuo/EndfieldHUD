@@ -231,8 +231,7 @@ void SettingsCanvas::resetSession() {
 SettingsCanvas::Structure SettingsCanvas::structure() const {
     const bool about = module() == core::Module::about;
     return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), config().applicationIcon(),
-        stringOr(config(), "accentHex"), about ? controller_->updateStatus().phase : SettingsUpdatePhase::idle,
-        about ? controller_->updateStatus().latestVersion : std::string()};
+        stringOr(config(), "accentHex"), about && !controller_->updateStatus().releaseURL.empty()};
 }
 
 // controllerChanged (:103-112). The Mac rebuilds every built canvas at once
@@ -1102,15 +1101,27 @@ void SettingsCanvas::buildAbout(d::Page& page) {
         renderUpdateStrip(true);
     });
     rows.push_back(&row("updates", text("Check for updates", "检查更新"), {&check.layer()}, page, {}, {&check}));
-    const auto latest = update.latestVersion.empty() ? std::string("—") : update.latestVersion.starts_with("v") ? update.latestVersion : "v" + update.latestVersion;
-    std::vector<d::Layer*> latestCluster{&readout(page, "latestRelease", latest)};
+    const auto latest = [](const std::string& version) { return version.empty() ? std::string("—") : version.starts_with("v") ? version : "v" + version; };
+    auto& latestReadout = readout(page, "latestRelease", latest(update.latestVersion));
+    std::vector<d::Layer*> latestCluster{&latestReadout};
     std::vector<d::Control*> latestControls;
+    d::IconButton* latestLink{};
     if (!update.releaseURL.empty()) {
-        auto& open = linkButton(page, "latestRelease", text("Latest GitHub release", "GitHub 最新版本"), update.releaseURL);
-        latestCluster.push_back(&open.layer()); latestControls.push_back(&open);
+        latestLink = &linkButton(page, "latestRelease", text("Latest GitHub release", "GitHub 最新版本"), update.releaseURL);
+        latestCluster.push_back(&latestLink->layer()); latestControls.push_back(latestLink);
     }
     auto& latestRow = row("latestRelease", text("Latest GitHub release", "GitHub 最新版本"), latestCluster, page, {}, latestControls);
-    spokenValue("latestRelease", latestRow, update.latestVersion.empty() ? std::string("—") : update.latestVersion, page);
+    auto& latestSpoken = spokenValue("latestRelease", latestRow, update.latestVersion.empty() ? std::string("—") : update.latestVersion, page);
+    // The daily check's result lands in place (the version, its link), not as a rebuild.
+    binders_.push_back([this, &latestReadout, &latestRow, &latestSpoken, latestLink, latestCluster, latest, shown = std::make_shared<std::string>(update.latestVersion)] {
+        const auto& u = controller_->updateStatus();
+        if (latestLink) setLink(*latestLink, u.releaseURL);
+        if (u.latestVersion == *shown) return;
+        *shown = u.latestVersion;
+        setReadout(latestReadout, latest(*shown));
+        latestRow.setCluster(latestCluster);
+        latestSpoken.value = shown->empty() ? std::string("—") : *shown;
+    });
     rows.push_back(&latestRow);
     // Windows: the windowsUpdates area names its toggle (daily checks) and
     // says whether it can change it.
@@ -1343,24 +1354,30 @@ d::Readout& SettingsCanvas::spokenValue(const std::string& id, d::RowPlate& plat
 }
 // readout + setReadout (:1060-1075): only the line frame; it pads the bounds for the glyphs.
 d::Layer& SettingsCanvas::readout(d::Page& page, const std::string& id, const std::string& value) {
+    d::Layer& layer = page.makeLayer("readout:" + id);
+    setReadout(layer, value);
+    return layer;
+}
+void SettingsCanvas::setReadout(d::Layer& layer, const std::string& value) {
     d::TextBlock block;
     block.runs = {{"[ ", d::type::readoutBracket()}, {value, d::type::readout()}, {" ]", d::type::readoutBracket()}};
     block.alignment = d::TextAlignment::right;
     block.setLineFrame({0, 0, std::ceil(d::preferredWidth(block, env().text)) + 2, 12});
-    d::Layer& layer = page.makeLayer("readout:" + id);
     layer.setText(std::move(block));
-    return layer;
 }
 // linkButton (:1077-1085).
 d::IconButton& SettingsCanvas::linkButton(d::Page& page, const std::string& id, const std::string& label, const std::string& url) {
     auto& button = page.make<d::IconButton>(id + ":open", label, d::Icon::ext, d::IconButton::Style::light);
+    setLink(button, url);
+    return button;
+}
+void SettingsCanvas::setLink(d::IconButton& button, const std::string& url) {
     button.onActivate = [this, url] {
         controller_->openLink(url);
         const auto [host, path] = hostAndPath(url);
         if (host == "github.com") toast(d::Icon::ext, "Opening GitHub", "正在打开 GitHub", path.empty() ? path : path.substr(1));
         else toast(d::Icon::ext, "Opening link", "正在打开链接", host.empty() ? url : host);
     };
-    return button;
 }
 
 // MARK: Titles (:1089-1116)

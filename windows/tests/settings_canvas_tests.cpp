@@ -901,6 +901,26 @@ void contracts() {
     w.controller->setUpdateStatus(done);
     w.now += .05; (void)w.context.advance(w.now);
     check(accessibilityValue(M::about, "value:updates") == "Up to date" && w.control(M::about, "updates").enabled(), "Then the outcome: Up to date");
+    // The open-time daily check (Windows checks as the HUD opens): its phase
+    // and result bind in place, so a page still entering is not rebuilt.
+    {
+        w.controller->setUpdateStatus(update);
+        w[M::about].prepareToLeave(w.now); w.hide(M::about);
+        w.show(M::about);
+        const auto* page = &w[M::about].page();
+        const auto builds = w.context.pagesBuilt();
+        w.controller->setUpdateStatus(checking);
+        auto daily = update; daily.phase = m::SettingsUpdatePhase::available; daily.latestVersion = "1.3.2"; daily.title = "Update available";
+        daily.releaseURL = "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.2";
+        w.controller->setUpdateStatus(daily);
+        check(&w[M::about].page() == page && w.context.pagesBuilt() == builds, "The daily check's phases and result rebuild no page");
+        check(accessibilityValue(M::about, "value:updates") == "Update available" && accessibilityValue(M::about, "value:latestRelease") == "1.3.2",
+            "The strip and the latest release read the result in place");
+        w.activate(M::about, "latestRelease:open");
+        check(w.links.back() == daily.releaseURL, "The latest release link opens the result's release");
+        w.controller->setUpdateStatus(done);
+        check(accessibilityValue(M::about, "value:updates") == "Up to date" && w.context.pagesBuilt() == builds, "A later result binds in place too");
+    }
     // The hero's tri-strip (HUDArtwork.triStrip): three equal bands magenta, mint, yellow at (0, 14, 4, 38).
     {
         const std::function<const d::Layer*(const d::Layer&)> find = [&](const d::Layer& l) -> const d::Layer* {

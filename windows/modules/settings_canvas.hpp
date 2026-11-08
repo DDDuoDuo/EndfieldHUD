@@ -124,7 +124,11 @@ private:
     enum class Section:std::uint8_t{main,overlay,battery,icons,credits,modules};
     struct Structure {
         Section section;core::Language language;std::string languageSetting;std::vector<SettingsDisplay> displays;
-        bool capturing;std::string icon,accent;SettingsUpdatePhase updatePhase;std::string latest;
+        // About's update phase and latest version bind in place (the Mac keys
+        // them here; Windows checks as the HUD opens, so a result that lands
+        // during the entrance would rebuild the page): only whether the latest
+        // release has a link changes the page.
+        bool capturing;std::string icon,accent;bool releaseLink;
         bool operator==(const Structure&)const=default;
     };
     struct ModuleRow {design::RowPlate* plate;design::DragGrip* grip;design::Layer* glyph;design::Toggle* toggle;design::IconButton* up;design::IconButton* down;double top;};
@@ -192,7 +196,9 @@ private:
     design::RowPlate& valueRow(const std::string& id,const std::string& title,const std::string& value,design::Page&);
     design::Readout& spokenValue(const std::string& id,design::RowPlate&,const std::string& value,design::Page&);
     design::Layer& readout(design::Page&,const std::string& id,const std::string& value);
+    void setReadout(design::Layer&,const std::string& value);
     design::IconButton& linkButton(design::Page&,const std::string& id,const std::string& label,const std::string& url);
+    void setLink(design::IconButton&,const std::string& url);
     std::string languageTitle(std::string_view)const;std::string themeTitle(std::string_view)const;std::string methodTitle(std::string_view)const;
     std::string placementTitle(std::string_view)const;std::string clockStyleTitle(std::string_view)const;std::string metricTitle(std::string_view)const;
     std::string logoTitle(std::string_view)const;std::string displaySelectionTitle()const;std::string iconTitle(std::string_view id,const std::string& english)const;
