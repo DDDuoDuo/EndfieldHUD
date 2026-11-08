@@ -1426,30 +1426,45 @@ final class HUDNavigationEntry {
             polygon(p(14, 10), p(18, 10), p(18, 14), p(22, 14), p(22, 18), p(18, 18),
                     p(18, 22), p(14, 22), p(14, 18), p(10, 18), p(10, 14), p(14, 14))
         case .system:
-            // A chamfered core with a diamond window; pins stand clear of it.
-            polygon(p(6.5, 11.5), p(11.5, 6.5), p(20.5, 6.5), p(25.5, 11.5),
-                    p(25.5, 20.5), p(20.5, 25.5), p(11.5, 25.5), p(6.5, 20.5))
-            polygon(p(16, 10.5), p(21.5, 16), p(16, 21.5), p(10.5, 16))
-            for v in [CGFloat(9.5), 18.5] {
-                box(v, 1, 4, 4); box(v, 27, 4, 4)
-                box(1, v, 4, 4); box(27, v, 4, 4)
+            // Stacked layers: a heavy slab with a flattened gear cut into it
+            // over a thin layer and a medium one.
+            polygon(p(2, 9), p(16, 2), p(30, 9), p(16, 16))
+            var gear: [CGPoint] = []
+            for k in 0..<8 {
+                let t = CGFloat(k) * .pi / 4
+                for (r, a) in [(4.8, t - asin(1.6 / 4.8)), (6.2, t - asin(1.1 / 6.2)),
+                               (6.2, t + asin(1.1 / 6.2)), (4.8, t + asin(1.6 / 4.8))] as [(CGFloat, CGFloat)] {
+                    gear.append(p(16 + r * sin(a), 9 - r * cos(a) / 2))
+                }
             }
+            path.addLines(between: gear); path.closeSubpath()
+            path.addLines(between: (0..<8).map { k -> CGPoint in
+                let a = CGFloat(k) * .pi / 4 + .pi / 8
+                return p(16 + 2.4 * sin(a), 9 - 1.2 * cos(a))
+            })
+            path.closeSubpath()
+            polygon(p(2, 14.5), p(16, 21.5), p(30, 14.5), p(30, 16.1), p(16, 23.1), p(2, 16.1))
+            polygon(p(2, 19), p(16, 26), p(30, 19), p(30, 23), p(16, 30), p(2, 23))
         case .display, .projection:
-            // Frame and lit panel share two cut corners; the stand is apart.
-            polygon(p(2, 8), p(6, 4), p(30, 4), p(30, 19), p(26, 23), p(2, 23))
-            polygon(p(5, 9.5), p(7.5, 7), p(27, 7), p(27, 17.5), p(24.5, 20), p(5, 20))
-            polygon(p(7.5, 11.5), p(9.5, 9.5), p(24.5, 9.5), p(24.5, 15.5), p(22.5, 17.5), p(7.5, 17.5))
-            polygon(p(13, 25), p(19, 25), p(22, 30), p(10, 30))
+            // A heavy screen with one cut corner and two glare slits, a thin
+            // bezel line, a heavy foot.
+            polygon(p(2, 9), p(8, 3), p(30, 3), p(30, 20), p(2, 20))
+            polygon(p(20, 5), p(22.2, 5), p(28, 10.8), p(28, 13))
+            polygon(p(24.4, 5), p(26.6, 5), p(28, 6.4), p(28, 8.6))
+            box(2, 21.75, 28, 1.5)
+            polygon(p(11, 25), p(21, 25), p(25, 30), p(7, 30))
         case .hotkeys:
-            // Two keys of a combination; the front one carries a chevron.
-            polygon(p(2, 6), p(6, 2), p(19, 2), p(19, 9), p(9, 9), p(9, 19), p(2, 19))
-            polygon(p(12, 16), p(16, 12), p(30, 12), p(30, 26), p(26, 30), p(12, 30))
-            polygon(p(17, 17.5), p(21, 17.5), p(25.5, 21), p(21, 24.5), p(17, 24.5), p(21.5, 21))
+            // A thin bracket for the key behind, a heavy front key with a
+            // deep chevron cut.
+            polygon(p(2, 16), p(2, 6.5), p(6.5, 2), p(16, 2), p(16, 3.5), p(7.12, 3.5), p(3.5, 7.12), p(3.5, 16))
+            polygon(p(7, 12), p(12, 7), p(30, 7), p(30, 25), p(25, 30), p(7, 30))
+            polygon(p(12.5, 12.5), p(17.5, 12.5), p(24, 18.5), p(17.5, 24.5), p(12.5, 24.5), p(19, 18.5))
         case .about:
-            // A hexagonal badge with an "i" cut out of it.
-            polygon(p(16, 1), p(28.99, 8.5), p(28.99, 23.5), p(16, 31), p(3.01, 23.5), p(3.01, 8.5))
-            polygon(p(16, 6.9), p(18.6, 9.5), p(16, 12.1), p(13.4, 9.5))
-            polygon(p(13.5, 14), p(18.5, 14), p(18.5, 24.5), p(16, 26.5), p(13.5, 24.5))
+            // A diamond badge with an "i" cut, a thin rule along its lower left.
+            polygon(p(16, 2), p(30, 16), p(16, 30), p(2, 16))
+            polygon(p(16, 7.6), p(18, 9.6), p(16, 11.6), p(14, 9.6))
+            polygon(p(14.3, 13), p(17.7, 13), p(17.7, 21.5), p(16, 23.2), p(14.3, 21.5))
+            polygon(p(1.94, 19.06), p(10.94, 28.06), p(9.88, 29.12), p(0.88, 20.12))
         case .storage:
             box(12, 2, 8, 8); box(14.5, 11, 3, 4)
             box(5, 15, 22, 3)
