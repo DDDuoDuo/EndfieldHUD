@@ -89,6 +89,7 @@ public:
         if(hr<0)return hr;
         return inner_->writeVolume(id,value);
     }
+    bool processRunning(std::string_view processKey)noexcept override{return inner_->processRunning(processKey);}
     void close()noexcept override{inner_->close();identities_.clear();endpoint_.clear();}
     const std::wstring&endpoint()const noexcept{return endpoint_;}
 private:

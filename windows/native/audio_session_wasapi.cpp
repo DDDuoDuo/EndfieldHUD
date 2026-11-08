@@ -165,6 +165,19 @@ VOID CALLBACK processExited(PVOID context,BOOLEAN)noexcept{static_cast<EventRout
 class NativeBackend final:public AudioSessionBackend {
     struct Entry{ComPtr<IAudioSessionControl2>control;ComPtr<ISimpleAudioVolume>volume;ComPtr<SessionEvents>events;bool registered{};AudioSessionRecord record;std::unique_ptr<Handle>process;std::wstring processName;HANDLE exitWait{};bool exitReported{};};
     static void unwatch(Entry&e)noexcept{if(e.exitWait){UnregisterWaitEx(e.exitWait,INVALID_HANDLE_VALUE);e.exitWait=nullptr;}}
+    // A process whose last session expired (its app closed its stream but
+    // runs on): its handle and exit wake stay while the routes keep asking
+    // processRunning after each read (an owned route outlives its sessions,
+    // source 74a7935). One not asked since the previous read is released.
+    struct Idle{std::unique_ptr<Handle>process;HANDLE exitWait{};bool asked{true};};
+    std::map<std::string,Idle,std::less<>>idle;
+    static void unwatch(Idle&i)noexcept{if(i.exitWait){UnregisterWaitEx(i.exitWait,INVALID_HANDLE_VALUE);i.exitWait=nullptr;}}
+    void watch(Idle&i)noexcept{if(route&&!i.exitWait&&i.process&&i.process->value&&!RegisterWaitForSingleObject(&i.exitWait,i.process->value,processExited,route.get(),INFINITE,WT_EXECUTEONLYONCE|WT_EXECUTEINWAITTHREAD))i.exitWait=nullptr;}
+    // A handle without SYNCHRONIZE cannot be waited on: its exit code tells.
+    static bool running(HANDLE process)noexcept{
+        const auto wait=WaitForSingleObject(process,0);if(wait==WAIT_OBJECT_0)return false;if(wait==WAIT_TIMEOUT)return true;
+        DWORD code{};return GetExitCodeProcess(process,&code)&&code==STILL_ACTIVE;
+    }
     // WAIT_FAILED (no SYNCHRONIZE access) is never treated as termination.
     static bool ended(const Entry&e)noexcept{return e.process&&e.process->value&&WaitForSingleObject(e.process->value,0)==WAIT_OBJECT_0;}
     // Discovery results per exact process identity (PID + creation time),
@@ -252,21 +265,30 @@ public:
         ComPtr<IAudioSessionEnumerator>sessions;if(SUCCEEDED(hr))hr=manager->GetSessionEnumerator(&sessions);int count{};if(SUCCEEDED(hr))hr=sessions->GetCount(&count); // Required to enable creation callbacks.
         if(SUCCEEDED(hr)&&(count<0||count>static_cast<int>(capacity)))hr=HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
         for(int n=0;SUCCEEDED(hr)&&n<count;++n){ComPtr<IAudioSessionControl>control;hr=sessions->GetSession(n,&control);if(SUCCEEDED(hr))hr=add(control.Get());}
-        if(SUCCEEDED(hr))hr=collect();if(FAILED(hr))pause();return hr;
+        if(SUCCEEDED(hr))hr=collect();if(FAILED(hr)){pause();return hr;}
+        for(auto&[_,i]:idle)watch(i);
+        return hr;
         }catch(const std::bad_alloc&){pause();return E_OUTOFMEMORY;}catch(...){pause();return E_FAIL;}
     }
     void pause()noexcept override{
         if(!ownThread())std::terminate();if(route)route->close();
         if(managerRegistered&&manager&&notification)manager->UnregisterSessionNotification(notification.Get());managerRegistered=false;
         for(auto&[_,e]:entries){if(e.registered&&e.control&&e.events)e.control->UnregisterAudioSessionNotification(e.events.Get());e.registered=false;e.events.Reset();unwatch(e);}
+        for(auto&[_,i]:idle)unwatch(i);
         if(route)route->discard();notification.Reset();route.reset();manager.Reset();enumerator.Reset();
     }
     std::int32_t read(std::vector<AudioSessionRecord>&out)override{
         if(!ownThread())return RPC_E_WRONG_THREAD;auto hr=collect();if(FAILED(hr))return hr;std::vector<AudioSessionRecord>next;next.reserve(entries.size());
+        for(auto i=idle.begin();i!=idle.end();){if(!i->second.asked){unwatch(i->second);i=idle.erase(i);}else{i->second.asked=false;++i;}}
         for(auto it=entries.begin();it!=entries.end();){auto&e=it->second;AudioSessionState state{};hr=e.control->GetState(&state);
             // Expired, or its process terminated and that was already reported
             // once (owned attenuation had its chance to be restored): release.
-            if((SUCCEEDED(hr)&&state==AudioSessionStateExpired)||e.exitReported){if(e.registered&&e.events)e.control->UnregisterAudioSessionNotification(e.events.Get());unwatch(e);it=entries.erase(it);continue;}
+            if((SUCCEEDED(hr)&&state==AudioSessionStateExpired)||e.exitReported){if(e.registered&&e.events)e.control->UnregisterAudioSessionNotification(e.events.Get());unwatch(e);
+                // An expired session of a process that runs on keeps the
+                // process watched until the routes stop asking about it.
+                if(!e.exitReported&&e.process&&e.process->value&&!e.record.processKey.empty()&&!ended(e)&&idle.size()<capacity&&!idle.contains(e.record.processKey)){
+                    Idle kept;kept.process=std::move(e.process);watch(kept);idle.emplace(e.record.processKey,std::move(kept));}
+                it=entries.erase(it);continue;}
             auto record=e.record;record.active=SUCCEEDED(hr)&&state==AudioSessionStateActive;record.volume.reset();record.error=hr;
             if(ended(e)){record.exited=true;record.active=false;e.exitReported=true;}
             DWORD pid{};const auto processStatus=e.control->GetProcessId(&pid);record.controllable=record.controllable&&processStatus==S_OK&&pid==record.pid;
@@ -277,7 +299,13 @@ public:
     }
     std::int32_t readVolume(std::string_view id,float&out)override{if(!ownThread())return RPC_E_WRONG_THREAD;const auto e=entries.find(id);if(e==entries.end()||!e->second.volume||!e->second.record.controllable)return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);DWORD pid{};if(e->second.control->GetProcessId(&pid)!=S_OK||pid!=e->second.record.pid)return HRESULT_FROM_WIN32(ERROR_INVALID_STATE);return e->second.volume->GetMasterVolume(&out);}
     std::int32_t writeVolume(std::string_view id,float value)override{if(!ownThread())return RPC_E_WRONG_THREAD;if(!std::isfinite(value)||value<0||value>1)return E_INVALIDARG;const auto e=entries.find(id);if(e==entries.end()||!e->second.volume||!e->second.record.controllable)return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);DWORD pid{};if(e->second.control->GetProcessId(&pid)!=S_OK||pid!=e->second.record.pid)return HRESULT_FROM_WIN32(ERROR_INVALID_STATE);return e->second.volume->SetMasterVolume(value,&ownWrites);}
-    void close()noexcept override{pause();entries.clear();endpoint.clear();}
+    bool processRunning(std::string_view processKey)noexcept override{
+        if(!ownThread())return false;
+        for(const auto&[_,e]:entries)if(e.record.processKey==processKey&&!e.exitReported&&e.process&&e.process->value&&running(e.process->value))return true;
+        const auto found=idle.find(processKey);if(found==idle.end()||!found->second.process||!found->second.process->value)return false;
+        found->second.asked=true;return running(found->second.process->value);
+    }
+    void close()noexcept override{pause();entries.clear();idle.clear();endpoint.clear();}
 };
 }
 AudioSessionWorker::Factory nativeAudioSessionBackendFactory(){return []{return std::make_unique<NativeBackend>();};}

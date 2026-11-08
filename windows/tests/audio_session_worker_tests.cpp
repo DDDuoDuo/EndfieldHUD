@@ -1,10 +1,12 @@
 #include "native/audio_session_worker.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <thread>
 namespace {
@@ -13,12 +15,15 @@ unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runt
 struct Fake final:AudioSessionBackend {
     std::vector<AudioSessionRecord>records{{"a","42:100",L"Synthetic app",42,true,true,.4f,0},{"b","42:100",L"Synthetic app",42,true,true,.8f,0}};
     std::vector<std::string>calls;std::int32_t failWrite{};unsigned writes{};Wake wake;
+    // Processes that run on after their last session expired.
+    std::set<std::string,std::less<>>running;
     std::int32_t open(std::wstring_view,Wake w)override{wake=std::move(w);calls.push_back("open");return 0;}
     std::int32_t resume(Wake w)override{wake=std::move(w);calls.push_back("resume");return 0;}
     void pause()noexcept override{wake={};}
     std::int32_t read(std::vector<AudioSessionRecord>&out)override{calls.push_back("read");out=records;return 0;}
     std::int32_t readVolume(std::string_view id,float&v)override{calls.push_back("get:"+std::string(id));for(const auto&r:records)if(r.id==id){if(!r.volume)return -99;v=*r.volume;return 0;}return -98;}
     std::int32_t writeVolume(std::string_view id,float v)override{calls.push_back("set:"+std::string(id));for(auto&r:records)if(r.id==id){r.volume=v;return failWrite&&++writes==static_cast<unsigned>(failWrite)?-77:0;}return -98;}
+    bool processRunning(std::string_view key)noexcept override{try{calls.push_back("running:"+std::string(key));}catch(...){}return running.contains(key);}
     void close()noexcept override{wake={};}
 };
 void transactions(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f);check(routes.applications().size()==1&&routes.applications()[0].state==AudioApplicationRouteState::direct&&!routes.applications()[0].gain,"Direct100% leaves existing native mixer levels untouched");
@@ -64,6 +69,46 @@ void exitedProcess(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f)
     g.records.clear();failing.update(g.records,g);check(failing.applications().empty(),"Its route ends when the backend releases the sessions");
     Fake h;h.records[1].exited=true;AudioSessionRoutes fresh;fresh.update(h.records,h);check(fresh.applications().empty(),"A process with a terminated session is not offered");
 }
+// Source 74a7935: a route stays while its app is momentarily silent. On
+// Windows an app that closes its stream leaves its session Expired (the
+// backend releases it); the route stays listed at its gain while the exact
+// process runs, and the app's next session, which Windows opens at the level
+// written here, joins from the remembered baseline: attenuated once.
+bool sessionWrites(const Fake&f){return std::any_of(f.calls.begin(),f.calls.end(),[](const auto&c){return c.rfind("set:",0)==0;});}
+void silentProcess(){
+    {
+        Fake f;for(auto&r:f.records)r.persistentID="{persist-"+r.id+"}";AudioSessionRoutes routes;routes.update(f.records,f);
+        check(routes.setGain("42:100",.5f,f)==0&&f.records[0].volume==.2f&&f.records[1].volume==.4f,"Owned attenuation before the app goes silent");
+        f.running.insert("42:100");const auto expired=f.records;f.records.clear();f.calls.clear();routes.update(f.records,f);
+        const auto&kept=routes.applications();
+        check(kept.size()==1&&kept[0].id=="42:100"&&kept[0].name==L"Synthetic app"&&kept[0].state==AudioApplicationRouteState::active&&kept[0].gain==.5f&&!kept[0].rendering,"Every session expired, the process runs: the route stays listed at its gain");
+        check(f.calls==std::vector<std::string>{"running:42:100"},"Only the process is asked about; nothing is read or written");
+        auto again=expired[0];again.id="a2";again.active=true;f.records={again};f.calls.clear();routes.update(f.records,f);
+        check(f.records[0].volume==.2f&&!sessionWrites(f),"The next session, opened at the level written here, joins as it is: attenuated once, not .2 x .5");
+        check(routes.applications().size()==1&&routes.applications()[0].available&&routes.applications()[0].rendering&&routes.applications()[0].gain==.5f,"The row is the live app again");
+        check(routes.setGain("42:100",.25f,f)==0&&f.records[0].volume==.1f,"A new gain applies from the original baseline");
+        check(routes.stop("42:100",f)==0&&f.records[0].volume==.4f&&routes.applications()[0].state==AudioApplicationRouteState::direct,"Stop restores the original level of that identity");
+    }
+    {
+        Fake f;for(auto&r:f.records)r.persistentID="{persist-"+r.id+"}";AudioSessionRoutes routes;routes.update(f.records,f);routes.setGain("42:100",.5f,f);
+        f.running.insert("42:100");const auto expired=f.records;f.records.clear();routes.update(f.records,f);
+        check(routes.setGain("42:100",.25f,f)==0&&routes.applications()[0].gain==.25f,"A silent route takes a new gain with nothing to write yet");
+        auto kept=expired[0];kept.id="a2";auto changed=expired[1];changed.id="b2";changed.volume=.7f;auto unknown=expired[1];unknown.id="c2";unknown.persistentID="{other}";unknown.volume=.9f;
+        f.records={kept,changed,unknown};routes.update(f.records,f);
+        check(f.records[0].volume==.1f,"A session at the kept level joins from its baseline: .4 x .25");
+        check(std::abs(*f.records[1].volume-.175f)<1e-6f,"One whose level changed meanwhile (a recovery or the user) starts from that level");
+        check(std::abs(*f.records[2].volume-.225f)<1e-6f,"Another identity starts from its own level");
+        f.records.clear();routes.update(f.records,f);f.running.clear();f.records.clear();routes.update(f.records,f);
+        check(routes.applications().empty(),"The route ends with its process");
+    }
+    {
+        Fake f;AudioSessionRoutes routes;routes.update(f.records,f);routes.setGain("42:100",.5f,f);f.records.clear();f.calls.clear();routes.update(f.records,f);
+        check(routes.applications().empty(),"A process that ended with its sessions leaves nothing owned");
+        Fake g;AudioSessionRoutes failed;failed.update(g.records,g);failed.setGain("42:100",.5f,g);g.records[0].volume=.9f;failed.update(g.records,g);
+        g.running.insert("42:100");g.records.clear();g.calls.clear();failed.update(g.records,g);
+        check(failed.applications().empty()&&g.calls.empty(),"A failed route is never kept for a silent app");
+    }
+}
 void appearanceMetadata(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable e;e.path="C:\\explicit-synthetic\\app.exe";e.identity.objectID[0]=1;e.identity.volumeSerial=9;f.records[0].executable=e;routes.update(f.records,f);
     check(routes.applications()[0].executable==e&&f.calls.empty(),"Captured regular-file appearance metadata flows through existing process grouping without audio writes");
     f.records[1].executable=e;routes.update(f.records,f);check(routes.applications()[0].executable==e,"Matching process sessions share one exact icon source");
@@ -84,6 +129,7 @@ public:
     std::int32_t read(std::vector<AudioSessionRecord>&out)override{std::lock_guard lock(s->mutex);thread();out=s->records;++s->reads;return 0;}
     std::int32_t readVolume(std::string_view id,float&out)override{std::lock_guard lock(s->mutex);thread();for(auto&r:s->records)if(r.id==id){out=*r.volume;return 0;}return -1;}
     std::int32_t writeVolume(std::string_view id,float value)override{std::lock_guard lock(s->mutex);thread();for(auto&r:s->records)if(r.id==id){r.volume=value;++s->writes;return 0;}return -1;}
+    bool processRunning(std::string_view)noexcept override{return false;}
     void close()noexcept override{std::lock_guard lock(s->mutex);thread();s->wake={};++s->closes;}
 };
 void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMutex;std::condition_variable noticed;unsigned notices{};AudioSessionWorker worker([state]{return std::make_unique<ThreadFake>(state);},[&]{std::lock_guard lock(noticeMutex);++notices;noticed.notify_one();});AudioSessionSnapshot snapshot;
@@ -100,4 +146,4 @@ void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMut
     check(!worker.activate(L"fixture endpoint")&&!worker.setGain("42:100",.5f),"Closed worker rejects stale queued UI commands");
 }
 }
-int main(){try{transactions();pausedPlayer();exitedProcess();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{transactions();pausedPlayer();exitedProcess();silentProcess();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -89,10 +89,19 @@ public:
     virtual std::int32_t read(std::vector<AudioSessionRecord>&)=0;
     virtual std::int32_t readVolume(std::string_view,float&)=0;
     virtual std::int32_t writeVolume(std::string_view,float)=0;
+    // An owned route whose sessions all expired (its app closed its stream
+    // but runs on; source 74a7935 keeps the route of a momentarily silent
+    // app) asks after every read whether that exact process (PID + creation
+    // time) still runs. The backend keeps watching the process (its handle and
+    // exit wake) while it is asked; false when it ended or cannot be told,
+    // which ends the route.
+    virtual bool processRunning(std::string_view processKey)noexcept=0;
     virtual void close()noexcept=0;
 };
 // Source-owned attenuation transaction. Direct100% does not alter the user's
-// native mixer; each opted-in session remembers its original scalar. Stop only
+// native mixer; an owned route stays listed, at its gain, while its app has
+// no session and its process runs (backend processRunning), and the app's
+// next session joins it from the baseline its expired one left; each opted-in session remembers its original scalar. Stop only
 // restores scalars still equal to this owner’s last write, preserving external
 // changes observed before cleanup. Public WASAPI has no atomic compare-and-set;
 // a concurrent external write between native read/write cannot be excluded.

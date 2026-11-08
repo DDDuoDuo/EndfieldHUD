@@ -44,6 +44,9 @@ struct World {
     // NativeBackend contract: a terminated process's sessions are reported
     // once with `exited`, then released by the next read.
     std::set<std::string>exitReported;bool failSessionWrites{};
+    // Processes that run on after their last session expired (a browser
+    // that closed its idle stream); every other one is reported ended.
+    std::set<std::string,std::less<>>runningAfterExpiry;
     // Default-device selector fake (the IPolicyConfig access): the console
     // role is the default the endpoint backend reports; multimedia and
     // communications are kept beside it. No real default device is touched.
@@ -105,6 +108,7 @@ public:
         if(hook)hook(id,v);
         std::lock_guard l(w->m);w->thread();++w->sessionWrites;auto*r=find(id);if(!r)return -98;if(w->failSessionWrites)return -97;r->volume=v;return 0;
     }
+    bool processRunning(std::string_view key)noexcept override{try{std::lock_guard l(w->m);w->thread();return w->runningAfterExpiry.contains(key);}catch(...){return false;}}
     void close()noexcept override{std::lock_guard l(w->m);w->thread();if(open_)++w->sessionCloses;open_=false;w->sessionWake={};}
 };
 
@@ -329,6 +333,37 @@ void journal(){
         check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f&&read(path)=="{corrupt","The mixer and the damaged journal are both left untouched");
         s.stop();
     }
+}
+// Source 74a7935 with the journal: an app that closes its stream but runs on
+// keeps its route; Windows opens its next session at the level written here,
+// the journal restores it and the route attenuates it once.
+void silentApp(){
+    Temp temp;const auto path=temp.root/"Audio"/"RouteJournal.json";Harness h(path);auto&s=*h.service;const auto player=std::string("4242:100");
+    s.vote(n::AudioVoter::nowPlaying,true);
+    h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2;},"Sessions listed");
+    check(s.setApplicationGain(speaker,player,.5f),"Gain accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active&&a->available;},"Route active");
+    {std::lock_guard l(h.world->m);h.world->runningAfterExpiry.insert(player);std::erase_if(h.world->sessions[speaker],[](const auto&r){return r.id=="{session-player}";});}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&!a->available&&!a->rendering&&a->state==n::AudioApplicationRouteState::active&&a->gain==.5f;},"The silent app's route stays listed at its gain");
+    {std::lock_guard l(h.world->m);n::AudioSessionRecord next{"{session-player-2}",player,L"Player",4242,true,true,.4f,0};next.persistentID=persistent;h.world->sessions[speaker].push_back(next);}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->available&&a->state==n::AudioApplicationRouteState::active&&a->gain==.5f;},"The next session joins the route");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.4f)<1e-6f,"Attenuated once: .8 x .5, not .4 x .5");
+    check(s.stopApplication(player),"Stop accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::direct;},"Route stopped");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player-2}")-.8f)<1e-6f,"Stop restores the original level");
+    h.world_until([&](World&){const auto d=n::AudioRouteJournal::decode(read(path));return d&&d->empty();},"Nothing is left to recover");
+    // The process ends while its app is silent: the route ends with it.
+    check(s.setApplicationGain(speaker,player,.5f),"Gain again");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active;},"Route active again");
+    {std::lock_guard l(h.world->m);std::erase_if(h.world->sessions[speaker],[](const auto&r){return r.id=="{session-player-2}";});}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&!a->available;},"Silent again");
+    {std::lock_guard l(h.world->m);h.world->runningAfterExpiry.clear();}
+    h.wake(&World::sessionWake);
+    h.until([&](const auto&x){return !app(x,player)&&x.applications.size()==1;},"The route ends with the process");
+    s.stop();
 }
 void processExit(){
     Temp temp;const auto path=temp.root/"Audio"/"RouteJournal.json";Harness h(path);auto&s=*h.service;
@@ -616,7 +651,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();processExit();hiddenOutputChange();failedRestore();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();silentApp();processExit();hiddenOutputChange();failedRestore();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif

@@ -21,8 +21,14 @@ template<class F>std::int32_t call(F&&f)noexcept{try{return f();}catch(...){retu
 }
 class AudioSessionRoutes::Impl {
 public:
-    struct Member{std::string id;float baseline{},expected{};bool touched{};};
-    struct Owned{float gain{1};std::int32_t error{};std::vector<Member>members;};
+    struct Member{std::string id;float baseline{},expected{};bool touched{};std::string persistentID;};
+    // Expired members of a route kept for its running process: the next
+    // session with the same persistent identity opens at the level Windows
+    // kept for it (`expected`, written here) and must join from `baseline`.
+    // Bounded per route; a newer expiry of the same identity replaces one.
+    static constexpr std::size_t maximumDormant=8;
+    // `row` is the route's last listed row, shown while it has no session.
+    struct Owned{float gain{1};std::int32_t error{};std::vector<Member>members,dormant;std::optional<AudioApplicationRoute>row;};
     std::vector<AudioSessionRecord>records;
     std::map<std::string,Owned,std::less<>>owned;
     std::vector<AudioApplicationRoute>apps;
@@ -41,6 +47,11 @@ public:
         // remembers its output devices). A Windows session persists Inactive
         // until it expires, so any live writable session lists the app.
         for(const auto&[_,group]:indices){next[group.index].available=group.writable;next[group.index].rendering=group.active;}
+        for(const auto&a:next)if(const auto found=owned.find(a.id);found!=owned.end())found->second.row=a;
+        // An owned route whose app has no session right now (source 74a7935:
+        // a silent app keeps its route) stays listed at its gain.
+        for(const auto&[id,o]:owned)if(o.row&&std::none_of(next.begin(),next.end(),[&](const auto&a){return a.id==id;})){
+            auto row=*o.row;row.available=false;row.rendering=false;next.push_back(std::move(row));}
         for(auto&a:next)if(const auto found=owned.find(a.id);found!=owned.end()){a.state=found->second.error<0?AudioApplicationRouteState::failed:AudioApplicationRouteState::active;a.gain=found->second.gain;a.error=found->second.error;}
         next.erase(std::remove_if(next.begin(),next.end(),[](const auto&a){return !a.available&&a.state==AudioApplicationRouteState::direct;}),next.end());apps=std::move(next);
     }
@@ -73,10 +84,33 @@ void AudioSessionRoutes::update(std::span<const AudioSessionRecord>records,Audio
     std::vector<std::string>ended;for(const auto&[id,o]:i.owned)if(std::any_of(o.members.begin(),o.members.end(),[&](const auto&m){const auto*r=i.record(m.id);return r&&r->exited;}))ended.push_back(id);
     for(const auto&id:ended)(void)stop(id,backend);
     for(auto owned=i.owned.begin();owned!=i.owned.end();){auto&o=owned->second;
-        o.members.erase(std::remove_if(o.members.begin(),o.members.end(),[&](const auto&m){return !i.record(m.id);}),o.members.end());
-        if(o.members.empty()){owned=i.owned.erase(owned);continue;}
+        // A session that expired leaves its baseline behind (see Impl::dormant).
+        for(auto m=o.members.begin();m!=o.members.end();){
+            if(i.record(m->id)){++m;continue;}
+            if(m->touched&&!m->persistentID.empty()){
+                std::erase_if(o.dormant,[&](const auto&d){return d.persistentID==m->persistentID;});
+                if(o.dormant.size()<Impl::maximumDormant)o.dormant.push_back(*m);
+            }
+            m=o.members.erase(m);
+        }
+        if(o.members.empty()){
+            const bool listed=std::any_of(i.records.begin(),i.records.end(),[&](const auto&r){return r.processKey==owned->first&&!r.exited;});
+            // Every session expired: a working route stays while the exact
+            // process runs (source 74a7935) and ends with it.
+            if(!listed&&o.error>=0&&o.row&&backend.processRunning(owned->first)){++owned;continue;}
+            if(!listed||o.error<0){owned=i.owned.erase(owned);continue;}
+        }
         if(o.error>=0){for(const auto&m:o.members){const auto*r=i.record(m.id);if(!r->controllable||!r->volume||!same(*r->volume,m.expected)){o.error=changedState;break;}}
-            if(o.error>=0){bool added=false;for(const auto&r:i.records)if(r.processKey==owned->first&&!r.exited&&std::none_of(o.members.begin(),o.members.end(),[&](const auto&m){return m.id==r.id;})){if(!r.controllable||!r.volume){o.error=changedState;break;}o.members.push_back({r.id,*r.volume,*r.volume,false});added=true;}
+            if(o.error>=0){bool added=false;for(const auto&r:i.records)if(r.processKey==owned->first&&!r.exited&&std::none_of(o.members.begin(),o.members.end(),[&](const auto&m){return m.id==r.id;})){if(!r.controllable||!r.volume){o.error=changedState;break;}
+                    Impl::Member next{r.id,*r.volume,*r.volume,false,r.persistentID};
+                    // The app's next session after one expired: still at the
+                    // level written here, it joins from the remembered
+                    // baseline instead of being attenuated a second time.
+                    if(const auto d=std::find_if(o.dormant.begin(),o.dormant.end(),[&](const auto&d){return !r.persistentID.empty()&&d.persistentID==r.persistentID;});d!=o.dormant.end()){
+                        if(same(*r.volume,d->expected)){next.baseline=d->baseline;next.touched=true;}
+                        o.dormant.erase(d);
+                    }
+                    o.members.push_back(std::move(next));added=true;}
                 if(added&&o.error>=0)o.error=i.apply(o,o.gain,backend);}}
         ++owned;
     }
@@ -86,7 +120,7 @@ std::int32_t AudioSessionRoutes::setGain(std::string_view id,float gain,AudioSes
     if(!identity(id)||!scalar(gain))return invalid;auto&i=*impl_;const auto app=std::find_if(i.apps.begin(),i.apps.end(),[&](const auto&a){return a.id==id;});if(app==i.apps.end())return notFound;
     auto found=i.owned.find(id);if(found==i.owned.end()){
         if(gain==1)return 0;if(!app->available||i.owned.size()>=maximumApplications)return changedState;Impl::Owned next;
-        for(const auto&r:i.records)if(r.processKey==id){if(!r.controllable||!r.volume)return changedState;next.members.push_back({r.id,*r.volume,*r.volume,false});}
+        for(const auto&r:i.records)if(r.processKey==id){if(!r.controllable||!r.volume)return changedState;next.members.push_back({r.id,*r.volume,*r.volume,false,r.persistentID});}
         if(next.members.empty())return notFound;found=i.owned.emplace(std::string(id),std::move(next)).first;
     }else if(found->second.error<0)return gain==1?stop(id,backend):changedState;
     auto&o=found->second;if(o.gain==gain&&o.error>=0)return 0;const auto hr=i.apply(o,gain,backend);o.gain=gain;o.error=hr;i.rebuild();return hr;

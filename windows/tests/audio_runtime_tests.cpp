@@ -73,6 +73,7 @@ public:
     std::int32_t read(std::vector<n::AudioSessionRecord>&out)override{std::lock_guard l(w->m);out=w->sessions;return 0;}
     std::int32_t readVolume(std::string_view id,float&v)override{std::lock_guard l(w->m);const auto*r=find(id);if(!r||!r->volume)return -98;v=*r->volume;return 0;}
     std::int32_t writeVolume(std::string_view id,float v)override{std::lock_guard l(w->m);auto*r=find(id);if(!r)return -98;r->volume=v;return 0;}
+    bool processRunning(std::string_view)noexcept override{return false;}
     void close()noexcept override{std::lock_guard l(w->m);w->sessionWake={};}
 };
 struct Harness {
