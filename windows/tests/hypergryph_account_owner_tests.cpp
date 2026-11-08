@@ -170,7 +170,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             overlay->deadline(clock); // the shared Context's deadlines (sub-page swaps, the confirm callback), as the host runs them
             const auto sample=modules.sample(clock).presentation;
             owner.update(app::ModuleFrame{center,settings,sample,1,clock,true},1);owner.upload(renderer);
-            all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
+            all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);for(const auto& e:owner.recoveryEntries()) all.push_back(e);
             composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
         };
         const auto first=Clock::now();frame({});firstFrameMS=since(first);renderer.draw(false);
@@ -207,7 +207,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         {
             const auto opened=renderer.stats();const auto openRaster=raster.stats();
             check(owner.gauge().sceneStats().popoverLoaded&&owner.gauge().sceneStats().popoverUploaded&&opened.nativeGroups==closedGPU.nativeGroups+1&&
-                  owner.headerEntries().size()==2,"Its first opening builds, uploads and composes the card above the wallet");
+                  owner.headerEntries().size()==1&&owner.recoveryEntries().size()==1,"Its first opening builds, uploads and composes the card (on the top layer) above the wallet");
             popoverGPUBytes=signedDelta(opened.resourceBytes+opened.nativeGroupBytes,closedGPU.resourceBytes+closedGPU.nativeGroupBytes);
             popoverRasterBytes=signedDelta(openRaster.resourceBytes,closedRaster.resourceBytes);
         }
@@ -255,7 +255,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             auto mapSettings=settings;mapSettings.module=core::Module::map;core::ModulePresentation mapModules(core::Module::map);
             const auto sample=mapModules.sample(clock).presentation;
             owner.update(app::ModuleFrame{core::Matrix4{},mapSettings,sample,1,clock,true},1);owner.upload(renderer);
-            all.assign(owner.headerEntries().begin(),owner.headerEntries().end());composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
+            all.assign(owner.headerEntries().begin(),owner.headerEntries().end());for(const auto& e:owner.recoveryEntries()) all.push_back(e);composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
             check(owner.moduleEntries().empty(),"The page is not composed on another module");
         }
         check(shown.surfaces>0&&shown.residentPixelBytes>0&&owner.page().sceneStats(core::Module::account)->rasterEntries==shown.rasterEntries,
@@ -322,7 +322,7 @@ void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem:
         owner.resize({1280,800,96,1,1280,800});
         gpu::LayerComposition composition;std::vector<gpu::LayerCompositionEntry> all;
         const auto publish=[&]{
-            owner.upload(renderer);all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
+            owner.upload(renderer);all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);for(const auto& e:owner.recoveryEntries()) all.push_back(e);
             composition.setEntries(renderer,all);composition.present(renderer);
         };
         if(prewarm) {
