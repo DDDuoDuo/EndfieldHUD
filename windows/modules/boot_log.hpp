@@ -137,9 +137,13 @@ public:
     // Back to the idle, hidden panel without onFinish (the HUD closed under
     // it: the Mac tears the whole view down).
     void stop() { reset(); }
-    // The HUD close strips the cursor blink (the cursor shows at full
-    // opacity); the lines keep typing until the HUD is hidden.
-    void stopBlink();
+    // The HUD close's cancel (SystemHUDView.cancelAnimations(forRetraction:),
+    // which keeps only HUDMotion.closeKeys): it strips the cursor blink (the
+    // cursor shows at full opacity), a running wipe-up (the panel shows whole
+    // again; onFinish still comes at its .38 s) and the rows' slide-in (they
+    // land at x 0). The band-in wipe and the rows' fade-ins keep playing, and
+    // the lines keep typing until the HUD is hidden.
+    void cancelForClose();
     static double slotTop(int index) noexcept { return firstLineTop + double(index) * lineHeight; }
     // The segments as runs; the last character of every segment but the last
     // carries the 8 px flex gap (as extra tracking).

@@ -356,7 +356,8 @@ struct FacilityOwner::Impl {
     // (fbOut .26 s, at once under Reduce Motion) and a leave already running
     // finishes; the drop, the unfold and a tag's slide-in keep playing, and
     // only the hazard loops stop. The boot log stays drawn and typing,
-    // without its cursor blink. Everything fades with the canvas.
+    // without its cursor blink, a running wipe-up or the rows' slide
+    // (BootLog::cancelForClose). Everything fades with the canvas.
     void beginClose() {
         interactive = false;
         cancelPointer();
@@ -364,7 +365,7 @@ struct FacilityOwner::Impl {
         banner.hide(true);
         banner.stopLoops();
         tags.stopLoops();
-        bootLog.stopBlink();
+        bootLog.cancelForClose();
         changed();
     }
     // The hidden HUD's full deactivation (OverlayController's teardown, a

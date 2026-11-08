@@ -55,7 +55,8 @@
 // the banner rises and fades out (a leave already running finishes), a
 // banner or tag still arriving keeps arriving, only the hazard loops stop,
 // and the tags and a playing boot log stay drawn (the log keeps typing,
-// without its blink, and takes no press or key); all of it fades with the
+// without its blink, a running wipe-up or the rows' slide, and takes no
+// press or key); all of it fades with the
 // canvas. The hidden HUD (overlayConcealed, or overlayRetracted for a File
 // Shelf drag) ends whatever still plays; a log that ended during the close
 // leaves the centre concealed until then.

@@ -313,9 +313,14 @@ void BootLog::startBlink() {
     blink_ = env_->deadlines.token();
     env_->deadlines.after(blinkStart_ + .25, blink_, [this] { blinkStep(); });
 }
-void BootLog::stopBlink() {
+void BootLog::cancelForClose() {
     cancel(blink_);
     cursor_->setValue(Channel::opacity, 1);
+    // bootOut ("hud.bootOut") is not a close key: the clip and the fade go
+    // back to the model (whole, opaque); the completion deadline stays.
+    if (finishing_) { term_->setValue(Channel::wipe, 1); term_->setValue(Channel::opacity, 1); }
+    // "hud.transform.translation.x" is not a close key, "hud.opacity" is.
+    for (auto* row : rows_) row->setValue(Channel::translateX, row->value(Channel::translateX));
 }
 // The step due now (a late deadline catches up to the clock's phase, as the
 // render server samples the discrete keyframes by time).

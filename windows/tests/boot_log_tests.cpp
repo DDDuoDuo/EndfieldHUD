@@ -143,29 +143,46 @@ void panel() {
     at(52.82); check(!log.isFinishing(), "the tail lasts 900 ms");
     at(52.822); check(log.isFinishing(), "then the wipe-up");
     at(53.21); check(finished == 2, "finished");
-    // The HUD close strips the blink (the cursor at full opacity) and the
-    // lines keep typing.
+    // The HUD close's cancel strips the blink (the cursor at full opacity)
+    // and the rows' slide (the row just revealed lands at x 0, its fade goes
+    // on), and the lines keep typing.
     at(60);
     log.play(lines, "1.3.0");
     at(60.28); at(60.54);
     check(log.isBlinking() && log.revealedCount() == 2 && near(log.cursor().value(Channel::opacity), .2), "a new log blinks and types");
-    log.stopBlink();
-    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1), "stopBlink ends the blink with the cursor shown");
+    check(log.row(1).animating(60.6) && !near(log.row(1).presented(Channel::translateX, 60.6), 0), "the row just revealed slides in");
+    log.cancelForClose();
+    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1), "the close's cancel ends the blink with the cursor shown");
+    check(near(log.row(1).presented(Channel::translateX, 60.6), 0) && log.row(1).presented(Channel::opacity, 60.6) < 1 && near(log.row(1).presented(Channel::opacity, 60.71), 1),
+        "it lands the sliding row at x 0 and keeps its fade");
     at(61);
     check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1) && log.revealedCount() > 2 && log.isPlaying(), "the lines keep typing without the blink");
     log.stop();
     check(!log.isPlaying() && finished == 2, "stop ends it without onFinish");
+    // A wipe-up running when the HUD closes: the panel shows whole again and
+    // onFinish still comes at its .38 s.
+    at(61.1);
+    log.play(lines, "1.3.0");
+    at(61.38);
+    log.skip();
+    check(log.isFinishing() && near(log.term().presented(Channel::opacity, 61.38), 1) && log.term().presented(Channel::opacity, 61.48) < 1, "the wipe-up plays");
+    at(61.48);
+    log.cancelForClose();
+    check(log.isFinishing() && near(log.term().presented(Channel::opacity, 61.5), 1) && near(log.term().presented(Channel::wipe, 61.5), 1) && finished == 2,
+        "the close's cancel strips a running wipe-up: the panel is whole again");
+    at(61.75); check(finished == 2 && log.isPlaying(), "its completion keeps its time");
+    at(61.77); check(finished == 3 && !log.isPlaying() && log.layer().hidden(), "and finishes at .38 s");
     // No lines: 900 ms then finish.
     at(62);
     log.play({}, "1.3.0");
     at(62.91); check(log.isFinishing(), "an empty log finishes after 900 ms");
-    at(63.3); check(finished == 3, "and completes");
+    at(63.3); check(finished == 4, "and completes");
     // Reduce Motion: no wipe, no blink, the finish completes at once.
     env.reduceMotion = true;
     log.play({b::BootLogLine::sub("x")}, "1.3.0");
     check(!log.isBlinking() && near(log.term().presented(Channel::wipe, 55), 1), "Reduce Motion: no wipe or blink");
     log.skip();
-    check(finished == 4 && !log.isPlaying(), "Reduce Motion finishes at once");
+    check(finished == 5 && !log.isPlaying(), "Reduce Motion finishes at once");
 }
 
 // The centre while the log plays (BootLogStage, host side): the module host
