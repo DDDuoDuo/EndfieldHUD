@@ -479,12 +479,43 @@ struct Application::Impl {
     UpdateService* updates() const noexcept;   // windowsUpdates area (app/areas/update_service.hpp)
     void refreshUpdateStatus();
     AppShortcutNavigation* appNavigation() const noexcept;
-    void bindNavigation(double time);
+    // `animated`: tiles slide to new places, only while arranging (Mac
+    // refreshAppNavigation: setDesktopNavigation(animated && arrangingModules)).
+    void bindNavigation(double time, bool animated = true);
     // Display > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
     // HUDModuleLayout.restorable): the right-hand source actions in the
     // layout's visible order without the hidden ones, and the module the HUD
     // reopens on (application_navigation.cpp).
     std::vector<std::uint64_t> layoutRightActions(std::span<const std::uint64_t> right) const;
+    // Display > Modules > Arrange on HUD (SystemHUDView "Module arrangement",
+    // application_navigation.cpp). While it is on, the right-hand module tiles
+    // are dragged to reorder instead of opening; saved apps and Add App do
+    // nothing. A press past DragGripMotion::liftDistance lifts the tile, which
+    // follows the pointer (SourceWatchSession::setArrangeDrag); over another
+    // module it takes that place, over an app or Add App it goes after the
+    // last visible module (ModuleLayout::arranging); the others slide and the
+    // Modules page rows follow. The release saves the order once, if it
+    // changed. Esc, arranging turning off and losing the capture cancel (the
+    // rest of that press does nothing); closing the HUD snaps.
+    void setModuleArrangement(bool on, double time);
+    // The order the right-hand list shows: a lifted drag's preview, else the applied one.
+    const ehud::data::ModuleLayout& arrangedLayout() const noexcept;
+    // rightRowTarget(atView:): the right-hand tile under a client point while
+    // arranging, below pointer captures (menus, the confirm bar, modal cards)
+    // and the owners covering the point (pinned notes, the charge capsule):
+    // a module name, "addApp", or empty for a saved app.
+    std::optional<std::string_view> rightRowTarget(core::Point);
+    // arrangeableModule(atView:): the module tile under the point (it can be dragged).
+    std::optional<std::string_view> arrangeableModule(core::Point);
+    // The navigation entry bound to a right-hand action, and the action of a module's entry.
+    const gpu::WatchAppearanceEntry* navigationEntry(std::uint64_t action) const noexcept;
+    std::optional<std::uint64_t> moduleAction(std::string_view module) const noexcept;
+    bool arrangePointer(const PointerEvent&, core::Point, double time);
+    bool arrangeKey(const KeyEvent&, double time);
+    void dragArrangedModule(core::Point, bool edgeScroll, double time);
+    void moveArrangedTile(core::Point, double time);
+    void followArrangeScroll(double time);
+    void endModuleArrangeDrag(bool save, bool animated, double time);
     core::Module restorableModule(core::Module) const;
     void syncActivityTelemetry(double time);
     void setProjectionActive(bool active, double time);
@@ -761,6 +792,8 @@ struct Application::Impl {
     std::unique_ptr<gpu::NativeWatchAppearance> nativeAppearance;
     gpu::WatchAppearance watchAppearance;
     std::unique_ptr<gpu::WatchLabelPresentation> labels;
+    std::unique_ptr<gpu::WatchArrangeMarks> arrangeMarks; // drawn after `layers` (its `after` draws)
+    std::vector<std::array<core::Rect,gpu::WatchArrangeMarks::rectangles>> arrangeMarkRects; // per mark, this frame
     std::vector<gpu::WatchButtonAvailability> available;
     std::unique_ptr<source::DesktopChromeProjectionPlan> chromePlan;
     std::optional<source::DesktopChromeBindings> chromeBindings; // the exact centre/status source nodes
@@ -949,6 +982,13 @@ struct Application::Impl {
     // Source navigation with saved app shortcuts (app_shortcut_navigation.hpp).
     WatchSessionNavigation baseNavigation;
     bool navigationDirty{};
+    // Display > Modules > Arrange on HUD (never saved): on, the module
+    // pressed (where, whether it has lifted, the order it previews), and a
+    // press Esc or arranging turning off dropped (its drags and release do nothing).
+    bool arrangingModules{};
+    struct ArrangeDrag {std::string module;core::Point start;bool lifted{};ehud::data::ModuleLayout preview;};
+    std::optional<ArrangeDrag> arrangeDrag;
+    bool swallowsArrangePress{};
     // Bottom-left ID card (native/id_card_presenter.hpp): caption leaves and
     // the desktop baseline are copied before the setup JSON is released.
     std::optional<gpu::IdCardCaptionLeaves> idCardLeaves;

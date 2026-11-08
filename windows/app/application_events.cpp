@@ -63,8 +63,14 @@ ModuleCursor Application::Impl::cursorAt(core::Point p){
     using C=ModuleRegistry::Chain;std::optional<ModuleCursor> chosen;
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&){if(!o.capturesPointer())return false;chosen=o.cursorAt(p);return true;},"cursor"))
         return chosen.value_or(ModuleCursor::source);
-    chosen.reset();
-    (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);return chosen.has_value()||o.covers(p);},"cursor");
+    // Arrange on HUD: the closed hand from the press on a module tile until
+    // its release, wherever the pointer goes.
+    if(arrangingModules&&arrangeDrag)return ModuleCursor::closedHand;
+    chosen.reset();bool covered=false;
+    (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);covered=!chosen&&o.covers(p);return chosen.has_value()||covered;},"cursor");
+    // The open hand over a module tile only where no owner answers or covers
+    // the point (a pinned note, a module's own drag or editor keeps its cursor).
+    if(!chosen&&!covered&&arrangeableModule(p))return ModuleCursor::openHand;
     return chosen.value_or(ModuleCursor::source);
 }
 
@@ -111,12 +117,20 @@ bool Application::Impl::onPointer(const PointerEvent&e){
             if(handled&&e.kind!=PointerKind::move)automationChanged();host.capturePointer(locked);refresh(hostTime(time));}return true;
     }
     using C=ModuleRegistry::Chain;
+    // Arrange on HUD: a press Esc or arranging turning off dropped swallows
+    // its drags and its release; any new press starts afresh.
+    if((e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)&&e.button==PointerButton::left)swallowsArrangePress=false;
+    else if(swallowsArrangePress&&e.kind==PointerKind::move&&(e.modifiers&MK_LBUTTON))return true;
+    else if(swallowsArrangePress&&e.kind==PointerKind::up&&e.button==PointerButton::left){swallowsArrangePress=false;host.capturePointer(false);host.refreshCursor();refresh(hostTime(time));return true;}
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
     if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
     // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&r){return o.capturesPointer()&&routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
+    // Arrange on HUD: below pointer captures, above the owners (a pinned note
+    // or the charge capsule over a tile keeps its press: rightRowTarget).
+    if(session->inputEnabled()&&arrangePointer(e,p,hostTime(time)))return true;
     if(registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&r){return routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
     // The clock sits below popovers and workspace notes, beside navigation:
     // a style indicator selects that style, the rest opens Work Mode.
@@ -178,6 +192,8 @@ bool Application::Impl::onKey(const KeyEvent&e){
     if(ready&&projectionShown()){if(projectionHandoff.acceptsInput()){bool handled{};(void)projectionCall("key",[&]{handled=projection->key(e,now());});if(handled)automationChanged();refresh(now());}return true;}
     if(ready){
         using C=ModuleRegistry::Chain;
+        // Esc during a press on an Arrange on HUD tile, before both key chains.
+        if(arrangeKey(e,now()))return true;
         // A handled key may open or close an editor (Return, Escape) under the pointer.
         if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}
         if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}

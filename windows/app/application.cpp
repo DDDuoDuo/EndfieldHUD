@@ -11,7 +11,9 @@
 #include "app/areas/projection_automation.hpp"
 #include "app/areas/calendar_reminder_module.hpp"
 #include "app/areas/update_service.hpp"
+#include "modules/hud_design_cards.hpp"
 #include "native/archive_password_vault.hpp"
+#include "native/hud_design_scene.hpp"
 #include "native/hypergryph_account_vault.hpp"
 #include "native/profile_text.hpp"
 #include "native/storage_files.hpp"
@@ -486,6 +488,7 @@ void Application::Impl::construct(){
         // Mac 1.3.0: the left icons sit over their captions by their visible glyph (B2b).
         nativeAppearance->setIconGlyphObserver([this](std::string_view id,core::Rect glyph){(void)labelPlan->setIconGlyph(id,glyph);});}startup.mark("native-bindings-content-catalog");
     labels=std::make_unique<gpu::WatchLabelPresentation>(*labelPlan,layers);for(const auto&id:labelPlan->buttonIDs())available.push_back({id,false,false});
+    arrangeMarks=std::make_unique<gpu::WatchArrangeMarks>(labelPlan->buttonIDs().size());
     chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="CLICK OUTSIDE TO CLOSE";
     if(includesChrome){chromeBindings=source::DesktopChromeBindings::fromJson(chromeJSON["bindings"]);chromePlan=std::make_unique<source::DesktopChromeProjectionPlan>(*scene,*camera,*animation,*chromeBindings);chrome=std::make_unique<gpu::NativeChromePresentation>(*chromePlan,layers,chromeJSON,rasterOptions,rasterizer);
         chrome->setContent(chromeContent);}startup.mark("chrome-artwork");
@@ -1726,6 +1729,8 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.hooks.chooseLogo=[this]{chooseCenterLogo();};
     // onEditOverlay: SystemHUDView.beginOverlayPlacement (the HUD stays open on Display > HUD elements).
     options.hooks.editOverlay=[this]{beginOverlayPlacement(now());};
+    // onArrangeModules: Display > Modules > Arrange on HUD (SystemHUDView.setModuleArrangement).
+    options.hooks.arrangeModules=[this](bool on){setModuleArrangement(on,now());};
     options.hooks.logoSelection=[this]{++logoImportGeneration;};
     ModuleRouting routing;routing.pointerCapture=1;routing.pointer=2;routing.wheelCapture=1;routing.wheel=2;routing.keyCapture=1;routing.key=2;routing.pointerPolicy={false,true,false};
     options.owner=designOwnerOptions("settings",routing);
@@ -2061,6 +2066,8 @@ void Application::Impl::close(double time){
     time=hostTime(time);
     if(!production())std::cout<<"Preview close requested at "<<time<<std::endl;
     if(registry.first(ModuleRegistry::Chain::finishEditing,[&](ModuleOwner&o,const ModuleRouting&){return !o.finishEditing(hostTime(time));},"close")){pendingClose=true;return;}
+    // An Arrange on HUD drag ends without animation (the list snaps).
+    endModuleArrangeDrag(false,false,time);
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
@@ -2086,6 +2093,7 @@ void Application::Impl::forceConceal(double time){
     // OverlayController.forceCloseSystemOverlay: sleep, session end and
     // termination cannot wait for visible animations or editor retries.
     time=hostTime(time);
+    endModuleArrangeDrag(false,false,time);
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingLink.reset();pendingStorageSettings=false;
     if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"force close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"force close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
@@ -2323,7 +2331,8 @@ void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stoppi
     if(reader&&!readerActionQueued){std::optional<tools::ReaderImportAction>action;isolate(readerModuleOwner,"import",[&]{action=reader->takeImportAction();});
         if(action){pendingReaderAction=std::move(*action);need(PostMessageW(static_cast<HWND>(host.hwnd()),readerActionMessage,serviceGeneration,0)!=FALSE,"Post Reader import action");readerActionQueued=true;}}
     if(workMode)updateClock();host.setFrameDemand(demand(time));scheduleDeadline();host.invalidate();}}
-bool Application::Impl::pointerLocked(){return registry.pointerLocked();}
+// A lifted Arrange on HUD tile holds the parallax like a module's drag (isModuleInputLocked).
+bool Application::Impl::pointerLocked(){return registry.pointerLocked()||(arrangeDrag&&arrangeDrag->lifted);}
 std::vector<modules::NotesShelfChoice> Application::Impl::shelfChoices(){std::vector<modules::NotesShelfChoice>choices;
     if(shelf)for(const auto&item:shelf->items()){
         auto extension=utf8(utf8Path(item.lastKnownPath).extension());std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return c>='A'&&c<='Z'?char(c+32):char(c);});
@@ -2332,7 +2341,9 @@ std::vector<modules::NotesShelfChoice> Application::Impl::shelfChoices(){std::ve
     }return choices;
 }
 void Application::Impl::publishNative(){
-    ordered.clear();ordered.push_back({&layers,{}});appendedOwners.clear();
+    // The Arrange on HUD marks draw right after the watch labels.
+    if(arrangeMarks)(void)arrangeMarks->upload(renderer);
+    ordered.clear();ordered.push_back({&layers,arrangeMarks?arrangeMarks->draws():std::span<const gpu::DrawObject>{}});appendedOwners.clear();
     // The clock style push's two pages sit right above the status panel.
     if(chrome)if(auto*pages=chrome->transitionScene())ordered.push_back({pages,{}});
     registry.forEach([&](ModuleOwner&o){const auto begin=probe.enabled?Clock::now():Clock::time_point{};o.upload(renderer);if(probe.enabled)probe.owner(o.name(),true,begin);},"upload");
@@ -2412,9 +2423,17 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     // overlaps the CPU work before it.
     {auto stage=probe.measure(LiveProbe::materials);materialPresentation->update(*sample->sourceFrame,parameters);}
     {auto stage=probe.measure(LiveProbe::nativeLabels);if(navigationDirty)bindNavigation(time);if(nativeContent)nativeContent->update(session->actions());
-    for(auto&button:available){const auto found=session->actions().find(button.buttonID);button.enabled=found!=session->actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);}
+    // Arrange on HUD: corner marks on every module tile, 4 points wider on the dragged one, and the tile drawn above the others.
+    const auto raised=session->raisedButton();
+    for(auto&button:available){const auto found=session->actions().find(button.buttonID);button.enabled=found!=session->actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);
+        const auto action=arrangingModules?session->rowAction(button.buttonID):std::nullopt;const auto*entry=action?navigationEntry(*action):nullptr;
+        button.arrangeMark=entry&&entry->module&&std::find(ehud::data::ModuleLayout::configurable.begin(),ehud::data::ModuleLayout::configurable.end(),entry->target)!=ehud::data::ModuleLayout::configurable.end();
+        button.liftedMark=button.arrangeMark&&arrangeDrag&&arrangeDrag->lifted&&entry->target==arrangeDrag->module;button.raised=raised==button.buttonID;}
     if(idCard)(void)idCard->advance(time,settings.reduceMotion); // the UID bar's wipe (B2b)
     const core::Rect viewport{0,0,metrics.width,metrics.height};labels->update(*sample->sourceFrame,sample->camera,viewport,available);
+    if(arrangeMarks&&designOverlay){const auto marks=labels->marks();arrangeMarkRects.clear();
+        for(const auto&mark:marks)arrangeMarkRects.push_back(modules::design::ArchiveTile::arrangeMarkRects({0,0,mark.size[0],mark.size[1]},mark.lifted));
+        (void)arrangeMarks->update(marks,arrangeMarkRects,gpu::designLinearTint(designOverlay->context().env().palette.plateInk()));}
     if(nativeAppearance){watchAppearance.selectedAction=notes?contentCatalog->actionForTarget(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session->actions(),watchAppearance,labels->placements());}
     // Chrome samples once per visible second; opacity follows the same
     // ready/close timestamps as the source outer controller.
@@ -2422,6 +2441,8 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     // HUDClockPageViewport: the style push advances on this frame clock.
     if(chrome){chrome->advance(time);chrome->update(*sample->sourceFrame,sample->camera,frameChrome,static_cast<float>(canvasOpacity(time)));}
     }
+    // The list moved under a lifted Arrange on HUD tile: the slot under the pointer previews.
+    if(session->takeArrangeScrolled())followArrangeScroll(time);
     return sample;
 }
 // Launch prewarm (Mac AppDelegate prewarmDesktop/prewarmDesktopResources, on
@@ -2704,7 +2725,7 @@ void Application::Impl::presentQuitConfirmation(double time){
 // Host routes into module areas
 // Source desktop navigation with the saved app shortcuts (AppShortcutNavigation
 // host contract): entries are bound before the session's right-side actions.
-void Application::Impl::bindNavigation(double time){
+void Application::Impl::bindNavigation(double time,bool animated){
     navigationDirty=false;if(!nativeAppearance)return;
     std::vector<gpu::WatchAppearanceEntry>entries;
     for(const auto&e:contentCatalog->entries())entries.push_back({e.action,e.target,moduleCaption(e.target,watchAppearance.language,e.title),"module:"+e.target,true});
@@ -2726,7 +2747,8 @@ void Application::Impl::bindNavigation(double time){
     nativeAppearance->setEntries(entries);
     // SourceWatchSession relays out the rows and resets the scroll when the
     // right-side count changes (Mac setDesktopNavigation).
-    session->setNavigation(std::move(navigation),time);
+    // The source shell's tiles slide to new places only for Arrange on HUD.
+    session->setNavigation(std::move(navigation),time,animated&&arrangingModules);
 }
 // OverlayController.reconcileChargeMetricTelemetry: the shared Activity
 // sampler stays attached while the charge badge/alert shows a CPU/RAM/
