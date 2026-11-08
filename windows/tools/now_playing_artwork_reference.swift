@@ -1,5 +1,6 @@
 // Oracle for the Now Playing small-cover decode on Windows
-// (windows/modules/now_playing_artwork.*, windows/modules/artwork_scaling.*):
+// (nowPlayingSmallCover in windows/native/now_playing_image.*, over
+// windows/modules/artwork_scaling.*):
 // the unchanged Mac NowPlayingArtworkLoader.layout / decode /
 // trimmingLetterbox (Sources/NowPlayingArtwork.swift) and
 // HUDPortraitArtwork.scaledImage (Sources/HUDPortraitArtwork.swift) over
@@ -140,6 +141,11 @@ struct Case { let name: String; let kind: String; let width: Int; let height: In
             Case(name: "pattern150x84", kind: "pattern", width: 150, height: 84, bar: 0, barBottom: 0, pixels: 720),
             Case(name: "letterbox160", kind: "pattern", width: 160, height: 120, bar: 15, barBottom: 15, pixels: 720),
             Case(name: "hqdefault", kind: "pattern", width: 480, height: 360, bar: 45, barBottom: 45, pixels: 720),
+            // Sizes whose region x factor is not whole (1.44): rounded up on
+            // the height, rounded down, and rounded up on the width.
+            Case(name: "pattern500x281", kind: "pattern", width: 500, height: 281, bar: 0, barBottom: 0, pixels: 720),
+            Case(name: "pattern500x282", kind: "pattern", width: 500, height: 282, bar: 0, barBottom: 0, pixels: 720),
+            Case(name: "pattern281x500", kind: "pattern", width: 281, height: 500, bar: 0, barBottom: 0, pixels: 720),
             Case(name: "wide1920x200", kind: "pattern", width: 1920, height: 200, bar: 0, barBottom: 0, pixels: 720),
             Case(name: "large640", kind: "pattern", width: 640, height: 640, bar: 0, barBottom: 0, pixels: 720),
         ]

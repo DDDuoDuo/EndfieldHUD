@@ -42,12 +42,11 @@ NowPlayingImageResult nowPlayingSmallCover(std::shared_ptr<const NotesImageFrame
   const auto trimmed=nowPlayingTrimmedLetterbox(image);
   const modules::ProfileImage picture{trimmed->width,trimmed->height,trimmed->straightRGBA,false};
   const double w=picture.width,h=picture.height,factor=double(plan.side)/std::max(w,h),square=std::min(w,h);
-  // HUDPortraitArtwork.scaledImage: max(1, round(region x factor)) per side.
-  const auto side=[](double v){return std::max(1u,static_cast<unsigned>(std::lround(v)));};
-  auto foreground=factor>1?frame(modules::artworkResampled(picture,1,{0,0,w,h},side(w*factor),side(h*factor),modules::ArtworkEdges::clamped)):trimmed;
+  // HUDPortraitArtwork.scaledImage: one factor on both axes, max(1, round(region x factor)) per side.
+  auto foreground=factor>1?frame(modules::artworkScaled(picture,{0,0,w,h},factor,modules::ArtworkEdges::clamped)):trimmed;
   const double scale=double(modules::nowPlayingCoverBackdropPixels)/square;
   const auto finish=modules::artworkBlurAndExposure(modules::nowPlayingCoverBackdropBlur,modules::nowPlayingCoverBackdropExposure);
-  auto backdrop=frame(modules::artworkResampled(picture,1,{(w-square)/2,(h-square)/2,square,square},side(square*scale),side(square*scale),modules::ArtworkEdges::clamped,&finish));
+  auto backdrop=frame(modules::artworkScaled(picture,{(w-square)/2,(h-square)/2,square,square},scale,modules::ArtworkEdges::clamped,&finish));
   out.image=std::move(foreground);out.backdrop=std::move(backdrop);
  }catch(const std::exception&){out.image=image;out.backdrop.reset();}
  return out;
