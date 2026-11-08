@@ -309,24 +309,12 @@ inline bool recordMicroTag(RecordedMeasurer& recorded, const Json& layer) {
 // Accessibility items against the oracle's rows (id, label, role, value, rect, enabled, on).
 // HUDDesignCanvas.refreshRouter lists a text field placed in its row once
 // (Mac 56e52e3); a field the page does not hold (a pop-over's) still follows
-// the page, and the pop-over lists it again. An oracle recorded from older Mac
-// sources (1.3.0) also lists a field placed in its row a second time after the
-// page. Only such an oracle passes `pageListedTwice`, the controls of the
-// Windows page: a later Mac listing of an edit field that page holds is
-// skipped, and every other row, pop-over fields included, is compared in full.
-// TODO(Step 0a): the Archive oracle is the only caller (the App Shortcut
-// oracle was rerun at the Mac pin); once its tool is rerun too, drop the
-// argument and this filter.
+// the page, and the pop-over lists it again.
 inline void compareAccessibility(const std::string& label, const Json& expected, std::span<const d::AccessibilityItem> items,
-    std::vector<std::string>& failures, std::span<d::Control* const> pageListedTwice = {}) {
+    std::vector<std::string>& failures) {
     static constexpr std::array<std::string_view, 9> roles{"button", "toggle", "popUp", "menuItem", "tab", "slider", "text", "edit", "group"};
     std::vector<const Json*> rows;
-    std::set<std::string> fields;
-    for (const auto& row : expected.array()) {
-        const auto& id = row["id"].string();
-        const bool inPage = std::any_of(pageListedTwice.begin(), pageListedTwice.end(), [&](const d::Control* c) { return c->id() == id; });
-        if (row["role"].string() != "edit" || !inPage || fields.insert(id).second) rows.push_back(&row);
-    }
+    for (const auto& row : expected.array()) rows.push_back(&row);
     if (rows.size() != items.size()) { failures.push_back(label + ": accessibility count " + std::to_string(items.size()) + " vs " + std::to_string(rows.size())); return; }
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto& e = *rows[i]; const auto& item = items[i];

@@ -152,6 +152,7 @@ public:
     bool handleKey(const design::KeyInput&) override;
     bool handleScroll(Point, Point) override;
     bool interceptPointerDown(Point, const design::PointerInput&) override;
+    bool handleRightPointerDown(Point) override;
     bool editingOtherText() const override;
     void endOtherEditing(bool commit) override;
     void willEndInteraction() override;
@@ -250,8 +251,12 @@ private:
     NotesFormatState formatState() const;
     void updateFormatBar();
     void applyFormat(const core::notes::FormatChange&);
+    std::vector<design::Menu::Item> categoryMenuItems(const std::optional<std::string>& current) const;
     void openCategoryMenu(const design::Control& anchor);
-    void confirmDelete();
+    // A gallery document: its tile's (and ⋯'s) label, and its Open / Move to… / Delete menu.
+    std::string documentLabel(const ArchiveSummary&) const;
+    void openDocumentMenu(const std::string& id, Rect anchorRect, const design::Control* anchor);
+    void confirmDelete(const std::string& id);
     void confirmDeclassify();
     void openClassify(const design::Control& anchor);
     struct PasswordForm { std::unique_ptr<design::Popover> popover; std::vector<design::Control*> controls; std::vector<design::TextField*> fields; };

@@ -490,6 +490,64 @@ void closedUnseen() {
     check(w.canvas->displayedPage().kind == m::ArchiveCanvas::PageKind::list, "A later first showing opens the list");
 }
 
+// A gallery document's menu (Mac 7ba4175, 7f8ed37): the tile's ⋯ or a
+// right-click opens Open / Move to… / Delete; a locked document can only be
+// opened; Move to… lists the categories at the same spot and a move toasts
+// once done; Delete asks and stays on the gallery; the labels hide a
+// classified title; an off-screen document's ⋯ stand-in opens the menu.
+void documentMenu() {
+    World w;
+    m::ArchiveCategory ops; ops.id = uuid(901); ops.name = "Ops"; ops.created = 1; w.repo->saveCategory(ops);
+    m::ArchiveCategory lab; lab.id = uuid(902); lab.name = "Lab"; lab.created = 2; w.repo->saveCategory(lab);
+    const auto document = [&](unsigned n, std::string title, std::optional<std::string> category, double date) {
+        m::ArchiveEntry e; e.id = uuid(n); e.title = std::move(title); e.body = "Body"; e.date = e.modified = date; e.categoryID = std::move(category);
+        w.repo->save(e); return e.id;
+    };
+    const auto report = document(911, "Field report", ops.id, 10), untitled = document(912, "", std::nullopt, 11), sealed = document(913, "Sealed", lab.id, 12);
+    w.repo->classify(sealed, "correct horse");
+    w.open();
+    auto& c = *w.canvas;
+    const auto more = [](const std::string& id) { return "doc:" + id + std::string(d::TileMoreButton::suffix); };
+    const auto rows = [&] {
+        std::vector<std::string> out;
+        for (const auto& item : w.items()) if (item.id.starts_with("doc.menu:") || item.id.starts_with("doc.moveTo:")) out.push_back(item.id + (item.enabled ? "" : " off"));
+        return out;
+    };
+    // Labels: "<title>, <dotted date>", "More, " + that; Untitled and Classified document.
+    check(w.control("doc:" + report)->label == "Field report, 2026.10.23" && w.control(more(report))->label == "More, Field report, 2026.10.23", "A titled document and its ⋯ are labelled");
+    check(w.control("doc:" + untitled)->label == "Untitled, 2026.10.23" && w.control(more(untitled))->label == "More, Untitled, 2026.10.23", "An untitled document reads Untitled");
+    check(w.control("doc:" + sealed)->label == "Classified document, 2026.10.23" && w.control(more(sealed))->label == "More, Classified document, 2026.10.23", "A classified title stays hidden");
+    // The ⋯: Open / Move to… / Delete; it toggles the menu.
+    check(w.press(more(report)) && c.menuOpen() && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move", "doc.menu:delete"}, "The ⋯ opens Open / Move to… / Delete");
+    check(w.press(more(report)) && !c.menuOpen(), "The ⋯ closes it again");
+    check(w.press(more(sealed)) && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete off"}, "A locked document can only be opened");
+    c.closeMenu();
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "Opening the menu opens no document");
+    // Move to…: the shared category list at the same spot, the current one marked; the move toasts once it is saved.
+    w.press(more(report));
+    check(w.press("doc.menu:move") && c.menuOpen() && rows() == std::vector<std::string>{"doc.moveTo:uncategorized", "doc.moveTo:" + ops.id, "doc.moveTo:" + lab.id}, "Move to… lists Uncategorized and the categories");
+    check(w.press("doc.moveTo:" + lab.id) && w.repo->entry(report)->categoryID == lab.id && w.toast() == "Moved|Lab", "A closed document moves and toasts Moved with the category");
+    check(w.state.entries().front().id == report && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "It moves to the front of All, still on the gallery");
+    // A right-click on a tile (or its ⋯) opens the same menu at the point.
+    const auto centre = [&](const std::string& id) { const auto r = w.control(id)->rect(c.root()); return d::Point{r.x + r.width / 2, r.y + r.height / 2}; };
+    check(c.rightPointerDown(centre("doc:" + untitled), w.now) && c.menuOpen() && rows().size() == 3 && !w.state.selected(), "A right-click opens the menu without opening the document");
+    check(c.rightPointerDown(centre("doc:" + untitled), w.now) && !c.menuOpen(), "A right-click with the menu open closes it");
+    check(c.rightPointerDown(centre(more(untitled)), w.now) && c.menuOpen(), "A right-click on the ⋯ opens the tile's menu");
+    // Delete asks with the title and stays on the gallery.
+    check(w.press("doc.menu:delete"), "Delete");
+    const auto& request = w.context.overlay().confirmState().request();
+    check(request && request->id == "deleteDocument" && request->message == "Untitled" && request->danger, "Delete asks with the title (Untitled)");
+    (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
+    check(!w.repo->entry(untitled) && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && w.toast() == "Document deleted|" && !w.control("doc:" + untitled), "Confirmed: deleted, still on the gallery");
+    // The editor's own Move and Delete are unchanged.
+    w.press("doc:" + report);
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "The document opens");
+    check(w.press("category") && w.press("moveTo:" + ops.id) && w.state.selected()->categoryID == ops.id && w.toast() == "Moved|Ops", "The editor's category menu still moves the open document");
+    w.press("delete");
+    (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
+    check(!w.repo->entry(report) && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "The editor's Delete returns to the gallery");
+}
+
 void languages() {
     World w(L::simplifiedChinese); w.open();
     auto& c = *w.canvas;
@@ -610,7 +668,7 @@ struct Oracle {
         std::vector<d::AccessibilityItem> items; c.accessibilityItems(items);
         windowsBody(label, expected, items);
         o::compare(label, expected, c.root(), c.root(), c.page().controls(), failures);
-        o::compareAccessibility(label, static_cast<const J&>(expected)["accessibility"], items, failures, c.page().controls());
+        o::compareAccessibility(label, static_cast<const J&>(expected)["accessibility"], items, failures);
         if (expected["top"].isObject()) o::compare(label + "/top", J::Object{{"layer", expected["top"]}}, c.top(), c.root(), {}, failures);
         const auto& header = (*r)["header"];
         if (c.header().counterText() != header["counter"].string()) failures.push_back(label + ": counter " + c.header().counterText());
@@ -637,6 +695,16 @@ void archiveOracle(Oracle& or_) {
     or_.scene("rename", "en", false, [&](World& w) { w.press("category:" + id(2)); w.canvas->beginRename(); });
     for (const auto* language : {"en", "zh-Hans"}) or_.scene("editor", language, false, press("doc:" + id(11)));
     or_.scene("editor", "en", true, press("doc:" + id(11)));
+    // A gallery document's menu: its ⋯ (a titled and a classified document), Move to…, a move through it, a right-click.
+    const auto more = [&](int n) { return "doc:" + id(n) + std::string(d::TileMoreButton::suffix); };
+    for (const auto* language : {"en", "zh-Hans"}) or_.scene("documentMenu", language, false, press(more(11)));
+    or_.scene("documentMenuClassified", "en", false, press(more(13)));
+    or_.scene("documentMoveTo", "en", false, pressTwo(more(11), "doc.menu:move"));
+    or_.scene("documentMoved", "en", false, [&](World& w) { w.press(more(11)); w.press("doc.menu:move"); w.press("doc.moveTo:" + id(2)); });
+    or_.scene("documentRightClick", "en", false, [&](World& w) {
+        const auto r = w.control("doc:" + id(12))->rect(w.canvas->root());
+        w.canvas->rightPointerDown({r.x + r.width / 2, r.y + r.height / 2}, w.now); w.settle();
+    });
     or_.scene("editorUntitled", "en", false, press("doc:" + id(14)));
     or_.scene("editorNew", "en", false, press("new"));
     or_.scene("editorNewInCategory", "en", false, pressTwo("category:" + id(2), "new"));
@@ -655,7 +723,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); focusMemory(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); focusMemory(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);

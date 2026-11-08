@@ -1,10 +1,11 @@
 import AppKit
 import QuartzCore
 
-// Actual-source oracle of the redesigned Archive (Mac 1.3.0 Sources/ArchiveCanvas.swift over its real ArchiveStore and
+// Actual-source oracle of the redesigned Archive (Mac 1.3.1 Sources/ArchiveCanvas.swift over its real ArchiveStore and
 // ArchiveController with ArchiveMemoryPasswordVault and synchronous executors). The unchanged Mac canvas is built in
 // scripted states (the empty list; three categories with a NEW badge and four documents, one classified; a category
-// filter; the category rename; the editor of a written document, of a new document, its category menu and its Classify
+// filter; the category rename; a gallery document's menu from its ⋯ or a right-click, its Move to… list and a move
+// from it; the editor of a written document, of a new document, its category menu and its Classify
 // pop-over; the locked page; the recovery page of a classified document whose password is gone; Recording mode;
 // English, Simplified Chinese, Light) and exported as its model layer tree with the design recorder
 // (tools/hud_design_reference_support.swift), its page controls and accessibility items, and the scenario's INPUT (the
@@ -139,6 +140,22 @@ private func pump() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)) }
         try scene("editorNew") { activate($0, "new") }
         try scene("editorNewInCategory") { c in activate(c, "category:" + research.id.uuidString); activate(c, "new") }
         try scene("categoryMenu") { c in activate(c, "doc:" + report.id.uuidString); activate(c, "category") }
+        // A gallery document's menu (Open / Move to… / Delete): from its ⋯, a classified one's, Move to…, a move
+        // to Research through it, and a right-click.
+        let more = { (entry: ArchiveEntry) in "doc:" + entry.id.uuidString + HUDTileMoreButton.suffix }
+        try scene("documentMenu") { activate($0, more(report)) }
+        try scene("documentMenu", language: .simplifiedChinese) { activate($0, more(report)) }
+        try scene("documentMenuClassified") { activate($0, more(sealed)) }
+        try scene("documentMoveTo") { c in activate(c, more(report)); c.performAccessibilityAction("doc.menu:move"); pump() }
+        try scene("documentMoved") { c in
+            activate(c, more(report)); c.performAccessibilityAction("doc.menu:move"); pump()
+            c.performAccessibilityAction("doc.moveTo:" + research.id.uuidString); pump()
+        }
+        try scene("documentRightClick") { c in
+            guard let tile = control(c, "doc:" + patrol.id.uuidString) else { fatalError("No patrol tile") }
+            let rect = tile.rect(in: c.root)
+            _ = c.rightPointerDown(at: CGPoint(x: rect.midX, y: rect.midY)); pump()
+        }
         try scene("classifyPopover") { c in activate(c, "doc:" + patrol.id.uuidString); activate(c, "classify") }
         try scene("locked") { activate($0, "doc:" + sealed.id.uuidString) }
         try scene("locked", language: .simplifiedChinese) { activate($0, "doc:" + sealed.id.uuidString) }
