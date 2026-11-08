@@ -56,17 +56,18 @@ struct World {
 // The controller: the published snapshot and the commands the canvas sends.
 struct Controller {
     m::NowPlayingViewInput input;
-    m::NowPlayingCover cover;
+    m::NowPlayingCoverArt cover;
     std::vector<m::NowPlayingIntent> sent;
     std::vector<bool> presented;
-    std::vector<unsigned> pixels;
+    std::vector<m::NowPlayingCoverSlot> slots;
+    std::vector<unsigned> pixels;   // the decode sizes named
     m::NowPlayingCanvasServices services() {
         m::NowPlayingCanvasServices s;
         s.input = [this]() -> const m::NowPlayingViewInput& { return input; };
         s.artwork = [this] { return cover; };
         s.setPresented = [this](bool v) { presented.push_back(v); };
         s.perform = [this](const m::NowPlayingIntent& i) { sent.push_back(i); return true; };
-        s.setArtworkPixels = [this](unsigned p) { pixels.push_back(p); };
+        s.setArtworkPixels = [this](m::NowPlayingCoverSlot p) { slots.push_back(p); pixels.push_back(p.decode); };
         return s;
     }
     static m::NowPlayingViewInput playing(double now, double position = 42, bool isPlaying = true) {
@@ -92,6 +93,16 @@ void layout() {
         && C::time(1e9) == C::time(604800), "Times: mm:ss, minutes past 59, \xe2\x80\x94:\xe2\x80\x94 when unknown, capped at 604800 s (:395-398)");
 }
 
+// Where a cover is drawn in the 480 px slot (showArt, :325-347).
+void coverFrames() {
+    const auto is = [](d::Rect r, d::Rect e) { return std::abs(r.x - e.x) < 1e-9 && std::abs(r.y - e.y) < 1e-9 && std::abs(r.width - e.width) < 1e-9 && std::abs(r.height - e.height) < 1e-9; };
+    check(is(C::coverFrame(300, 300, true, 1), {90, 90, 300, 300}), "A 300 px small cover at boxScale 1: 300 points, centred");
+    check(is(C::coverFrame(300, 300, true, 2), {165, 165, 150, 150}), "At boxScale 2: 150 points");
+    check(is(C::coverFrame(960, 540, true, 1.5), {0, 105, 480, 270}), "A small cover larger than the slot (640 x 360 points) is fitted inside it");
+    check(is(C::coverFrame(960, 750, false, 1.5), {-67.2, 0, 614.4, 480}), "A cover that is not small is aspect-filled (cropped by the mask)");
+    check(is(C::coverFrame(960, 540, false, 1), {-186.66666666666669, 0, 853.3333333333334, 480}), "Without a backdrop a 16:9 cover is aspect-filled");
+}
+
 void behaviour() {
     FakeMeasurer measurer;
     World w(measurer); w.appearance(Language::english, false, false);
@@ -106,13 +117,15 @@ void behaviour() {
     const auto coversDrawnSize = [&] {
         const double s = w.context.boxScale();
         return !ctl.pixels.empty() && ctl.pixels.back() == m::nowPlayingCoverPixelSize(480, std::min(4., s + .5))
-            && ctl.pixels.back() >= unsigned(std::ceil(480 * (s + .35)));
+            && ctl.pixels.back() >= unsigned(std::ceil(480 * (s + .35)))
+            && ctl.slots.back().layout == m::nowPlayingCoverPixelSize(480, s);
     };
     check(coversDrawnSize(), "The page names its 480 px slot at the render scale plus half a density step (:173)");
     w.context.update(d::geometry::baseUnit, 1.5 / d::geometry::baseUnit, w.now);
-    check(std::abs(w.context.boxScale() - 1.5) < 1e-9 && coversDrawnSize() && ctl.pixels.back() == 960, "Density 1.5 asks for 960 px, not 720 (drawn up to 480 x 1.85)");
+    check(std::abs(w.context.boxScale() - 1.5) < 1e-9 && coversDrawnSize() && ctl.pixels.back() == 960 && ctl.slots.back().layout == 720,
+        "Density 1.5 decodes a large cover at 960 px, not 720 (drawn up to 480 x 1.85); a small one is laid out in the 720 px slot (decision AW-D2 (a))");
     w.context.update(d::geometry::baseUnit, 4 / d::geometry::baseUnit, w.now);
-    check(ctl.pixels.back() == 1920, "Density 4 (the largest) asks for 1920 px");
+    check(ctl.pixels.back() == 1920 && ctl.slots.back().layout == 1920, "Density 4 (the largest) asks for 1920 px");
     w.context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, w.now);
     check(ctl.pixels.back() == 1200, "Back at density 2: 1200 px");
     check(textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire" && textOf(canvas.root(), "nowPlaying.elapsed") == "00:42" && textOf(canvas.root(), "nowPlaying.duration") == "03:34",
@@ -206,9 +219,22 @@ void nothingPlaying() {
     check(!canvas.transitioning() && textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire", "A track appearing rebuilds in place (:157)");
     // A decoded cover is drawn by the owner: it shows in the top art layer.
     auto cover = std::make_shared<endfield::native::NotesImageFrame>(); cover->width = cover->height = 960;
-    ctl.cover = cover; ctl.input.coverAvailable = true; ctl.input.coverRevision = 1;
+    ctl.cover = {cover, nullptr, 960, 960}; ctl.input.coverAvailable = true; ctl.input.coverRevision = 1;
     canvas.refresh(w.now);
-    check(canvas.coverViews(w.now)[1].image == ctl.cover && !canvas.coverViews(w.now)[0].image && find(canvas.root(), "nowPlaying.cover.ring")->hidden(),
+    const auto shown = canvas.coverViews(w.now)[1];
+    check(shown.frame.x == 0 && shown.frame.y == 0 && shown.frame.width == 480 && shown.frame.height == 480 && !shown.backdrop, "A cover that fills the slot is aspect-filled, without a backdrop");
+    // A small cover (with a backdrop) is drawn whole at its own pixels over it.
+    auto small = std::make_shared<endfield::native::NotesImageFrame>(); small->width = small->height = 300;
+    auto fill = std::make_shared<endfield::native::NotesImageFrame>(); fill->width = fill->height = 96;
+    ctl.cover = {small, fill, 300, 300}; ctl.input.coverRevision = 2;
+    canvas.refresh(w.now);
+    const auto drawn = canvas.coverViews(w.now)[1];
+    const double scale = w.context.boxScale();
+    check(drawn.image == small && drawn.backdrop == fill && std::abs(drawn.frame.width - 300 / scale) < 1e-9 && std::abs(drawn.frame.x - (480 - 300 / scale) / 2) < 1e-9
+        && find(canvas.root(), "nowPlaying.cover.ring")->hidden(), "A small cover is drawn at px / boxScale, centred over its backdrop (:325-347); the placeholder stays hidden");
+    ctl.cover = {cover, nullptr, 960, 960}; ctl.input.coverRevision = 3;
+    canvas.refresh(w.now);
+    check(canvas.coverViews(w.now)[1].image == ctl.cover.image && !canvas.coverViews(w.now)[0].image && find(canvas.root(), "nowPlaying.cover.ring")->hidden(),
         "The cover shows (Reduce Motion: at once) and the placeholder ring hides (:318-328)");
 }
 
@@ -286,7 +312,7 @@ void oracleScenes(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        layout();
+        layout(); coverFrames();
         behaviour();
         nothingPlaying();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {

@@ -1,4 +1,5 @@
 #include "native/now_playing_image.hpp"
+#include "modules/artwork_scaling.hpp"
 #include "modules/now_playing_model.hpp"
 #include <algorithm>
 #include <array>
@@ -7,18 +8,44 @@
 #include <thread>
 namespace endfield::native {
 namespace {
-bool valid(const NowPlayingImageResult&r){if(!r.image)return r.failure!=NowPlayingImageFailure::none;const auto&i=*r.image;return r.failure==NowPlayingImageFailure::none&&i.width&&i.height&&i.width<=modules::nowPlayingMaximumCoverPixels&&i.height<=modules::nowPlayingMaximumCoverPixels&&i.straightRGBA.size()==std::size_t(i.width)*i.height*4;}
+bool bounded(const NotesImageFrame&i){return i.width&&i.height&&i.width<=modules::nowPlayingMaximumCoverPixels&&i.height<=modules::nowPlayingMaximumCoverPixels&&i.straightRGBA.size()==std::size_t(i.width)*i.height*4;}
+bool valid(const NowPlayingImageResult&r){if(!r.image)return r.failure!=NowPlayingImageFailure::none&&!r.backdrop;return r.failure==NowPlayingImageFailure::none&&bounded(*r.image)&&(!r.backdrop||bounded(*r.backdrop));}
+// The source's upright size, or the image's for a result that names none.
+std::pair<unsigned,unsigned>native(const NowPlayingImageResult&r){if(r.nativeWidth&&r.nativeHeight)return {r.nativeWidth,r.nativeHeight};return r.image?std::pair{r.image->width,r.image->height}:std::pair{0u,0u};}
+std::shared_ptr<const NotesImageFrame>frame(const modules::ProfileImage&image){
+ const auto straight=modules::profileStraight(image);auto out=std::make_shared<NotesImageFrame>();out->width=straight.width;out->height=straight.height;out->straightRGBA=straight.rgba;return out;}
+}
+NowPlayingImageResult nowPlayingSmallCover(std::shared_ptr<const NotesImageFrame>image,unsigned nativeWidth,unsigned nativeHeight,modules::NowPlayingCoverSlot slot){
+ NowPlayingImageResult out{image,NowPlayingImageFailure::none,0,nullptr,nativeWidth,nativeHeight};
+ if(!image||!image->width||!image->height||image->straightRGBA.size()!=std::size_t(image->width)*image->height*4)return out;
+ const auto plan=modules::nowPlayingCoverLayout(nativeWidth,nativeHeight,slot);
+ if(!plan.small)return out;
+ try{
+  const modules::ProfileImage picture{image->width,image->height,image->straightRGBA,false};
+  const double w=picture.width,h=picture.height,factor=double(plan.side)/std::max(w,h),square=std::min(w,h);
+  // HUDPortraitArtwork.scaledImage: max(1, round(region x factor)) per side.
+  const auto side=[](double v){return std::max(1u,static_cast<unsigned>(std::lround(v)));};
+  auto foreground=factor>1?frame(modules::artworkResampled(picture,1,{0,0,w,h},side(w*factor),side(h*factor),modules::ArtworkEdges::clamped)):image;
+  const double scale=double(modules::nowPlayingCoverBackdropPixels)/square;
+  const auto finish=modules::artworkBlurAndExposure(modules::nowPlayingCoverBackdropBlur,modules::nowPlayingCoverBackdropExposure);
+  auto backdrop=frame(modules::artworkResampled(picture,1,{(w-square)/2,(h-square)/2,square,square},side(square*scale),side(square*scale),modules::ArtworkEdges::clamped,&finish));
+  out.image=std::move(foreground);out.backdrop=std::move(backdrop);
+ }catch(const std::exception&){out.image=image;out.backdrop.reset();}
+ return out;
 }
 struct NativeNowPlayingArtwork::Impl:std::enable_shared_from_this<Impl>{
  // `pixels`: the decode size this entry stands for.
- struct Entry{std::weak_ptr<const std::vector<std::uint8_t>>bytes;NowPlayingImageResult value;unsigned pixels{};};
+ struct Entry{std::weak_ptr<const std::vector<std::uint8_t>>bytes;NowPlayingImageResult value;modules::NowPlayingCoverSlot pixels{};};
  app::UtilityExecutor&queue;std::function<void()>changed;SizedDecoder decode;app::UtilityExecutor::Route route;const std::thread::id owner=std::this_thread::get_id();
  Bytes desired;std::array<Entry,2>cache;NowPlayingImageResult value{{},NowPlayingImageFailure::unavailable};Stats counts;std::uint64_t generation{},published{};bool alive{true},inFlight{},pending{};
- unsigned pixels{modules::nowPlayingDefaultCoverPixels};
+ modules::NowPlayingCoverSlot pixels{};
  Impl(app::UtilityExecutor&q,std::function<void()>c,SizedDecoder d):queue(q),changed(std::move(c)),decode(std::move(d)),route(q.makeRoute()){if(!changed||!decode)throw std::invalid_argument("Now Playing artwork needs decoder and owner invalidation");}
  void check()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Now Playing artwork belongs to its owner thread");}
  void notify(){auto callback=changed;if(alive&&callback)callback();}
- bool fits(const Entry&e)const noexcept{if(!e.value.image||e.pixels==pixels)return true;const auto side=std::max(e.value.image->width,e.value.image->height);return side<e.pixels&&side<=pixels;}
+ // NowPlayingArtworkLoader.fits: no cover, the same slot, or a new decode
+ // would draw it the same (a cover at its own size within both slots, a
+ // small one at the same enlarged side).
+ bool fits(const Entry&e)const noexcept{if(!e.value.image||e.pixels==pixels)return true;const auto[w,h]=native(e.value);return modules::nowPlayingCoverLayout(w,h,e.pixels)==modules::nowPlayingCoverLayout(w,h,pixels);}
  bool submit(){check();if(!alive||inFlight||!pending||!desired)return false;const auto bytes=desired;const auto token=generation;const auto size=pixels;const auto weak=weak_from_this();auto result=std::make_shared<NowPlayingImageResult>();const auto decoder=decode;
   const bool accepted=queue.submit(route,[result,decoder,bytes,size]{*result=decoder(*bytes,size);if(!valid(*result))*result={{},NowPlayingImageFailure::decode};},[weak,result,bytes,token,size](std::exception_ptr error){if(auto self=weak.lock()){self->inFlight=false;++self->counts.decoded;if(error)*result={{},NowPlayingImageFailure::decode};
     // Two bounded immutable thumbnails/negative entries; encoded buffers are
@@ -34,7 +61,7 @@ struct NativeNowPlayingArtwork::Impl:std::enable_shared_from_this<Impl>{
  }
 };
 NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,Decoder d)
- :NativeNowPlayingArtwork(q,std::move(c),d?SizedDecoder([d=std::move(d)](std::span<const std::uint8_t>b,unsigned){return d(b);}):SizedDecoder{}){}
+ :NativeNowPlayingArtwork(q,std::move(c),d?SizedDecoder([d=std::move(d)](std::span<const std::uint8_t>b,modules::NowPlayingCoverSlot){return d(b);}):SizedDecoder{}){}
 NativeNowPlayingArtwork::NativeNowPlayingArtwork(app::UtilityExecutor&q,std::function<void()>c,SizedDecoder d):impl_(std::make_shared<Impl>(q,std::move(c),std::move(d))){}
 NativeNowPlayingArtwork::~NativeNowPlayingArtwork(){auto i=impl_;i->check();i->alive=false;i->changed={};i->desired.reset();i->pending=false;i->queue.invalidate(i->route);}
 bool NativeNowPlayingArtwork::request(Bytes bytes){auto i=impl_;i->check();if(bytes&&bytes->empty())bytes.reset();if(i->desired==bytes)return false;++i->generation;i->desired=std::move(bytes);i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;
@@ -42,7 +69,8 @@ bool NativeNowPlayingArtwork::request(Bytes bytes){auto i=impl_;i->check();if(by
  for(std::size_t n=0;n<i->cache.size();++n)if(i->cache[n].bytes.lock()==i->desired&&i->fits(i->cache[n])){i->value=i->cache[n].value;if(n)std::swap(i->cache[0],i->cache[n]);++i->counts.cacheHits;return true;}
  i->pending=true;i->submit();return true;
 }
-bool NativeNowPlayingArtwork::setPixelSize(unsigned value){auto i=impl_;i->check();value=std::clamp(value,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);if(value==i->pixels)return false;i->pixels=value;
+bool NativeNowPlayingArtwork::setPixelSize(modules::NowPlayingCoverSlot value){auto i=impl_;i->check();
+ for(auto*side:{&value.layout,&value.decode})*side=std::clamp(*side,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);if(value==i->pixels)return false;i->pixels=value;
  for(auto&e:i->cache)if(!i->fits(e)&&e.value.image!=i->value.image)e={};
  if(!i->desired||i->value.failure==NowPlayingImageFailure::invalidPayload)return false;
  const auto current=std::find_if(i->cache.begin(),i->cache.end(),[&](const auto&e){return e.bytes.lock()==i->desired&&e.value.image==i->value.image;});
@@ -50,15 +78,15 @@ bool NativeNowPlayingArtwork::setPixelSize(unsigned value){auto i=impl_;i->check
  // The shown cover stays until the re-decode for the new size is ready.
  ++i->generation;i->pending=true;i->submit();return true;
 }
-unsigned NativeNowPlayingArtwork::pixelSize()const noexcept{return impl_->pixels;}
+modules::NowPlayingCoverSlot NativeNowPlayingArtwork::pixelSize()const noexcept{return impl_->pixels;}
 void NativeNowPlayingArtwork::cancel(){auto i=impl_;i->check();++i->generation;i->desired.reset();i->pending=false;i->value={{},NowPlayingImageFailure::unavailable};++i->published;}
 bool NativeNowPlayingArtwork::submitPending(){return impl_->submit();}
 void NativeNowPlayingArtwork::trim(const std::shared_ptr<const NotesImageFrame>&keep){auto i=impl_;i->check();for(auto&e:i->cache)if(e.value.image&&e.value.image!=keep)e={};if(i->value.image&&i->value.image!=keep)i->value={{},NowPlayingImageFailure::unavailable};}
 const NowPlayingImageResult&NativeNowPlayingArtwork::result()const{impl_->check();return impl_->value;}
 std::uint64_t NativeNowPlayingArtwork::revision()const noexcept{return impl_->published;}
 NativeNowPlayingArtwork::Stats NativeNowPlayingArtwork::stats()const{impl_->check();auto s=impl_->counts;s.inFlight=impl_->inFlight;s.pending=impl_->pending;
- const NotesImageFrame*seen[3]{};std::size_t count{};const auto add=[&](const std::shared_ptr<const NotesImageFrame>&f){if(!f)return;for(std::size_t k=0;k<count;++k)if(seen[k]==f.get())return;seen[count++]=f.get();s.residentBytes+=f->straightRGBA.size();};
- add(impl_->value.image);for(const auto&e:impl_->cache)add(e.value.image);return s;}
+ const NotesImageFrame*seen[6]{};std::size_t count{};const auto add=[&](const std::shared_ptr<const NotesImageFrame>&f){if(!f)return;for(std::size_t k=0;k<count;++k)if(seen[k]==f.get())return;seen[count++]=f.get();s.residentBytes+=f->straightRGBA.size();};
+ add(impl_->value.image);add(impl_->value.backdrop);for(const auto&e:impl_->cache){add(e.value.image);add(e.value.backdrop);}return s;}
 }
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -88,27 +116,42 @@ unsigned orientation(IWICBitmapFrameDecode*frame,std::span<const std::uint8_t>by
  for(const auto*query:{L"/app1/ifd/{ushort=274}",L"/ifd/{ushort=274}"}){PROPVARIANT value{};const auto hr=reader->GetMetadataByName(query,&value);const unsigned n=SUCCEEDED(hr)&&value.vt==VT_UI2?value.uiVal:1;PropVariantClear(&value);if(n>=2&&n<=8)return n;}return 1;
 }
 ComPtr<IWICColorContext>colorContext(IWICImagingFactory*f,IWICBitmapFrameDecode*frame){UINT count{};const auto hr=frame->GetColorContexts(0,nullptr,&count);if(hr==WINCODEC_ERR_UNSUPPORTEDOPERATION||hr==E_NOTIMPL)return {};checked(hr);if(!count)return {};ComPtr<IWICColorContext>c;checked(f->CreateColorContext(&c));auto*raw=c.Get();checked(frame->GetColorContexts(1,&raw,&count));WICColorContextType type{};checked(c->GetType(&type));if(type==WICColorContextUninitialized)return {};if(type==WICColorContextProfile){UINT size{};checked(c->GetProfileBytes(0,nullptr,&size));if(size>modules::nowPlayingMaximumArtworkBytes)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}if(type==WICColorContextExifColorSpace){UINT space{};checked(c->GetExifColorSpace(&space));if(space!=1&&space!=2)throw Error{NowPlayingImageFailure::unsupportedProfile,E_INVALIDARG};}return c;}
-NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,unsigned maximum){
+// The upright first frame, scaled down (never up) to at most the limit
+// `bound` names for its native upright size, with that size.
+NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,const std::function<unsigned(unsigned,unsigned)>&bound){
  Apartment apartment;ComPtr<IWICImagingFactory>factory;checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)));
  // Worker keeps original bytes alive until every lazy codec/transform and
  // stream below has been destroyed; only the copied RGBA thumbnail escapes.
  ComPtr<IWICStream>stream;checked(factory->CreateStream(&stream));checked(stream->InitializeFromMemory(const_cast<BYTE*>(bytes.data()),static_cast<DWORD>(bytes.size())));ComPtr<IWICBitmapDecoder>decoder;checked(factory->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder));
  ComPtr<IWICBitmapFrameDecode>frame;checked(decoder->GetFrame(0,&frame));UINT width{},height{};checked(frame->GetSize(&width,&height));if(!modules::nowPlayingArtworkMetadata(width,height,bytes.size()))return {{},NowPlayingImageFailure::dimensions};
+ // The native size is upright (Mac: swapped for EXIF orientations 5...8).
+ const auto rotation=orientation(frame.Get(),bytes);const unsigned nativeWidth=rotation>=5?height:width,nativeHeight=rotation>=5?width:height;
+ const unsigned maximum=bound(nativeWidth,nativeHeight);
  const auto scale=std::min(1.,double(maximum)/double(std::max(width,height)));UINT tw=std::max(1u,static_cast<unsigned>(std::floor(width*scale+.5))),th=std::max(1u,static_cast<unsigned>(std::floor(height*scale+.5)));
  ComPtr<IWICBitmapSource>source=frame;ComPtr<IWICBitmapScaler>scaler;if(tw!=width||th!=height){checked(factory->CreateBitmapScaler(&scaler));checked(scaler->Initialize(source.Get(),tw,th,WICBitmapInterpolationModeFant));source=scaler;}
- const auto rotation=orientation(frame.Get(),bytes);{ComPtr<IWICBitmapSource>upright;checked(orientWICSource(factory.Get(),source.Get(),rotation,&upright));source=upright;}if(rotation>=5)std::swap(tw,th);
+ {ComPtr<IWICBitmapSource>upright;checked(orientWICSource(factory.Get(),source.Get(),rotation,&upright));source=upright;}if(rotation>=5)std::swap(tw,th);
  const auto profile=colorContext(factory.Get(),frame.Get());ComPtr<IWICColorContext>srgb;ComPtr<IWICColorTransform>color;if(profile){checked(factory->CreateColorContext(&srgb));checked(srgb->InitializeFromExifColorSpace(1));checked(factory->CreateColorTransformer(&color));checked(color->Initialize(source.Get(),profile.Get(),srgb.Get(),GUID_WICPixelFormat32bppRGBA));source=color;}
- ComPtr<IWICFormatConverter>converter;checked(factory->CreateFormatConverter(&converter));checked(converter->Initialize(source.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));auto image=std::make_shared<NotesImageFrame>();image->width=tw;image->height=th;image->straightRGBA.resize(std::size_t(tw)*th*4);checked(converter->CopyPixels(nullptr,tw*4,static_cast<UINT>(image->straightRGBA.size()),image->straightRGBA.data()));return {std::move(image)};
-}
+ ComPtr<IWICFormatConverter>converter;checked(factory->CreateFormatConverter(&converter));checked(converter->Initialize(source.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));auto image=std::make_shared<NotesImageFrame>();image->width=tw;image->height=th;image->straightRGBA.resize(std::size_t(tw)*th*4);checked(converter->CopyPixels(nullptr,tw*4,static_cast<UINT>(image->straightRGBA.size()),image->straightRGBA.data()));
+ NowPlayingImageResult out{std::move(image)};out.nativeWidth=nativeWidth;out.nativeHeight=nativeHeight;return out;
 }}
 #endif
 namespace endfield::native {
-NowPlayingImageResult decodeNowPlayingCover(std::span<const std::uint8_t>bytes,unsigned maximumPixels){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
+namespace {
+NowPlayingImageResult decode(std::span<const std::uint8_t>bytes,const std::function<unsigned(unsigned,unsigned)>&bound){if(bytes.empty()||bytes.size()>modules::nowPlayingMaximumArtworkBytes)return {{},NowPlayingImageFailure::invalidPayload};
 #ifdef _WIN32
- try{return wic(bytes,std::clamp(maximumPixels,64u,modules::nowPlayingMaximumCoverPixels));}catch(const Error&e){return {{},e.kind,static_cast<std::int32_t>(e.code)};}
+ try{return wic(bytes,bound);}catch(const Error&e){return {{},e.kind,static_cast<std::int32_t>(e.code)};}
 #else
- (void)maximumPixels;return {{},NowPlayingImageFailure::unavailable};
+ (void)bound;return {{},NowPlayingImageFailure::unavailable};
 #endif
 }
-NowPlayingImageResult decodeNowPlayingImage(std::span<const std::uint8_t>bytes){return decodeNowPlayingCover(bytes,modules::nowPlayingArtworkThumbnailSize);}
+}
+NowPlayingImageResult decodeNowPlayingCover(std::span<const std::uint8_t>bytes,modules::NowPlayingCoverSlot slot){
+ for(auto*side:{&slot.layout,&slot.decode})*side=std::clamp(*side,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);
+ // A small cover is decoded within the layout slot (the Mac's one slot);
+ // only a cover that is not small uses the decode headroom.
+ auto result=decode(bytes,[slot](unsigned w,unsigned h){return modules::nowPlayingCoverLayout(w,h,slot).small?slot.layout:slot.decode;});
+ if(!result.image)return result;
+ return nowPlayingSmallCover(std::move(result.image),result.nativeWidth,result.nativeHeight,slot);
+}
+NowPlayingImageResult decodeNowPlayingImage(std::span<const std::uint8_t>bytes){return decode(bytes,[](unsigned,unsigned){return modules::nowPlayingArtworkThumbnailSize;});}
 }

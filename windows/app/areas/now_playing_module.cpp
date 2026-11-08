@@ -253,10 +253,11 @@ public:
         service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock, 3., std::move(launch));
 
         tools::NowPlayingSessionOptions options;
-        // Covers are decoded (WIC Fant, scaled down only) to the size the
-        // canvas draws its 480 px slot at (B11: setArtworkPixels from the
-        // live render scale) and drawn 1:1 by the cover carrier.
-        options.decodeAt = [](std::span<const std::uint8_t> bytes, unsigned pixels) { return gpu::decodeNowPlayingCover(bytes, pixels); };
+        // Covers are decoded for the slot the canvas draws its 480 px cover
+        // in (B11: setArtworkPixels from the live render scale): scaled down
+        // (WIC Fant) to the slot, or, when small, enlarged at most twice
+        // (Lanczos) over a baked backdrop, and drawn 1:1 by the cover carrier.
+        options.decodeAt = [](std::span<const std::uint8_t> bytes, modules::NowPlayingCoverSlot slot) { return gpu::decodeNowPlayingCover(bytes, slot); };
         if (mode_ == ApplicationAreaMode::production) {
             // Visible-only LRCLIB/NetEase lookups and catalog covers over one
             // kept-alive WinHTTP session (retained while Now Playing is
@@ -302,10 +303,10 @@ public:
         core_ = std::make_unique<tools::DesignOwnerCore>(c.rasterizer, *host_.designContext(), std::move(design));
         modules::NowPlayingCanvasServices services;
         services.input = [this]() -> const modules::NowPlayingViewInput& { return session_->input(); };
-        services.artwork = [this] { return session_->artwork(); };
+        services.artwork = [this] { return session_->coverArt(); };
         services.setPresented = [this](bool value) { session_->setActive(value, time_); followPresentation(); };
         services.perform = [this](const modules::NowPlayingIntent& intent) { const bool done = session_->dispatch(intent, time_); synchronize(time_); return done; };
-        services.setArtworkPixels = [this](unsigned pixels) { session_->setArtworkPixels(pixels); };
+        services.setArtworkPixels = [this](modules::NowPlayingCoverSlot slot) { session_->setArtworkPixels(slot); };
         auto canvas = std::make_unique<modules::NowPlayingCanvas>(*host_.designContext(), std::move(services));
         canvas_ = canvas.get();
         core_->add(std::move(canvas));
@@ -584,6 +585,8 @@ private:
                    "Fixture metadata reaches the canvas");
         step.check(std::abs(position() - 42) < 1e-9 && !playing() && modules::nowPlayingTime(in.track->duration) == "03:30", "The fixture starts paused at 42 of 210 seconds");
         step.check(in.coverAvailable && session_->artworkStats().decoded > 0 && canvas_->coverViews(t)[1].image, "The fixture cover decodes on the shared executor and shows");
+        step.check(canvas_->coverViews(t)[1].backdrop && cover_->stats().residentTextures == 2,
+                   "The 96 px fixture cover is small: drawn whole over its backdrop, two textures once the cross-fade has settled");
         step.check(canvas_->showsLyrics() && lyricRow(in, t) == "Current", "Fixture timed lyrics show the current line");
         step.check(in.volumeAvailable && in.volume && std::abs(*in.volume - 1) < 1e-9 && audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
                    "The synthetic process route resolves through the per-app audio bridge");

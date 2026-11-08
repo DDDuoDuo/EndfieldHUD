@@ -53,7 +53,7 @@ struct Fixture{
         if(audio)o.volume=bridge.bind();o.playback=[this](const m::NowPlayingPlaybackEvent&e){events.push_back(e);};
         if(playlist)o.neteasePlayingList=[playlist]()->m::NowPlayingBody{return playlist;};
         owner=std::make_unique<t::NowPlayingSession>(service,q,[]{},std::move(o));
-        if(drawnPixels)owner->setArtworkPixels(drawnPixels);
+        if(drawnPixels)owner->setArtworkPixels({drawnPixels,drawnPixels});
     }
     void work(){q.waitIdle();q.drain();}
     void flush(){work();owner->utilityCompleted(now);work();owner->utilityCompleted(now);}
@@ -140,7 +140,7 @@ void sizedCover(){
           "Sized cover URLs keep the source host rules and stay allow-listed");
     Fixture f(true,false,960);f.ready(media("cloudmusic.exe"));f.answer(0,body(catalogSearch));
     check(f.transport.requests.size()==3&&f.transport.requests[2].url=="https://p1.music.126.net/AbC==/1099.jpg?param=960y960","The download asks for the slot's size");
-    f.owner->setArtworkPixels(1320);f.read(windowPlayer("Synthetic Song",0));
+    f.owner->setArtworkPixels({1320,1320});f.read(windowPlayer("Synthetic Song",0));
     check(f.transport.requests.size()==4&&f.transport.requests[3].url==search,"Another player's track is looked up again");
     f.answer(3,body(catalogSearch));
     check(f.transport.requests.back().kind==n::NowPlayingWeb::Kind::artwork&&f.transport.requests.back().url=="https://p1.music.126.net/AbC==/1099.jpg?param=1320y1320",

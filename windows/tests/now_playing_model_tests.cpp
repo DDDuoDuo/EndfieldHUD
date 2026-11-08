@@ -42,4 +42,12 @@ void bounds(){check(!m::NowPlayingLyrics::parse(std::string(m::nowPlayingMaximum
     const auto lyrics=m::NowPlayingLyrics::parse("[00:01] One\n[00:10.5] 二行\n[00:20] Third");t.isPlaying=true;const auto before=allocations.load();double total{};for(unsigned k=0;k<10000;++k){const auto now=double(k)/1000;const auto elapsed=t.elapsed(now);const auto rows=lyrics->window(*elapsed);const auto deadline=m::nowPlayingDisplayDeadline(t,now,true,&*lyrics,true,false);total+=double(rows[1].size())+deadline.value_or(0);}check(allocations.load()==before&&total>0,"Warm progress and lyric deadlines allocate nothing and perform no provider read");
 }
 }
-int main(int argc,char**argv){try{check(argc==2,"Pass the immutable original-Swift fixture path");source(argv[1]);bounds();std::cout<<"Now Playing model: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing model failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// The cover slot (decision AW-D2 (a)): the layout size at the box scale, the
+// decode size half a density step above it (up to 4, never under it).
+void coverSlot(){
+ check(m::nowPlayingCoverSlot(480,1)==m::NowPlayingCoverSlot{480,720}&&m::nowPlayingCoverSlot(480,1.5)==m::NowPlayingCoverSlot{720,960}&&m::nowPlayingCoverSlot(480,2)==m::NowPlayingCoverSlot{960,1200}
+  &&m::nowPlayingCoverSlot(480,4)==m::NowPlayingCoverSlot{1920,1920}&&m::nowPlayingCoverSlot(480,5)==m::NowPlayingCoverSlot{2048,2048},"The layout slot is the drawn size; the decode slot adds half a step up to density 4");
+ check(m::nowPlayingCoverFillLimit==1.25&&m::nowPlayingCoverMaximumEnlargement==2&&m::nowPlayingCoverBackdropPixels==96&&m::nowPlayingCoverBackdropBlur==6&&m::nowPlayingCoverBackdropExposure==-1.2,
+  "Small-cover constants (NowPlayingArtwork.swift:62-73)");
+}
+int main(int argc,char**argv){try{check(argc==2,"Pass the immutable original-Swift fixture path");source(argv[1]);bounds();coverSlot();std::cout<<"Now Playing model: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing model failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

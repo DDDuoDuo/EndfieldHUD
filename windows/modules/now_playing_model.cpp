@@ -129,6 +129,14 @@ unsigned nowPlayingCoverPixelSize(double points,double scale)noexcept{
     const double pixels=points*scale;if(!std::isfinite(pixels)||pixels<=0)return nowPlayingDefaultCoverPixels;
     return static_cast<unsigned>(std::clamp(std::ceil(std::min(double(nowPlayingMaximumCoverPixels),pixels)-1e-6),double(nowPlayingMinimumCoverPixels),double(nowPlayingMaximumCoverPixels)));
 }
+NowPlayingCoverSlot nowPlayingCoverSlot(double points,double boxScale)noexcept{
+    return {nowPlayingCoverPixelSize(points,boxScale),nowPlayingCoverPixelSize(points,std::max(boxScale,std::min(4.,boxScale+.5)))};
+}
+NowPlayingCoverLayout nowPlayingCoverLayout(unsigned width,unsigned height,NowPlayingCoverSlot slot)noexcept{
+    const double longer=std::max(width,height),shorter=std::min(width,height);
+    if(!(shorter>0)||!(slot.layout/shorter>nowPlayingCoverFillLimit))return {false,static_cast<unsigned>(std::lround(std::min(longer,double(slot.decode))))};
+    return {true,static_cast<unsigned>(std::lround(std::min(double(slot.layout),longer*nowPlayingCoverMaximumEnlargement)))};
+}
 bool nowPlayingAcknowledgesSeek(const NowPlayingTrack&track,double requested,double sampledAt)noexcept{
     if(!track.position||!std::isfinite(requested)||!std::isfinite(sampledAt))return false;const auto advance=track.isPlaying?std::min(3.,std::max(0.,track.sampledAt-sampledAt)):0.;return std::abs(*track.position-std::min(track.duration.value_or(nowPlayingMaximumSeconds),requested+advance))<=1.25;
 }

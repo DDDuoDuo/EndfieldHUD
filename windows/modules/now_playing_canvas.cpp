@@ -355,9 +355,29 @@ std::optional<std::string> NowPlayingCanvas::identity() const {
 std::array<NowPlayingCanvas::CoverView, 2> NowPlayingCanvas::coverViews(double now) const noexcept {
     std::array<CoverView, 2> out{};
     if (!art_[0]) return out;
-    if (covers_[0] && now < fadeEnd_) out[0] = {art_[0], covers_[0]};
-    if (covers_[1]) out[1] = {art_[1], covers_[1]};
+    const auto view = [&](std::size_t n) {
+        const auto& c = covers_[n];
+        return CoverView{art_[n], c.image, c.backdrop, coverFrame(c.width, c.height, bool(c.backdrop), env().text.boxScale)};
+    };
+    if (covers_[0].image && now < fadeEnd_) out[0] = view(0);
+    if (covers_[1].image) out[1] = view(1);
     return out;
+}
+Rect NowPlayingCanvas::coverFrame(unsigned width, unsigned height, bool backdrop, double boxScale) noexcept {
+    const double side = Layout::cover.width;
+    if (!width || !height) return {0, 0, side, side};
+    double w, h;
+    if (!backdrop) {
+        // resizeAspectFill: the image covers the slot, centred.
+        const double scale = std::max(side / width, side / height);
+        w = width * scale; h = height * scale;
+    } else {
+        const double scale = std::isfinite(boxScale) && boxScale > 0 ? boxScale : 1;
+        w = width / scale; h = height / scale;
+        const double fit = std::min({1., side / w, side / h});
+        w *= fit; h *= fit;
+    }
+    return {(side - w) / 2, (side - h) / 2, w, h};
 }
 
 // --- Presentation (:114-167) -------------------------------------------------------------
@@ -402,14 +422,10 @@ double NowPlayingCanvas::takeDirection() {
 // --- Page (:169-288) -------------------------------------------------------------------------
 void NowPlayingCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
-    // The Mac decodes at its unquantised render scale. Windows' boxScale is
-    // the design density rounded to .5 steps with .35 hysteresis (at most 4),
-    // so it can sit up to .35 under the drawn density: ask for half a step
-    // more (up to density 4, never under boxScale) so a large cover is not
-    // decoded small and enlarged. Covers smaller than the slot keep their own
-    // size (the decoder never enlarges).
-    const double quantised = env().text.boxScale;
-    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverPixelSize(Layout::cover.width, std::max(quantised, std::min(4., quantised + .5))));
+    // The Mac decodes at its unquantised render scale; Windows names the
+    // slot at the quantised boxScale for the layout and half a density step
+    // more for decoding a cover that is not small (nowPlayingCoverSlot).
+    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverSlot(Layout::cover.width, env().text.boxScale));
     volumeOpen_ = false; volumeGesture_.reset(); displayed_.reset(); covers_ = {}; lyricsVisible_ = false; art_ = {};
     parts_.clear();
     const auto& track = input().track;
@@ -564,28 +580,30 @@ void NowPlayingCanvas::update(bool animated) {
     if (playButton_->label != playLabel && context().onInputStateChange) context().onInputStateChange();
 }
 bool NowPlayingCanvas::canSeek() const { return nowPlayingControls(input()).seek; }
-// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes: the
-// new cover over the old one, which is dropped once the fade ends.
+// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes, with
+// its backdrop (drawn at its art layer's opacity): the new cover over the
+// old one, which is dropped once the fade ends.
 void NowPlayingCanvas::showArt(bool animated) {
     if (!art_[0]) return;
     const auto& in = input();
-    NowPlayingCover image = in.coverAvailable && services_.artwork ? services_.artwork() : nullptr;
-    if (image == displayed_) return;
-    displayed_ = image;
+    NowPlayingCoverArt art = in.coverAvailable && services_.artwork ? services_.artwork() : NowPlayingCoverArt{};
+    if (!art.image) art = {};
+    if (art.image == displayed_) return;
+    displayed_ = art.image;
     const auto clock = env().clock();
     if (animated && !clock.reduceMotion) {
         const auto old = covers_[1];
-        covers_ = {old, image};
+        covers_ = {old, art};
         fadeEnd_ = clock.now + .2;
-        art_[0]->setValue(Channel::opacity, old ? 1 : 0);
-        if (image) { art_[1]->setValue(Channel::opacity, 0); d::motion::animate(*art_[1], Channel::opacity, 1, .2, clock, d::easing::easeInOut); }
+        art_[0]->setValue(Channel::opacity, old.image ? 1 : 0);
+        if (art.image) { art_[1]->setValue(Channel::opacity, 0); d::motion::animate(*art_[1], Channel::opacity, 1, .2, clock, d::easing::easeInOut); }
         else d::motion::animate(*art_[0], Channel::opacity, 0, .2, clock, d::easing::easeInOut);
     } else {
-        covers_ = {nullptr, image};
+        covers_ = {NowPlayingCoverArt{}, art};
         fadeEnd_ = 0;
         art_[0]->setValue(Channel::opacity, 0); art_[1]->setValue(Channel::opacity, 1);
     }
-    if (placeholder_) placeholder_->setHidden(image != nullptr);
+    if (placeholder_) placeholder_->setHidden(art.image != nullptr);
 }
 // The whole lyric block fades (.24 s) when lyrics are toggled, arrive or end.
 void NowPlayingCanvas::setLyricsVisible(bool visible, bool animated) {

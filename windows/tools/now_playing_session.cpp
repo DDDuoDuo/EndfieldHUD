@@ -5,6 +5,8 @@
 #include <tuple>
 namespace endfield::tools {namespace {
 std::optional<double>earlier(std::optional<double>a,std::optional<double>b){return a&&b?std::min(*a,*b):a?a:b;}
+// A decoded result as the canvas shows it: the image, its backdrop and size.
+modules::NowPlayingCoverArt coverOf(const native::NowPlayingImageResult&r){if(!r.image)return {};return {r.image,r.backdrop,r.image->width,r.image->height};}
 std::string_view actionKey(modules::NowPlayingCommandKind kind){
     switch(kind){case modules::NowPlayingCommandKind::playPause:return "playPause";case modules::NowPlayingCommandKind::previous:return "previous";
     case modules::NowPlayingCommandKind::next:return "next";case modules::NowPlayingCommandKind::seek:return "seek";}
@@ -45,7 +47,8 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  bool requestedEndRefresh{};std::string endIdentity;
  std::shared_ptr<native::NowPlayingWeb>web;std::unique_ptr<modules::NowPlayingLyricsSources>sources;Cover cover;
  std::shared_ptr<const modules::NowPlayingAppVolume>volume;std::function<void(const modules::NowPlayingPlaybackEvent&)>playback;
- std::shared_ptr<const native::NotesImageFrame>image;std::optional<Seek>seek;std::optional<double>displayDeadline;
+ // The presented cover with its backdrop; its identity is the image.
+ modules::NowPlayingCoverArt image;std::optional<Seek>seek;std::optional<double>displayDeadline;
  // The track the presented cover belongs to: a sharper cover of the same
  // track replaces it only once decoded, so the slot never shows a gap.
  std::optional<modules::NowPlayingLyricsKey>imageKey;
@@ -60,7 +63,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  std::string volumeRouteID;std::optional<std::pair<std::string,double>>pendingVolume;std::uint64_t volumeRevision{};
  std::vector<std::pair<std::string,std::optional<std::string>>>identities;
  std::uint64_t serviceRevision{},imageRevision{},completion{},event{},coverRevision{},refreshRead{};bool alive{true},active{},imageDirty{},sourcesDirty{},retryMissing{};double time{};
- unsigned coverPixels{modules::nowPlayingCatalogDefaultCoverPixels},artworkPixels{modules::nowPlayingDefaultCoverPixels};
+ unsigned coverPixels{modules::nowPlayingCatalogDefaultCoverPixels};modules::NowPlayingCoverSlot artworkPixels{};
  // A window-title player's progress bar: the position last presented for the
  // track. The bar is drawn a little behind the player's clock (it updates in
  // steps), so a reading at most progressLag seconds behind the running time
@@ -75,8 +78,8 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
  Impl(native::NativeNowPlayingService&s,std::function<void()>c):service(s),changed(std::move(c)){}
  void initialize(app::UtilityExecutor&q,NowPlayingSessionOptions options){
   const auto weak=weak_from_this();
-  images=std::make_unique<native::NativeNowPlayingArtwork>(q,[weak]{if(auto self=weak.lock();self&&self->alive&&self->active){self->imageDirty=true;auto callback=self->changed;if(callback)callback();}},options.decodeAt?std::move(options.decodeAt):native::NativeNowPlayingArtwork::SizedDecoder([d=std::move(options.decode)](std::span<const std::uint8_t>b,unsigned){return d(b);}));
-  web=std::move(options.web);volume=std::move(options.volume);playback=std::move(options.playback);coverPixels=modules::nowPlayingCatalogCoverPixels(artworkPixels);
+  images=std::make_unique<native::NativeNowPlayingArtwork>(q,[weak]{if(auto self=weak.lock();self&&self->alive&&self->active){self->imageDirty=true;auto callback=self->changed;if(callback)callback();}},options.decodeAt?std::move(options.decodeAt):native::NativeNowPlayingArtwork::SizedDecoder([d=std::move(options.decode)](std::span<const std::uint8_t>b,modules::NowPlayingCoverSlot){return d(b);}));
+  web=std::move(options.web);volume=std::move(options.volume);playback=std::move(options.playback);coverPixels=modules::nowPlayingCatalogCoverPixels(artworkPixels.decode);
   utility=&q;if(web)decodeRoute=q.makeRoute();
   modules::NowPlayingDecoder decoder=modules::nowPlayingInlineDecoder();
   if(web)decoder=[weak](std::function<void()>work,std::function<void()>done){
@@ -166,7 +169,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    sources->update(key,input.track);sourcesDirty=false;input.lyrics=sources->lyrics();
    // An unconfirmed cached session never targets a live audio route.
    input.volumeAvailable=false;input.capabilities.volume=false;input.volume.reset();
-   input.coverAvailable=bool(image);input.coverRevision=coverRevision;serviceRevision=s.revision;imageDirty=false;imageRevision=images->revision();assign(std::move(input));return;}
+   input.coverAvailable=bool(image.image);input.coverRevision=coverRevision;serviceRevision=s.revision;imageDirty=false;imageRevision=images->revision();assign(std::move(input));return;}
 
   if(s.commandCompleted&&s.commandCompleted->request.token!=completion){const auto&done=*s.commandCompleted;completion=done.request.token;
    if(seek&&done.failure!=native::NowPlayingServiceFailure::none&&done.request.token>=seek->token)seek.reset();else if(seek&&seek->token==done.request.token){seek->rollback=done.completedAt+2.5;seek->readAtCompletion=done.mediaReadRevision;}
@@ -224,19 +227,19 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    if(input.track->position)input.track->position=input.track->elapsed(time);
    input.track->sampledAt=time;input.track->isPlaying=*rendering;
   }
-  images->request(artwork);imageDirty=false;imageRevision=images->revision();auto next=images->result().image;
+  images->request(artwork);imageDirty=false;imageRevision=images->revision();auto next=coverOf(images->result());
   auto imageWork=images->stats();bool decoding=artwork&&(imageWork.inFlight||imageWork.pending);
-  if(sharpen&&artwork!=thumbnail&&!next&&!decoding){
+  if(sharpen&&artwork!=thumbnail&&!next.image&&!decoding){
    // The downloaded cover is not an image: keep the player's thumbnail.
-   cover.broken=true;artwork=thumbnail;images->request(artwork);imageRevision=images->revision();next=images->result().image;
+   cover.broken=true;artwork=thumbnail;images->request(artwork);imageRevision=images->revision();next=coverOf(images->result());
    imageWork=images->stats();decoding=artwork&&(imageWork.inFlight||imageWork.pending);
   }
-  const bool keepWarm=warmCoverHeld&&!next&&(decoding||remotePending)&&warm&&warm->track&&input.track&&input.track->sameIdentity(*warm->track)&&s.media.session&&s.media.session->appUserModelID==warmApplication;
+  const bool keepWarm=warmCoverHeld&&!next.image&&(decoding||remotePending)&&warm&&warm->track&&input.track&&input.track->sameIdentity(*warm->track)&&s.media.session&&s.media.session->appUserModelID==warmApplication;
   // The same track's next cover (the sharper download) is shown only once
   // decoded: the current one stays meanwhile and then crossfades into it.
-  const bool hold=!next&&decoding&&image&&key&&imageKey&&*imageKey==*key;
+  const bool hold=!next.image&&decoding&&image.image&&key&&imageKey&&*imageKey==*key;
   if(keepWarm)next=image;else{warmCoverHeld=false;warm.reset();warmApplication.clear();if(hold)next=image;}
-  if(image!=next){image=std::move(next);++coverRevision;imageKey=image?key:std::nullopt;}input.coverAvailable=bool(image);input.coverRevision=coverRevision;
+  if(image.image!=next.image){image=std::move(next);++coverRevision;imageKey=image.image?key:std::nullopt;}input.coverAvailable=bool(image.image);input.coverRevision=coverRevision;
   serviceRevision=s.revision;assign(std::move(input));
  }
  // NowPlayingPresentation.sync's validation and bounds, then the published
@@ -306,7 +309,7 @@ void NowPlayingSession::setActive(bool active,double t){auto i=impl_;const auto 
  if(!active){const auto&s=i->service.snapshot();if(s.fresh){if(s.media.session&&s.media.track&&(s.failure==native::NowPlayingServiceFailure::none||s.failure==native::NowPlayingServiceFailure::timedOut||s.failure==native::NowPlayingServiceFailure::unavailable)){i->warm=i->input;i->warm->track=s.media.track;i->warm->failed=false;i->warmApplication=s.media.session->appUserModelID;}else{i->warm.reset();i->warmApplication.clear();}}}
  i->active=active;i->seek.reset();i->completion=0;i->commandSources.clear();i->pendingVolume.reset();i->retryMissing=false;i->progress.reset();i->controlsRead.reset();i->retryServed.reset();i->requestedEndRefresh=false;
  if(!active){i->displayDeadline.reset();i->images->cancel();i->imageDirty=false;i->stopCover();i->sources->hide();i->discardDecodes();i->sourcesDirty=false;i->identities.clear();i->volumeRouteID.clear();i->service.setActive(false);if(i->volume&&i->volume->setActive)i->volume->setActive(false);return;}
- i->warmCoverHeld=i->warm&&bool(i->image);if(i->web)i->web->prepare();if(i->volume&&i->volume->setActive)i->volume->setActive(true);if(!i->current(e))return;i->service.setActive(true);if(i->current(e)&&i->active)i->publish();}
+ i->warmCoverHeld=i->warm&&bool(i->image.image);if(i->web)i->web->prepare();if(i->volume&&i->volume->setActive)i->volume->setActive(true);if(!i->current(e))return;i->service.setActive(true);if(i->current(e)&&i->active)i->publish();}
 bool NowPlayingSession::active()const noexcept{return impl_->active;}
 bool NowPlayingSession::utilityCompleted(double t){auto i=impl_;const auto e=i->begin(t);if(!i->active)return false;const bool updated=i->service.drain();if(!i->current(e)||!i->active)return updated;
  const bool downloaded=i->web&&i->web->drain();if(!i->current(e)||!i->active)return updated||downloaded;
@@ -332,20 +335,21 @@ bool NowPlayingSession::dispatch(modules::NowPlayingIntent intent,double t){auto
 std::optional<double>NowPlayingSession::nextWakeTime(double)const{auto&i=*impl_;if(!i.active)return {};auto due=earlier(i.service.nextWakeTime(),i.displayDeadline);if(i.web)due=earlier(due,i.web->nextWakeTime());due=earlier(due,i.retryDue());return earlier(due,i.seek?i.seek->rollback:std::nullopt);}
 const modules::NowPlayingViewInput&NowPlayingSession::input()const noexcept{return impl_->input;}
 std::uint64_t NowPlayingSession::inputRevision()const noexcept{return impl_->inputRevision;}
-std::shared_ptr<const native::NotesImageFrame>NowPlayingSession::artwork()const noexcept{return impl_->image;}
+std::shared_ptr<const native::NotesImageFrame>NowPlayingSession::artwork()const noexcept{return impl_->image.image;}
+modules::NowPlayingCoverArt NowPlayingSession::coverArt()const noexcept{return impl_->image;}
 native::NativeNowPlayingArtwork::Stats NowPlayingSession::artworkStats()const{return impl_->images->stats();}
 bool NowPlayingSession::optimisticSeek()const noexcept{return impl_->seek.has_value();}
 const std::string&NowPlayingSession::volumeRoute()const noexcept{return impl_->volumeRouteID;}
 const modules::NowPlayingLyricsSources&NowPlayingSession::lyricsSources()const noexcept{return *impl_->sources;}
-void NowPlayingSession::setArtworkPixels(unsigned value){auto&i=*impl_;value=std::clamp(value,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);if(value==i.artworkPixels)return;i.artworkPixels=value;i.coverPixels=modules::nowPlayingCatalogCoverPixels(value);(void)i.images->setPixelSize(value);}
-unsigned NowPlayingSession::artworkPixels()const noexcept{return impl_->artworkPixels;}
+void NowPlayingSession::setArtworkPixels(modules::NowPlayingCoverSlot value){auto&i=*impl_;for(auto*side:{&value.layout,&value.decode})*side=std::clamp(*side,modules::nowPlayingMinimumCoverPixels,modules::nowPlayingMaximumCoverPixels);if(value==i.artworkPixels)return;i.artworkPixels=value;i.coverPixels=modules::nowPlayingCatalogCoverPixels(value.decode);(void)i.images->setPixelSize(value);}
+modules::NowPlayingCoverSlot NowPlayingSession::artworkPixels()const noexcept{return impl_->artworkPixels;}
 bool NowPlayingSession::park(){auto&i=*impl_;if(i.active)return false;const auto before=i.images->stats().residentBytes;const bool covers=!i.recentCovers.empty();
- i.images->trim(i.image);i.recentCovers.clear();i.recentCovers.shrink_to_fit();i.recentCoverBytes=0;
+ i.images->trim(i.image.image);i.recentCovers.clear();i.recentCovers.shrink_to_fit();i.recentCoverBytes=0;
  if(!i.cover.inFlight&&i.cover.bytes&&!(i.warm&&i.warm->track)){i.cover={};}
  return covers||i.images->stats().residentBytes<before;}
 NowPlayingSessionMemory NowPlayingSession::memory()const{
  const auto&i=*impl_;NowPlayingSessionMemory m;m.recentCovers=i.recentCovers.size();m.recentCoverBytes=i.recentCoverBytes;
  if(i.cover.bytes&&std::none_of(i.recentCovers.begin(),i.recentCovers.end(),[&](const auto&e){return e.second==i.cover.bytes;}))m.coverBytes=i.cover.bytes->size();
- m.artworkBytes=i.images->stats().residentBytes;if(i.image&&!m.artworkBytes)m.artworkBytes=i.image->straightRGBA.size();
+ m.artworkBytes=i.images->stats().residentBytes;if(i.image.image&&!m.artworkBytes)m.artworkBytes=i.image.image->straightRGBA.size()+(i.image.backdrop?i.image.backdrop->straightRGBA.size():0);
  return m;}
 }

@@ -20,7 +20,10 @@
 // the art layers' sampled poses): the canvas lays out two content-less art
 // layers and cross-fades them (.2 s ease-in-out, the CATransition fade)
 // whenever the cover changes, which keeps the NetEase thumbnail -> catalog
-// cover cross-fade.
+// cover cross-fade. A cover that fills the slot is drawn aspect-filled; a
+// small one (Mac 1.3.1, 45f75dc: one with a backdrop) is drawn whole at its
+// own pixels, centred over its blurred backdrop, which fills the slot and
+// fades with its cover (coverFrame).
 //
 // Windows differences (C9 report): GSMTC capabilities gate the transport and
 // the seek bar besides the Mac's rules; the elapsed time runs at the
@@ -34,15 +37,13 @@
 #include "modules/now_playing_model.hpp"
 #include <map>
 
-namespace endfield::native { struct NotesImageFrame; }
 namespace endfield::modules {
-using NowPlayingCover = std::shared_ptr<const native::NotesImageFrame>;
 struct NowPlayingCanvasServices {
     std::function<const NowPlayingViewInput&()> input;   // controller.snapshot (+ lyrics, volume, cover state)
-    std::function<NowPlayingCover()> artwork;            // controller.artworkImage (identity only here)
+    std::function<NowPlayingCoverArt()> artwork;         // controller.artwork (the image is its identity)
     std::function<void(bool)> setPresented;               // controller.activate / deactivate + the audio watch
     std::function<bool(const NowPlayingIntent&)> perform; // transport, seek, app volume
-    std::function<void(unsigned)> setArtworkPixels;       // controller.artworkPixelSize
+    std::function<void(NowPlayingCoverSlot)> setArtworkPixels; // controller.artworkPixelSize
 };
 
 class NowPlayingCanvas final : public design::Canvas {
@@ -60,8 +61,15 @@ public:
         static constexpr design::Rect popup{518, 364, 44, 150};
         static constexpr design::Rect hitBounds{-36, -84, 632, 654};
     };
-    // One cover the owner draws: an art layer and the image it shows.
-    struct CoverView { const design::Layer* layer{}; NowPlayingCover image; };
+    // One cover the owner draws: an art layer, the image it shows at `frame`
+    // (in the layer's bounds) and the backdrop that fills the layer under it.
+    struct CoverView { const design::Layer* layer{}; NowPlayingCover image, backdrop; design::Rect frame{}; };
+    // Where a width x height pixel cover is drawn in the 480 px slot
+    // (showArt, :325-347): without a backdrop aspect-filled (cropped by the
+    // cover's mask); with one at its own pixels (px / boxScale, the Mac's
+    // contentsScale = renderScale with .center), centred and, should it
+    // exceed the slot, fitted inside it.
+    static design::Rect coverFrame(unsigned width, unsigned height, bool backdrop, double boxScale) noexcept;
 
     NowPlayingCanvas(design::Context&, NowPlayingCanvasServices);
     ~NowPlayingCanvas() override;
@@ -111,7 +119,7 @@ private:
     std::optional<std::pair<std::uint64_t, NowPlayingTrack>> seekGesture_;
     std::optional<std::pair<std::uint64_t, std::string>> volumeGesture_;
     NowPlayingCover displayed_;
-    std::array<NowPlayingCover, 2> covers_{};    // what the two art layers show (bottom, top)
+    std::array<NowPlayingCoverArt, 2> covers_{}; // what the two art layers show (bottom, top)
     double fadeEnd_{};               // the cross-fade's end: the old cover drops then
     // Elements of the current page, updated in place between rebuilds.
     design::Layer *cover_{}, *placeholder_{}, *titleText_{}, *artistText_{}, *elapsedText_{}, *durationText_{};
