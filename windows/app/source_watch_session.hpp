@@ -112,6 +112,8 @@ public:
     // under the lifted tile (a wheel's spring or an edge scroll), so the slot
     // under a still pointer changed. Taken once; the host previews again.
     bool takeArrangeScrolled()noexcept;
+    // The button drawn above the other tiles in the last frame (dragged or settling).
+    std::optional<std::string_view> raisedButton()const noexcept;
     void setScrollPosition(double,double time); // explicit restored/navigation position
     const WatchSessionFrame* sample(double time);
     core::FrameDemand demand(double time);

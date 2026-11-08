@@ -63,6 +63,9 @@ struct SourceWatchSession::Impl {
     std::set<std::string_view,std::less<>> rightButtons;
     DesktopArrangeMotion arrange;std::optional<std::string_view> arrangeButton;
     std::optional<double> arrangeDrawnPosition;bool arrangeScrolled{};
+    // This frame's placements, kept so a steady frame allocates nothing (an
+    // MSVC map holds a node even while empty).
+    SourceWatchFrameBuilder::TilePlacements arrangePlacements;
     void cancelDrag(double time){if(navigationDrag&&navigationDrag->active){scrollMotion.gesture(0,navigationDrag->hiddenLength,time,GesturePhase::ended,GesturePhase::none,settings.reduceMotion);scrollPosition=scrollMotion.position();}navigationDrag.reset();}
 
     bool input{},hidden{true};std::optional<double> clock,heldTime;
@@ -223,7 +226,7 @@ struct SourceWatchSession::Impl {
     // the held look at once instead of lifting again.
     void applyArrange(double time){
         const bool reduce=settings.reduceMotion;arrange.prune(time,reduce);
-        SourceWatchFrameBuilder::TilePlacements placements;std::optional<std::string_view> raised,lifted;
+        auto&placements=arrangePlacements;placements.clear();std::optional<std::string_view> raised,lifted;
         if(arrange.isActive())forRightTargets([&](std::string_view button,std::uint64_t action){
             if(action==arrange.lifted()&&arrange.liftedCenter()){placements.emplace(std::string(button),DesktopTilePlacement::center(*arrange.liftedCenter()));lifted=button;}
             else if(const auto offset=arrange.offset(action,time,reduce))placements.emplace(std::string(button),DesktopTilePlacement::offset(*offset));
@@ -382,6 +385,7 @@ std::optional<std::uint64_t> SourceWatchSession::rowActionAt(Point point,bool re
 std::optional<std::uint64_t> SourceWatchSession::arrangeLifted()const noexcept{return impl_->arrange.lifted();}
 bool SourceWatchSession::arrangeActive()const noexcept{return impl_->arrange.isActive();}
 bool SourceWatchSession::takeArrangeScrolled()noexcept{return std::exchange(impl_->arrangeScrolled,false);}
+std::optional<std::string_view> SourceWatchSession::raisedButton()const noexcept{return impl_->builder.desktopRaisedButton();}
 void SourceWatchSession::setScrollPosition(double value,double time){need(std::isfinite(value),"Invalid Watch scroll position");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.scrollMotion.reset(value,*at);p.scrollPosition=p.scrollMotion.position();p.lastHit.reset();}
 const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;const auto at=p.advance(value);if(!at)return p.hasFrame?&p.rendered:nullptr;
     if(p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed||p.environment.viewport[0]<=0||p.environment.viewport[1]<=0){++p.stats.concealedSamples;return nullptr;}

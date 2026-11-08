@@ -273,13 +273,13 @@ struct SourceWatchFrameBuilder::Impl {
     // Arrange on HUD: each placed tile's translation from its slot, given its
     // resting node, in the list viewport's plane; the tiles and their subtrees
     // move in `nodes` (resting on entry). Hits keep where they rest.
-    void moveTiles(std::span<ResolvedNode> nodes){
+    void moveTiles(std::span<ResolvedNode> moved){
         tileMoves.clear();frame.tileTranslations.clear();if(placements.empty())return;
         const auto&scroll=frame.layoutReport.scroll;const auto planeIndex=scroll?layout.nodeIndex(scroll->viewportID):std::nullopt;if(!planeIndex)return;
-        const auto&plane=nodes[*planeIndex];
-        for(const auto&[id,placement]:placements){const auto index=layout.nodeIndex(id);if(!index)continue;const auto&button=nodes[*index];if(!button.activeInHierarchy||!button.rect)continue;
+        const auto&plane=moved[*planeIndex];
+        for(const auto&[id,placement]:placements){const auto index=layout.nodeIndex(id);if(!index)continue;const auto&button=moved[*index];if(!button.activeInHierarchy||!button.rect)continue;
             if(const auto t=DesktopTiles::translation(placement,button.worldMatrix,*button.rect,plane.worldMatrix)){tileMoves.emplace(*index,*t);frame.tileTranslations.emplace(id,*t);}}
-        DesktopTiles::moveNodes(nodes,tileMoves,layout);
+        DesktopTiles::moveNodes(moved,tileMoves,layout);
     }
     void restHits(const Matrix4&root){
         for(auto&h:frame.hits){const auto t=frame.tileTranslations.find(h.buttonID);
