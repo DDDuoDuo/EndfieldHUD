@@ -1053,7 +1053,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// The overlays' own exits, inside the close's length. Called after
     /// cancelAnimations, which would strip them; each is immediate when reduced.
+    /// A sub-page swap lands its next page held hidden, to leave with the module.
     private func beginClosingExits() {
+        designCanvases.values.forEach { $0.settleSwap(concealed: true) }
         facilityBanner.hide(animated: true)
         accountGauge.dismiss(animated: true)
         layoutAccountGaugeControls()
