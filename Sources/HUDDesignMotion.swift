@@ -58,6 +58,8 @@ enum HUDMotion {
     }
 
     /// stIn(dx, dy): fades in (opaque at 60 %) while sliding from `offset` to rest.
+    /// A negative `delay` resumes an entrance that began that long ago (enter,
+    /// wipe and grow): a page rebuilt mid-entrance carries on in phase.
     static func enter(_ layer: CALayer, from offset: CGPoint, duration: CFTimeInterval = HUDDuration.entrance,
                       delay: CFTimeInterval = 0, timing: CAMediaTimingFunction = HUDEasing.standard,
                       env: HUDDesignEnvironment, key: String = "hud.enter") {
@@ -73,7 +75,7 @@ enum HUDMotion {
         }
         let group = CAAnimationGroup()
         group.animations = animations; group.duration = duration; group.timingFunction = timing
-        if delay > 0 { group.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; group.fillMode = .backwards }
+        if delay != 0 { group.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; group.fillMode = .backwards }
         layer.add(group, forKey: key)
     }
 
@@ -150,8 +152,8 @@ enum HUDMotion {
         layer.mask = mask
         let grow = CABasicAnimation(keyPath: origin == .top ? "transform.scale.y" : "transform.scale.x")
         grow.fromValue = 0; grow.toValue = 1; grow.duration = duration; grow.timingFunction = timing
-        let begin = delay > 0 ? layer.convertTime(CACurrentMediaTime(), from: nil) + delay : 0
-        if delay > 0 { grow.beginTime = begin; grow.fillMode = .backwards }
+        let begin = delay != 0 ? layer.convertTime(CACurrentMediaTime(), from: nil) + delay : 0
+        if delay != 0 { grow.beginTime = begin; grow.fillMode = .backwards }
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak layer, weak mask] in
             guard let layer, let mask, layer.mask === mask else { return }
@@ -162,7 +164,7 @@ enum HUDMotion {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = fadeFrom * layer.opacity; fade.toValue = layer.opacity
             fade.duration = duration; fade.timingFunction = timing
-            if delay > 0 { fade.beginTime = begin; fade.fillMode = .backwards }
+            if delay != 0 { fade.beginTime = begin; fade.fillMode = .backwards }
             layer.add(fade, forKey: key + ".fade")
         }
         CATransaction.commit()
@@ -180,7 +182,7 @@ enum HUDMotion {
         guard !env.reducesMotion else { return }
         let grow = CABasicAnimation(keyPath: "transform.scale.x")
         grow.fromValue = 0; grow.toValue = 1; grow.duration = duration; grow.timingFunction = timing
-        if delay > 0 { grow.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; grow.fillMode = .backwards }
+        if delay != 0 { grow.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; grow.fillMode = .backwards }
         layer.add(grow, forKey: key)
     }
 

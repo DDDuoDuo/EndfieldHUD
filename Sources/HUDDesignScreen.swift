@@ -257,11 +257,26 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// The module entrance; `delay` holds it back until the centre shows.
     func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         guard !env.reducesMotion else { return }
+        entrance = (offset, CACurrentMediaTime() + delay)
         if showsHeader { header.playEntrance(delay: delay) }
+        playPageEntrance(from: offset, delay: delay)
+    }
+
+    /// The page's part of the entrance (the header keeps its own): the row
+    /// stagger, plus a subclass's extras built with the page. A page rebuilt
+    /// mid-entrance replays it with a negative `delay`, resuming in phase.
+    func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         HUDMotion.stagger(page.staggered, from: offset, delay: delay, env: env)
     }
 
+    /// The entrance playing on the page (its offset and start), until the
+    /// module leaves; an in-place re-render carries it to the new page.
+    private var entrance: (offset: CGPoint, start: CFTimeInterval)?
+    /// The last row starts at the stagger cap; the title wipe is the longest track.
+    private static let entranceLength = HUDMotion.staggerDelay(HUDDuration.staggerCap) + max(HUDDuration.entrance, HUDDuration.titleWipe)
+
     func prepareToLeave() {
+        entrance = nil
         closePopups()
         suspendInput()
         settleSwap(concealed: true)
@@ -289,6 +304,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             if isStale { rerender() }
             didActivate()
         } else {
+            entrance = nil
             closePopups(); suspendInput(); settleSwap(concealed: true)
             didDeactivate()
         }
@@ -301,9 +317,16 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// except for a module that was left, which comes back at the top.
     /// During a sub-page swap the page has already left: the re-rendered one
     /// stays hidden until the swap lands its own page with the entrance.
+    /// A re-render while the entrance still plays (data arriving as the
+    /// module opens or switches in) carries it on in phase: rows already
+    /// shown stay shown, the rest still enter.
     func rerender() {
         install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
-        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey) }
+        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey); return }
+        guard let entrance else { return }
+        let now = CACurrentMediaTime()
+        if env.reducesMotion || now >= entrance.start + Self.entranceLength { self.entrance = nil; return }
+        playPageEntrance(from: entrance.offset, delay: entrance.start - now)
     }
 
     private var currentOffsets: [String: CGFloat] {

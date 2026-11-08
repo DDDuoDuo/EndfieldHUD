@@ -237,8 +237,8 @@ final class WorkModeCanvas: HUDDesignCanvas {
     override func willLeave() { stateDot?.removeAnimation(forKey: "workMode.blink") }
 
     /// The flick of the inner title; the column staggers in (the ring has no entrance).
-    override func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
-        super.playEntrance(from: offset, delay: delay)
+    override func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playPageEntrance(from: offset, delay: delay)
         if let titleGroup { HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, delay: delay, fadeFrom: 0, env: env) }
     }
 

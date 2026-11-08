@@ -116,8 +116,8 @@ final class FileShelfCanvas: HUDDesignCanvas {
         onDeactivate?()
     }
 
-    override func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
-        super.playEntrance(from: offset, delay: delay)
+    override func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playPageEntrance(from: offset, delay: delay)
         if let card { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, delay: delay, env: env) }
     }
 
