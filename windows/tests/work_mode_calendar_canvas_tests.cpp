@@ -358,8 +358,22 @@ void workMode(Run& run) {
         const auto staggered = w.canvas->page().staggered();
         check(!staggered.empty() && std::abs(staggered[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (w.now + .2 + d::staggerDelay(0))) < 1e-12, "The column staggers in after the delay too");
     }
+    {   // The ring enters with the page (Mac c4c2029): the first row of the
+        // stagger, before the tabs, the state, the timer and the rest.
+        WorkWorld w(run.measurer);
+        const auto staggered = w.canvas->page().staggered();
+        const auto suffix = [&](std::size_t i, std::string_view id) { return i < staggered.size() && std::string_view(staggered[i]->id()).ends_with(id); };
+        check(suffix(0, "workMode.ring") && suffix(1, "workMode.kind") && suffix(2, "workMode.state") && suffix(3, "workMode.timer"),
+            "The stagger runs ring, tabs, state, timer");
+        w.canvas->playEntrance({0, 24}, w.now);
+        const auto& ring = *staggered[0];
+        const auto& enter = ring.tracks().slots[std::size_t(d::MotionSlot::enter)][0];
+        check(enter.present() && std::abs(enter.start - (w.now + d::staggerDelay(0))) < 1e-12 && ring.presented(d::Channel::opacity, w.now + d::staggerDelay(0)) == 0
+            && std::abs(ring.presented(d::Channel::translateY, w.now + d::staggerDelay(0)) - (ring.value(d::Channel::translateY) + 24)) < 1e-9
+            && std::abs(ring.presented(d::Channel::opacity, w.now + 1) - 1) < 1e-12, "The ring enters at +.06, sliding from the offset and fading in from 0");
+    }
     {   // Start pressed while the entrance plays rebuilds the page (Mac d03d5b9):
-        // the column and the inner title's wipe carry on in phase.
+        // the ring, the column and the inner title's wipe carry on in phase.
         WorkWorld w(run.measurer);
         const double t0 = w.now;
         w.canvas->playEntrance({0, 24}, t0);

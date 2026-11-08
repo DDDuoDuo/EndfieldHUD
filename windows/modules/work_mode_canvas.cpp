@@ -288,7 +288,7 @@ void WorkModeCanvas::resetSession() {
     Canvas::resetSession();
     if (changed && renderedLanguage()) refresh(false);
 }
-// The flick of the inner title; the column staggers in (the ring has no entrance).
+// The flick of the inner title; the ring and the column stagger in.
 // Part of the page's entrance (:240-243), so a page rebuilt mid-entrance
 // (Start pressed while Work Mode opens) carries the wipe on in phase.
 void WorkModeCanvas::playPageEntrance(Point offset, double delay) {
@@ -354,6 +354,12 @@ void WorkModeCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
     ring_ = std::make_unique<Ring>(page.builder(), workModeDial::fraction(value));
     page.layer().add(ring_->layer());
+    // The ring is the first row of the page's stagger (:314, Mac c4c2029), so
+    // it enters on open, on a module switch and on a tab change. Mac parity
+    // (E-D1): above a density of about 3.08 the renderer refuses the ring's
+    // group (maximumNativeGroupPixels), so its fade draws tick by tick, as a
+    // module-switch fade of the ring already does.
+    page.stagger(ring_->layer());
     buildTitle(page);
     buildTabs(page, value);
     buildState(page, value);
