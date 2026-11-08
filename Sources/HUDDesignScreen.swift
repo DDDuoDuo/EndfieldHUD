@@ -397,10 +397,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         removeDepartedPopups()
         guard swapWork == nil else { return }
         finishLeave()
-        HUDMotion.perform {
-            page.layer.removeAnimation(forKey: Self.holdKey)
-            if showsHeader { header.layer.removeAnimation(forKey: Self.holdKey) }
-        }
+        HUDMotion.perform { page.layer.removeAnimation(forKey: Self.holdKey) }
     }
 
     private func finishLeave() {
