@@ -298,6 +298,14 @@ void reorderRules(const m::AppShortcutArtwork& art) {
     canvas.performAccessibilityAction(menuItem(menuItems(canvas), "Move up")->id, w.now);
     check(owner.requests.size() == 1 && owner.requests[0].kind == m::AppShortcutRequest::Kind::move && owner.requests[0].id == "C" && owner.requests[0].index == 1,
           "Move up asks the store to move the shortcut one slot up");
+    // Until the owner answers, the shown order is the old one: no second move starts from it.
+    canvas.rowGrip("C")->activate();
+    entries = menuItems(canvas);
+    check(entries.size() == 4 && !entries[1].enabled && !entries[2].enabled && entries[0].enabled && entries[3].enabled,
+          "While a move is unanswered Move up and Move down are disabled");
+    canvas.closeMenu();
+    canvas.dragRow("A", 2);
+    check(owner.requests.size() == 1 && !canvas.reordering(), "Nothing lifts while a menu move is unanswered");
     canvas.requestFinished(owner.requests[0], fileOf({record("A", "Alpha", "original"), record("C", "Charlie", "star"), record("B", "Bravo", "camera")}), std::nullopt);
     check(ids(canvas) == std::vector<std::string>{"A", "C", "B"} && reordered == 1 && canvas.rowGrip("C")->rect(canvas.root()).y < canvas.rowGrip("B")->rect(canvas.root()).y,
           "The list follows the move and the right-hand order is told");
@@ -329,6 +337,12 @@ void reorderRules(const m::AppShortcutArtwork& art) {
     canvas.pointerUp({gripCentre.x, gripCentre.y + 2 * m::AppShortcutCanvas::pitch}, w.now);
     check(!canvas.reordering() && rowA.zPosition() == 0 && owner.requests.size() == 1 && owner.requests[0].kind == m::AppShortcutRequest::Kind::move
           && owner.requests[0].id == "A" && owner.requests[0].index == 2, "The drop is one move request to the new slot");
+    // The rows show the dropped order before the answer: the item menu sends no move indexed on the old one.
+    canvas.rowGrip("A")->activate();
+    entries = menuItems(canvas);
+    check(entries.size() == 4 && !entries[1].enabled && !entries[2].enabled, "While the dropped order is unanswered Move up and Move down are disabled");
+    canvas.closeMenu();
+    check(owner.requests.size() == 1, "The item menu sent nothing");
     canvas.dragRow("C", 0);
     check(owner.requests.size() == 1 && !canvas.reordering(), "Nothing lifts while the dropped order is unanswered");
     const auto before = w.context.pagesBuilt();

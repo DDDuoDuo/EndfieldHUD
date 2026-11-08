@@ -193,6 +193,11 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
     }
     }
 }
+// A move (a grip drop or Move up / Move down) the owner has not answered:
+// items_ is the order before it, so no other reorder starts from it.
+bool AppShortcutCanvas::moving() const {
+    return std::any_of(pending_.begin(), pending_.end(), [](const auto& r) { return r.kind == AppShortcutRequest::Kind::move; });
+}
 std::vector<std::string> AppShortcutCanvas::itemIDs() const {
     std::vector<std::string> ids;
     for (const auto& v : items_) ids.push_back(v.id);
@@ -294,10 +299,13 @@ void AppShortcutCanvas::openItemMenu(const std::string& id, const d::Control* an
     if (menuOpen()) { closeMenu(); return; }
     const auto index = found - items_.begin();
     const auto count = std::ptrdiff_t(items_.size());
+    // While a move is unanswered items_ still holds the old order (the Mac's
+    // write is synchronous): Move up and Move down wait for the answer.
+    const bool settled = !moving();
     std::vector<d::Menu::Item> entries(4);
     entries[0].id = "icon"; entries[0].title = text("Change icon", "更换图标");
-    entries[1].id = "up"; entries[1].title = text("Move up", "上移"); entries[1].separatorBefore = true; entries[1].enabled = index > 0;
-    entries[2].id = "down"; entries[2].title = text("Move down", "下移"); entries[2].enabled = index + 1 < count;
+    entries[1].id = "up"; entries[1].title = text("Move up", "上移"); entries[1].separatorBefore = true; entries[1].enabled = settled && index > 0;
+    entries[2].id = "down"; entries[2].title = text("Move down", "下移"); entries[2].enabled = settled && index + 1 < count;
     entries[3].id = "remove"; entries[3].title = text("Remove", "移除"); entries[3].danger = true; entries[3].separatorBefore = true;
     const d::Rect anchorRect = anchor ? anchor->rect(root()) : row->second->rect(root());
     openMenu("apps:item", std::move(entries), anchorRect, anchor, 168, [this, id, index](const d::Menu::Item& picked) {
@@ -312,7 +320,7 @@ void AppShortcutCanvas::openItemMenu(const std::string& id, const d::Control* an
 // moveRow (:219-230): Move up / Move down: one store write, then the list and
 // the right-hand order follow (requestFinished).
 void AppShortcutCanvas::moveRow(const std::string& id, std::ptrdiff_t index) {
-    if (!store_) return;
+    if (!store_ || moving()) return;
     AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id; request.index = index;
     (void)submit(std::move(request));
 }
@@ -325,7 +333,8 @@ d::ListReorder::Rows AppShortcutCanvas::reorderRows() const {
     };
 }
 // Lift, drag and drop as the Notes TODO cards (ListReorder); the drop is one
-// store write. Nothing lifts with one row, the chooser or a drop.
+// store write. Nothing lifts with one row, the chooser, a drop or an
+// unanswered move.
 void AppShortcutCanvas::dragRow(const std::string& id, d::DragGrip::Phase phase, d::Point point) {
     if (!list_) return;
     auto& list = *list_;
@@ -334,7 +343,7 @@ void AppShortcutCanvas::dragRow(const std::string& id, d::DragGrip::Phase phase,
     switch (phase) {
     case d::DragGrip::Phase::began: {
         d::Layer* row = reorderRows()(id);
-        if (items_.size() < 2 || chooser_ || dropTarget_ || landing_ || !row) return;
+        if (items_.size() < 2 || chooser_ || dropTarget_ || moving() || !row) return;
         closePopups(); endEditing(true);
         reorder_ = d::ListReorder::lift(id, itemIDs(), *row, local->y, 0, pitch, clock());
         if (reorder_ && context().onLockParallax) context().onLockParallax();

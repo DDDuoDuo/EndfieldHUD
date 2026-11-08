@@ -19,8 +19,9 @@
 // Windows adaptations (recorded in the port report):
 //  - A reorder (a grip drop, Move up / Move down) is one move request; the
 //    dropped row has already settled when the owner answers, and the page is
-//    re-rendered once it has landed. While a dropped order is unanswered no
-//    other row lifts (the Mac's write is synchronous).
+//    re-rendered once it has landed. While any move is unanswered no other
+//    row lifts and Move up / Move down are disabled (the Mac's write is
+//    synchronous, so its order is never stale).
 //  - Applications are Windows targets (.exe / .lnk, or a packaged application
 //    "shell:AppsFolder\<AUMID>" from the chooser); the owner says which paths
 //    are applications (Services::isApplication) and inspects them.
@@ -158,6 +159,7 @@ private:
     void cancelReorder();
     design::ListReorder::Rows reorderRows() const;
     std::vector<std::string> itemIDs() const;
+    bool moving() const;
     void rename(const std::string& id, const std::string& text, design::TextField&);
     void save(const std::string& id, std::string name, std::string preset);
     void confirmRemove(const ShortcutRecord&);
