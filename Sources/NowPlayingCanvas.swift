@@ -332,12 +332,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     private func showArt(_ artwork: NowPlayingArtworkImage?, animated: Bool) {
         guard let art, artwork?.image !== displayedArt else { return }
         displayedArt = artwork?.image
-        if animated, !env.reducesMotion, art.superlayer != nil {
-            for layer in [backdrop, art].compactMap({ $0 }) {
-                let fade = CATransition()
-                fade.type = .fade; fade.duration = 0.2; fade.timingFunction = HUDEasing.easeInOut
-                layer.add(fade, forKey: "hud.art.fade")
-            }
+        if animated, art.superlayer != nil {
+            for layer in [backdrop, art].compactMap({ $0 }) { HUDMotion.crossFade(layer, duration: 0.2, env: env, key: "hud.art.fade") }
         }
         HUDMotion.perform {
             art.contents = artwork?.image; backdrop?.contents = artwork?.backdrop

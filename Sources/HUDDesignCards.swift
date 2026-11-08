@@ -523,10 +523,8 @@ final class HUDArchiveTile: HUDControl {
     /// cross-fades with the glyph, in one fade of the well.
     func setPoster(_ image: CGImage?, animated: Bool = false) {
         guard style == .standard, image != nil || poster != nil else { return }
-        if animated, image != nil, poster?.isHidden != false, !env.reducesMotion {
-            let fade = CATransition()
-            fade.type = .fade; fade.duration = HUDDuration.hover; fade.timingFunction = HUDEasing.easeInOut
-            well.add(fade, forKey: "hud.poster.fade")
+        if animated, image != nil, poster?.isHidden != false {
+            HUDMotion.crossFade(well, duration: HUDDuration.hover, env: env, key: "hud.poster.fade")
         }
         HUDMotion.perform {
             if poster == nil, image != nil {

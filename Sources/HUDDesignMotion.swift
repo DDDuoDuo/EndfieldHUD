@@ -79,6 +79,15 @@ enum HUDMotion {
         layer.add(group, forKey: key)
     }
 
+    /// Cross-fades a layer's next contents (a cover or poster arriving) with
+    /// what it shows now, in one ease-in-out fade. Nothing under Reduce Motion.
+    static func crossFade(_ layer: CALayer, duration: CFTimeInterval, env: HUDDesignEnvironment, key: String) {
+        guard !env.reducesMotion else { return }
+        let fade = CATransition()
+        fade.type = .fade; fade.duration = duration; fade.timingFunction = HUDEasing.easeInOut
+        layer.add(fade, forKey: key)
+    }
+
     /// The list stagger: 36 ms apart after 60 ms, index capped at 14 (spec §1.10).
     static func staggerDelay(_ index: Int) -> CFTimeInterval {
         HUDDuration.staggerBase + Double(min(max(0, index), HUDDuration.staggerCap)) * HUDDuration.staggerStep
