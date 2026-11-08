@@ -14,7 +14,9 @@
 namespace endfield::modules::hypergryph {
 struct AccountPresentation {
     enum class RegionChoice {china,global};
-    enum class HeaderMode {workMode,endfield,arknights,hidden};
+    // Hiding the gauge is Display > HUD elements > Show Sanity (1.3.1); a
+    // cache that still says hiddenHeader reads as endfield.
+    enum class HeaderMode {workMode,endfield,arknights};
     enum class Status {disconnected,connecting,connected,refreshing,failed};
     struct RoleRow {std::string id,title,subtitle;bool operator==(const RoleRow&) const=default;};
     RegionChoice region{RegionChoice::china};
@@ -32,6 +34,8 @@ struct AccountPresentation {
     bool busy() const noexcept {return status==Status::connecting||status==Status::refreshing;}
     bool operator==(const AccountPresentation&) const=default;
 };
+// The 1.3.0 header value that hid the gauge; the cache keeps it for v1.2.0.
+inline constexpr std::string_view hiddenHeader="hidden";
 std::string_view headerModeName(AccountPresentation::HeaderMode) noexcept;
 std::optional<AccountPresentation::HeaderMode> headerModeNamed(std::string_view) noexcept;
 std::string headerModeTitle(AccountPresentation::HeaderMode,core::Language);
@@ -172,6 +176,12 @@ public:
     Region region() const noexcept;
     const RegionRecord& record() const;
     AccountPresentation::HeaderMode headerMode() const noexcept;
+    // Display > HUD elements > Show Sanity (HypergryphAccountController.
+    // showsHeaderGauge): off, the gauge presents nothing, no header role is
+    // fetched and only the open Account module refreshes; turning it on
+    // resets the refresh deadline and ticks at once.
+    bool showsHeaderGauge() const noexcept;
+    void setShowsHeaderGauge(bool);
     bool gameSyncActive() const;
     // Mac syncFields / gameSyncedFields: the card fields an enabled Endfield
     // sync writes, and those it owns right now (the card editor locks them).

@@ -207,9 +207,10 @@ void lifecycle() {
         h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
         h::HypergryphAccountController c(api,vault,queue,&file,&sink,nullptr,nullptr,o);
         check(!c.cacheWritesAllowed()&&c.cache()==h::AccountCache{},"Unreadable/newer cache stays untouched and the app continues in memory");
-        h::AccountAction a;a.kind=h::AccountAction::Kind::selectHeaderMode;a.headerMode=h::AccountPresentation::HeaderMode::hidden;c.perform(a);
+        h::AccountAction a;a.kind=h::AccountAction::Kind::selectHeaderMode;a.headerMode=h::AccountPresentation::HeaderMode::arknights;c.perform(a);
+        c.setShowsHeaderGauge(false);
         check(file.bytes==std::optional<std::string>("{\"version\":2}"),"Original bytes are never replaced");
-        check(c.gaugeValue({true,1500,0}).visible==false,"Hidden header mode removes the gauge");
+        check(c.gaugeValue({true,1500,0}).visible==false,"Show Sanity off removes the gauge");
     }
     // No polling: nothing is scheduled while hidden or unlinked.
     file.bytes.reset();
@@ -471,6 +472,40 @@ void perFieldSync() {
 // wallet and sanity as over the Mac bytes, asks for a new Windows sign-in,
 // requests nothing, keeps the Mac's profile lock and rewrites nothing; a new
 // sign-in resumes syncing.
+// Display > HUD elements > Show Sanity (Mac 361adb0, 427f144, 4ee7d76): the
+// 1.3.0 "hidden" header reads as Arknights: Endfield and is never rewritten;
+// with Show Sanity off the gauge presents nothing and the header game no
+// longer refreshes the account; turning it on refreshes at once.
+void showSanity(const Json& oracle) {
+    const Json* mac=nullptr;
+    for(const auto& entry:oracle["trace"].array()) {
+        const auto& cache=entry["after"]["cache"];
+        if(!cache.isObject()||!cache["records"].contains("mainland")) continue;
+        const auto& record=cache["records"]["mainland"];
+        if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
+    }
+    check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
+    double now{};
+    for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,num(snapshot["observedAt"]));
+    h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
+    Json endfield=*mac;endfield["header"]="endfield";Json hidden=*mac;hidden["header"]="hidden";
+    FakeAPI refAPI;refAPI.now=[&now]{return now;};FakeVault refVault;ManualQueue refQueue;MemoryFile refFile;ProfileSink refSink;refFile.bytes=endfield.encode();
+    h::HypergryphAccountController reference(refAPI,refVault,refQueue,&refFile,&refSink,nullptr,nullptr,o);
+    FakeAPI api;api.now=[&now]{return now;};FakeVault vault;ManualQueue queue;MemoryFile file;ProfileSink sink;file.bytes=hidden.encode();
+    h::HypergryphAccountController c(api,vault,queue,&file,&sink,nullptr,nullptr,o);
+    check(c.headerMode()==h::AccountPresentation::HeaderMode::endfield&&c.presentation().headerMode==h::AccountPresentation::HeaderMode::endfield,
+          "A cache that says hidden reads as Arknights: Endfield");
+    check(c.cache().header=="hidden"&&file.bytes==std::optional<std::string>(hidden.encode()),"The hidden header stays in the cache for v1.2.0");
+    check(c.gaugeValue({true,1500,0}).value==reference.gaugeValue({true,1500,0}).value&&c.sanityPresentation().has_value(),"The gauge shows Endfield sanity");
+    c.setShowsHeaderGauge(false);
+    check(!c.showsHeaderGauge()&&!c.gaugeValue({true,1500,0}).visible&&c.gaugeValue({true,1500,0}).value.empty()&&!c.sanityPresentation(),
+          "Show Sanity off: the gauge presents nothing and no sanity");
+    now+=24*3600;c.setVisible(true,false);c.tick();
+    check(!c.hasActiveRequest()&&!c.nextWakeTime(),"Show Sanity off: the header game refreshes nothing and schedules nothing");
+    c.setShowsHeaderGauge(true);
+    check(c.showsHeaderGauge()&&c.hasActiveRequest(),"Turning Show Sanity on refreshes the account at once");
+    check(file.bytes==std::optional<std::string>(hidden.encode()),"Show Sanity never rewrites the account cache");
+}
 void importedCache(const Json& oracle) {
     const Json* mac=nullptr;
     for(const auto& entry:oracle["trace"].array()) {
@@ -529,7 +564,7 @@ int main(int argc,char** argv) {
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
         replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();cacheFields();perFieldSync();
-        importedCache(fixture["controller"]);
+        importedCache(fixture["controller"]);showSanity(fixture["controller"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account controller checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

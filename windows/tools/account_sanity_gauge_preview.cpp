@@ -61,11 +61,11 @@ struct AccountSanityGaugePreview::Impl {
     double toHost(double controllerTime) const {return time+std::max(0.0,controllerTime-controller.now());}
     // HUDAccountGauge.size at the gauge origin (its press and hit rect).
     static bool inWallet(core::Point q) {return q.x>=0&&q.y>=0&&q.x<g::bounds.width&&q.y<g::bounds.height;}
-    // HypergryphAccountController.gaugeValue shows Work Mode minutes unless the
-    // header is hidden or a linked game (sanity) mode is selected.
+    // HypergryphAccountController.gaugeValue shows Work Mode minutes unless
+    // Show Sanity is off or a linked game (sanity) mode is selected.
     bool showsWorkMode() const {
         using M=h::AccountPresentation::HeaderMode;const auto mode=controller.headerMode();
-        return mode!=M::hidden&&!(controller.record().linked&&(mode==M::endfield||mode==M::arknights));
+        return controller.showsHeaderGauge()&&!(controller.record().linked&&(mode==M::endfield||mode==M::arknights));
     }
 };
 AccountSanityGaugePreview::AccountSanityGaugePreview(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,const std::filesystem::path& resources,AccountSanityGaugeOptions o)

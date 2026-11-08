@@ -180,10 +180,11 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
     gauge.update({},1,time+.2);gauge.upload(renderer);all.assign(gauge.entries().begin(),gauge.entries().end());
     composition.setEntries(renderer,all);composition.present(renderer);renderer.draw(false);
     check(gauge.key({app::KeyKind::down,VK_ESCAPE},false,time+.3)&&!gauge.model().popoverOpen(),"Esc dismisses only the recovery popover");
-    h::AccountAction hide;hide.kind=h::AccountAction::Kind::selectHeaderMode;hide.headerMode=h::AccountPresentation::HeaderMode::hidden;controller.perform(hide);gauge.contentChanged(time+.4);
-    check(gauge.model().hidden()&&!gauge.model().canOpen(),"Hidden header mode removes the gauge");
+    controller.setShowsHeaderGauge(false);gauge.contentChanged(time+.4);
+    check(gauge.model().hidden()&&!gauge.model().canOpen(),"Show Sanity off removes the gauge");
     check(!gauge.covers(wallet)&&!gauge.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},time+.4),"A hidden wallet takes no press");
-    hide.headerMode=h::AccountPresentation::HeaderMode::workMode;controller.perform(hide);gauge.contentChanged(time+.5);
+    controller.setShowsHeaderGauge(true);
+    h::AccountAction work;work.kind=h::AccountAction::Kind::selectHeaderMode;work.headerMode=h::AccountPresentation::HeaderMode::workMode;controller.perform(work);gauge.contentChanged(time+.5);
     check(gauge.model().value()=="24 / 25"&&!gauge.model().canOpen(),"Work Mode header shows Work Mode minutes");
     // The shown wallet is a header control whatever it shows: a press on
     // Work Mode minutes is consumed (it never reaches the host's close for a
