@@ -1,4 +1,5 @@
 #include "modules/display_center_logo.hpp"
+#include "core/data/data_store.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -6,14 +7,8 @@
 
 namespace endfield::modules {
 namespace {
-constexpr std::array<std::string_view, 5> identifiers{"endfield", "rhodesIsland", "babel", "rhineLab", "custom"};
+constexpr auto& identifiers = ehud::data::SettingsChoices::centerLogos; // CenterLogoChoice order
 void need(bool value, const char* message) { if (!value) throw std::invalid_argument(message); }
-int hexValue(char c) noexcept {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
 // A normalized 1-D Gaussian (standard deviation sigma, radius ceil(3 sigma)).
 std::vector<double> gaussian(double sigma) {
     if (!(sigma > 1e-6)) return {1.0};
@@ -53,16 +48,7 @@ std::string_view centerLogoPresetFile(CenterLogoChoice choice) noexcept {
     }
 }
 std::optional<std::string> centerLogoRevision(std::string_view value) noexcept {
-    // Foundation UUID(uuidString:): 8-4-4-4-12 hexadecimal digits in either case.
-    if (value.size() != 36) return std::nullopt;
-    std::string out(value);
-    for (std::size_t n = 0; n < out.size(); ++n) {
-        if (n == 8 || n == 13 || n == 18 || n == 23) { if (out[n] != '-') return std::nullopt; continue; }
-        const int digit = hexValue(out[n]);
-        if (digit < 0) return std::nullopt;
-        out[n] = "0123456789ABCDEF"[digit];
-    }
-    return out;
+    return ehud::data::canonicalUUID(value);
 }
 
 std::optional<CenterLogoBounds> centerLogoVisibleBounds(const CenterLogoBitmap& image) {

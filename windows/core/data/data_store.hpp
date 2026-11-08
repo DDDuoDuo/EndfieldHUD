@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,6 +22,9 @@ private: StoreErrorCode code_;
 
 std::string makeUUID();
 bool validUUID(std::string_view value) noexcept;
+// Foundation UUID(uuidString:)?.uuidString: the canonical uppercase form, or
+// nullopt when the text is not 8-4-4-4-12 hexadecimal digits (either case).
+std::optional<std::string> canonicalUUID(std::string_view value);
 double foundationNow(); // seconds since 2001-01-01 UTC, matching Mac Codable Date
 bool validWindowsFilePath(std::string_view path) noexcept;
 // Native references use an additive v1 locator: referencePlatform="windows"
@@ -174,6 +178,20 @@ inline constexpr std::array<ScopedSetting, 50> scopedSettings{{
     {"orbipom.bestScore.v1", std::nullopt}, {"dailyBootLogLastDay", std::nullopt},
 }};
 
+// The record's open string choices a reader knows, default first: the Mac
+// HUDClockStyle, HUDCenterLogo, HUDChargeMetric and DisplayMode raw values.
+// A saved value outside its list (another build's) loads and round-trips
+// unchanged, and knownOr reads it as the list's first entry, as the Mac
+// rawValue decoders fall back to the default. (theme, language, clockFormat
+// and placement are closed sets validateSettings already checks.)
+struct SettingsChoices {
+    static constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
+    static constexpr std::array<std::string_view, 5> centerLogos{"endfield", "rhodesIsland", "babel", "rhineLab", "custom"};
+    static constexpr std::array<std::string_view, 6> alertMetrics{"battery", "ram", "cpu", "network", "disk", "gpu"};
+    static constexpr std::array<std::string_view, 3> displayModes{"whenChargingStarts", "always", "never"};
+};
+std::string_view knownOr(std::string_view value, std::span<const std::string_view> choices) noexcept;
+
 // One preference record (the Mac AppConfiguration keys plus additive Windows
 // keys). String choices such as displayMode/alertMetric are not closed sets:
 // a value another build wrote loads unchanged and its reader falls back.
@@ -198,11 +216,15 @@ struct Settings {
     // (scopedSettings) copied from defaults(), a key absent there removed;
     // HUD elements keeps the layout's Open on. Every other key is kept.
     Settings restoring(Scope scope) const;
-    // `restoring(scope) == self` on typed values, never JSON tokens: numbers
-    // by value (1 and 1.0 match), the layouts through moduleLayout() and
-    // overlayLayout(), the length and the icon through their accessors
-    // ("battery" is the watch), accentHex in either case, and an absent key
-    // as its default.
+    // `restoring(scope) == self` on typed values, never JSON tokens, as
+    // AppConfiguration.normalized compares them: numbers by value (1 and 1.0
+    // match), Booleans through their readers (a wrong type is the default),
+    // the layouts through moduleLayout() and overlayLayout(), the length and
+    // the icon through their accessors ("battery" is the watch), accentHex
+    // through normalizedThemeHex, the SettingsChoices keys through knownOr,
+    // the UUIDs canonical (an invalid one is nil, and the display name with
+    // it), and an absent key as its default. An icon name outside the roster
+    // compares as saved: the roster is a resource, not part of this layer.
     bool isDefault(Scope scope) const;
     std::string string(std::string_view key) const;
     double number(std::string_view key) const;

@@ -15,7 +15,7 @@
 namespace endfield::app {
 namespace {
 constexpr std::string_view centerLogoTexture = "desktop.center-logo";
-constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
+constexpr auto& clockStyles = ehud::data::SettingsChoices::clockStyles;
 constexpr std::string_view clockWorkModeID = "clock:workMode", clockStylePrefix = "clock:style:";
 }
 

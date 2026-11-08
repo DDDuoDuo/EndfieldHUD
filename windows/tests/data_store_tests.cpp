@@ -451,6 +451,22 @@ void restoreScopes131() {
     check(battery.restoring(S::display) == defaults && saved.restoring(S::display).string("applicationIcon") == "endfield", "Display restores the Endfield icon");
     Settings length = defaults;length.set("chargeBarLength", -2);
     check(length.isDefault(S::display), "An unusable length reads as nil, which is the default");
+    // Values the readers show as the defaults compare as the defaults, as the
+    // Mac decoders and AppConfiguration.normalized read them.
+    Settings shown = defaults;
+    for (const auto& [key, value] : std::vector<std::pair<std::string, Json>>{{"clockStyle", "futureStyle"}, {"centerLogo", "futureLogo"},
+             {"alertMetric", "futureMetric"}, {"displayMode", "futureMode"}, {"accentHex", "fad41f"}, {"centerLogoRevision", "not a revision"},
+             {"showsCloseHint", "on"}})
+        shown.set(key, value);
+    check(shown.isDefault(S::display), "Unknown choices read as the defaults, as do an invalid revision and a non-Boolean close hint");
+    shown.set("clockStyle", "dial");check(!shown.isDefault(S::display), "A known choice that is not the default is a change");
+    shown = defaults;shown.set("centerLogoRevision", "0f9e8d7c-6b5a-4938-a7b6-c5d4e3f2a1b0");
+    check(!shown.isDefault(S::display), "A valid revision is a change");
+    Settings monitor = defaults;monitor.set("hudDisplayUUID", "not a display");monitor.set("hudDisplayName", "Studio");
+    check(monitor.isDefault(S::system), "An invalid display UUID is nil, and its name with it");
+    monitor.set("hudDisplayUUID", "0f9e8d7c-6b5a-4938-a7b6-c5d4e3f2a1b0");
+    check(!monitor.isDefault(S::system), "A valid display UUID is a change");
+    monitor.set("hudDisplayUUID", nullptr);monitor.set("hudDisplayName", nullptr);check(monitor.isDefault(S::system), "No display is the default");
 }
 // HUDOverlayLayout: Stored decoding, normalization, the default removal.
 void overlayLayout131(const std::function<void(const Json&)>& writeSettings, const fs::path& root) {

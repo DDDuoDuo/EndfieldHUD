@@ -17,11 +17,12 @@ endif()
 # HUDCenterLogoPresentation): portable artwork, Windows WIC decode/import.
 add_library(hud_display_center_logo modules/display_center_logo.cpp)
 target_include_directories(hud_display_center_logo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_display_center_logo PUBLIC hud_localization)
+# The preference's logo choices and UUID rule come from the settings record.
+target_link_libraries(hud_display_center_logo PUBLIC hud_localization hud_data)
 if(WIN32)
   target_sources(hud_display_center_logo PRIVATE native/display_center_logo.cpp)
   target_compile_definitions(hud_display_center_logo PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_display_center_logo PUBLIC hud_data hud_packet PRIVATE windowscodecs ole32)
+  target_link_libraries(hud_display_center_logo PUBLIC hud_packet PRIVATE windowscodecs ole32)
 endif()
 if(BUILD_TESTING)
   # Oracle: tools/display_center_logo_reference.sh (unchanged Mac sources).

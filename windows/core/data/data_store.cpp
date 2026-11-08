@@ -253,6 +253,15 @@ bool validUUID(std::string_view value) noexcept {
         else if(!((c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f'))) return false;
     }return true;
 }
+std::optional<std::string> canonicalUUID(std::string_view value) {
+    if(!validUUID(value)) return std::nullopt;
+    std::string out(value);for(auto& c:out) if(c>='a'&&c<='f') c=static_cast<char>(c-'a'+'A');
+    return out;
+}
+std::string_view knownOr(std::string_view value,std::span<const std::string_view> choices) noexcept {
+    const auto found=std::find(choices.begin(),choices.end(),value);
+    return found==choices.end()?choices.front():*found;
+}
 double foundationNow() {return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()-978307200.0;}
 // "displayMode" and "alertMetric" are open string choices (validateSettings
 // checks only their type): the Mac values, the Windows-only "never" (Don't
@@ -277,19 +286,37 @@ const Settings& defaultSettings() {static const auto value=Settings::defaults();
 bool resets(SettingsScope scope,std::optional<SettingsScope> owner) {
     return owner&&(*owner==scope||(scope==SettingsScope::display&&*owner==SettingsScope::hudElements));
 }
-std::string uppercase(std::string text) {for(auto& c:text) if(c>='a'&&c<='z') c=static_cast<char>(c-'a'+'A');return text;}
+// One key's value as AppConfiguration holds it after its decoder and
+// normalized: an absent key is its default, a number its double, a Boolean
+// its reader's value, accentHex six uppercase digits (else the default), a
+// SettingsChoices key a known choice, a UUID canonical or nil, and the
+// display name nil without a valid display UUID (else trimmed, nil if empty).
+Json typedSetting(std::string_view key,const Settings& settings) {
+    const auto& defaults=defaultSettings().fields;
+    const auto& raw=settings.fields.contains(key)?settings.fields[key]:defaults[key];
+    const std::string text=raw.isString()?raw.string():std::string();
+    if(key=="accentHex") return normalizedThemeHex(text).value_or(defaults["accentHex"].string());
+    for(const auto& [name,choices]:{std::pair{"clockStyle",std::span<const std::string_view>(SettingsChoices::clockStyles)},
+            {"centerLogo",SettingsChoices::centerLogos},{"alertMetric",SettingsChoices::alertMetrics},{"displayMode",SettingsChoices::displayModes}})
+        if(key==name) return std::string(knownOr(text,choices));
+    if(key=="hudDisplayUUID"||key=="centerLogoRevision") {const auto id=raw.isString()?canonicalUUID(text):std::nullopt;return id?Json(*id):Json(nullptr);}
+    if(key=="hudDisplayName") {
+        if(!typedSetting("hudDisplayUUID",settings).isString()||!raw.isString()) return nullptr;
+        auto name=trimmed(text,[](char32_t c){return swiftWhitespace(c)||swiftNewline(c);});
+        return name.empty()?Json(nullptr):Json(std::move(name));
+    }
+    if(defaults[key].isBool()) return flag(settings.fields,key,defaults[key].boolean());
+    if(raw.isNumber()) return raw.number();
+    return raw;
+}
 // One key of two records compared by its typed value (AppConfiguration
-// equality after normalization). An absent key reads as its default.
+// equality after normalization).
 bool sameSetting(std::string_view key,const Settings& a,const Settings& b) {
     if(key==OverlayLayout::key) return a.overlayLayout()==b.overlayLayout();
     if(key=="hudModuleOrder"||key=="hudHiddenModules") return a.moduleLayout()==b.moduleLayout();
     if(key=="chargeBarLength") return a.chargeBarLength()==b.chargeBarLength();
     if(key=="applicationIcon") return a.applicationIcon()==b.applicationIcon();
-    const auto value=[&](const Settings& settings)->const Json& {return settings.fields.contains(key)?settings.fields[key]:defaultSettings().fields[key];};
-    const auto& x=value(a);const auto& y=value(b);
-    if(x.isNumber()&&y.isNumber()) return x.number()==y.number();
-    if(key=="accentHex"&&x.isString()&&y.isString()) return uppercase(x.string())==uppercase(y.string());
-    return x==y;
+    return typedSetting(key,a)==typedSetting(key,b);
 }
 }
 Settings Settings::restoring(Scope scope) const {

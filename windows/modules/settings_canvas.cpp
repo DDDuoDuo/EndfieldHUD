@@ -14,19 +14,18 @@ namespace {
 constexpr std::array<std::string_view, 6> languages{"system", "english", "simplifiedChinese", "traditionalChinese", "japanese", "korean"};
 constexpr std::array<std::string_view, 3> themes{"dark", "light", "system"};
 constexpr std::array<std::string_view, 2> clockFormats{"twentyFourHour", "twelveHour"};
-constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
-constexpr std::array<std::string_view, 6> metrics{"battery", "ram", "cpu", "network", "disk", "gpu"}; // HUDChargeMetric.allCases
-constexpr std::array<std::string_view, 3> methods{"whenChargingStarts", "always", "never"};
+// The record's own choice lists, so a value the reader shows and the Restore
+// check (Settings::isDefault) agree.
+constexpr auto& clockStyles = ehud::data::SettingsChoices::clockStyles;
+constexpr auto& metrics = ehud::data::SettingsChoices::alertMetrics; // HUDChargeMetric.allCases
+constexpr auto& methods = ehud::data::SettingsChoices::displayModes;
 constexpr std::array<std::string_view, 2> placements{"topCenter", "custom"};
-constexpr std::array<std::string_view, 4> presetLogos{"endfield", "rhodesIsland", "babel", "rhineLab"};
+constexpr auto presetLogos = std::span(ehud::data::SettingsChoices::centerLogos).first<4>(); // every HUDCenterLogo but Custom
 constexpr double modulePitch = d::metric::rowHeight + d::metric::rowGap;
 constexpr d::Size logoTile{120, 44};
 constexpr double logoFieldHeight = 16;
 // A saved value another build wrote reads as the first choice (the decoders' fallback).
-std::string_view knownOr(std::string_view value, std::span<const std::string_view> values) {
-    const auto found = std::find(values.begin(), values.end(), value);
-    return found == values.end() ? values.front() : *found;
-}
+using ehud::data::knownOr;
 int indexOf(std::string_view value, std::span<const std::string_view> values) {
     const auto found = std::find(values.begin(), values.end(), value);
     return found == values.end() ? 0 : int(found - values.begin());
