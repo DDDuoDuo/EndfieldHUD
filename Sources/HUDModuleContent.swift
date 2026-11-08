@@ -126,16 +126,17 @@ final class HUDModuleContent {
     /// module, kept for the next open, with its screen hidden instead of
     /// showing only to leave again. Its completion is dropped, as by cancel().
     /// The old screen of that switch, if it was still leaving, finishes its
-    /// leave instead of vanishing, and is removed by the next change.
+    /// leave instead of vanishing, and is removed by the next change. A switch
+    /// reversed back to that screen keeps it as the committed one, still
+    /// finishing its leave (cancel() shows it again for the next open).
     func settle(concealed: Bool = false) {
         precondition(Thread.isMainThread)
         pendingInitialModule = nil
         let inFlight = concealed && state.isTransitioning
-        let leaving = inFlight && current.module != state.requestedModule
-            && current.wrapper.animation(forKey: "module.leave") != nil ? current.wrapper : nil
+        let leaving = inFlight && current.wrapper.animation(forKey: "module.leave") != nil ? current.wrapper : nil
         if concealed { latestCompletion = nil }
         settle(on: state.requestedModule, notify: !concealed, keeping: leaving)
-        if inFlight { withoutActions { current.wrapper.isHidden = true } }
+        if inFlight && current.wrapper !== leaving { withoutActions { current.wrapper.isHidden = true } }
     }
 
     /// The old screen a concealed settle left to finish its leave.
@@ -243,11 +244,11 @@ final class HUDModuleContent {
     /// The HUD's close: the shown redesigned screen leaves back toward the side
     /// its opening entrance came from, the entrance reversed. No selection,
     /// swap or state changes; cancel() restores the screen. Nothing when reduced,
-    /// nor for a screen settle(concealed:) hid.
+    /// nor for a screen settle(concealed:) hid or left finishing its leave.
     func leaveForClose() {
         precondition(Thread.isMainThread)
         guard let content = factories[current.module] as? HUDDirectionalContent, current.wrapper.superlayer != nil,
-              !current.wrapper.isHidden else { return }
+              !current.wrapper.isHidden, current.wrapper.animation(forKey: "module.leave") == nil else { return }
         let offset = HUDShellPosition.entranceOffset(from: nil, to: current.module)
         playLeave(current, toward: CGPoint(x: -offset.x, y: -offset.y), unit: content.contentUnit)
     }
@@ -289,10 +290,10 @@ final class HUDModuleContent {
         if previous != module, chosen !== current { (factories[previous] as? HUDDirectionalContent)?.prepareToLeave() }
         withoutActions {
             for child in layer.sublayers ?? [] where child !== leaving { child.removeFromSuperlayer() }
-            departing = leaving
+            departing = leaving === chosen.wrapper ? nil : leaving
             current = chosen
             incoming = nil
-            normalize(chosen)
+            normalize(chosen, keeping: leaving)
             layer.addSublayer(chosen.wrapper)
         }
         onPresentationChange?(previous, module, false)
@@ -326,9 +327,10 @@ final class HUDModuleContent {
         }
     }
 
-    private func normalize(_ screen: Screen) {
+    /// `kept`: a leaving screen whose animations stay (settle's `keeping`).
+    private func normalize(_ screen: Screen, keeping kept: CALayer? = nil) {
         withoutActions {
-            removeAnimations(in: screen.wrapper)
+            removeAnimations(in: screen.wrapper, except: kept)
             screen.wrapper.transform = CATransform3DIdentity
             screen.wrapper.opacity = 1
             screen.wrapper.isHidden = false
