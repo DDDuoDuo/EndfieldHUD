@@ -3735,8 +3735,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// The terminal wiped up: the centre enters from below, then the checks run.
     private func finishBootLog() {
+        // One commit: the restored centre must not show before its rows hide.
+        CATransaction.begin()
         withoutActions { moduleContent.layer.opacity = 1 }
         designCanvases[selectedModule]?.playEntrance(from: HUDShellPosition.subpageOffset(dx: 0, dy: 1))
+        CATransaction.commit()
         facilityAlerts?.checkNow()
         facilityChanged()
         updateButtonStates()
