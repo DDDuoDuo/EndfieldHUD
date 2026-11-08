@@ -119,6 +119,10 @@ std::vector<const native::VolumeApplication*> VolumeCanvas::listedApplications()
 VolumeCanvas::Structure VolumeCanvas::structure() const {
     Structure s{env().language, tab_, {}, tab_ == 1 && snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value()};
     if (tab_ == 1) for (const auto* app : listedApplications()) s.apps.push_back(app->id);
+    // The empty list's reason (14d27e3): process detection's message, the
+    // empty state's subtitle. Windows has no output a route cannot use, so
+    // the Mac's outputAvailability fallback has no counterpart here.
+    if (tab_ == 1 && s.apps.empty()) s.emptyReason = snapshot_.applicationMessage;
     return s;
 }
 

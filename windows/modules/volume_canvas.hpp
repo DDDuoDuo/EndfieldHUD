@@ -88,6 +88,8 @@ public:
 private:
     struct Structure {
         core::Language language{}; int tab{}; std::vector<std::string> apps; bool supported{}, status{};
+        // Why App volume lists no app (VolumeCanvas.emptyReason, 14d27e3).
+        std::optional<std::string> emptyReason;
         bool operator==(const Structure&) const = default;
     };
     struct SliderRow { design::RowPlate* row; design::Slider* slider; };

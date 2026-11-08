@@ -436,6 +436,23 @@ void volumeCanvas() {
     // Unsupported (:286-295).
     model.state.applicationActivitySupported = false; model.state.applicationMessage.reset(); canvas.receive(model.state);
     check(canvas.listedApplications().empty() && !canvas.hasAdjustableApplication(), "Unsupported: no app is listed");
+    // The empty list's reason is part of the App volume page's structure
+    // (14d27e3, Structure.emptyReason): a new reason rebuilds that page, while
+    // Devices never rebuilds for it.
+    {
+        auto empty = model.state; empty.applicationActivitySupported = true; empty.applications.clear(); empty.applicationMessage = "Reason A";
+        canvas.receive(empty);
+        const d::Page* page = &canvas.page();
+        check(canvas.listedApplications().empty() && hasText(canvas.page().layer(), "Reason A"), "An empty App volume list shows its reason");
+        empty.applicationMessage = "Reason B"; canvas.receive(empty);
+        check(&canvas.page() != page && hasText(canvas.page().layer(), "Reason B") && !hasText(canvas.page().layer(), "Reason A"), "A new reason rebuilds the empty list with it");
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true); canvas.settleSwap();
+        page = &canvas.page();
+        empty.applicationMessage = "Reason C"; canvas.receive(empty);
+        check(canvas.tab() == 0 && &canvas.page() == page, "On Devices a new reason does not rebuild");
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true); canvas.settleSwap();
+        check(canvas.tab() == 1 && hasText(canvas.page().layer(), "Reason C"), "Back on App volume the latest reason shows");
+    }
     canvas.setActive(false, w.now);
     check(model.writes.back() == "stop", "Deactivation stops the controller; routes survive (:67-70)");
     // MODS-638: a new HUD session (the Mac's new VolumeCanvas, :15) shows Devices.
