@@ -383,6 +383,15 @@ bool ModuleLayout::move(std::string_view module,std::ptrdiff_t index) {
     auto moved=std::move(*found);order.erase(found);order.insert(order.begin()+to,std::move(moved));
     std::vector<std::string> next;for(const auto& name:order) if(contains(hidden,name)) next.push_back(name);hidden=std::move(next);return true;
 }
+bool ModuleLayout::listsTarget(std::string_view target) noexcept {return target.empty()||target=="addApp"||configurableModule(target);}
+std::optional<ModuleLayout> ModuleLayout::arranging(std::string_view module,std::optional<std::string_view> target) const {
+    if(!configurableModule(module)||isHidden(module)||!target||!listsTarget(*target)) return std::nullopt;
+    // Over a saved app or Add App: after the last visible module.
+    std::string other;if(!target->empty()&&*target!="addApp") other=std::string(*target);else if(const auto shown=visible();!shown.empty()) other=shown.back();
+    if(other.empty()||other==module||isHidden(other)) return std::nullopt;
+    const auto index=std::find(order.begin(),order.end(),other);if(index==order.end()) return std::nullopt;
+    auto next=*this;if(!next.move(module,index-order.begin())) return std::nullopt;return next;
+}
 // HUDModuleLayout(defaults:): an absent order is the default order; a present
 // one is read as given (a non-array reads as empty, so the default order).
 ModuleLayout Settings::moduleLayout() const {

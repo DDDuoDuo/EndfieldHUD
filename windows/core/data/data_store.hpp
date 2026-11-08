@@ -73,6 +73,16 @@ struct ModuleLayout {
     bool canSetHidden(std::string_view module, bool value) const; // false when hiding the last visible
     bool setHidden(std::string_view module, bool value);
     bool move(std::string_view module, std::ptrdiff_t index);    // clamped; false when unchanged
+    // HUDModuleLayout.listsTarget: a tile of the right-hand list. `target` is a
+    // module raw value ("addApp" for Add App) or empty for a saved app.
+    static bool listsTarget(std::string_view target) noexcept;
+    // HUDModuleLayout.arranging(_:over:) (Display > Modules > Arrange on HUD):
+    // the layout with the visible `module` dragged over `target`, a tile of
+    // the right-hand list (nullopt: nothing under the pointer; empty: a saved
+    // app). Over another visible module it takes that module's place; over a
+    // saved app or Add App it goes after the last visible module. Nullopt
+    // when nothing moves; hidden modules never move or act as targets.
+    std::optional<ModuleLayout> arranging(std::string_view module, std::optional<std::string_view> target) const;
     bool operator==(const ModuleLayout&) const = default;
 };
 // Mac ProjectionSettings.Values (Sources/ProjectionSettings.swift:17-41),

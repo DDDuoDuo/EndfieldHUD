@@ -313,6 +313,33 @@ void settingsVersion130() {
         value.setModuleLayout(ModuleLayout{});
         check(!value.fields.contains("hudModuleOrder") && !value.fields.contains("hudHiddenModules"), "The default layout leaves no keys behind");
     }
+    // Display > Modules > Arrange on HUD (HUDModuleLayout.arranging(_:over:)).
+    {
+        check(ModuleLayout::listsTarget("") && ModuleLayout::listsTarget("addApp") && ModuleLayout::listsTarget("map") &&
+              !ModuleLayout::listsTarget("system") && !ModuleLayout::listsTarget("storage") && !ModuleLayout::listsTarget("clock"),
+              "The right-hand list's tiles: modules, saved apps and Add App");
+        ModuleLayout layout;
+        const auto overModule = layout.arranging("map", std::string_view("fileShelf"));
+        check(overModule && overModule->order[1] == "map" && overModule->order[2] == "fileShelf" && overModule->order.size() == 17,
+              "Over another module the dragged module takes its place");
+        const auto down = layout.arranging("notes", std::string_view("archive"));
+        check(down && down->order[2] == "archive" && down->order[3] == "notes", "Dragged down it lands where the target was");
+        const auto overApp = layout.arranging("notes", std::string_view(""));
+        check(overApp && overApp->order.back() == "notes" && overApp->hidden.empty(), "Over a saved app it goes after the last visible module");
+        const auto overAdd = layout.arranging("map", std::string_view("addApp"));
+        check(overAdd && overAdd->order.back() == "map", "Over Add App it goes after the last visible module");
+        check(!layout.arranging("power", std::string_view("addApp")) && !layout.arranging("power", std::string_view("")),
+              "The last visible module over an app or Add App changes nothing");
+        check(!layout.arranging("map", std::nullopt) && !layout.arranging("map", std::string_view("map")) &&
+              !layout.arranging("map", std::string_view("system")) && !layout.arranging("addApp", std::string_view("map")) &&
+              !layout.arranging("clock", std::string_view("map")), "Nothing under the pointer, itself, a fixed module or no module: no change");
+        layout.setHidden("power", true);layout.setHidden("archive", true);
+        const auto pastHidden = layout.arranging("notes", std::string_view("addApp"));
+        check(pastHidden && pastHidden->order[15] == "notes" && pastHidden->order[16] == "power" && pastHidden->hidden == std::vector<std::string>{"archive", "power"},
+              "After the last visible module, ahead of a hidden one; the hidden set is unchanged");
+        check(!layout.arranging("archive", std::string_view("map")) && !layout.arranging("map", std::string_view("archive")),
+              "Hidden modules never move or act as targets");
+    }
     // Daily boot log: consumed once per local day; Restore Defaults keeps the day.
     {
         Settings value = Settings::defaults();
