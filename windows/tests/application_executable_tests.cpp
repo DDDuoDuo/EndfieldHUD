@@ -231,6 +231,10 @@ void cursors(const DataModule& module, const fs::path& source) {
     }
 }
 
+// The VERSIONINFO copyright of EndfieldHUD.exe, Setup and the uninstaller: the Mac NSHumanReadableCopyright
+// without its final full stop (fd6ad78), with "(C)" for the symbol in the ASCII resource scripts.
+constexpr std::string_view legalCopyright = "Copyright (C) 2026 DDDuoDuo. MIT License";
+
 std::string versionString(const std::vector<std::uint8_t>& block, const wchar_t* name) {
     const auto query = std::wstring(L"\\StringFileInfo\\040904B0\\") + name;
     void* value{};
@@ -263,10 +267,20 @@ void versionInfo(const fs::path& exe, const Version& v) {
     const auto dotted = std::to_string(v.major) + "." + std::to_string(v.minor) + "." + std::to_string(v.patch) + "." + std::to_string(v.build);
     check(versionString(block, L"ProductName") == "EndfieldHUD" && versionString(block, L"FileDescription") == "EndfieldHUD", "Product name and description");
     check(versionString(block, L"InternalName") == "EndfieldHUD" && versionString(block, L"OriginalFilename") == "EndfieldHUD.exe", "Internal and original file names");
-    check(versionString(block, L"CompanyName") == "DDDuoDuo" && versionString(block, L"LegalCopyright").find("MIT") != std::string::npos, "Author and license");
+    check(versionString(block, L"CompanyName") == "DDDuoDuo" && versionString(block, L"LegalCopyright") == legalCopyright, "Author and license");
     check(versionString(block, L"FileVersion") == dotted, "FileVersion string");
     check(versionString(block, L"ProductVersion") == v.release + " (" + std::to_string(v.build) + ") Windows development", "ProductVersion names the ported release");
     check(versionString(block, L"PrivateBuild").find(v.commit) != std::string::npos, "PrivateBuild names the source commit");
+}
+
+// Setup and the uninstaller carry the same copyright line (their names and descriptions differ).
+void packagedCopyright(const fs::path& exe) {
+    DWORD ignored{};
+    const auto size = GetFileVersionInfoSizeW(exe.c_str(), &ignored);
+    check(size > 0, "Setup VERSIONINFO present");
+    std::vector<std::uint8_t> block(size);
+    check(GetFileVersionInfoW(exe.c_str(), 0, size, block.data()) != FALSE, "Setup VERSIONINFO readable");
+    check(versionString(block, L"LegalCopyright") == legalCopyright, "Setup and the uninstaller name the same copyright without a final full stop");
 }
 
 void manifest(const DataModule& module, const Version& v) {
@@ -284,7 +298,7 @@ void manifest(const DataModule& module, const Version& v) {
 
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 3, "Usage: application_executable_tests EndfieldHUD.exe windows-source-dir");
+        check(argc == 5, "Usage: application_executable_tests EndfieldHUD.exe windows-source-dir setup-stub.exe uninstall.exe");
         const fs::path exe = fs::absolute(argv[1]), source = fs::absolute(argv[2]);
         check(exe.filename() == L"EndfieldHUD.exe" && fs::is_regular_file(exe), "Built EndfieldHUD.exe");
         const auto version = authority(source);
@@ -294,6 +308,7 @@ int wmain(int argc, wchar_t** argv) {
         icon(module, frames);
         cursors(module, source);
         versionInfo(exe, version);
+        for (const auto* packaged : {argv[3], argv[4]}) packagedCopyright(fs::absolute(packaged));
         manifest(module, version);
         std::cout << "EndfieldHUD executable: " << checks << " checks passed (" << frames.size() << " icon frames, version " << version.release << " build " << version.build << ")\n";
         return 0;

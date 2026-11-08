@@ -363,8 +363,10 @@ if(WIN32)
     add_executable(application_executable_tests tests/application_executable_tests.cpp)
     target_compile_definitions(application_executable_tests PRIVATE ${EHUD_APP_DEFINITIONS})
     target_link_libraries(application_executable_tests PRIVATE hud_resource_locator version)
-    add_dependencies(application_executable_tests EndfieldHUD)
-    add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}")
+    # Setup and the uninstaller (cmake/modules/packaging.cmake): their VERSIONINFO copyright only.
+    add_dependencies(application_executable_tests EndfieldHUD endfieldhud_setup_stub endfieldhud_uninstaller)
+    add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}"
+      "$<TARGET_FILE:endfieldhud_setup_stub>" "$<TARGET_FILE:endfieldhud_uninstaller>")
     if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
       # Production Notes/File Shelf roots: the real owners on temporary roots
       # that already hold an earlier run's records, across a restart.
