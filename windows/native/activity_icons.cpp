@@ -61,6 +61,7 @@ ActivityIconStats ActivityIconLoads::stats()const{const auto&i=*impl_;i.thread()
 #include <shobjidl_core.h>
 #include <knownfolders.h>
 #include <commoncontrols.h>
+#include "native/apps_folder.hpp"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <cmath>
@@ -93,7 +94,7 @@ std::optional<ActivityIconPixels>load(const std::string&key,unsigned size){
     if(key.starts_with(packaged)){
         // The packaged app's Start icon from its AppsFolder item (icon only).
         const auto aumid=wide(std::string_view(key).substr(packaged.size()));ComPtr<IShellItemImageFactory>factory;Bitmap bitmap;ComPtr<IWICBitmap>decoded;
-        if(!aumid.empty()&&SUCCEEDED(SHCreateItemInKnownFolder(FOLDERID_AppsFolder,KF_FLAG_DONT_VERIFY,aumid.c_str(),IID_PPV_ARGS(&factory)))&&
+        if(SUCCEEDED(openAppsFolderItem(aumid,factory.GetAddressOf()))&&
            SUCCEEDED(factory->GetImage({LONG(size),LONG(size)},SIIGBF_ICONONLY,&bitmap.value))&&bitmap.value&&
            SUCCEEDED(wic->CreateBitmapFromHBITMAP(bitmap.value,nullptr,WICBitmapUsePremultipliedAlpha,&decoded)))
             if(auto out=pixels(wic.Get(),decoded.Get(),size))return out;

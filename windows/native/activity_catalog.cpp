@@ -2,6 +2,7 @@
 #include "native/activity_provider.hpp"
 #include "native/activity_gpu.hpp"
 #include "native/process_identity.hpp"
+#include "native/apps_folder.hpp"
 #include "core/data/json.hpp"
 #include <algorithm>
 #include <cmath>
@@ -161,7 +162,7 @@ std::string windowsActivityFileDescription(const std::wstring&path){
 std::string windowsActivityPackagedName(const std::wstring&aumid){
     if(aumid.empty()||aumid.size()>4096||aumid.find(L'\0')!=aumid.npos)return {};
     const Apartment apartment;if(FAILED(apartment.hr)&&apartment.hr!=RPC_E_CHANGED_MODE)return {};
-    Microsoft::WRL::ComPtr<IShellItem>item;if(FAILED(SHCreateItemInKnownFolder(FOLDERID_AppsFolder,KF_FLAG_DONT_VERIFY,aumid.c_str(),IID_PPV_ARGS(&item)))||!item)return {};
+    Microsoft::WRL::ComPtr<IShellItem>item;if(FAILED(openAppsFolderItem(aumid,item.GetAddressOf()))||!item)return {};
     PWSTR name{};if(FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY,&name))||!name)return {};
     const std::wstring value(name);CoTaskMemFree(name);
     // An unknown AUMID echoes its own parsing name; that is not a display name.
