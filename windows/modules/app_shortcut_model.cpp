@@ -155,6 +155,19 @@ bool removeShortcut(ShortcutFile& file, std::string_view id) {
     const auto key = uuid(std::string(id));
     return std::erase_if(file.items, [&](const auto& v) { return uuid(v.id) == key; }) != 0;
 }
+bool moveShortcut(ShortcutFile& file, std::string_view id, std::ptrdiff_t index) {
+    const auto key = uuid(std::string(id));
+    auto& items = file.items;
+    const auto found = std::find_if(items.begin(), items.end(), [&](const auto& v) { return uuid(v.id) == key; });
+    if (found == items.end()) return false;
+    const auto from = found - items.begin();
+    const auto target = std::clamp<std::ptrdiff_t>(index, 0, std::ptrdiff_t(items.size()) - 1);
+    if (target == from) return false;
+    auto moved = std::move(*found);
+    items.erase(found);
+    items.insert(items.begin() + target, std::move(moved));
+    return true;
+}
 ShortcutRepository::ShortcutRepository(std::filesystem::path directory, ShortcutTextRules rules)
     : directory_(std::move(directory)), path_(directory_ / "shortcuts.json"), rules_(std::move(rules)) {
     need(directory_.is_absolute() && rules_.validName && rules_.trimmed);

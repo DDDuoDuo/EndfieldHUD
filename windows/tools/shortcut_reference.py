@@ -14,7 +14,7 @@ target = out / 'shortcut-source.json'
 if target.exists():
     raise SystemExit('Refusing to replace an existing source oracle')
 source = root / 'Sources/AppShortcutStore.swift'
-subprocess.run(['git', 'diff', '--quiet', 'ca04f142185c7de40acd8523bdb563195d90a1d1', '--', str(source)], cwd=root, check=True)
+subprocess.run(['git', 'diff', '--quiet', '2c047e0024aa337b11ab7d1e2577f7a918bace78', '--', str(source)], cwd=root, check=True)
 text = source.read_text()
 
 def declaration(marker):
@@ -59,7 +59,7 @@ sdk = subprocess.check_output(['bash', str(root / 'windows/tools/mac_sdk.sh')], 
 subprocess.run(['xcrun', 'swiftc', '-O', '-sdk', sdk, '-module-cache-path', str(root / 'build/windows-module-reference/.compiler/module-cache'), str(compiler / 'main.swift'), '-o', str(compiler / 'reference')], check=True, env=env)
 subprocess.run([str(compiler / 'reference'), str(target)], check=True)
 data = json.loads(target.read_text())
-data['sourceAuthority'] = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
+data['sourceAuthority'] = '2c047e0024aa337b11ab7d1e2577f7a918bace78'
 data['sourceSHA256'] = hashlib.sha256(source.read_bytes()).hexdigest()
 data['extractedDeclarationsSHA256'] = [hashlib.sha256(p.encode()).hexdigest() for p in parts]
 data['isolation'] = 'Original pure decode/name/icon declarations; synthetic records only; no store, file inspection or launch.'
