@@ -830,8 +830,7 @@ struct Application::Impl {
     tools::ArchiveOwner* archive{};   // archiveModuleOwner's owner (Archive on the design library)
     std::optional<modules::ArchiveMediaRequest> pendingArchiveRequest; // the canvas's picker / Shelf request (archiveMediaMessage)
     gpu::ApplicationIcon applicationIcon;
-    struct TrayIconArt {std::string id,file,sha256;bool templateArt{};};
-    std::vector<TrayIconArt> trayIcons;
+    std::vector<gpu::TrayIconArt> trayIcons;
     std::string trayIconKey;
     std::unique_ptr<gpu::TrayController> tray;
     bool quitRequested{};

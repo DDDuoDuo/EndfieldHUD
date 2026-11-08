@@ -85,7 +85,7 @@ Version authority(const fs::path& source) {
 std::vector<Frame> committedIcon(const fs::path& source) {
     const auto provenance = Json::parse(read(source / "resources" / "app" / "provenance.json", 256 * 1024));
     const auto ico = read(source / "resources" / "app" / "EndfieldHUD.ico", 4 * 1024 * 1024);
-    check(provenance["sourceCommit"].string() == "ca04f142185c7de40acd8523bdb563195d90a1d1" && provenance["icon"].string() == "endfield", "Icon provenance names the pinned Mac source and icon");
+    check(provenance["sourceCommit"].string() == "c6b59b9b208ff1d810df209f1f54ff6a770c980b" && provenance["icon"].string() == "endfield", "Icon provenance names the pinned Mac source and icon");
     check(sha(ico) == provenance["ico"]["sha256"].string() && std::int64_t(ico.size()) == provenance["ico"]["bytes"].integer(), "Committed ICO matches its provenance pin");
     check(le16(ico, 0) == 0 && le16(ico, 2) == 1, "ICO header");
     const auto& sizes = provenance["sizes"].array();
@@ -110,7 +110,7 @@ std::vector<Frame> committedIcon(const fs::path& source) {
         check(std::any_of(frames.begin(), frames.end(), [&](const Frame& f) { return f.size == required; }), "Windows shell icon size present: " + std::to_string(required));
     // The 64 px frame is the pinned roster icon the tray already shows.
     const auto roster = Json::parse(read(source / "resources" / "application-icons" / "manifest.json", 512 * 1024));
-    check(roster["sourceCommit"].string() == "ca04f142185c7de40acd8523bdb563195d90a1d1", "Roster pinned to the same source");
+    check(roster["sourceCommit"].string() == "c6b59b9b208ff1d810df209f1f54ff6a770c980b", "Roster pinned to the same source");
     const Json* app{};
     for (const auto& icon : roster["icons"].array()) if (icon["id"].string() == "endfield") app = &icon["app"];
     check(app && app->contains("sha256") && (*app)["width"].integer() == 64 && (*app)["height"].integer() == 64, "Roster Endfield app icon");

@@ -174,9 +174,8 @@ void replay(const Json& data, const Json& manifest) {
     // The Mac 1.3.1 Settings pages not ported yet: their recorded differences
     // are listed but do not fail until the item named here lands, and each
     // must still differ, so a page that comes to match is taken off the list.
-    // The watch icon's localized title comes with the watch icon.
     const std::set<std::string> pendingPages;
-    const std::set<std::string> pendingIconTitles{"watch"};
+    const std::set<std::string> pendingIconTitles;
     std::set<std::string> pendingMatched;
     const auto row = [&](core::Module module, std::string_view state) {
         check(page < pages.size(), "The oracle has a page for " + std::string(state));
@@ -334,6 +333,7 @@ void contracts() {
     m::SettingsCanvasHooks hooks;
     hooks.displays = [] { return std::vector<m::SettingsDisplay>{{"DISPLAY-A", "Studio"}, {"DISPLAY-B", "Studio"}}; };
     hooks.icons = {{"endfield", "Endfield", {d::ImageSource::Kind::asset, "application-icons/endfield-app.png", std::string(64, '0'), 0}},
+                   {"watch", "Watch", {d::ImageSource::Kind::asset, "application-icons/watch-app.png", std::string(64, '0'), 0}},
                    {"babel", "Babel", {d::ImageSource::Kind::asset, "application-icons/babel-app.png", std::string(64, '0'), 0}}};
     hooks.about.repository = "https://github.com/DDDuoDuo/EndfieldHUD";
     m::SettingsUpdateStatus update;
@@ -671,7 +671,18 @@ void contracts() {
     w[M::display].resetSession();
     check(w[M::display].page().scrollAreas()[0]->offset() == 0, "A new HUD session builds a scrolled page at the top");
     w.show(M::display);
+    // HUDApplicationIcon(savedValue:): a 1.3.0 "battery" reads as the watch,
+    // so the picker selects the watch tile.
+    w.update([](Settings& s) { s.set("applicationIcon", "battery"); });
     w.activate(M::display, "appIcon");
+    {
+        std::vector<d::AccessibilityItem> items; w[M::display].accessibilityItems(items);
+        const auto on = [&](std::string_view id) {
+            const auto found = std::find_if(items.begin(), items.end(), [&](const auto& i) { return i.id == id; });
+            return found != items.end() && found->on;
+        };
+        check(on("appIcon:watch") && !on("appIcon:endfield") && !on("appIcon:babel"), "A saved battery icon selects the watch tile");
+    }
     w.activate(M::display, "appIcon:babel");
     check(committed().string("applicationIcon") == "babel", "An app icon tile picks the icon");
     w.hide(M::display);

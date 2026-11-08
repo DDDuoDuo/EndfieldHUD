@@ -89,12 +89,12 @@ std::optional<Json> glyphNode(const std::string& id, const Json& tree, double si
     }
     return std::nullopt;
 }
-// HUDApplicationIcon.title (HUDApplicationIcon.swift:65-136): the icons whose
+// HUDApplicationIcon.title (HUDApplicationIcon.swift:72-141): the icons whose
 // names the Mac localizes (the roster's titles are the English ones; the
 // game-menu icons and Endfield, D.D.D., S.W.E.E.P., Project Red stay English).
 struct IconName { std::string_view id, english, simplifiedChinese; };
 constexpr std::array<IconName, 32> localizedIcons{{
-    {"battery", "Battery", "电池"},
+    {"watch", "Watch", "腕表"},
     {"originium", "Originium", "源石"},
     {"orundum", "Orundum", "合成玉"},
     {"perlica", "Perlica", "佩丽卡"},

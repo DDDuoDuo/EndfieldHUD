@@ -1761,14 +1761,8 @@ void Application::Impl::constructGame(double time){
 }
 void Application::Impl::constructTray(){
     const auto bytes=ehud::data::detail::readFile(args.residentIcons/"manifest.json",512*1024);need(bytes.has_value(),"Missing original icon roster");
-    const auto catalog=Json::parse(*bytes);need(catalog["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Icon source differs from this app migration");
-    // HUDApplicationIcon.menuBarImage per offered icon: the tray art, drawn
-    // as a template (tinted for the taskbar theme) except Perlica.
-    for(const auto&icon:catalog["icons"].array()){
-        if(!icon["offered"].boolean())continue;const auto&art=icon["tray"];
-        trayIcons.push_back({icon["id"].string(),art["file"].string(),art["sha256"].string(),art["template"].boolean()&&icon["id"].string()!="perlica"});
-    }
-    need(std::any_of(trayIcons.begin(),trayIcons.end(),[](const auto&i){return i.id=="endfield";}),"Missing original Endfield icon");
+    const auto catalog=Json::parse(*bytes);need(catalog["sourceCommit"].string()=="c6b59b9b208ff1d810df209f1f54ff6a770c980b","Icon source differs from this app migration");
+    trayIcons=gpu::trayIconRoster(catalog);
     tray=std::make_unique<gpu::TrayController>(static_cast<HWND>(host.hwnd()),trayMessage,RegisterWindowMessageW(L"TaskbarCreated"));
     loadTrayIcon();
     // Explorer may be absent or hide the icon; hotkey and relaunch activation
@@ -1789,16 +1783,14 @@ void Application::Impl::constructTray(){
 // Rebuilt only on the preference, a theme setting change or the first start.
 bool Application::Impl::loadTrayIcon(){
     if(trayIcons.empty())return false;
-    const auto chosen=configuration.applicationIcon();
-    auto icon=std::find_if(trayIcons.begin(),trayIcons.end(),[&](const auto&i){return i.id==chosen;});
-    if(icon==trayIcons.end())icon=std::find_if(trayIcons.begin(),trayIcons.end(),[](const auto&i){return i.id=="endfield";});
+    const auto&icon=gpu::trayIconFor(trayIcons,configuration.applicationIcon());
     DWORD light=0,size=sizeof(light);
     const bool lightTaskbar=RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"SystemUsesLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS&&light!=0;
-    const auto ink=!icon->templateArt?gpu::IconInk::original:lightTaskbar?gpu::IconInk::blackTemplate:gpu::IconInk::whiteTemplate;
+    const auto ink=!icon.templateArt?gpu::IconInk::original:lightTaskbar?gpu::IconInk::blackTemplate:gpu::IconInk::whiteTemplate;
     const auto pixels=static_cast<unsigned>(std::max(16,GetSystemMetricsForDpi(SM_CXSMICON,GetDpiForSystem())));
-    auto key=icon->id+"|"+std::to_string(static_cast<int>(ink))+"|"+std::to_string(pixels);
+    auto key=icon.id+"|"+std::to_string(static_cast<int>(ink))+"|"+std::to_string(pixels);
     if(key==trayIconKey&&applicationIcon.handle())return false;
-    applicationIcon=gpu::ApplicationIcon::fromPNG(args.residentIcons/utf8Path(icon->file),icon->sha256,pixels,ink);trayIconKey=std::move(key);
+    applicationIcon=gpu::ApplicationIcon::fromPNG(args.residentIcons/utf8Path(icon.file),icon.sha256,pixels,ink);trayIconKey=std::move(key);
     return true;
 }
 void Application::Impl::applyTrayIcon(){

@@ -42,7 +42,7 @@ enum HUDResources {
             let bytes = try Data(contentsOf: HUDResources.root.appendingPathComponent(name))
             sourceAssets["Resources/" + name] = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         }
-        let result: [String: Any] = ["sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1", "icon": "endfield", "sourceAssets": sourceAssets, "sizes": sizes,
+        let result: [String: Any] = ["sourceCommit": "c6b59b9b208ff1d810df209f1f54ff6a770c980b", "icon": "endfield", "sourceAssets": sourceAssets, "sizes": sizes,
                                      "method": "Unchanged HUDApplicationIcon.image(size:) for .endfield at each Windows icon size; detached resource resolver; no window"]
         try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys, .prettyPrinted]).write(to: out.appendingPathComponent("provenance.json"), options: .withoutOverwriting)
     }
