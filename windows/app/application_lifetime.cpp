@@ -47,6 +47,7 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // A canvas still registered is an owner missing above: the Context then
     // stays to member destruction (every owner is declared after it).
     bool designKept{};
+    if(hudElements){registry.remove(*hudElements);hudElements.reset();}
     if(designOverlay){registry.remove(*designOverlay);
         if(designOverlay->context().canvases().empty())designOverlay.reset();
         else{designKept=true;const char*line="EndfieldHUD teardown: a design canvas outlived its owner's drop; the shared design Context is kept\n";std::fputs(line,stderr);OutputDebugStringA(line);}}

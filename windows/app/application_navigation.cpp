@@ -31,7 +31,8 @@ void Application::Impl::constructNavigationAutomation() {
     buttons.peers = [this](std::vector<HudButtonPeer>& out) { navigationPeers(out); };
     buttons.frame = [this](const HudButtonPeer& peer) { return navigationFrame(peer); };
     buttons.enabled = [this](const HudButtonPeer& peer) {
-        if (!session->inputEnabled() || peer.slot >= navigationSlots.size()) return false;
+        // updateNavigationButtonStates: allowsInputBesidePlacement.
+        if (!session->inputEnabled() || placingOverlay() || peer.slot >= navigationSlots.size()) return false;
         const auto& slot = navigationSlots[peer.slot];
         if (slot.kind == NavigationSlot::Kind::logo) return session->phase() == core::VisibilityPhase::visible;
         return slot.kind != NavigationSlot::Kind::scroll || session->canScroll(slot.direction);
@@ -160,7 +161,7 @@ std::optional<core::Rect> Application::Impl::navigationFrame(const HudButtonPeer
 // accessibilityPerformPress: performClick on the button (any hit button of the
 // profile card), or scrollDesktopNavigation(direction, animated: false).
 bool Application::Impl::navigationPress(const HudButtonPeer& peer) {
-    if (!session || !ready || stopping || peer.slot >= navigationSlots.size()) return false;
+    if (!session || !ready || stopping || placingOverlay() || peer.slot >= navigationSlots.size()) return false;
     const auto time = areaClock();
     const auto slot = navigationSlots[peer.slot]; // the press may re-list the buttons
     if (slot.kind == NavigationSlot::Kind::scroll) {

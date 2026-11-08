@@ -50,8 +50,8 @@ struct SettingsCanvasHooks {
     // accent), the logo import panel, and a preset pick that cancels an import.
     std::function<void()> chooseColor,chooseLogo,logoSelection;
     // onEditOverlay: Display > HUD elements > Edit position and size places
-    // the HUD's title, Sanity gauge and alert tags on the HUD itself. Unset,
-    // the row does nothing (the placement editor is not ported yet).
+    // the HUD's title, Sanity gauge and alert tags on the HUD itself (the
+    // host's app/hud_elements_editor). Unset, the row does nothing.
     std::function<void()> editOverlay;
     // The logo as the centre shows it, fitted into `fitting` (logoArtwork:
     // presets by id, "custom" with its revision); nullopt while it is not

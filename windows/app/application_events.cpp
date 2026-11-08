@@ -147,6 +147,8 @@ bool Application::Impl::onWheel(const WheelEvent&e){
     if(!ready)return false;const auto time=now();
     if(projectionShown()){if(projectionHandoff.acceptsInput()){bool handled{};(void)projectionCall("wheel",[&]{handled=projection->wheel(e,hostTime(time));});if(handled)automationChanged();refresh(time);}return true;}
     using C=ModuleRegistry::Chain;
+    // Placing the HUD elements: the wheel neither scrolls nor turns anything.
+    if(placingOverlay())return true;
     if(registry.first(C::wheelCapture,[&](ModuleOwner&o,const ModuleRouting&){return o.capturesWheel()&&session->inputEnabled()&&o.wheel(e,hostTime(time));},"wheel")){automationChanged();refresh(time);return true;}
     if(auto*owner=registry.first(C::wheel,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.wheel(e,hostTime(time));},"wheel")){
         automationChanged();

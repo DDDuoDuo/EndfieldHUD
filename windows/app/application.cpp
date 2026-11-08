@@ -313,6 +313,23 @@ void Application::Impl::constructDesignOverlay(){
     if(visibleMode())designClipboard=gpu::systemNotesClipboard();
     designOverlay->resize(metrics);registry.add(*designOverlay);
     moduleContrast=std::make_unique<ModuleContrast>(rasterizer,rasterOptions);
+    constructHudElements();
+}
+// Display > HUD elements > Edit position and size: the editor on the shared
+// Context, routed ahead of every module while placing.
+void Application::Impl::constructHudElements(){
+    HudElementsEditorOptions o;
+    o.raster=rasterOptions;o.window=host.hwnd();o.now=[this]{return areaClock();};
+    o.changed=[this]{automationChanged();if(ready&&!stopping)host.invalidate();};
+    o.natural=[this](core::OverlayGeometry::Element element,const ehud::data::OverlayLayout&layout){return overlayNatural(element,layout);};
+    o.layoutChanged=[this]{overlayLayoutChanged();};
+    // finishOverlayPlacement: settingsController.update { $0.overlayLayout = draft }.
+    o.save=[this](const ehud::data::OverlayLayout&layout){
+        if(!settingsUI||stopping)return;
+        auto next=settingsUI->controller().committed();if(next.overlayLayout(graphemes)==layout)return;
+        next.setOverlayLayout(layout,graphemes);settingsUI->controller().update(std::move(next),areaClock());};
+    hudElements=std::make_unique<HudElementsEditor>(rasterizer,designOverlay->context(),std::move(o));
+    hudElements->resize(metrics);registry.add(*hudElements);
 }
 // SystemHUDView.moduleContrast (SystemHUDView.swift:2312-2318, 2767-2769): a
 // radial CAGradientLayer over HUDModuleContent.viewportFrame (280, 100, 440 x
@@ -1023,6 +1040,7 @@ const ehud::data::ModuleLayout* Application::Impl::AreaHost::moduleLayout()const
 std::uint64_t Application::Impl::AreaHost::moduleLayoutRevision()const noexcept{return impl_.moduleLayoutRevision;}
 const ehud::data::OverlayLayout*Application::Impl::AreaHost::overlayLayout()const noexcept{return &impl_.shownOverlayLayout();}
 std::uint64_t Application::Impl::AreaHost::overlayLayoutRevision()const noexcept{return impl_.overlayLayoutRevision;}
+bool Application::Impl::AreaHost::allowsInputBesidePlacement()const noexcept{return !impl_.placingOverlay();}
 void Application::Impl::AreaHost::publishService(std::string_view key,void*value,const std::type_info&type){
     const auto found=services_.find(key);
     if(!value){if(found!=services_.end())services_.erase(found);return;}
@@ -1703,6 +1721,8 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.hooks.reopensOn=[this](core::Module module){return (closing||session->phase()==core::VisibilityPhase::concealed)&&notes&&notes->selected()==module;};
     options.hooks.chooseColor=[this]{requestThemeColor();};
     options.hooks.chooseLogo=[this]{chooseCenterLogo();};
+    // onEditOverlay: SystemHUDView.beginOverlayPlacement (the HUD stays open on Display > HUD elements).
+    options.hooks.editOverlay=[this]{beginOverlayPlacement(now());};
     options.hooks.logoSelection=[this]{++logoImportGeneration;};
     ModuleRouting routing;routing.pointerCapture=1;routing.pointer=2;routing.wheelCapture=1;routing.wheel=2;routing.keyCapture=1;routing.key=2;routing.pointerPolicy={false,true,false};
     options.owner=designOwnerOptions("settings",routing);
@@ -2652,6 +2672,7 @@ void Application::Impl::activate(const WatchActivation&event){
 // swap, no accepted quit); the bar's capture blocks everything else while it
 // shows. The bar is drawn on the centre plane, so it follows the tilt.
 void Application::Impl::presentQuitConfirmation(double time){
+    if(placingOverlay())return; // guard allowsInputBesidePlacement
     if(lifecycle.phase()!=core::SystemOverlayPhase::open||quitRequested||quitPromptOpen||(notes&&notes->modulePresentation().transitioning))return;
     auto&context=designOverlay->context();if(context.overlay().capturesInput())return;
     // An open sanity recovery popover is dismissed instead (the account area's QuitPreemption).
@@ -2843,7 +2864,11 @@ Application::Impl::AutomationInputs Application::Impl::automationInputs(){
 }
 HudAutomationSource Application::Impl::automationSource(){
     HudAutomationSource source;
-    source.owners=[this](std::vector<ModuleOwner*>&out){registry.forEach([&](ModuleOwner&o){out.push_back(&o);},"automation");};
+    // While the HUD elements are placed only the strip's stand-ins, the
+    // (disabled) navigation and the pinned notes are listed: the canvases,
+    // the overlay, the alerts and the gauge hide theirs (layoutDesignAccessibility).
+    source.owners=[this](std::vector<ModuleOwner*>&out){const bool placing=placingOverlay();registry.forEach([&](ModuleOwner&o){
+        if(!placing||&o==hudElements.get()||&o==navigationAutomation.get()||&o==notesModuleOwner.get())out.push_back(&o);},"automation");};
     source.refresh=[this](ModuleOwner&o,IRawElementProviderFragmentRoot*root){bool changed{};(void)registry.guard(o,[&]{changed=o.automationRefresh(root);},"automation");return changed;};
     // Groups are named after the module the owner presents (localized caption).
     source.name=[this](const ModuleOwner&o){

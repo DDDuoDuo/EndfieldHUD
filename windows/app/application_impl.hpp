@@ -18,6 +18,7 @@
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
 #include "app/hud_button_automation.hpp"
+#include "app/hud_elements_editor.hpp"
 #include "core/hud_overlay_geometry.hpp"
 #include "app/presentation_priority.hpp"
 #include "app/summon_hotkey.hpp"
@@ -290,6 +291,7 @@ struct Application::Impl {
         std::uint64_t moduleLayoutRevision() const noexcept override;
         const ehud::data::OverlayLayout* overlayLayout() const noexcept override;
         std::uint64_t overlayLayoutRevision() const noexcept override;
+        bool allowsInputBesidePlacement() const noexcept override;
         bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
         void cancelFileChoice() override;
         std::uint32_t registerMessage() override;
@@ -517,6 +519,9 @@ struct Application::Impl {
     void chooseThemeColor();
     void deactivateDisplayPanels();
     std::optional<core::Point> clockPoint(core::Point client) const;
+    // SystemHUDView.allowsModuleInput for the chrome controls and the HUD
+    // elements editor.
+    bool moduleInputAllowed() const;
     bool clockAcceptsInput() const;
     void setClockHovered(bool);
     void clockHover(const PointerEvent&);
@@ -552,17 +557,26 @@ struct Application::Impl {
     std::optional<double> lastHookSummon;
     // --- Display > HUD elements (app/hud_elements_editor.hpp) ----------------------
     // SystemHUDView.applyOverlayLayout / shownOverlayLayout: the applied
-    // record's layout (normalized, its text cut by the grapheme rule); the
-    // revision moves whenever the shown layout changes
-    // (ApplicationHost::overlayLayout for the account and facility areas).
+    // record's layout (normalized, its text cut by the grapheme rule) and the
+    // editor's draft while placing; the revision moves whenever the shown
+    // layout changes (ApplicationHost::overlayLayout for the account and
+    // facility areas).
     ehud::data::OverlayLayout appliedOverlayLayout;
     std::uint64_t overlayLayoutRevision{};
     const ehud::data::OverlayLayout& shownOverlayLayout() const noexcept;
+    bool placingOverlay() const noexcept;
+    // SystemHUDView.allowsInputBesidePlacement: module input and no placing.
+    bool allowsInputBesidePlacement() const;
+    // settings.onEditOverlay -> beginOverlayPlacement (only while module input
+    // is allowed, nothing is placed and the confirm bar is down).
+    void beginOverlayPlacement(double time);
+    void overlayLayoutChanged();   // the shown layout moved: revision, title, frame
     void applyOverlayTitle();      // the chrome's title from the shown layout
     // overlayNatural: an element's size at 100 % in core-plane points.
     core::OverlaySize overlayNatural(core::OverlayGeometry::Element, const ehud::data::OverlayLayout&);
     struct TitleNatural { std::string title, subtitle; double size{}; core::Language language{}; core::OverlaySize natural; };
     std::optional<TitleNatural> titleNatural; // the last measured title (content events only)
+    void constructHudElements();
     // --- Source navigation UI Automation (app/application_navigation.cpp) ----------
     void constructNavigationAutomation();
     void navigationPeers(std::vector<HudButtonPeer>&);
@@ -863,6 +877,8 @@ struct Application::Impl {
     // The design library's shared overlay (confirm bar, toast, content dim) and
     // its Context; outlives every design owner (they borrow the Context).
     std::unique_ptr<tools::DesignOverlayOwner> designOverlay;
+    // Display > HUD elements > Edit position and size (borrows the Context).
+    std::unique_ptr<HudElementsEditor> hudElements;
     // holdDesignDensity: the density the last retract left (where the next
     // deploy starts), the held density and the layout it was derived for.
     std::optional<double> designDensityStart, heldDesignDensity;

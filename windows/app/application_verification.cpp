@@ -2660,6 +2660,64 @@ int Application::Impl::runHiddenVerification(){
                         auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
                 }
+                // Display > HUD elements > Edit position and size (SystemHUDView
+                // overlay placement, Mac a93b2c5 ... fe3f046): the strip and its marks
+                // on the top layer, the inputs beside placement off (the clock's
+                // peers withdrawn, its press refused), the cursor (open over an
+                // element, closed while dragging, normal over the strip), a drag,
+                // Esc dropping the draft and Return saving the placement as drawn.
+                if(chrome&&settingsUI&&hudElements){
+                    using G=core::OverlayGeometry;
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const auto saved=appliedOverlayLayout;
+                    beginOverlayPlacement(time);for(unsigned frame=0;frame<30;++frame)present(time+double(frame)/60,true);time+=.6;
+                    hostCheck(placingOverlay()&&hudElements->strip()&&!allowsInputBesidePlacement()&&moduleInputAllowed(),
+                        "Edit position and size starts placing; the navigation waits, the HUD keeps its module input");
+                    hostCheck(registry.first(ModuleRegistry::Chain::pointerCapture,[](ModuleOwner&o,const ModuleRouting&){return o.capturesPointer();},"verify")==hudElements.get(),
+                        "The placement captures the pointer ahead of every module");
+                    // The top layer: after the pinned notes, before the areas' modal cards.
+                    {const auto top=hudElements->topEntries();std::size_t first=ordered.size(),last=0;
+                        for(std::size_t n=0;n<ordered.size();++n)for(const auto&e:top)if(ordered[n].scene==e.scene){first=std::min(first,n);last=std::max(last,n);}
+                        std::size_t notesLast=0;if(notesModuleOwner)for(const auto&e:notesModuleOwner->floatingEntries())for(std::size_t n=0;n<ordered.size();++n)if(ordered[n].scene==e.scene)notesLast=std::max(notesLast,n);
+                        hostCheck(!top.empty()&&first<ordered.size()&&first>=notesLast&&last+1>=first,"The strip and its marks draw on the top layer, above the pinned notes");}
+                    {std::vector<HudButtonPeer> peers;navigationPeers(peers);
+                        hostCheck(!peers.empty()&&std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return navigationPress(peer);}),"The module, Quit and scroll buttons are refused while placing");}
+                    {HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                        hostCheck(hudElements->automationCount()==5,"The strip lists three sliders and two pills");
+                        uia.disconnectOwners();uia.shutdown();}
+                    // A drag of the gauge from where it is drawn.
+                    const auto frames=hudElements->frames();const auto gauge=frames[G::index(G::Element::sanity)];
+                    const auto grab=hudElements->clientPoint({gauge.x+gauge.width/2,gauge.y+gauge.height/2});
+                    hostCheck(grab&&cursorAt(*grab)==ModuleCursor::openHand,"The open hand shows over an element");
+                    if(grab){
+                        (void)hudElements->pointer({PointerKind::down,PointerButton::left,grab->x,grab->y},time);
+                        hostCheck(hudElements->dragged()==G::Element::sanity&&cursorAt(*grab)==ModuleCursor::closedHand,"A press on the gauge drags it; the closed hand shows");
+                        (void)hudElements->pointer({PointerKind::move,PointerButton::none,grab->x-60,grab->y+40},time+.05);
+                        (void)hudElements->pointer({PointerKind::up,PointerButton::left,grab->x-60,grab->y+40},time+.1);present(time+.15,true);time+=.2;
+                        const auto*draft=hudElements->draft();
+                        hostCheck(draft&&draft->sanity.x<-1&&draft->sanity.y>1&&!hudElements->dragged()&&shownOverlayLayout().sanity==draft->sanity,"The drag moves the gauge in the draft the HUD shows");
+                    }
+                    if(const auto*editor=hudElements->strip();editor&&!editor->sliders().empty()){
+                        const auto slider=editor->sliders().front()->layer().frame();
+                        const auto over=hudElements->stripClientPoint({slider.x+slider.width/2,slider.y+slider.height/2});
+                        hostCheck(over&&cursorAt(*over)==ModuleCursor::source,"The normal cursor shows over the strip");}
+                    hostCheck(onKey({KeyKind::down,VK_ESCAPE})&&!placingOverlay()&&appliedOverlayLayout==saved&&shownOverlayLayout()==saved,"Esc drops the draft");
+                    for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=.3;
+                    hostCheck(allowsInputBesidePlacement(),"After Cancel the navigation takes input again");
+                    // Return saves every placement as drawn, in one settings write.
+                    beginOverlayPlacement(time);present(time,true);time+=.1;
+                    const auto title=hudElements->frames()[G::index(G::Element::title)];
+                    if(const auto press=hudElements->clientPoint({title.x+10,title.y+10})){
+                        (void)hudElements->pointer({PointerKind::down,PointerButton::left,press->x,press->y},time);
+                        (void)hudElements->pointer({PointerKind::move,PointerButton::none,press->x+80,press->y+30},time+.05);
+                        (void)hudElements->pointer({PointerKind::up,PointerButton::left,press->x+80,press->y+30},time+.1);}
+                    const auto moved=hudElements->draft()?std::optional(*hudElements->draft()):std::nullopt;
+                    hostCheck(onKey({KeyKind::down,VK_RETURN})&&!placingOverlay()&&moved&&moved->title.x>1&&settingsUI->controller().committed().overlayLayout(graphemes).title==moved->title,
+                        "Return saves the moved title");
+                    present(time+.2,true);time+=.3;
+                    hostCheck(chromeContent.title.origin.x>270&&std::abs(chromeContent.title.origin.x-(270+moved.value_or(saved).title.x))<1e-6,"The title is drawn at its saved place");
+                    auto restore=settingsUI->controller().committed();restore.setOverlayLayout(saved,graphemes);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
+                }
                 // The clock section scrolls with a Windows mouse wheel too (the Mac
                 // reads the horizontal swipe), and a style change pushes the inner
                 // clipped page (HUDClockPageViewport.transition: 0.26 s,

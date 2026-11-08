@@ -211,14 +211,50 @@ std::optional<core::Point> Application::Impl::clockPoint(core::Point client) con
     return chrome->statusPoint(client, viewProjection, metrics.pixelWidth, metrics.pixelHeight, metrics.scale);
 }
 // SystemHUDView.allowsModuleInput for the chrome controls.
-bool Application::Impl::clockAcceptsInput() const {
+bool Application::Impl::moduleInputAllowed() const {
     return chrome && ready && !stopping && !closing && !quitRequested && notes && session->inputEnabled() &&
         session->phase() == core::VisibilityPhase::visible &&
         !notes->modulePresentation().transitioning && !(designOverlay && designOverlay->capturesPointer());
 }
+bool Application::Impl::clockAcceptsInput() const { return moduleInputAllowed(); }
 
 // --- Display > HUD elements ------------------------------------------------------
-const ehud::data::OverlayLayout& Application::Impl::shownOverlayLayout() const noexcept { return appliedOverlayLayout; }
+const ehud::data::OverlayLayout& Application::Impl::shownOverlayLayout() const noexcept {
+    if (hudElements) if (const auto* draft = hudElements->draft()) return *draft;
+    return appliedOverlayLayout;
+}
+bool Application::Impl::placingOverlay() const noexcept { return hudElements && hudElements->placing(); }
+bool Application::Impl::allowsInputBesidePlacement() const { return moduleInputAllowed() && !placingOverlay(); }
+// beginOverlayPlacement: only while module input is allowed, nothing is
+// placed and the confirm bar is down. A design field being edited commits,
+// the Sanity recovery menu closes, the source watch's buttons wait.
+void Application::Impl::beginOverlayPlacement(double time) {
+    if (!hudElements || placingOverlay() || !moduleInputAllowed()) return;
+    time = hostTime(time);
+    designOverlay->context().editorFocusMoved();
+    if (areaHost) if (auto* preempt = areaHost->find<QuitPreemption>(quitPreemptionService))
+        (void)isolateService(quitPreemptionService, "HUD elements", [&] { (void)(*preempt)(time); });
+    setClockHovered(false);
+    if (!hudElements->begin(appliedOverlayLayout, time)) return;
+    // SystemHUDView.updateNavigationButtonStates: the source watch's buttons
+    // and the navigation peers wait (allowsInputBesidePlacement). The editor
+    // takes every pointer event meanwhile, so the watch only drops its hover
+    // and press here; the peers check placingOverlay().
+    if (session->inputEnabled()) { session->setInputEnabled(false, time); session->setInputEnabled(true, time); }
+    environment.pointerLocked = pointerLocked(); session->setEnvironment(environment, time);
+    if (automation) automation->disconnectOwners();
+    automationChanged(); refresh(time);
+}
+void Application::Impl::overlayLayoutChanged() {
+    ++overlayLayoutRevision;
+    applyOverlayTitle();
+    if (!placingOverlay() && ready && !stopping && session) {
+        // Placing ended: the parallax and the source watch's buttons return.
+        environment.pointerLocked = pointerLocked(); session->setEnvironment(environment, hostTime(now()));
+        automationChanged();
+    }
+    if (ready && !stopping) host.invalidate();
+}
 // overlayNatural: the title measured as it is drawn at its size (the
 // chrome's measurement), the gauge's 168 x 42, the alert column the facility
 // area publishes (one tag's slot without it).
