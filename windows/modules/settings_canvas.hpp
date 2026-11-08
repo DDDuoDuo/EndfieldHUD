@@ -53,6 +53,10 @@ struct SettingsCanvasHooks {
     // the HUD's title, Sanity gauge and alert tags on the HUD itself (the
     // host's app/hud_elements_editor). Unset, the row does nothing.
     std::function<void()> editOverlay;
+    // onArrangeModules: Display > Modules > Arrange on HUD turned on or off
+    // (only real changes): the HUD's right-hand module buttons are dragged to
+    // reorder while it is on.
+    std::function<void(bool)> arrangeModules;
     // The logo as the centre shows it, fitted into `fitting` (logoArtwork:
     // presets by id, "custom" with its revision); nullopt while it is not
     // decoded yet or unreadable (the tile stays empty, the field shows the
@@ -99,6 +103,9 @@ public:
     // it turns off on Back, on leaving the page or the HUD, and in buildPage
     // whenever the section is not Modules.
     bool arrangingModules()const noexcept{return arranging_;}
+    // previewModuleOrder: the rows follow a drag on the HUD (`order`) and
+    // return to the saved order with nullopt, when it drops or is cancelled.
+    void previewModuleOrder(std::optional<std::vector<std::string>> order);
     // Keycap labels: CTRL, ALT, SHIFT, WIN, then the key (HUDSettingsCanvas.keycaps).
     static std::vector<std::string> keycaps(SettingsShortcut);
 
@@ -150,6 +157,8 @@ private:
     design::ScrollArea* modulesScroll_{};
     std::optional<Drag> moduleDrag_;
     bool arranging_{};design::Toggle* arrangeToggle_{};
+    // The order a drag on the HUD previews; the rows follow it until the drop.
+    std::optional<std::vector<std::string>> previewedModuleOrder_;
     const ehud::data::Settings& config()const noexcept{return controller_->configuration();}
     template<class F> void update(F&& mutation);
     Structure structure()const;

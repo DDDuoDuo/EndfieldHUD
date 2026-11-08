@@ -66,6 +66,7 @@ struct World {
         callbacks.checkUpdates = [this] { hooks.emplace_back("checkUpdates"); };
         callbacks.editBatteryPosition = [this] { hooks.emplace_back("editPosition"); };
         hooks0.editOverlay = [this] { hooks.emplace_back("editOverlay"); };
+        hooks0.arrangeModules = [this](bool on) { hooks.emplace_back(on ? "arrangeOn" : "arrangeOff"); };
         controller = std::make_unique<m::SettingsController>(initial, callbacks, L::english);
         controller->setUpdateStatus(update);
         hooks0.chooseColor = [this] { hooks.emplace_back("chooseColor"); };
@@ -466,14 +467,32 @@ void contracts() {
     check(arrange.label == "Arrange on HUD, Drag the module buttons on the right" && !arrange.isOn() && !w[M::display].arrangingModules(),
         "Arrange on HUD sits above the list, off, its hint spoken with the switch");
     w.activate(M::display, "modulesArrange");
-    check(arrange.isOn() && w[M::display].arrangingModules(), "The switch turns arranging on");
-    { const auto saves = w.saved.size(); w.activate(M::display, "modulesArrange"); w.activate(M::display, "modulesArrange");
-      check(w.saved.size() == saves, "Arrange on HUD is never saved"); }
+    check(arrange.isOn() && w[M::display].arrangingModules() && w.hooks.back() == "arrangeOn", "The switch turns arranging on and tells the HUD");
+    { const auto saves = w.saved.size(), heard = w.hooks.size(); w.activate(M::display, "modulesArrange"); w.activate(M::display, "modulesArrange");
+      check(w.saved.size() == saves && w.hooks.size() == heard + 2, "Arrange on HUD is never saved; the HUD hears each change"); }
+    {
+        // A drag on the HUD previews its order: the rows follow it, and nil returns them to the saved order.
+        auto preview = committed().moduleLayout().order;
+        std::rotate(preview.begin(), preview.begin() + 1, preview.begin() + 3); // fileShelf, clipboard, notes
+        w[M::display].previewModuleOrder(preview);
+        (void)w.context.advance(w.now + 1);
+        check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY) - 2 * 56) < 1e-9 &&
+              std::abs(rowOf("fileShelf").frame().y + rowOf("fileShelf").value(d::Channel::translateY)) < 1e-9, "The rows follow the HUD's preview");
+        w.update([](Settings& s) { s.set("blurAmount", .4); });
+        (void)w.context.advance(w.now + 2);
+        check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY) - 2 * 56) < 1e-9, "A record applied meanwhile keeps the preview");
+        w[M::display].previewModuleOrder(std::nullopt);
+        (void)w.context.advance(w.now + 3);
+        check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY)) < 1e-9, "Without a preview the rows return to the saved order");
+        w[M::display].previewModuleOrder(preview);
+    }
     { const auto back = w[M::display].page().back; back(); }
-    check(w[M::display].section() == "main" && !w[M::display].arrangingModules(), "Back returns to Display and turns arranging off");
-    w.activate(M::display, "modules"); w.activate(M::display, "modulesArrange");
+    check(w[M::display].section() == "main" && !w[M::display].arrangingModules() && w.hooks.back() == "arrangeOff", "Back returns to Display and turns arranging off");
+    w.activate(M::display, "modules");
+    check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY)) < 1e-9, "Arranging off dropped the preview");
+    w.activate(M::display, "modulesArrange");
     w.hide(M::display);
-    check(!w[M::display].arrangingModules(), "Leaving the HUD turns arranging off");
+    check(!w[M::display].arrangingModules() && w.hooks.back() == "arrangeOff", "Leaving the HUD turns arranging off");
     w.show(M::system);
     check(std::none_of(w[M::system].page().controls().begin(), w[M::system].page().controls().end(), [](const d::Control* c) { return c->id() == "modules"; }),
         "System no longer lists Modules");

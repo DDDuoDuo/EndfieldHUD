@@ -473,10 +473,14 @@ void SettingsCanvas::setArrangingModules(bool on) {
     if (next == arranging_) { if (arrangeToggle_) arrangeToggle_->setOn(next, true); return; }
     arranging_ = next;
     if (arrangeToggle_) arrangeToggle_->setOn(next, true);
-    // TODO(B2): the HUD's side of Arrange on HUD. Off drops the HUD's preview
-    // (previewModuleOrder(nil)), and the HUD hears every real change
-    // (onArrangeModules) to drag its module buttons. Until then the switch
-    // only keeps its own state.
+    if (!next) previewModuleOrder(std::nullopt);
+    if (hooks_.arrangeModules) hooks_.arrangeModules(next);
+}
+// previewModuleOrder (:413-420).
+void SettingsCanvas::previewModuleOrder(std::optional<std::vector<std::string>> order) {
+    if (order == previewedModuleOrder_) return;
+    previewedModuleOrder_ = std::move(order);
+    if (!moduleDrag_ && !moduleRows_.empty()) layoutModuleRows(previewedModuleOrder_ ? *previewedModuleOrder_ : config().moduleLayout().order, true);
 }
 // Order and visibility of the right-hand list: drag a row by its grip (the
 // others reflow) or use its move buttons; the switch shows or hides it.
@@ -532,8 +536,8 @@ void SettingsCanvas::buildModules(d::Page& page) {
     binders_.push_back([this, &restore] {
         renderModuleStates();
         restore.setEnabled(!config().moduleLayout().isDefault());
-        // A drag in progress owns the positions until it drops.
-        if (!moduleDrag_) layoutModuleRows(config().moduleLayout().order, true);
+        // A drag in progress (here or on the HUD) owns the positions until it drops.
+        if (!moduleDrag_) layoutModuleRows(previewedModuleOrder_ ? *previewedModuleOrder_ : config().moduleLayout().order, true);
     });
     restore.setEnabled(!layout.isDefault());
     header().configure({"DISPLAY", "MODULES"}, "SYS-02", title("Modules", "模块"), d::format::pad2(std::int64_t(layout.order.size())), true);
