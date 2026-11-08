@@ -860,6 +860,8 @@ bool Application::Impl::broadcast(HostEvent::Kind kind,double time,std::uint32_t
 }
 void Application::Impl::concealed(double time){
     presentationPriority.restore(); // a closed HUD never competes with the foreground app
+    // The hidden HUD's deactivation clears the hover kept through the close.
+    setClockHovered(false);
     if(concealedBroadcast)return;concealedBroadcast=true;
     // The hidden HUD has no projected controls for UI Automation.
     if(automation)automation->disconnectOwners();
@@ -2069,7 +2071,9 @@ void Application::Impl::close(double time){
     // An Arrange on HUD drag ends without animation (the list snaps).
     endModuleArrangeDrag(false,false,time);
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archive)isolate(archiveModuleOwner,"close",[&]{(void)archive->media().cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
-    finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
+    // The clock's hover plate stays until the first move or the hide (48584b5
+    // defers clearControlHighlights: onPointer, concealed()).
+    finishAreaPicker({true,false,{}});deactivateDisplayPanels();
     // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"close",[&]{audio->volume().setVisible(false);});automationChanged();

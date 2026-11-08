@@ -124,7 +124,9 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     else if(swallowsArrangePress&&e.kind==PointerKind::move&&(e.modifiers&MK_LBUTTON))return true;
     else if(swallowsArrangePress&&e.kind==PointerKind::up&&e.button==PointerButton::left){swallowsArrangePress=false;host.capturePointer(false);host.refreshCursor();refresh(hostTime(time));return true;}
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
-    if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
+    // During the close every highlight kept from its start (the clock, the
+    // Sanity gauge, the HUD elements strip) clears on the first move.
+    if(e.kind==PointerKind::move||e.kind==PointerKind::leave){clockHover(e);if(closing)clearControlHighlights(hostTime(time));}
     // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
