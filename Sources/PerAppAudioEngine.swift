@@ -506,9 +506,12 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     }
     private func validateProcess() throws {
         let pid: Int32 = try read(property(application.id, kAudioProcessPropertyPID))
-        let devices: [UInt32] = try array(property(application.id, kAudioProcessPropertyDevices, scope: kAudioDevicePropertyScopeOutput))
+        // The HAL lists only the devices a process is playing to right now, so
+        // a paused app or one between sounds lists none. That keeps (or
+        // starts) its route; the tap stays unmuted until real audio arrives.
+        let devices = try Set(array(property(application.id, kAudioProcessPropertyDevices, scope: kAudioDevicePropertyScopeOutput)).filter { $0 != 0 })
         guard pid == application.pid, pid != ProcessInfo.processInfo.processIdentifier,
-              Set(devices) == Set([output.id]) else {
+              devices.isEmpty || devices == [output.id] else {
             throw message("This process must output only to the selected device. Processes using another or several devices are not supported.",
                           "此进程必须仅向所选设备输出，暂不支持使用其他或多个设备的进程。")
         }
