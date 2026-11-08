@@ -525,9 +525,15 @@ void SettingsStore::write(Json envelope,const Settings& value) {
     envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
     detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;
 }
+void SettingsStore::writeBeside(std::string_view key,Json value) {
+    auto envelope=envelope_;envelope[std::string(key)]=std::move(value);
+    if(!persisted_) {write(std::move(envelope),value_);return;}
+    const auto bytes=encodeRecord(envelope);
+    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;
+}
 bool SettingsStore::markLaunched() {
     if(launched_) return false;
-    auto envelope=envelope_;envelope["hasLaunched"]=true;write(std::move(envelope),value_);launched_=true;return true;
+    writeBeside("hasLaunched",true);launched_=true;return true;
 }
 std::string SettingsStore::lastOpenedModule() const {
     const auto& stored=envelope_["hudLastOpenedModule"];
@@ -536,14 +542,14 @@ std::string SettingsStore::lastOpenedModule() const {
 bool SettingsStore::saveLastOpenedModule(std::string_view module) {
     require(ModuleLayout::isModule(module),"Unknown HUD module");
     if(const auto& stored=std::as_const(envelope_)["hudLastOpenedModule"];stored.isString()&&stored.string()==module) return false;
-    auto envelope=envelope_;envelope["hudLastOpenedModule"]=std::string(module);write(std::move(envelope),value_);return true;
+    writeBeside("hudLastOpenedModule",std::string(module));return true;
 }
 bool SettingsStore::sanityMigrated() const noexcept {
     return envelope_.contains("hudOverlaySanityMigrated")&&!envelope_["hudOverlaySanityMigrated"].isNull();
 }
 bool SettingsStore::markSanityMigrated() {
     if(sanityMigrated()) return false;
-    auto envelope=envelope_;envelope["hudOverlaySanityMigrated"]=true;write(std::move(envelope),value_);return true;
+    writeBeside("hudOverlaySanityMigrated",true);return true;
 }
 bool SettingsStore::migrateHiddenSanity(const std::function<bool()>& headerHidden) {
     if(!markSanityMigrated()||!headerHidden||!headerHidden()) return false;

@@ -315,6 +315,11 @@ private:
     std::optional<std::string> persisted_;
     bool launched_{};
     void write(Json envelope, const Settings& value); // version + record + the keys beside it
+    // One key beside the record (a separate defaults key on the Mac, set on
+    // its own): a stored record is written back as it was stored, never
+    // through the save transforms; with no file yet it is written as the
+    // first save writes it.
+    void writeBeside(std::string_view key, Json value);
 };
 
 struct Profile {

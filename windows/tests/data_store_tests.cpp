@@ -654,6 +654,31 @@ void settingsVersion131() {
         const SettingsStore reloaded(root.path);
         check(reloaded.lastOpenedModule() == "hotkeys" && reloaded.sanityMigrated() && reloaded.value().string("theme") == "dark", "A settings save keeps both keys");
     }
+    // Saving one of them sets only that key (the Mac sets one defaults key):
+    // the stored record is written back as stored, never through the save
+    // transforms (no watch for "battery", no layout cut, no hotkey mirror,
+    // no defaults added). The next ordinary save still applies them.
+    {
+        const auto longText = std::string(30, 'A');
+        const Json record = Json::Object{{"applicationIcon", "battery"}, {"windowsSummonHotkeyDisabled", false}, {"hudScale", Json::parse("1.0")},
+            {"hudOverlayLayout", Json::Object{{"titleText", longText}}}};
+        writeSettings(record);
+        SettingsStore store(root.path, scalarPrefix);
+        check(store.saveLastOpenedModule("calendar") && store.markSanityMigrated() && store.markLaunched(), "Three keys beside the record");
+        const auto file = settingsFile(root.path);
+        check(file["settings"] == record && file["hudLastOpenedModule"] == Json("calendar") && file["hudOverlaySanityMigrated"] == Json(true) &&
+              file["hasLaunched"] == Json(true), "Closing the HUD leaves the stored record exactly as it was");
+        auto next = store.value();next.set("closeOnFocusLost", false);check(store.update(next), "An ordinary save");
+        const auto saved = settingsFile(root.path);
+        check(saved["settings"]["applicationIcon"] == Json("watch") && saved["hudLastOpenedModule"] == Json("calendar") && saved["hasLaunched"] == Json(true),
+              "The next ordinary save stores the watch and keeps the keys beside it");
+    }
+    {   // No file yet: the first key beside the record writes the record as a first save does.
+        Temporary fresh;
+        SettingsStore store(fresh.path);
+        check(store.saveLastOpenedModule("notes") && settingsFile(fresh.path)["settings"].isObject() && SettingsStore(fresh.path).lastOpenedModule() == "notes",
+              "A first last-module save creates a loadable record");
+    }
     for (const auto& stored : {Json("teleporter"), Json(4), Json(nullptr)}) {
         const auto bytes = Json(Json::Object{{"version", 1}, {"settings", Json::Object{}}, {"hudLastOpenedModule", stored}, {"hudOverlaySanityMigrated", "yes"}}).encode();
         std::ofstream(root.path / "settings.json", std::ios::binary | std::ios::trunc).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
