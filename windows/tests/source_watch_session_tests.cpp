@@ -2,6 +2,7 @@
 #include "app/source_watch_session.hpp"
 #include "core/shell_packet.hpp"
 #include "core/source_native_labels.hpp"
+#include "tests/source_watch_list_fixture.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -239,4 +240,92 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
     std::cout<<frames<<" original macOS session checkpoints compared\n";
 }
 }
-int main(int argc,char**argv){try{synthetic();entranceEnd();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
+// HUDSourceDesktopArrangeMotion: lift, follow, drop, retarget, prune.
+void arrangeMotion(){
+    DesktopArrangeMotion motion;check(!motion.isActive()&&!motion.requiresFrames(),"Idle: nothing runs");
+    motion.lift(1,{10,20},{12,25});check(motion.lifted()==1&&motion.raised()==1&&motion.liftedCenter()==Vec2{10,20}&&!motion.requiresFrames(),"A lift holds the tile where it is shown; no frames while held");
+    motion.move({40,30},std::nullopt);check(motion.liftedCenter()==Vec2{38,25},"The tile follows the pointer minus the grab");
+    motion.move({400,-300},std::pair{Vec2{0,0},Vec2{50,60}});check(motion.liftedCenter()==Vec2{50,0},"Kept inside the bounds");
+    motion.retarget(2,{0,100},{0,0},1,false);check(motion.requiresFrames()&&motion.offset(2,1,false)==Vec2{0,100},"Another tile slides from where it is shown");
+    const auto mid=motion.offset(2,1+.09,false);check(mid&&(*mid)[1]>0&&(*mid)[1]<100,"Mid-slide it is between");
+    checkNear((*mid)[1],100*(1-DesignEasing::listSlide.value(.5)),1e-12,"The slide eases on the list's curve");
+    motion.retarget(2,motion.shown(2,{0,0},1.09,false),{0,-100},1.09,false);checkNear((*motion.offset(2,1.09,false))[1],(*mid)[1]+100,1e-12,"A retarget continues from where the tile is drawn");
+    check(!motion.offset(2,1.09+DesignMotion::listSlide+1e-9,false),"The slide ends after .18 s");
+    motion.retarget(1,{0,0},{5,5},2,false);check(motion.liftedCenter()==Vec2{50,0}&&!motion.slides().contains(1),"The lifted tile is never retargeted");
+    motion.drop(Vec2{0,0},3,false);check(!motion.lifted()&&motion.raised()==1&&motion.offset(1,3,false)==Vec2{50,0},"A drop slides from where it was held, still raised");
+    motion.prune(3+DesignMotion::listSlide+1e-9,false);check(!motion.isActive()&&!motion.raised()&&!motion.requiresFrames(),"Pruned when settled: nothing left");
+    motion.lift(1,{0,0},{0,0});motion.move({9,9},std::nullopt);motion.drop(Vec2{0,0},4,true);check(!motion.isActive()&&!motion.raised(),"Reduce Motion drops at once");
+    motion.retarget(3,{0,9},{0,0},5,false);check(!motion.offset(3,5,true)&&motion.shown(3,{0,0},5,true)==Vec2{0,0},"Reduce Motion draws every tile at its slot");
+    motion.prune(5,true);check(!motion.isActive(),"Reduce Motion ends every slide");
+}
+// Display > Modules > Arrange on HUD on the source session.
+void arrangeSession(){
+    const auto fixture=endfield::tests::sourceListFixture();Synthetic base;
+    SourceWatchSession session(fixture.scene,fixture.document,base.library,base.camera,fixture.resources,{},emptyTransitions(),{},fixture.settings);
+    auto env=environment();env.pointerLocked=true;session.setEnvironment(env,0);WatchSessionSettings settings;settings.ambientEnabled=false;session.setSettings(settings,0);
+    WatchSessionNavigation navigation;for(std::uint64_t a=100;a<108;++a)navigation.rightActions.push_back(a);for(const auto&id:fixture.buttons)navigation.managedButtons.insert(id);
+    session.setNavigation(navigation,0);session.showStable(0,1);session.setInputEnabled(true,0);
+    const auto*frame=session.sample(0);check(frame&&frame->sourceFrame->layoutReport.scroll,"The list shows");
+    const Rect viewport{0,0,1280,800};
+    const auto centre=[&](std::string_view button)->Point{const auto*f=session.currentFrame();for(const auto&h:f->sourceFrame->hits)if(h.buttonID==button){
+        const auto p=projectNativePoint({h.rect.origin[0]+h.rect.size[0]/2,h.rect.origin[1]+h.rect.size[1]/2,0},h.restWorld.value_or(h.world),f->camera.projection*f->camera.view,viewport);check(p.has_value(),"A tile projects");return *p;}
+        throw std::runtime_error("No hit for the button");};
+    const auto button=[&](std::uint64_t action){for(const auto&id:fixture.buttons)if(session.rowAction(id)==action)return id;throw std::runtime_error("Unbound action");};
+    const auto first=centre(button(100)),second=centre(button(102));
+    check(session.rowActionAt(first)==100&&session.rowActionAt(first,true)==100&&session.rowActionAt(second,true)==102,"Row targets: the tile under the point, drawn or at rest");
+    check(!session.rowAction("missing")&&!session.rowAction("list"),"Only the right-hand buttons have row actions");
+    // Lift and follow: the tile is drawn at the pointer, its hit keeps the slot.
+    double t=2;session.pointerMove(first,t);session.sample(t);t=4;
+    session.setArrangeDrag(100,first,true,t);check(session.arrangeLifted()==100&&session.arrangeActive(),"The press point lifts the tile");
+    session.setArrangeDrag(100,Point{first.x,first.y+70},true,t);frame=session.sample(t);
+    check(frame->sourceFrame->tileTranslations.contains(button(100))&&session.hovered()==button(100),"The lifted tile follows the pointer and stays hovered");
+    check(session.rowActionAt(first,true)==100,"The resting slot under the press is still the dragged tile's");
+    env.pointer=Point{5,5};session.setEnvironment(env,t);frame=session.sample(t+.01);check(session.hovered()==button(100),"Hover is held on the lifted tile wherever the pointer goes");
+    session.setArrangeDrag(100,Point{first.x,first.y+5000},true,t);frame=session.sample(t+.02);
+    {const auto&f=*frame->sourceFrame;const ResolvedNode*list{},*tile{};for(const auto&n:f.resolved){if(n.node->id=="list")list=&n;if(n.node->id==button(100))tile=&n;}
+     const auto c=DesktopTiles::center(tile->worldMatrix,*tile->rect,list->worldMatrix);check(c&&(*c)[1]>=list->rect->origin[1]+45-1e-9&&(*c)[1]<=list->rect->origin[1]+list->rect->size[1]-45+1e-9,"The tile stays inside the list, inset by half its height");}
+    check(!FrameDemandGate{}.refresh(session.demand(t+.03)).timerInterval,"A held tile needs no frames between pointer events");
+    // Rebinding: the others slide, the held tile keeps its look at once.
+    auto swapped=navigation;std::swap(swapped.rightActions[0],swapped.rightActions[2]);session.setNavigation(swapped,t+.03,true);
+    check(session.arrangeLifted()==100&&session.demand(t+.03).finiteAnimation,"A changed order slides the other tiles");
+    frame=session.sample(t+.04);check(session.hovered()==button(100)&&button(100)!=fixture.buttons[0],"The button now holding the dragged tile is held hovered");
+    check(session.rowActionAt(first,true)==102,"The resting target reads the slots, not a tile sliding there");
+    session.sample(t+.03+DesignMotion::listSlide+.001);check(!session.demand(t+.25).finiteAnimation,"Slides end after .18 s, and the held look did not replay its lift");
+    // The drop settles into the slot; then nothing runs.
+    session.setArrangeDrag(std::nullopt,std::nullopt,true,t+.3);check(!session.arrangeLifted()&&session.arrangeActive()&&session.demand(t+.3).finiteAnimation,"Let go, the tile slides into its slot");
+    session.sample(t+.3+DesignMotion::listSlide+.001);check(!session.arrangeActive(),"Settled: the motion is over");
+    frame=session.sample(t+.6);check(frame->sourceFrame->tileTranslations.empty(),"Settled tiles are drawn at their slots");
+    session.sample(t+1.8);check(!session.demand(t+1.8).finiteAnimation,"Once the hover has faded, nothing runs while idle");
+    // Cancelled without animation: everything snaps.
+    session.setArrangeDrag(102,centre(button(102)),true,t+1);session.setArrangeDrag(102,Point{centre(button(102)).x,centre(button(102)).y+40},true,t+1);session.setNavigation(navigation,t+1,true);
+    session.setArrangeDrag(std::nullopt,std::nullopt,false,t+1);check(!session.arrangeActive()&&!session.demand(t+1).finiteAnimation,"A close drops every slide at once");
+    // Reduce Motion: no slides.
+    settings.reduceMotion=true;session.setSettings(settings,t+2);session.setNavigation(swapped,t+2,true);check(!session.arrangeActive(),"Reduce Motion: the order changes in place");
+    settings.reduceMotion=false;session.setSettings(settings,t+2);session.setNavigation(navigation,t+2,false);check(!session.arrangeActive(),"Outside arranging the list re-lays instantly");
+    // A long list: the scroll stays where the lifted tile is bound, and a scroll under it is reported.
+    for(std::uint64_t a=108;a<121;++a)navigation.rightActions.push_back(a);session.setNavigation(navigation,t+3);session.sample(t+3);
+    session.setArrangeDrag(100,centre(button(100)),true,t+3);session.sample(t+3);(void)session.takeArrangeScrolled();
+    session.setScrollPosition(0,t+3.1);session.sample(t+3.1);
+    DesktopNavigationLayout list(fixture.scene,fixture.document,21);const auto range=*list.positions(0);
+    check(session.scrollPosition()>=range.first-1e-12&&session.scrollPosition()<=range.second+1e-12&&session.scrollPosition()>0,"The list scrolls no further than keeps the lifted tile bound");
+    check(session.takeArrangeScrolled()&&!session.takeArrangeScrolled(),"The frame that drew the list moved under the tile reports it once");
+    session.setArrangeDrag(std::nullopt,std::nullopt,false,t+3.2);session.setScrollPosition(0,t+3.2);session.sample(t+3.2);check(session.scrollPosition()==0,"Letting go lifts the limit");
+    // Scrolling by points: 32 by default, the edge step on screen.
+    const auto*f=session.sample(t+4);const auto&info=*f->sourceFrame->layoutReport.scroll;const ResolvedNode*list0{};for(const auto&n:f->sourceFrame->resolved)if(n.node->id=="list")list0=&n;
+    const auto vp=f->camera.projection*f->camera.view;const auto world=f->camera.worldRoot*list0->worldMatrix;const auto&r=*list0->rect;
+    const auto top=*projectNativePoint({r.origin[0]+r.size[0]/2,r.origin[1]+r.size[1],0},world,vp,viewport),bottom=*projectNativePoint({r.origin[0]+r.size[0]/2,r.origin[1],0},world,vp,viewport);
+    const double unitsPerPoint=r.size[1]/std::hypot(top.x-bottom.x,top.y-bottom.y);
+    session.setScrollPosition(.5,t+4);check(session.scrollDirection(1,false,t+4),"Scrolls down");checkNear(session.scrollPosition(),.5-32*unitsPerPoint/info.hiddenLength,1e-9,"32 points by default");
+    session.setScrollPosition(.5,t+4);check(session.scrollTowardEdge(top,t+4),"At the top edge the list scrolls up");checkNear(session.scrollPosition(),.5+12*unitsPerPoint/info.hiddenLength,1e-9,"12 points at the edge");
+    session.setScrollPosition(.5,t+4);check(!session.scrollTowardEdge(Point{(top.x+bottom.x)/2,(top.y+bottom.y)/2},t+4),"Mid-list nothing scrolls");
+    settings.hudScale=1.6;session.setSettings(settings,t+5);f=session.sample(t+5);for(const auto&n:f->sourceFrame->resolved)if(n.node->id=="list")list0=&n;
+    const auto world2=f->camera.worldRoot*list0->worldMatrix;const auto vp2=f->camera.projection*f->camera.view;
+    const auto top2=*projectNativePoint({r.origin[0]+r.size[0]/2,r.origin[1]+r.size[1]-18*0,0},world2,vp2,viewport),bottom2=*projectNativePoint({r.origin[0]+r.size[0]/2,r.origin[1],0},world2,vp2,viewport);
+    const double unitsPerPoint2=r.size[1]/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y);check(std::abs(unitsPerPoint2-unitsPerPoint)>1e-3,"A larger HUD has fewer source units per point");
+    // 18 points inside the top edge: a step of 36 - 18 = 18, capped at 12.
+    const Point inside{top2.x+(bottom2.x-top2.x)*18/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y),top2.y+(bottom2.y-top2.y)*18/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y)};
+    const Point band{top2.x+(bottom2.x-top2.x)*30/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y),top2.y+(bottom2.y-top2.y)*30/std::hypot(top2.x-bottom2.x,top2.y-bottom2.y)};
+    session.setScrollPosition(.5,t+5);check(session.scrollTowardEdge(inside,t+5),"Inside the band");checkNear(session.scrollPosition(),.5+12*unitsPerPoint2/info.hiddenLength,1e-6,"At most 12 points");
+    session.setScrollPosition(.5,t+5);check(session.scrollTowardEdge(band,t+5),"Near the band's inner edge");checkNear(session.scrollPosition(),.5+6*unitsPerPoint2/info.hiddenLength,1e-6,"The band is measured in screen points");
+}
+int main(int argc,char**argv){try{synthetic();entranceEnd();arrangeMotion();arrangeSession();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>=2)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<"PASS "<<checks<<" source Watch session checks\n";return 0;}catch(const std::exception&error){countAllocations=false;std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

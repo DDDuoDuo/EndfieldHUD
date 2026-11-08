@@ -60,7 +60,11 @@ public:
     void setEnvironment(WatchSessionEnvironment,double time);
     void setInputEnabled(bool,double time);
     void setDesktopSettings(source::SourceDesktopFrameSettings);
-    void setNavigation(WatchSessionNavigation,double time);
+    // `animated` (Arrange on HUD, HUDSourceWatchView.setDesktopNavigation):
+    // while the right-hand count is unchanged, the HUD is visible and Reduce
+    // Motion is off, tiles whose place changes slide there from where they
+    // are shown (DesignMotion::listSlide). A count change still resets the scroll.
+    void setNavigation(WatchSessionNavigation,double time,bool animated=false);
     void setHitFilter(HitFilter,double time); // e.g. source Map cutout; caller-owned geometry
     // Each lifecycle operation invalidates prior opening tokens. A held open
     // samples the exact first pose, requests no animation wake, and starts only
@@ -81,7 +85,33 @@ public:
     // Wheel deltas are logical points. Exact Mac nonprecise factor (10), plane
     // scale, viewport ownership and gesture/momentum continuation are retained.
     bool scroll(core::Point,double deltaY,bool precise,core::GesturePhase,core::GesturePhase momentum,double time);
-    bool scrollDirection(int direction,bool animated,double time);
+    // `points` on screen (32 for the wheel, keys and the scroll indicators).
+    bool scrollDirection(int direction,bool animated,double time,double points=32);
+    // HUDSourceWatchView.scrollDesktopNavigationTowardEdge (Arrange on HUD,
+    // pointer events only): near the top or bottom of the right-hand list, or
+    // past it, the list scrolls toward the pointer by the shared 36/12 step
+    // (core::DragGripMotion::edgeScrollStep) measured in screen points.
+    bool scrollTowardEdge(core::Point,double time);
+    // Display > Modules > Arrange on HUD (HUDSourceWatchView.setDesktopArrangeDrag):
+    // the right-hand tile bound to `action` follows `pointer` (logical client
+    // point) in the plane of the list's scroll viewport, held where it was
+    // grabbed (from where it is drawn) and kept inside the list. Without a
+    // pointer the tile drops: it slides into its slot unless `animated` is
+    // false (which also ends every slide at once) or under Reduce Motion.
+    void setArrangeDrag(std::optional<std::uint64_t> action,std::optional<core::Point> pointer,bool animated,double time);
+    // desktopRowTarget(at:resting:): the right-hand action under a point.
+    // `resting`: from the slots at rest inside the list viewport (while a
+    // tile is dragged), so a tile sliding under the pointer cannot flip the
+    // order back.
+    std::optional<std::uint64_t> rowActionAt(core::Point,bool resting=false)const;
+    // The right-hand action bound to a source button (nullopt for others).
+    std::optional<std::uint64_t> rowAction(std::string_view buttonID)const;
+    std::optional<std::uint64_t> arrangeLifted()const noexcept;
+    bool arrangeActive()const noexcept;
+    // onDesktopArrangeScroll: a sampled frame drew the list at a new position
+    // under the lifted tile (a wheel's spring or an edge scroll), so the slot
+    // under a still pointer changed. Taken once; the host previews again.
+    bool takeArrangeScrolled()noexcept;
     void setScrollPosition(double,double time); // explicit restored/navigation position
     const WatchSessionFrame* sample(double time);
     core::FrameDemand demand(double time);
