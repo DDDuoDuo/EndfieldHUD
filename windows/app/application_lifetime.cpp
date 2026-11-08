@@ -85,7 +85,7 @@ int Application::Impl::runVisible(){
     if(production()){
         // First run waits for the preference record and its launch marker.
         launchPending=true;
-        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,!args.persistLaunchMarker),openingTime);reopenAfterLaunch(openingTime);}
+        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,diagnosticRun()),openingTime);reopenAfterLaunch(openingTime);}
         else if(!settingsSaves){launchPending=false;perform(lifecycle.launch(args.startup,false,true),openingTime);reopenAfterLaunch(openingTime);}
     }else perform(lifecycle.toggle(),openingTime); // An explicit development launch opens at once.
     scheduleDeadline();

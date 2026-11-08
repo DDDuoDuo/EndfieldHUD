@@ -386,6 +386,9 @@ struct Application::Impl {
     // --- lifecycle --------------------------------------------------------------
     bool visibleMode() const noexcept { return args.mode != ApplicationMode::hiddenBenchmark; }
     bool production() const noexcept { return args.mode == ApplicationMode::production; }
+    // OverlayController.isDiagnosticRun: development previews and hidden
+    // verification never write the launch marker or the module last opened.
+    bool diagnosticRun() const noexcept { return !args.persistLaunchMarker; }
     void perform(const core::SystemOverlayEffects&, double time);
     void openPresentation(core::Module initial, double time);
     void targetDisplay();

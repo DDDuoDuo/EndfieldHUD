@@ -16,6 +16,11 @@ struct SettingsSaveStatus {
     // AppDelegate "hasLaunched": read with the initial record; markLaunched()
     // persists it beside the preferences on the same executor/route.
     bool launched{},launchMarkPending{};
+    // OverlayController.lastSystemModule ("hudLastOpenedModule", beside the
+    // record): read with the initial record (map when missing or not a
+    // module); saveLastModule() writes it on the same executor/route.
+    std::string lastModule{"map"};
+    bool lastModulePending{};
 };
 // One UI-owned binding to the app's shared bounded executor. Construction
 // performs no filesystem work and starts no worker. start() loads on that
@@ -47,6 +52,11 @@ public:
     // First-run onboarding consumed. Coalesces with any pending preference
     // save; flush() also waits for it. Valid before or after the initial load.
     void markLaunched();
+    // HUDOverlayLayout.saveLastModule: the store writes only when the saved
+    // name differs; a name already sent from this binding is not sent again.
+    // Coalesces to the latest name; flush() also waits for it. Normal runs
+    // only (diagnostic and test runs keep the last module in memory).
+    void saveLastModule(std::string module);
     void queueCapacityAvailable();
     void retry();
     const SettingsSaveStatus&status()const;

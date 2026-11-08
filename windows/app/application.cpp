@@ -742,6 +742,8 @@ void Application::Impl::connectAreas(){
     // position editor is open.
     if(auto*p=powerArea())p->setEditingObserver([this](bool editing){lifecycle.setEditingPosition(editing);});
     lifecycle.setModuleRestore([this](core::Module last){return restorableModule(last);}); // reopen fallback (B2b)
+    // Display > Open on (hudOverlayLayout.openModule; nil: Last opened).
+    lifecycle.setOpenModule([this]()->std::optional<core::Module>{const auto chosen=configuration.overlayLayout().openModule;return chosen?core::moduleNamed(*chosen):std::nullopt;});
     // Areas are constructed after Settings: its views render again now that
     // the area services its hooks read exist.
     if(settingsUI)settingsUI->refreshViews(areaClock());
@@ -1639,12 +1641,16 @@ void Application::Impl::constructSettings(){
         ehud::data::SettingsStore fixture(args.dataRoot);auto value=fixture.value();value.set("orbipom.bestScore.v1",std::int64_t{71});fixture.update(value);
     }
     settingsSaves=std::make_unique<SettingsSaveQueue>(args.dataRoot,*utility,SettingsSaveCallbacks{[this](const ehud::data::Settings&loaded){
+        // "Last opened" across relaunches (HUDOverlayLayout.lastModule), read
+        // with the record before any launch opening; diagnostic runs start at
+        // Map and keep it in memory only.
+        if(!diagnosticRun())lifecycle.restoreLastModule(core::moduleNamed(settingsSaves->status().lastModule).value_or(core::Module::map));
         if(!production()){createSettings(loaded);return;}
         // A Settings UI failure must not cancel first-run launch or the HUD.
         // The launch work runs after the start stage has closed (and cleared).
         bool failed{};
         {const FatalStage starting("start","settings");try{createSettings(loaded);}catch(const std::exception&e){startFailed("settings",e);failed=true;}}
-        if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());reopenAfterLaunch(now());}}
+        if(failed){settingsLoaded=true;if(launchPending){launchPending=false;holdDesignDensity();perform(lifecycle.launch(args.startup,settingsSaves->status().launched,diagnosticRun()),now());reopenAfterLaunch(now());}}
         },[this]{refresh(now());}},
         // The HUD elements text is cut to 24 Characters (Swift prefix) on save.
         graphemes,
@@ -1744,7 +1750,7 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
         // AppDelegate first-run onboarding, after the preference record and its
         // launch marker are known. --login/--no-onboarding suppress it.
         holdDesignDensity(); // before the launch opening (the prewarm may not have run)
-        perform(lifecycle.launch(args.startup,settingsSaves->status().launched,!args.persistLaunchMarker),now());
+        perform(lifecycle.launch(args.startup,settingsSaves->status().launched,diagnosticRun()),now());
         reopenAfterLaunch(now());
     }
     // The launch prewarm runs once the run is idle, in the applied language and theme.
@@ -1916,6 +1922,7 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
+        case K::rememberModule:if(settingsSaves)settingsSaves->saveLastModule(std::string(core::moduleIdentifier(e.module)));break;
         case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
         case K::terminate:if(lifecycleTraced()&&memoryTrace->quits<4)recordMemory("quit-"+std::to_string(++memoryTrace->quits),false);finishQuit(time);break;
         case K::restartShortcut:if(tray)applySummonShortcut(false);break;

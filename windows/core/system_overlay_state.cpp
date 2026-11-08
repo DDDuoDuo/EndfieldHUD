@@ -116,9 +116,10 @@ void SystemOverlayLifecycle::perform(SystemOverlayAction action, SystemOverlayEf
     switch (action.kind) {
     case SystemOverlayAction::Kind::none: return;
     case SystemOverlayAction::Kind::open: {
-        // initialModule: initialModuleRequest ?? moduleLayout.restorable(
-        // lastSystemModule); then the request is consumed by this presentation only.
-        const auto initial = initialModuleRequest_.value_or(moduleRestore_ ? moduleRestore_(lastSystemModule_) : lastSystemModule_);
+        // HUDOverlayLayout.initialModule(request:configuration:last:); then the
+        // request is consumed by this presentation only.
+        const auto chosen = openModule_ ? openModule_() : std::nullopt;
+        const auto initial = initialModuleRequest_ ? *initialModuleRequest_ : restorable(chosen.value_or(lastSystemModule_));
         view_ = initial;
         interaction_ = false;
         initialModuleRequest_.reset();
@@ -130,6 +131,9 @@ void SystemOverlayLifecycle::perform(SystemOverlayAction action, SystemOverlayEf
         out.push({Kind::close, action.token, view_.value_or(lastSystemModule_)});
         return;
     }
+}
+Module SystemOverlayLifecycle::restorable(Module module) const {
+    return moduleRestore_ ? moduleRestore_(module) : module;
 }
 bool SystemOverlayLifecycle::overlayToggle(SystemOverlayEffects& out) {
     // OverlayController.toggleSystemOverlay. Projection return is handled by
@@ -166,6 +170,8 @@ void SystemOverlayLifecycle::tearDown(SystemOverlayEffects& out) {
     const bool shouldQuit = quitAfterSystemClose_;
     quitAfterSystemClose_ = false;
     lastSystemModule_ = view_.value_or(lastSystemModule_);
+    // lastSystemModule's didSet: HUDOverlayLayout.saveLastModule.
+    if (remembersLastModule_) out.push({Kind::rememberModule, state_.generation(), lastSystemModule_});
     view_.reset();
     interaction_ = false;
     // The drag loop itself (shelfDragging_) is not the presentation's: it

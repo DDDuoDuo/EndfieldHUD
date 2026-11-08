@@ -29,34 +29,41 @@ struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
     UtilityExecutor::Route route;
     const std::thread::id owner=std::this_thread::get_id();
     SettingsSaveStatus state;std::shared_ptr<const ehud::data::Settings>baseline,latest;
+    std::optional<std::string>lastModule,lastModuleSent;
     bool alive{true},started{};
     Impl(std::filesystem::path root,UtilityExecutor&e,SettingsSaveCallbacks cb,ehud::data::CharacterPrefix characters,std::function<bool()> hidden)
         :executor(e),callbacks(std::move(cb)),worker(std::make_shared<Worker>(std::move(root),std::move(characters),std::move(hidden))),route(e.makeRoute()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Settings save queue owner-thread operation");}
     void notify(){if(alive&&callbacks.changed)callbacks.changed();}
     void pump(){
-        if(!alive||!started||state.busy||state.failed||(state.loaded&&!latest&&!state.launchMarkPending))return;
+        if(!alive||!started||state.busy||state.failed||(state.loaded&&!latest&&!state.launchMarkPending&&!lastModule))return;
         const bool loading=!state.loaded;const auto revision=state.revision;
         const auto value=loading?nullptr:latest;const auto storage=worker;const bool mark=!loading&&state.launchMarkPending;
+        const auto module=loading?std::nullopt:lastModule;
         auto loaded=std::make_shared<std::shared_ptr<const ehud::data::Settings>>();auto launched=std::make_shared<bool>();
+        auto last=std::make_shared<std::string>();
         const std::weak_ptr<Impl>weak=shared_from_this();
-        if(!executor.submit(route,[storage,value,loaded,launched,loading,mark]{
+        if(!executor.submit(route,[storage,value,loaded,launched,last,loading,mark,module]{
             storage->initialize();
-            if(loading){*loaded=std::make_shared<const ehud::data::Settings>(storage->store->value());*launched=storage->store->hasLaunched();return;}
+            if(loading){*loaded=std::make_shared<const ehud::data::Settings>(storage->store->value());*launched=storage->store->hasLaunched();*last=storage->store->lastOpenedModule();return;}
             if(mark)storage->store->markLaunched();
+            if(module)storage->store->saveLastOpenedModule(*module);
             if(value)storage->store->update(*value);
-        },[weak,loaded,launched,value,revision,loading,mark](std::exception_ptr error){
+        },[weak,loaded,launched,last,value,revision,loading,mark,module](std::exception_ptr error){
             auto i=weak.lock();if(!i||!i->alive)return;i->state.busy=false;
             if(error){
                 // A newer explicit preference gets one attempt of its own;
                 // a stale failure must not block it or replace its status.
-                if(loading||mark||revision==i->state.revision){i->state.failed=true;i->state.error=failureMessage(error);}
+                if(loading||mark||module||revision==i->state.revision){i->state.failed=true;i->state.error=failureMessage(error);}
             }else if(loading){
                 i->baseline=*loaded;i->state.loaded=true;i->state.error.reset();
                 i->state.launched=*launched;if(i->state.launched)i->state.launchMarkPending=false;
+                i->state.lastModule=std::move(*last);
                 if(i->callbacks.loaded)i->callbacks.loaded(*i->baseline);
             }else{
                 if(mark){i->state.launched=true;i->state.launchMarkPending=false;}
+                if(module){i->lastModuleSent=module;i->state.lastModule=*module;
+                    if(i->lastModule==module){i->lastModule.reset();i->state.lastModulePending=false;}}
                 if(value){i->baseline=value;i->state.savedRevision=revision;
                     if(revision==i->state.revision){i->latest.reset();i->state.dirty=false;i->state.error.reset();}}
                 else i->state.error.reset();
@@ -89,6 +96,12 @@ void SettingsSaveQueue::markLaunched(){
     auto i=impl_;i->onOwner();if(i->state.launched||i->state.launchMarkPending)return;
     i->state.launchMarkPending=true;i->state.failed=false;i->state.error.reset();i->pump();
 }
+void SettingsSaveQueue::saveLastModule(std::string module){
+    auto i=impl_;i->onOwner();
+    if(i->lastModule==module)return;
+    if(!i->lastModule&&i->lastModuleSent==module)return;
+    i->lastModule=std::move(module);i->state.lastModulePending=true;i->state.failed=false;i->state.error.reset();i->pump();
+}
 void SettingsSaveQueue::queueCapacityAvailable(){auto i=impl_;i->onOwner();i->pump();}
 void SettingsSaveQueue::retry(){auto i=impl_;i->onOwner();i->started=true;i->state.failed=false;i->state.error.reset();i->pump();}
 const SettingsSaveStatus&SettingsSaveQueue::status()const{impl_->onOwner();return impl_->state;}
@@ -96,7 +109,7 @@ bool SettingsSaveQueue::flush(){
     auto i=impl_;i->onOwner();i->started=true;i->state.failed=false;i->state.error.reset();i->pump();
     while(i->alive){
         if(i->state.failed)return false;
-        if(i->state.loaded&&!i->state.busy&&!i->state.dirty&&!i->state.launchMarkPending)return true;
+        if(i->state.loaded&&!i->state.busy&&!i->state.dirty&&!i->state.launchMarkPending&&!i->state.lastModulePending)return true;
         i->executor.waitIdle();i->executor.drain();if(!i->alive)return false;i->pump();
     }return false;
 }

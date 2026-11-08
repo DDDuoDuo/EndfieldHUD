@@ -649,6 +649,8 @@ private:
     }
     void requestReopen() {
         if (coverageMode()) {++coverageReopenRequests_;return;}
+        // An explicit request (the tray Settings path): a module chosen under
+        // Display > Open on cannot replace Add App.
         host_.openModule(core::Module::addApp);
     }
 

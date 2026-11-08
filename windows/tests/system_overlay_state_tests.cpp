@@ -203,6 +203,90 @@ void contracts() {
     try { (void)visible.advance(std::nan("")); } catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Nonfinite caller clocks reject instead of spinning");
 }
+// HUDOverlayLayout.initialModule and "Last opened" across relaunches
+// (OverlayController.lastSystemModule's didSet): an explicit request, then the
+// module chosen under Display > Open on, then the module last opened; a hidden
+// module swapped for the first visible one; the module left saved at every
+// teardown of a normal run, never in a diagnostic one.
+void openOn() {
+    using K = core::SystemOverlayEffect::Kind;
+    std::optional<core::Module> chosen;
+    const auto hiddenMap = [](core::Module m) { return m == core::Module::map || m == core::Module::calendar ? core::Module::notes : m; };
+    const auto openedOn = [](const core::SystemOverlayEffects& e) {
+        for (const auto& effect : e) if (effect.kind == K::open) return std::optional(effect.module);
+        return std::optional<core::Module>{};
+    };
+    const auto remembered = [](const core::SystemOverlayEffects& e) {
+        std::optional<core::Module> result;
+        for (const auto& effect : e) if (effect.kind == K::rememberModule) { check(!result, "One save per teardown"); result = effect.module; }
+        return result;
+    };
+    const auto cycle = [&](core::SystemOverlayLifecycle& life, core::SystemOverlayEffects opening, std::optional<core::Module> select = {}) {
+        const auto module = openedOn(opening);
+        (void)life.didOpen(life.generation());
+        if (select) (void)life.selectModule(*select);
+        (void)life.close();
+        return std::pair{module, remembered(life.didClose(life.generation()))};
+    };
+    {   core::SystemOverlayLifecycle life;
+        life.setOpenModule([&] { return chosen; });
+        auto [first, saved] = cycle(life, life.toggle(), core::Module::archive);
+        check(first == core::Module::map && !saved && life.lastModule() == core::Module::archive, "Without a restored module the first open shows Map and nothing is saved");
+        chosen = core::Module::calendar;
+        check(cycle(life, life.toggle()).first == core::Module::calendar, "A chosen module replaces the module last opened");
+        check(life.lastModule() == core::Module::calendar, "The chosen module becomes the last one once shown");
+        chosen = core::Module::hotkeys;
+        check(cycle(life, life.openSettingsModule(core::Module::about)).first == core::Module::about, "An explicit request wins over the chosen module");
+        life.setModuleRestore(hiddenMap);
+        chosen = core::Module::calendar;
+        check(cycle(life, life.toggle()).first == core::Module::notes, "A hidden chosen module opens the first visible one");
+        chosen.reset();
+        (void)cycle(life, life.toggle(), core::Module::map);
+        check(life.lastModule() == core::Module::map && cycle(life, life.toggle()).first == core::Module::notes, "Last opened goes through the same swap");
+        chosen = core::Module::calendar;
+        check(cycle(life, life.openSettingsModule(core::Module::map)).first == core::Module::map, "An explicit request is never swapped");
+        // A failed app launch reopens on Add App through the same explicit
+        // request (AppShortcutArea::requestReopen -> openSettingsModule).
+        chosen = core::Module::hotkeys;
+        check(cycle(life, life.openSettingsModule(core::Module::addApp)).first == core::Module::addApp && life.lastModule() == core::Module::addApp,
+              "A failed launch reopens on Add App over a chosen module");
+        check(cycle(life, life.toggle()).first == core::Module::hotkeys, "The next ordinary open goes back to the chosen module");
+    }
+    {   // A normal run: the saved module opens first, and every teardown asks
+        // the owner to save the module left (the store writes only a change).
+        core::SystemOverlayLifecycle life;
+        life.setOpenModule([&] { return chosen; });
+        chosen.reset();
+        life.restoreLastModule(core::Module::reader);
+        check(life.remembersLastModule() && life.lastModule() == core::Module::reader, "The saved module is the last one");
+        std::optional<std::string> store{"reader"};
+        unsigned writes{};
+        const auto save = [&](std::optional<core::Module> module) {
+            check(module.has_value(), "A normal run saves at every teardown");
+            const auto name = std::string(core::moduleIdentifier(*module));
+            if (store != name) { store = name; ++writes; }
+        };
+        auto [first, saved] = cycle(life, life.toggle());
+        check(first == core::Module::reader && saved == core::Module::reader, "A relaunch opens on the module last opened");
+        save(saved);
+        check(writes == 0, "Closing on the saved module writes nothing");
+        auto next = cycle(life, life.toggle(), core::Module::volume);
+        save(next.second);
+        check(next.second == core::Module::volume && writes == 1 && store == "volume", "A different module is saved once");
+        chosen = core::Module::calendar;
+        next = cycle(life, life.toggle());
+        save(next.second);
+        check(next.first == core::Module::calendar && store == "calendar" && writes == 2, "The chosen module shown is the one last opened");
+        // Forced closes and a quit save the module first, then terminate.
+        (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(core::Module::eventLog);
+        const auto forced = life.forceClose();
+        check(forced.size() == 1 && forced[0].kind == K::rememberModule && forced[0].module == core::Module::eventLog, "A forced close saves the module left");
+        (void)life.toggle(); (void)life.didOpen(life.generation());
+        (void)life.requestQuit();
+        const auto quit = life.didClose(life.generation());
+        check(quit.size() == 2 && quit[0].kind == K::rememberModule && quit[1].kind == K::terminate, "A quit saves the module before terminating");
+    }
+}
 // Sources/ShelfDragPresentationState.swift, compiled unchanged
 // (tools/shelf_drag_presentation_reference.py): every seeded transition.
 void shelfRaw(const Json& source) {
@@ -359,6 +443,7 @@ int main(int argc, char** argv) {
         raw(source);
         scripts(source);
         contracts();
+        openOn();
         const auto shelfBytes = ehud::data::detail::readFile(argv[2], 4 * 1024 * 1024);
         check(shelfBytes.has_value(), "Read the bounded Shelf drag oracle");
         const auto shelfSource = Json::parse(*shelfBytes);
