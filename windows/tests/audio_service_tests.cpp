@@ -19,7 +19,9 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
 
 // Injected endpoint/session backends only: no COM, audio device, mixer,
 // process or user file is touched. Journals live in temporary directories.
@@ -47,6 +49,7 @@ struct World {
     // Processes that run on after their last session expired (a browser
     // that closed its idle stream); every other one is reported ended.
     std::set<std::string,std::less<>>runningAfterExpiry;
+    std::vector<std::wstring>sessionEndpoints; // every endpoint a session manager opened on
     // Default-device selector fake (the IPolicyConfig access): the console
     // role is the default the endpoint backend reports; multimedia and
     // communications are kept beside it. No real default device is touched.
@@ -95,7 +98,7 @@ class FakeSessions final:public n::AudioSessionBackend {
 public:
     explicit FakeSessions(std::shared_ptr<World>world):w(std::move(world)){std::lock_guard l(w->m);w->thread();++w->sessionsCreated;}
     ~FakeSessions()override{std::lock_guard l(w->m);w->thread();}
-    std::int32_t open(std::wstring_view id,Wake wake)override{std::lock_guard l(w->m);w->thread();endpoint=id;open_=true;w->sessionWake=std::move(wake);++w->sessionOpens;return 0;}
+    std::int32_t open(std::wstring_view id,Wake wake)override{std::lock_guard l(w->m);w->thread();endpoint=id;open_=true;w->sessionEndpoints.emplace_back(id);w->sessionWake=std::move(wake);++w->sessionOpens;return 0;}
     std::int32_t resume(Wake wake)override{std::lock_guard l(w->m);w->thread();w->sessionWake=std::move(wake);++w->sessionResumes;return 0;}
     void pause()noexcept override{std::lock_guard l(w->m);w->thread();w->sessionWake={};++w->sessionPauses;}
     std::int32_t read(std::vector<n::AudioSessionRecord>&out)override{std::lock_guard l(w->m);w->thread();++w->sessionReads;auto&list=w->sessions[endpoint];
@@ -440,6 +443,55 @@ void failedRestore(){
     check(std::abs(sessionVolume(*h.world,usb,"{session-player-usb}")-.2f)<1e-6f,"The new output's session follows the route");
     volume.close();s.stop();
 }
+// Source 7fa4733 offers paused apps after the output changes. Windows lists
+// the new default output's sessions afresh: a paused (Inactive) session there
+// is listed and adjustable at once, as the laptop probe found a paused
+// Chrome's session stays Inactive.
+void pausedAppAfterOutputChange(){
+    Harness h;auto&s=*h.service;const auto player=std::string("4242:100");
+    {std::lock_guard l(h.world->m);h.world->sessions[usb][0].active=false;}
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown");
+    h.until([](const auto&x){return x.applicationsSupported&&x.applications.size()==2;},"Sessions listed");
+    {std::lock_guard l(h.world->m);h.world->defaultOutput=usb;}
+    h.wake(&World::topologyWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return x.defaultOutputID==usb&&x.applicationsSupported&&a&&x.applications.size()==1;},"The new output's sessions are listed");
+    {const auto*a=app(s.snapshot(),player);check(a->available&&!a->rendering&&a->state==n::AudioApplicationRouteState::direct,"A paused app on the new output is listed and adjustable");}
+    check(s.setApplicationGain(usb,player,.5f),"Gain accepted");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active&&a->gain==.5f;},"Its route starts while it is paused");
+    check(std::abs(sessionVolume(*h.world,usb,"{session-player-usb}")-.4f)<1e-6f,"The paused session is attenuated");
+    s.stop();
+}
+// A lock, not a hardware check: the session path never reads an endpoint's
+// bus or form factor, so it cannot show real WASAPI behaviour. Bluetooth
+// headphones (A2DP), a Bluetooth headset with its microphone (hands-free)
+// and an HDMI display each list their apps and take a gain once they are the
+// default output (batch-4 V8; the Mac's 14d27e3 and 1874456 changed only its
+// own output rule). Only the render endpoints open sessions; the headset's
+// microphone is never opened and no input default is written.
+void outputsListApps(){
+    const std::wstring a2dp=L"{0.0.0.00000000}.{bt-a2dp}",hfp=L"{0.0.0.00000000}.{bt-hfp}",hdmi=L"{0.0.0.00000000}.{hdmi}",headsetMic=L"{0.0.1.00000000}.{bt-hfp-mic}";
+    struct Output{std::wstring id;std::string key,session;};
+    const std::vector<Output>outputs{{a2dp,"5001:1","{s-a2dp}"},{hfp,"5002:1","{s-hfp}"},{hdmi,"5003:1","{s-hdmi}"}};
+    Harness h({},true);auto&s=*h.service;
+    {std::lock_guard l(h.world->m);auto&w=*h.world;
+        w.outputs={{a2dp,L"Headphones",L"BTHENUM",3u},{hfp,L"Headset",L"BTHHFENUM",5u},{hdmi,L"Display",L"HDAUDIO",9u}};
+        w.inputs={{mic,L"Microphone",L"HDAUDIO",4u},{headsetMic,L"Headset Microphone",L"BTHHFENUM",5u}};
+        w.defaultOutput=w.multimediaOutput=w.communicationsOutput=a2dp;w.sessions.clear();
+        for(const auto&o:outputs){n::AudioSessionRecord r{o.session,o.key,L"Player",static_cast<std::uint32_t>(std::stoul(o.key)),true,true,.8f,0};r.persistentID=o.session;w.sessions[o.id]={r};}}
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown");
+    bool first=true;
+    for(const auto&o:outputs){
+        if(!std::exchange(first,false)){{std::lock_guard l(h.world->m);h.world->defaultOutput=o.id;}h.wake(&World::topologyWake);}
+        h.until([&](const auto&x){const auto*a=app(x,o.key);return x.defaultOutputID==o.id&&x.applicationsSupported&&a&&a->available;},"The output's app is listed and adjustable");
+        check(s.setApplicationGain(o.id,o.key,.5f),"Gain accepted");
+        h.until([&](const auto&x){const auto*a=app(x,o.key);return a&&a->state==n::AudioApplicationRouteState::active&&a->gain==.5f;},"The gain becomes active");
+        check(std::abs(sessionVolume(*h.world,o.id,o.session)-.4f)<1e-6f,"The app's session is attenuated on this output");
+    }
+    {std::lock_guard l(h.world->m);const auto&w=*h.world;
+        check(w.sessionEndpoints==std::vector<std::wstring>{a2dp,hfp,hdmi},"Sessions open on the render endpoints only, never the headset microphone");
+        check(w.defaultWrites.empty()&&w.defaultInput==mic&&!w.violation,"No input (or any) default is written");}
+    s.stop();
+}
 // Now Playing reads AudioApplicationRoute::rendering for window-title
 // players (NetEase keeps the song in its title while paused). A session
 // state event republishes it without repainting Volume; hiding per-app audio
@@ -651,7 +703,7 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();silentApp();processExit();hiddenOutputChange();failedRestore();renderingAndRelease();
+    try{lifecycle();fixedOutput();journal();silentApp();processExit();hiddenOutputChange();failedRestore();pausedAppAfterOutputChange();outputsListApps();renderingAndRelease();
 #ifdef _WIN32
         oneWorker();
 #endif
