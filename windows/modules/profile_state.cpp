@@ -319,8 +319,15 @@ void ProfileState::refreshSystemAccount(double now,double ifOlderThan){
     if(!source_.read||!std::isfinite(now))return;
     if(accountReadAt_&&now-*accountReadAt_<ifOlderThan)return;
     accountReadAt_=now;
-    if(readingAccount_)return;
-    readingAccount_=true;
+    // The Mac reads the name and UID again at every open the throttle lets
+    // through, even while its picture read is pending. Here they share one
+    // read off the owner thread, so an open during a read reads once more
+    // after it answers (several such opens: one more read).
+    if(readingAccount_){accountRereadWanted_=true;return;}
+    readSystemAccount();
+}
+void ProfileState::readSystemAccount(){
+    readingAccount_=true;accountRereadWanted_=false;
     const std::weak_ptr<bool>alive=alive_;
     source_.read([this,alive](ehud::data::SystemAccount reading){
         const auto token=alive.lock();if(!token||!*token)return;
@@ -329,6 +336,7 @@ void ProfileState::refreshSystemAccount(double now,double ifOlderThan){
         try{next=normalizedSystemAccount(std::move(reading),text_);}catch(const std::exception&){next={};} // unreadable: the stored defaults
         account_=next.empty()?std::nullopt:std::optional(std::move(next));
         publishSystemAccount();
+        if(*token&&accountRereadWanted_&&!readingAccount_)readSystemAccount(); // an observer may have destroyed the state
     });
 }
 void ProfileState::setHidesSystemAccount(bool hides){if(hides==hides_)return;hides_=hides;publishSystemAccount();}

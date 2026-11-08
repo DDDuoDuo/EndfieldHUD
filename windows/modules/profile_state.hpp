@@ -116,6 +116,9 @@ struct ProfilePersistence {
 // `done` runs later on the owner thread with the raw name and UID and the
 // login picture's image key (the same key while the picture is unchanged;
 // none: no picture or unreadable). Any failure is an empty account.
+// Not yet confirmed: the Mac reads the name and UID synchronously and only the
+// picture off the main thread, so its card shows the account on the same
+// open; here they show when the read answers (a moment after launch).
 struct ProfileAccountSource {
     using Done=std::function<void(ehud::data::SystemAccount)>;
     std::function<void(Done)>read;
@@ -153,7 +156,9 @@ public:
     bool removeImage(ProfileImageKind);
     // Issue #17. refreshSystemAccount reads the account through the source
     // (none: nothing happens); a read made less than `ifOlderThan` seconds
-    // before `now` is skipped, and one read runs at a time. Observers hear
+    // before `now` is skipped, and one read runs at a time (an open during a
+    // read reads once more after it, as the Mac re-reads the name and UID
+    // while its picture read is pending). Observers hear
     // only a real change of the shown account; nothing is committed.
     void refreshSystemAccount(double now,double ifOlderThan=0);
     // Recording mode: the cards show the stored defaults in place of the
@@ -178,10 +183,11 @@ private:
     PersonalProfile profile_;ProfileTextRules text_;ProfileDateRules dates_;ProfilePersistence persistence_;ProfileAccountSource source_;
     ehud::data::ProfileSyncFields locked_{};std::uint64_t revision_{1},nextObserver_{1};
     std::vector<std::pair<std::uint64_t,std::function<void()>>>observers_;
-    std::optional<ehud::data::SystemAccount>account_;std::optional<double>accountReadAt_;bool hides_{},readingAccount_{};
+    std::optional<ehud::data::SystemAccount>account_;std::optional<double>accountReadAt_;bool hides_{},readingAccount_{},accountRereadWanted_{};
     std::shared_ptr<bool>alive_=std::make_shared<bool>(true); // a read's late answer after destruction is dropped
     void adopt(PersonalProfile);void notify();
     std::optional<ehud::data::SystemAccount>shownAccount()const{return hides_?std::nullopt:account_;}
     void publishSystemAccount();
+    void readSystemAccount();
 };
 }

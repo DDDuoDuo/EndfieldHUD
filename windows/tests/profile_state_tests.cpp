@@ -214,11 +214,20 @@ void systemAccount(){
     check(notices==1&&commits==0&&store.profile().displayedName()=="Ada Lovelace"&&store.profile().displayedUID()=="1001"&&store.profile().avatarKey()==std::optional<std::string>("system-1"),
           "The account's name, UID and picture show; nothing is saved");
     check(m::profileValue(m::ProfileField::name,store.profile(),dates)=="Ada Lovelace","Personal ID's name value is the shown name");
-    // The throttle: HUD opens within 60 s of the last read do not read.
-    store.refreshSystemAccount(150,60);check(reads==1,"A read 50 s after the last is skipped");
-    store.refreshSystemAccount(161,60);check(reads==2,"A read 61 s after the last runs");
+    // The Mac re-reads the name and UID at the open at 101 although its picture
+    // read is pending: here that open reads once the first read answers.
+    check(reads==2&&pending.size()==1,"An open during a read reads again after it answers");
     answer({"Ada Lovelace","1001","system-1"});
-    check(notices==1,"An unchanged account notifies no one");
+    check(reads==2&&pending.empty()&&notices==1,"An unchanged account notifies no one, and no further read follows");
+    // The throttle: HUD opens within 60 s of the last read do not read.
+    store.refreshSystemAccount(150,60);check(reads==2,"A read 49 s after the last is skipped");
+    store.refreshSystemAccount(162,60);check(reads==3,"A read 61 s after the last runs");
+    store.refreshSystemAccount(230,60);store.refreshSystemAccount(240);
+    check(reads==3&&pending.size()==1,"Opens during a read wait for it");
+    answer({"Ada Lovelace","1001","system-1"});
+    check(reads==4&&pending.size()==1&&notices==1,"Several opens during a read read once more");
+    answer({"Ada Lovelace","1001","system-1"});
+    check(reads==4&&pending.empty()&&notices==1,"An unchanged account notifies no one");
     store.refreshSystemAccount(300);answer({"Ada Lovelace","1001","system-2"});
     check(notices==2&&store.profile().avatarKey()==std::optional<std::string>("system-2"),"A new picture is a new key and a notice");
     // Recording mode hides only the account's values.
