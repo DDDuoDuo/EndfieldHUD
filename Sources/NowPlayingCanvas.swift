@@ -128,7 +128,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             stopClock(); closeVolume(keepingDrawn: true); seek?.cancelDrag()
             requestedEndRefresh = false
             // Nothing keeps running on the hidden page (bar runs, lyric slides,
-            // fades); a finite entrance finishes under the module's leave.
+            // fades); a finite entrance finishes under the module's leave, and
+            // a track change's page swap in flight finishes leaving.
             Self.removeAnimations(in: page.layer)
             controller.deactivate(); audio.stop()
         }
@@ -140,8 +141,10 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     override func closePopups() { super.closePopups(); closeVolume(keepingDrawn: keepsClosingPopupsDrawn) }
 
+    private static let finiteKeys = HUDMotion.entranceKeys.union(HUDMotion.exitKeys)
+
     private static func removeAnimations(in layer: CALayer) {
-        for key in layer.animationKeys() ?? [] where !HUDMotion.entranceKeys.contains(key) { layer.removeAnimation(forKey: key) }
+        for key in layer.animationKeys() ?? [] where !finiteKeys.contains(key) { layer.removeAnimation(forKey: key) }
         layer.sublayers?.forEach(removeAnimations)
     }
 
