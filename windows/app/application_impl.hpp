@@ -415,7 +415,10 @@ struct Application::Impl {
     void shelfDragEffect(const core::SystemOverlayEffect&, double time);
     bool shelfDragFrame(double time, bool settled);
     void reopenAfterSaveFailure(core::Module, double time);
-    void trayAction(gpu::TrayAction, bool hotkey, double time);
+    // fromProjection: the action was deferred until Projection's dismissal
+    // finished (ProjectionHandoff's external action), so its opening is the
+    // return to the module the HUD left (lifecycle.returnFromProjection).
+    void trayAction(gpu::TrayAction, bool hotkey, double time, bool fromProjection = false);
     void forwardedActivation(std::span<const std::string>);
     void updateTrayMenu();
     void sessionEnding(SessionEnd, std::uint32_t reason);

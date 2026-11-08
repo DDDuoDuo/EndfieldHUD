@@ -209,10 +209,13 @@ SystemOverlayEffects SystemOverlayLifecycle::openWorkMode(double now) {
     if (suspended_ || terminating_ || editingPosition_) return out;
     if (state_.phase() == SystemOverlayPhase::open) { select(Module::workMode, out); return out; }
     if (state_.phase() != SystemOverlayPhase::closed || !appToggle(out)) return out;
+    scheduleWorkMode(now);
+    return out;
+}
+void SystemOverlayLifecycle::scheduleWorkMode(double now) {
     if (timerCount_ == timers_.size()) throw std::logic_error("Too many delayed Work Mode selections");
     // DispatchQueue.main.asyncAfter(deadline: .now() + entranceDuration + 0.3)
     timers_[timerCount_++] = {(now + entranceDuration) + 0.3, ++timerSerial_, state_.generation()};
-    return out;
 }
 SystemOverlayEffects SystemOverlayLifecycle::reopen() {
     SystemOverlayEffects out;
@@ -220,12 +223,14 @@ SystemOverlayEffects SystemOverlayLifecycle::reopen() {
     if (!state_.active()) (void)appToggle(out);
     return out;
 }
-SystemOverlayEffects SystemOverlayLifecycle::returnFromProjection() {
+SystemOverlayEffects SystemOverlayLifecycle::returnFromProjection(std::optional<double> workModeAt) {
+    if (workModeAt && !std::isfinite(*workModeAt)) throw std::invalid_argument("System overlay requires a finite caller clock");
     SystemOverlayEffects out;
     if (state_.active()) return out;
     initialModuleRequest_ = restorable(lastSystemModule_);
     // A refused opening leaves no request behind for a later one.
-    if (!appToggle(out)) initialModuleRequest_.reset();
+    if (!appToggle(out)) { initialModuleRequest_.reset(); return out; }
+    if (workModeAt) scheduleWorkMode(*workModeAt);
     return out;
 }
 SystemOverlayEffects SystemOverlayLifecycle::close(bool interruptOpening) {

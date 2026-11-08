@@ -610,8 +610,12 @@ int Application::Impl::runIdleTrace(){
     // so this hand-off only carries a summon queued during the close
     // (projectionActionMessage's external action), which reopens the HUD;
     // without a display the hand-off ends with the HUD closed.
+    // The queued summon reopens on the module the HUD left, over a module
+    // chosen under Open on (OverlayController.returnFromProjection).
     openHUD();
     {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
+     const auto left=lifecycle.viewModule().value_or(core::Module::map);auto layout=configuration.overlayLayout();const auto chosenBefore=layout.openModule;
+     layout.openModule=std::string(core::moduleIdentifier(left==core::Module::calendar?core::Module::notes:core::Module::calendar));configuration.setOverlayLayout(layout);
      const auto framesBefore=host.stats().frames;
      const auto command=projectionHandoff.open({session->phase()==core::VisibilityPhase::visible,quitRequested,pendingClose,false},{hudDisplay,previousApplication});
      need(command&&command->action==ProjectionHandoff::Action::closeHUD,"Projection's hand-off closes the HUD first");
@@ -621,8 +625,10 @@ int Application::Impl::runIdleTrace(){
           "Projection's hand-off with a summon queued finishes the Reduce Motion close without a frame and goes on");
      // The hand-off placed the window on its display: the trace's own place back.
      need(host.place(placed.left,placed.top,placed.right-placed.left,placed.bottom-placed.top),"The traced window returns to its place");
-     if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");}
+     if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");
+         need(lifecycle.viewModule()==restorableModule(left),"The summon queued during Projection's hand-off reopens on the module left, not the chosen one");}
      else openHUD();
+     layout.openModule=chosenBefore;configuration.setOverlayLayout(layout);
      closeHUD();}
     // A fresh memory trace for the rows read below: the transition deadlines
     // by index, and the close rows (at most eight closes).

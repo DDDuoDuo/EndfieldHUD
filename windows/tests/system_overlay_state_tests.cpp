@@ -305,6 +305,24 @@ void openOn() {
         check(life.returnFromProjection().empty() && !life.initialModuleRequest(), "A refused return leaves no request behind");
         life.setSuspended(false);
         check(cycle(life, life.toggle()).first == core::Module::notes, "The next open goes back to the chosen module (hidden, so the first visible one)");
+        // Tray Work Mode during Projection (Application::trayAction after the
+        // dismissal): the return opens on the module left, then Work Mode is
+        // selected after the entrance, as openWorkMode schedules it.
+        (void)cycle(life, life.toggle(), core::Module::projection);
+        const auto workMode = life.returnFromProjection(10);
+        check(openedOn(workMode) == core::Module::projection && life.nextWakeTime() == 10 + core::SystemOverlayLifecycle::entranceDuration + 0.3,
+              "Work Mode during Projection reopens on Projection and waits for the entrance");
+        (void)life.didOpen(life.generation());
+        const auto selected = life.advance(11.1);
+        check(selected.size() == 1 && selected[0].kind == K::select && selected[0].module == core::Module::workMode && life.viewModule() == core::Module::workMode,
+              "Then Work Mode is selected");
+        (void)life.close(); (void)life.didClose(life.generation());
+        life.setSuspended(true);
+        check(life.returnFromProjection(20).empty() && !life.nextWakeTime() && !life.initialModuleRequest(), "A refused Work Mode return schedules nothing");
+        life.setSuspended(false);
+        bool nonfinite{};
+        try { (void)life.returnFromProjection(std::nan("")); } catch (const std::invalid_argument&) { nonfinite = true; }
+        check(nonfinite && !life.active(), "A nonfinite Work Mode clock is refused");
     }
     {   // A normal run: the saved module opens first, and every teardown asks
         // the owner to save the module left (the store writes only a change).

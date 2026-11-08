@@ -138,7 +138,13 @@ public:
     // OverlayController's return from Projection (Projection closed): the HUD
     // reopens on moduleLayout.restorable(lastSystemModule), the module it
     // left, as an explicit request, so a chosen Open on module cannot replace it.
-    SystemOverlayEffects returnFromProjection();
+    // Every way out of Projection lands here, as every AppDelegate entry
+    // reaches toggleSystemOverlay -> returnFromProjection on the Mac: its
+    // Return button, the hotkey, tray Open, a relaunch, and tray Settings and
+    // About too, whose own request the return replaces. With workModeAt (tray
+    // Work Mode), Work Mode is then selected after the entrance as
+    // openWorkMode does.
+    SystemOverlayEffects returnFromProjection(std::optional<double> workModeAt = std::nullopt);
     // OverlayController entry points.
     SystemOverlayEffects close(bool interruptOpening = false); // closeSystemOverlay
     SystemOverlayEffects requestQuit();                // confirmed red power button
@@ -237,6 +243,7 @@ private:
     void closeOverlay(bool interruptOpening, SystemOverlayEffects&);
     void select(Module, SystemOverlayEffects&);
     void settingsModule(Module, SystemOverlayEffects&);
+    void scheduleWorkMode(double now);
     void tearDown(SystemOverlayEffects&);
     void performShelfDrag(ShelfDragPresentationState::Action, SystemOverlayEffects&);
     void finishConcealedShelfClose(SystemOverlayEffects&);

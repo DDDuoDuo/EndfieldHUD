@@ -2139,16 +2139,20 @@ void Application::Impl::finishQuit(double time){
     projectionHandoff.cancel();(void)projectionCall("quit",[&]{projection->close(hostTime(time));});
     stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
 }
-void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double time){
+void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double time,bool fromProjection){
     if(projectionHandoff.active()){projectionTrayAction=action;refresh(time);return;}
+    // Mac 2c047e0: during Projection every AppDelegate entry reaches
+    // toggleSystemOverlay -> returnFromProjection, whose completion sets the
+    // request to the module the HUD left, replacing Settings' or About's.
+    const auto settingsModule=[&](core::Module module){return fromProjection?lifecycle.returnFromProjection():lifecycle.openSettingsModule(module);};
     switch(action){
     case gpu::TrayAction::quit:perform(lifecycle.requestTermination(),time);break;
-    case gpu::TrayAction::openOverlay:perform(hotkey?lifecycle.toggle():lifecycle.openOverlay(),time);break;
-    case gpu::TrayAction::settings:perform(lifecycle.openSettingsModule(core::Module::system),time);break;
-    case gpu::TrayAction::about:perform(lifecycle.openSettingsModule(core::Module::about),time);break;
-    case gpu::TrayAction::checkUpdates:perform(lifecycle.openSettingsModule(core::Module::about),time);if(auto*u=updates())(void)isolateService(UpdateService::key,"update check",[&]{(void)u->check(hostTime(time));});break;
+    case gpu::TrayAction::openOverlay:perform(fromProjection?lifecycle.returnFromProjection():hotkey?lifecycle.toggle():lifecycle.openOverlay(),time);break;
+    case gpu::TrayAction::settings:perform(settingsModule(core::Module::system),time);break;
+    case gpu::TrayAction::about:perform(settingsModule(core::Module::about),time);break;
+    case gpu::TrayAction::checkUpdates:perform(settingsModule(core::Module::about),time);if(auto*u=updates())(void)isolateService(UpdateService::key,"update check",[&]{(void)u->check(hostTime(time));});break;
     case gpu::TrayAction::previewCharging:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break;
-    case gpu::TrayAction::workMode:perform(lifecycle.openWorkMode(time),time);break;
+    case gpu::TrayAction::workMode:perform(fromProjection?lifecycle.returnFromProjection(time):lifecycle.openWorkMode(time),time);break;
     default:break;
     }
     if(visibleMode()&&session->phase()!=core::VisibilityPhase::concealed&&!closing&&!stopping){host.show();refresh(time);}
@@ -3070,7 +3074,10 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
     case A::external:{projectionDropRoute(false,time);(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
         const auto action=command.externalID?static_cast<gpu::TrayAction>(*command.externalID):gpu::TrayAction::openOverlay;
         if(action==gpu::TrayAction::quit){perform(lifecycle.requestTermination(),time);break;}
-        trayAction(action==gpu::TrayAction::none?gpu::TrayAction::openOverlay:action,false,time);
+        // The hotkey, tray Open, a relaunch or a close request during
+        // Projection (openOverlay), and tray Settings, About, Check for
+        // Updates and Work Mode, reopen on the module the HUD left.
+        trayAction(action==gpu::TrayAction::none?gpu::TrayAction::openOverlay:action,false,time,true);
         break;
     }
     case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();(void)projectionCall("close",[&]{projection->close(hostTime(time));});presentationPriority.restore();automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
