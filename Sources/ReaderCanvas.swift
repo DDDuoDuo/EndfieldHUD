@@ -111,8 +111,12 @@ final class ReaderCanvas: HUDDesignCanvas {
         closePanel()
         panStart = nil; detailWork?.cancel(); detailWork = nil
         settleTurn()
-        controller.setActive(false)
+        // The page leaves as drawn: the controller empties its rendered
+        // column here, which must not recycle the neighbouring pages first.
+        deactivating = true; controller.setActive(false); deactivating = false
     }
+
+    private var deactivating = false
 
     override func willLeave() { closePanel() }
 
@@ -136,7 +140,7 @@ final class ReaderCanvas: HUDDesignCanvas {
         if let awaiting = awaitingBook, controller.book?.id == awaiting, controller.current != nil || controller.error != nil { awaitingBook = nil }
         // The library loaded after this canvas was made: reopen the book that was being read.
         if !tabSettled, controller.book != nil { if controller.isReading { tab = .reading }; tabSettled = true }
-        guard renderedLanguage != nil, !isTransitioning else { return }
+        guard renderedLanguage != nil, !isTransitioning, !deactivating else { return }
         if structure != renderedStructure { rerender() } else { binders.forEach { $0() } }
         header.setCounter(counter)
     }
@@ -466,13 +470,17 @@ final class ReaderCanvas: HUDDesignCanvas {
                 pageClip?.frame = Self.pageViewport.insetBy(dx: 0, dy: columnInset)
                 pageColumn?.frame = pageClip?.bounds ?? .zero
             }
+            // A neighbour rendered after the column is on screen fades in.
+            let shown = isActive && pageColumn?.isVisible(in: root) == true
             for (page, top) in placed {
+                let arriving = shown && page.location != current.location && pageLayers[page.location] == nil
                 let layer = pageLayer(page)
                 HUDMotion.perform {
                     if layer.contents as! CGImage? !== page.image { layer.contents = page.image }
                     layer.contentsRect = columnCrop(page)
                     layer.frame = CGRect(x: 0, y: top, width: viewportSize.width, height: columnHeight(page))
                 }
+                if arriving { HUDMotion.enter(layer, from: .zero, env: env) }
             }
             return
         }
