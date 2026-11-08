@@ -969,7 +969,7 @@ final class OverlayController: NSObject {
             HUDStartupTrace.end("open.beginEntrance", since: &startup)
         case .close(let token):
             logSystemPhase()
-            systemView?.interactionEnabled = false
+            // The exit stops input first, then leaves with every element.
             armTransitionDeadline(after: SystemHUDView.exitDuration + 0.2) { [weak self] in
                 self?.finishSystemClosing(token)
             }
@@ -1021,7 +1021,7 @@ final class OverlayController: NSObject {
         switch action {
         case .none: break
         case .retract(let token):
-            view.interactionEnabled = false
+            // The exit stops the view's input first.
             panel.ignoresMouseEvents = true
             let completion = { [weak self] in
                 guard let self else { return }
@@ -1117,7 +1117,11 @@ final class OverlayController: NSObject {
                                preservingNowPlayingPresentation: true)
         let action = systemState.didOpen(token)
         logSystemPhase()
-        systemView?.interactionEnabled = systemState.phase == .open && !documentTerminationInProgress
+        // A close queued during the opening stops input in its own exit,
+        // which leaves every element drawn to fold away with the HUD.
+        if case .close = action {} else {
+            systemView?.interactionEnabled = systemState.phase == .open && !documentTerminationInProgress
+        }
         performSystemAction(action)
         presentPendingShelfDrop()
     }

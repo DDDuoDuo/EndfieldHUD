@@ -257,14 +257,28 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// The module entrance; `delay` holds it back until the centre shows.
     func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         guard !env.reducesMotion else { return }
+        entrance = (offset, CACurrentMediaTime() + delay)
         if showsHeader { header.playEntrance(delay: delay) }
+        playPageEntrance(from: offset, delay: delay)
+    }
+
+    /// The page's part of the entrance (the header keeps its own): the row
+    /// stagger, plus a subclass's extras built with the page. A page rebuilt
+    /// mid-entrance replays it with a negative `delay`, resuming in phase.
+    func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         HUDMotion.stagger(page.staggered, from: offset, delay: delay, env: env)
     }
 
+    /// The entrance playing on the page (its offset and start), until the
+    /// module leaves; an in-place re-render carries it to the new page.
+    private var entrance: (offset: CGPoint, start: CFTimeInterval)?
+    /// The last row starts at the stagger cap; the title wipe is the longest track.
+    private static let entranceLength = HUDMotion.staggerDelay(HUDDuration.staggerCap) + max(HUDDuration.entrance, HUDDuration.titleWipe)
+
     func prepareToLeave() {
-        closePopups()
-        endEditing(commit: true)
-        cancelGestures()
+        entrance = nil
+        closePopupsForLeave()
+        suspendInput()
         settleSwap(concealed: true)
         willLeave()
         // Last, so a re-render made while the module leaves keeps its page.
@@ -290,7 +304,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             if isStale { rerender() }
             didActivate()
         } else {
-            closePopups(); endEditing(commit: true); cancelGestures(); settleSwap(concealed: true)
+            entrance = nil
+            closePopupsForLeave(); suspendInput(); settleSwap(concealed: true)
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -302,9 +317,16 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// except for a module that was left, which comes back at the top.
     /// During a sub-page swap the page has already left: the re-rendered one
     /// stays hidden until the swap lands its own page with the entrance.
+    /// A re-render while the entrance still plays (data arriving as the
+    /// module opens or switches in) carries it on in phase: rows already
+    /// shown stay shown, the rest still enter.
     func rerender() {
         install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
-        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey) }
+        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey); return }
+        guard let entrance else { return }
+        let now = CACurrentMediaTime()
+        if env.reducesMotion || now >= entrance.start + Self.entranceLength { self.entrance = nil; return }
+        playPageEntrance(from: entrance.offset, delay: entrance.start - now)
     }
 
     private var currentOffsets: [String: CGFloat] {
@@ -317,7 +339,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// The next page, a Back included, starts at the top.
     func navigate(dx: CGFloat, dy: CGFloat = 0) {
         let offset = HUDShellPosition.subpageOffset(dx: dx, dy: dy)
-        closePopups(); endEditing(commit: true); cancelGestures()
+        closePopups(); suspendInput()
         guard !env.reducesMotion, root.superlayer != nil else {
             if let work = swapWork { work.cancel(); swapWork = nil; finishLeave() }
             install(makePage(restoring: [:])); return
@@ -326,6 +348,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         // time: settling it would show the next page at full opacity only to
         // send it out again.
         if let work = swapWork { work.cancel() } else {
+            finishLeave()
             let old = page.layer
             leavingPage = old
             HUDMotion.leave(old, toward: offset, env: env, key: "hud.page.leave")
@@ -350,19 +373,20 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     /// Completes a pending sub-navigation at once. `concealed` is for a module
-    /// that leaves or stops being active: the new page and the header had
-    /// already left, so they stay hidden until the module shows again
+    /// that leaves or stops being active (the HUD's close included): the old
+    /// page and the header finish the leave they are in and stay transparent,
+    /// and the new page waits hidden, until the module shows again
     /// (makeContent, setActive) instead of popping in while it leaves.
     func settleSwap(concealed: Bool = false) {
         guard let work = swapWork else { return }
         work.cancel(); swapWork = nil
         CATransaction.begin()
-        finishLeave()
-        install(makePage(restoring: [:]))
+        // The model ends transparent, so a cancel that strips the leave keeps them out.
         if concealed {
-            HUDMotion.hold(page.layer, key: Self.holdKey)
-            if showsHeader { HUDMotion.hold(header.layer, key: Self.holdKey) }
-        }
+            HUDMotion.perform { leavingPage?.opacity = 0; if showsHeader { header.layer.opacity = 0 } }
+        } else { finishLeave() }
+        install(makePage(restoring: [:]))
+        if concealed { HUDMotion.hold(page.layer, key: Self.holdKey) }
         CATransaction.commit()
     }
 
@@ -370,18 +394,17 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private var swapDeadline = DispatchTime.now()
 
     private func revealSettledPage() {
+        removeDepartedPopups()
         guard swapWork == nil else { return }
-        HUDMotion.perform {
-            page.layer.removeAnimation(forKey: Self.holdKey)
-            if showsHeader { header.layer.removeAnimation(forKey: Self.holdKey) }
-        }
+        finishLeave()
+        HUDMotion.perform { page.layer.removeAnimation(forKey: Self.holdKey) }
     }
 
     private func finishLeave() {
         HUDMotion.perform {
             leavingPage?.removeAnimation(forKey: "hud.page.leave")
             leavingPage?.removeFromSuperlayer()
-            header.layer.removeAnimation(forKey: "hud.header.leave")
+            if showsHeader { header.layer.removeAnimation(forKey: "hud.header.leave"); header.layer.opacity = 1 }
         }
         leavingPage = nil
     }
@@ -461,7 +484,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         menuState = nil
         (state.anchor as? HUDMenuAnchor)?.isOpen = false
         state.menu.controls.forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.menu.layer.removeFromSuperlayer() }
+        retirePopup([state.menu.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
@@ -486,12 +509,38 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         guard let state = popoverState else { return }
         popoverState = nil
         (state.controls + (state.popover.close.map { [$0] } ?? [])).forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.popover.layer.removeFromSuperlayer() }
+        retirePopup([state.popover.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
 
     func closePopups() { closeMenu(); closePopover() }
+
+    /// True while the module leaving closes its menus and pop-overs: they
+    /// stop taking input but stay drawn to leave with the page, and the next
+    /// showing removes them. Every other close removes them at once.
+    private(set) var keepsClosingPopupsDrawn = false
+    private var departedPopups: [CALayer] = []
+
+    private func closePopupsForLeave() {
+        keepsClosingPopupsDrawn = true
+        closePopups()
+        keepsClosingPopupsDrawn = false
+    }
+
+    /// Removes a closed popup's layers, or (`keepingDrawn`, the module
+    /// leaving) keeps them drawn until the next showing.
+    func retirePopup(_ layers: [CALayer], keepingDrawn: Bool) {
+        if keepingDrawn { departedPopups += layers; return }
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
+
+    private func removeDepartedPopups() {
+        guard !departedPopups.isEmpty else { return }
+        let layers = departedPopups
+        departedPopups = []
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
 
     // MARK: Text fields
 
@@ -501,6 +550,10 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     func endEditing(commit: Bool) { textFields.forEach { $0.endEditing(commit: commit) } }
+
+    /// Inline editors commit and gestures end while the page stays drawn,
+    /// menus included (the HUD's close: they leave with the module).
+    func suspendInput() { endEditing(commit: true); cancelGestures() }
 
     /// The native editor under a host view point, for the host's hitTest.
     func textView(atHost point: CGPoint) -> NSView? {

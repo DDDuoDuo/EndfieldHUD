@@ -236,9 +236,9 @@ final class WorkModeCanvas: HUDDesignCanvas {
 
     override func willLeave() { stateDot?.removeAnimation(forKey: "workMode.blink") }
 
-    /// The flick of the inner title; the column staggers in (the ring has no entrance).
-    override func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
-        super.playEntrance(from: offset, delay: delay)
+    /// The flick of the inner title; the ring and the column stagger in.
+    override func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playPageEntrance(from: offset, delay: delay)
         if let titleGroup { HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, delay: delay, fadeFrom: 0, env: env) }
     }
 
@@ -311,6 +311,7 @@ final class WorkModeCanvas: HUDDesignCanvas {
         let ring = WorkModeRing(fraction: WorkModeDialGeometry.fraction(value), env: env)
         self.ring = ring
         HUDMotion.perform { page.layer.addSublayer(ring.layer) }
+        page.stagger(ring.layer)
         buildTitle(page)
         buildTabs(page, value)
         buildState(page, value)

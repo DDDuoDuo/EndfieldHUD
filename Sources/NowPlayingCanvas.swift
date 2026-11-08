@@ -72,6 +72,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     private var displayedArt: CGImage?
     // Elements of the current page, updated in place between rebuilds.
     private var art: CALayer?
+    private var backdrop: CALayer?
     private var placeholder: CALayer?
     private var titleText: HUDTextLayer?
     private var artistText: HUDTextLayer?
@@ -123,9 +124,12 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             presentationStartCountForVerification += 1
             audio.start(); controller.activate(); refresh()
         } else {
-            stopClock(); closeVolume(); seek?.cancelDrag()
+            // The volume pop-up stays drawn to leave with the page.
+            stopClock(); closeVolume(keepingDrawn: true); seek?.cancelDrag()
             requestedEndRefresh = false
-            // Nothing keeps running on the hidden page (bar runs, lyric slides, fades).
+            // Nothing keeps running on the hidden page (bar runs, lyric slides,
+            // fades); a finite entrance finishes under the module's leave, and
+            // a track change's page swap in flight finishes leaving.
             Self.removeAnimations(in: page.layer)
             controller.deactivate(); audio.stop()
         }
@@ -135,10 +139,13 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     override func renderScaleChanged() { closeVolume(); super.renderScaleChanged() }
 
-    override func closePopups() { super.closePopups(); closeVolume() }
+    override func closePopups() { super.closePopups(); closeVolume(keepingDrawn: keepsClosingPopupsDrawn) }
+
+    private static let finiteKeys = HUDMotion.entranceKeys.union(HUDMotion.exitKeys).union([HUDMotion.crossFadeKey])
 
     private static func removeAnimations(in layer: CALayer) {
-        layer.removeAllAnimations(); layer.sublayers?.forEach(removeAnimations)
+        for key in layer.animationKeys() ?? [] where !finiteKeys.contains(key) { layer.removeAnimation(forKey: key) }
+        layer.sublayers?.forEach(removeAnimations)
     }
 
     private var structure: Structure { Structure(language: L10n.resolvedLanguage, playing: controller.snapshot.track != nil) }
@@ -236,14 +243,16 @@ final class NowPlayingCanvas: HUDDesignCanvas {
                 label.lineFrame = CGRect(x: 0, y: (size.height - 96) / 2 + 86, width: size.width, height: 10)
                 [hatch, ring, label].forEach(cover.addSublayer)
             }
-            art = nil; placeholder = nil; titleText = nil; artistText = nil
+            art = nil; backdrop = nil; placeholder = nil; titleText = nil; artistText = nil
             return cover
         }
+        let fill = HUDLayer.plain("nowPlaying.cover.backdrop")
         let image = HUDLayer.plain("nowPlaying.cover.art")
         let shade = HUDLayer.gradient("nowPlaying.cover.shade")
         let title = HUDTextLayer(track.title, style: HUDTextStyle(size: 21, weight: .bold, color: HUDColor.white(1), lineHeight: 1.2))
         let artist = HUDTextLayer(track.artist, style: HUDTextStyle(size: 14, weight: .regular, color: HUDColor.white(0.8), lineHeight: 1.2))
         HUDMotion.perform {
+            fill.frame = bounds; fill.contentsGravity = .resizeAspectFill
             image.frame = bounds; image.contentsGravity = .resizeAspectFill
             ring.position = CGPoint(x: size.width / 2, y: size.height / 2)
             shade.frame = CGRect(x: 0, y: size.height - 116, width: size.width, height: 116)
@@ -251,9 +260,9 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             shade.locations = [0, 0.3, 1]
             title.lineFrame = CGRect(x: 20, y: size.height - 38 - 21 * 1.2, width: size.width - 40, height: 21 * 1.2)
             artist.lineFrame = CGRect(x: 20, y: size.height - 16 - 14 * 1.2, width: size.width - 40, height: 14 * 1.2)
-            [image, ring, shade, title, artist].forEach(cover.addSublayer)
+            [fill, image, ring, shade, title, artist].forEach(cover.addSublayer)
         }
-        art = image; placeholder = ring; titleText = title; artistText = artist
+        art = image; backdrop = fill; placeholder = ring; titleText = title; artistText = artist
         return cover
     }
 
@@ -305,7 +314,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             if let track { titleText?.text = track.title; artistText?.text = track.artist; trackReadout?.track = track }
             durationText?.text = Self.time(track?.duration)
         }
-        showArt(controller.artworkImage, animated: animated)
+        showArt(controller.artwork, animated: animated)
         seek?.isEnabled = canSeek
         lyricWindow?.setLyrics(track == nil ? nil : controller.lyrics)
         setLyricsVisible(showsLyrics && track != nil && controller.lyrics?.hasContent == true, animated: animated)
@@ -319,16 +328,22 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         return track.supportsSeeking && track.duration != nil && track.position != nil && controller.snapshot.failure == nil
     }
 
-    /// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes.
-    private func showArt(_ image: CGImage?, animated: Bool) {
-        guard let art, image !== displayedArt else { return }
-        displayedArt = image
-        if animated, !env.reducesMotion, art.superlayer != nil {
-            let fade = CATransition()
-            fade.type = .fade; fade.duration = 0.2; fade.timingFunction = HUDEasing.easeInOut
-            art.add(fade, forKey: "hud.art.fade")
+    /// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes,
+    /// with its backdrop. A cover that fills the slot is drawn aspect-filled as
+    /// before; a small one (with a backdrop) is drawn whole at its own pixels,
+    /// centred over its blurred fill, rather than stretched by the GPU.
+    private func showArt(_ artwork: NowPlayingArtworkImage?, animated: Bool) {
+        guard let art, artwork?.image !== displayedArt else { return }
+        displayedArt = artwork?.image
+        if animated, art.superlayer != nil {
+            for layer in [backdrop, art].compactMap({ $0 }) { HUDMotion.crossFade(layer, duration: 0.2, env: env) }
         }
-        HUDMotion.perform { art.contents = image; placeholder?.isHidden = image != nil }
+        HUDMotion.perform {
+            art.contents = artwork?.image; backdrop?.contents = artwork?.backdrop
+            art.contentsGravity = artwork?.backdrop == nil ? .resizeAspectFill : .center
+            art.contentsScale = env.renderScale
+            placeholder?.isHidden = artwork != nil
+        }
     }
 
     /// The whole lyric block fades (.24 s) when lyrics are toggled, arrive or end.
@@ -455,18 +470,25 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private var currentOutput: AudioDeviceInfo? { audio.snapshot.outputs.first { $0.id == audio.snapshot.defaultOutputID } }
 
-    /// The audio process of the playing app: only an unambiguous match, never
-    /// an unrelated process or one of several helpers (the Volume module
-    /// lists those individually).
+    /// The audio process of the playing app, its own or a helper inside its
+    /// bundle (a browser plays through one): the one with a live route, else
+    /// the one playing, else the one with a failed route, else the only one.
+    /// A failed route never outranks the process now playing (a browser's
+    /// replaced helper). Never an unrelated process, nor a guess between
+    /// several (the Volume module lists those individually).
     private var audioApplication: AudioApplicationInfo? {
         guard let app = controller.snapshot.application else { return nil }
-        var candidates = audio.snapshot.availableApplications.isEmpty ? audio.snapshot.activeApplications : audio.snapshot.availableApplications
-        for session in perAppAudio.sessions where !candidates.contains(where: { $0.id == session.processID }) {
-            candidates.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
-                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
+        let matches = perAppAudio.candidates(in: audio.snapshot).filter {
+            $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL
         }
-        let matches = candidates.filter { $0.pid == app.pid || $0.applicationURL?.standardizedFileURL == app.bundleURL.standardizedFileURL }
-        return matches.count == 1 ? matches[0] : nil
+        func routed(live: Bool) -> [AudioApplicationInfo] {
+            matches.filter { match in perAppAudio.sessions.contains {
+                $0.processID == match.id && ($0.state == .preparing || $0.state == .active) == live
+            } }
+        }
+        let live = routed(live: true), playing = matches.filter(\.isRunningOutput), ended = routed(live: false)
+        let preferred = [live, playing, ended].first { !$0.isEmpty } ?? matches
+        return preferred.count == 1 ? preferred[0] : nil
     }
 
     private var currentSession: PerAppAudioSession? {
@@ -491,13 +513,17 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     }
 
     /// Why the volume does not follow the slider: the player's Automation
-    /// state, else a failed per-app route's own error.
+    /// state, else a failed per-app route's own error, else why the playing
+    /// app's volume cannot be routed through the current output.
     private var volumeNotice: String? {
         guard controller.playerVolume == nil else { return nil }
         if let failure = controller.playerVolumeFailure { return failure.message }
         if controller.isAwaitingPermission { return NowPlayingFailure.permissionRequired.message }
-        guard let session = currentSession, session.state == .failed else { return nil }
-        return session.error
+        guard let session = currentSession else {
+            guard let app = audioApplication else { return nil }
+            return currentOutput.flatMap { perAppAudio.availability(application: app, output: $0) }
+        }
+        return session.state == .failed ? session.error : nil
     }
 
     /// Once the player's own volume is available, a per-app route this page
@@ -553,13 +579,15 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         if controller.playerVolumeFailure == .permissionRequired, !controller.isAwaitingPermission { controller.connect() }
     }
 
-    private func closeVolume() {
+    /// `keepingDrawn`: the module is leaving; the pop-up stays drawn with
+    /// the page until it shows again.
+    private func closeVolume(keepingDrawn: Bool = false) {
         guard isVolumeOpen else { return }
         isVolumeOpen = false; volumeGesture = nil
         if let popup {
             popup.clearInteractionState()
             page.remove(popup)
-            HUDMotion.perform { popup.layer.removeFromSuperlayer(); popup.noticeLayer.removeFromSuperlayer() }
+            retirePopup([popup.layer, popup.noticeLayer], keepingDrawn: keepingDrawn)
         }
         popup = nil
         volumeButton?.isOn = false

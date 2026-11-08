@@ -80,6 +80,8 @@ final class FileShelfCanvas: HUDDesignCanvas {
     private var renderedStructure: Structure?
     private var renderedSelection: Set<UUID> = []
     private var renderedCard: UUID?
+    /// The page's card started its own selection slide when it was built.
+    private var cardSlidIn = false
 
     init(context: HUDDesignContext, store: FileShelfStore?, error: String? = nil) {
         self.store = store
@@ -116,9 +118,13 @@ final class FileShelfCanvas: HUDDesignCanvas {
         onDeactivate?()
     }
 
-    override func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
-        super.playEntrance(from: offset, delay: delay)
-        if let card { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, delay: delay, env: env) }
+    /// A card that just slid in for a new selection keeps its own slide: the
+    /// in-phase replay of an entrance already under way (a negative delay)
+    /// would cut it short and pop the card in.
+    override func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playPageEntrance(from: offset, delay: delay)
+        guard let card, delay >= 0 || !cardSlidIn else { return }
+        HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, delay: delay, env: env)
     }
 
     override func recordingModeChanged() {
@@ -148,7 +154,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
 
     override func buildPage(_ page: HUDDesignPage) {
         renderedStructure = structure
-        tiles = [:]; cardBinder = nil; card = nil; grid = nil
+        tiles = [:]; cardBinder = nil; card = nil; grid = nil; cardSlidIn = false
         let previousCard = renderedCard
         renderedCard = nil
         let add = HUDButton(id: "shelf.add", title: L10n.text("Add", "添加"), icon: .plus, kind: .primary, size: .small, env: env)
@@ -369,7 +375,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
             let value = self.properties[item.id]
             HUDMotion.perform { for (layer, text) in live { layer.text = text(value) } }
         }
-        if replaying, root.superlayer != nil { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env) }
+        if replaying, root.superlayer != nil { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env); cardSlidIn = true }
         renderedCard = item.id
         loadProperties(item)
     }
@@ -554,7 +560,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard !items.isEmpty, !clearing else { return }
         let count = items.count
         confirm(HUDConfirmRequest(id: "shelf.clear", title: L10n.text("Remove \(count) files from the shelf?", "从暂存架移除 \(count) 个文件？"),
-                                  message: L10n.text("Original files stay where they are.", "原文件保持不变。"),
+                                  message: L10n.text("Original files stay where they are", "原文件保持不变"),
                                   confirmTitle: L10n.text("Remove all", "全部移除"), danger: true, icon: .trash)) { [weak self] in
             self?.clearShelf()
         }
@@ -598,7 +604,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
         toast(icon: .warn, "Notice", "提示", detail: message)
     }
 
-    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable.", "文件暂存架存储不可用。")) }
+    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable", "文件暂存架存储不可用")) }
 
     /// Accessibility and verification actions: `shelf:add`, `shelf:clear`,
     /// `shelf:<id>:select|open|reveal|remove|menu`.

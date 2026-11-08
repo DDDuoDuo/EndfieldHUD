@@ -310,7 +310,7 @@ final class StorageController {
         self.scanDetails = scanDetails ?? { token in
             guard let device = Self.startupDevice() else {
                 return StorageDetailsSnapshot(categories: [], isLoading: false, updatedAt: clock(),
-                                              isPartial: true, error: "The startup filesystem is unavailable.")
+                                              isPartial: true, error: "The startup filesystem is unavailable")
             }
             return StorageFolderScanner.scan(scopes: StorageFolderScanner.standardScopes(), cancellation: token,
                                              date: clock(), expectedDevice: device)
@@ -441,7 +441,7 @@ final class StorageController {
                 self.capacityInFlight = false; self.snapshot.isLoading = false
                 self.volumes = StorageVolumeCatalog.limited(listed, keeping: self.selectedVolumeIdentifier)
                 if let result = self.currentVolume?.capacity ?? startup { self.snapshot.capacity = result; self.snapshot.error = nil }
-                else { self.snapshot.error = "Storage capacity is unavailable." }
+                else { self.snapshot.error = "Storage capacity is unavailable" }
                 self.publish()
                 if self.pendingVolumeRead && self.isActive { self.refreshCapacity(force: true) }
             }

@@ -259,19 +259,19 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
         case .system:
             return RestoreCopy(id: "restore", title: L10n.text("Restore default settings", "恢复默认设置"),
                                question: L10n.text("Restore default settings?", "恢复默认设置？"),
-                               message: L10n.text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept.",
-                                                  "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式。"),
+                               message: L10n.text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept",
+                                                  "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式"),
                                toast: ("Settings restored", "已恢复默认设置"))
         case .display:
             return RestoreCopy(id: "displayRestore", title: L10n.text("Restore default settings", "恢复默认设置"),
                                question: L10n.text("Restore default settings?", "恢复默认设置？"),
-                               message: L10n.text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.",
-                                                  "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。"),
+                               message: L10n.text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept",
+                                                  "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式"),
                                toast: ("Settings restored", "已恢复默认设置"))
         case .hudElements:
             return RestoreCopy(id: "overlayRestore", title: L10n.text("Restore defaults", "恢复默认"),
                                question: L10n.text("Restore HUD elements?", "恢复界面元素默认设置？"),
-                               message: L10n.text("Only this page's settings change.", "仅恢复本页设置。"),
+                               message: L10n.text("Only this page's settings change", "仅恢复本页设置"),
                                toast: ("HUD elements restored", "已恢复界面元素"))
         }
     }
@@ -476,7 +476,7 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
 
     private func confirmModulesReset() {
         confirm(HUDConfirmRequest(id: "modulesReset", title: L10n.text("Restore default layout?", "恢复默认布局？"),
-                                  message: L10n.text("All modules are shown in their original order.", "所有模块按原顺序显示。"),
+                                  message: L10n.text("All modules are shown in their original order", "所有模块按原顺序显示"),
                                   confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)) { [weak self] in
             self?.controller.update { $0.moduleLayout = HUDModuleLayout() }
             self?.toast(icon: .reset, "Layout restored", "已恢复默认布局")

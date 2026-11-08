@@ -209,7 +209,7 @@ final class OrbiPomCanvas: HUDDesignCanvas {
         restartConfirmation = true
         reconcileClock()
         confirm(HUDConfirmRequest(id: "minigameRestart", title: L10n.text("Restart the game?", "重新开始游戏？"),
-                                  message: L10n.text("The current score is lost.", "当前得分将会丢失。"),
+                                  message: L10n.text("The current score is lost", "当前得分将会丢失"),
                                   confirmTitle: L10n.text("Restart", "重新开始"), icon: .reset),
                 onConfirm: { [weak self] in
                     guard let self else { return }
@@ -612,8 +612,8 @@ private enum OrbiPomGuide {
         let columnWidth = (width - 24 - gutter) / 2
         var left = Column(width: columnWidth), right = Column(width: columnWidth)
         left.heading(L10n.text("Goal", "目标"))
-        left.paragraph(L10n.text("Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish.",
-                                 "将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失。"))
+        left.paragraph(L10n.text("Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish",
+                                 "将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失"))
         left.heading(L10n.text("Controls", "操作"))
         left.key(L10n.text("Aim", "瞄准"), L10n.text("Move the pointer over the box, or the arrow keys", "在容器上移动指针，或使用方向键"))
         left.key(L10n.text("Drop", "投放"), L10n.text("Click, or Return", "点击，或按 Return 键"))
@@ -621,20 +621,20 @@ private enum OrbiPomGuide {
         left.key(L10n.text("Cancel skill", "取消技能"), L10n.text("Esc, or click the skill again", "按 Esc，或再次点击该技能"))
         left.key(L10n.text("Pause", "暂停"), L10n.text("Space or P", "空格键或 P"))
         left.heading(L10n.text("Game over", "游戏结束"))
-        left.paragraph(L10n.text("Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends.",
-                                 "山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束。"))
+        left.paragraph(L10n.text("Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends",
+                                 "山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束"))
         right.heading(L10n.text("Score", "计分"))
-        right.paragraph(L10n.text("Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score.",
-                                  "合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分。"))
+        right.paragraph(L10n.text("Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score",
+                                  "合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分"))
         right.heading(L10n.text("SP and skills", "能量与技能"))
-        right.paragraph(L10n.text("Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it.",
-                                  "每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动。"))
+        right.paragraph(L10n.text("Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it",
+                                  "每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动"))
         let costs = [L10n.text("1 SP", "1 SP"), L10n.text("2 SP", "2 SP"), L10n.text("3 SP", "3 SP"), L10n.text("6 SP spent", "消耗 6 SP")]
-        let details = [L10n.text("Removes the piece you pick.", "移除选中的山团团。"),
-                       L10n.text("A rising wind fills the box for a few seconds and lifts the pieces.", "上升气流充满容器数秒，托起山团团。"),
-                       L10n.text("Shakes the box from side to side.", "左右摇晃容器。"),
-                       L10n.text("Pick two pieces to trade places. It charges with the SP you spend on the other skills.",
-                                 "选择两个山团团交换位置。在其他技能上消耗 SP 即可充能。")]
+        let details = [L10n.text("Removes the piece you pick", "移除选中的山团团"),
+                       L10n.text("A rising wind fills the box for a few seconds and lifts the pieces", "上升气流充满容器数秒，托起山团团"),
+                       L10n.text("Shakes the box from side to side", "左右摇晃容器"),
+                       L10n.text("Pick two pieces to trade places. It charges with the SP you spend on the other skills",
+                                 "选择两个山团团交换位置。在其他技能上消耗 SP 即可充能")]
         for (index, skill) in OrbiPomSkill.allCases.enumerated() {
             right.skill(skill, cost: costs[index], detail: details[index], env: env)
         }

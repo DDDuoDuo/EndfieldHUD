@@ -111,8 +111,12 @@ final class ReaderCanvas: HUDDesignCanvas {
         closePanel()
         panStart = nil; detailWork?.cancel(); detailWork = nil
         settleTurn()
-        controller.setActive(false)
+        // The page leaves as drawn: the controller empties its rendered
+        // column here, which must not recycle the neighbouring pages first.
+        deactivating = true; controller.setActive(false); deactivating = false
     }
+
+    private var deactivating = false
 
     override func willLeave() { closePanel() }
 
@@ -136,7 +140,7 @@ final class ReaderCanvas: HUDDesignCanvas {
         if let awaiting = awaitingBook, controller.book?.id == awaiting, controller.current != nil || controller.error != nil { awaitingBook = nil }
         // The library loaded after this canvas was made: reopen the book that was being read.
         if !tabSettled, controller.book != nil { if controller.isReading { tab = .reading }; tabSettled = true }
-        guard renderedLanguage != nil, !isTransitioning else { return }
+        guard renderedLanguage != nil, !isTransitioning, !deactivating else { return }
         if structure != renderedStructure { rerender() } else { binders.forEach { $0() } }
         header.setCounter(counter)
     }
@@ -451,6 +455,11 @@ final class ReaderCanvas: HUDDesignCanvas {
         let zoomed = current.isIllustration && imageView.zoom > 1
         if preferences.vertical, !zoomed {
             pendingTurn = nil
+            // Reopening the book shown (the module shown again) empties the
+            // rendered column until its render returns: the drawn pages and
+            // the scroll stay as they are until then.
+            if controller.pages.isEmpty, controller.error == nil, columnLocation == current.location,
+               pageLayers[current.location] != nil { return }
             if columnLocation != current.location { columnLocation = current.location; scrollOffset = 0 }
             clampOffset()
             guard let current = controller.current else { return }
@@ -466,13 +475,17 @@ final class ReaderCanvas: HUDDesignCanvas {
                 pageClip?.frame = Self.pageViewport.insetBy(dx: 0, dy: columnInset)
                 pageColumn?.frame = pageClip?.bounds ?? .zero
             }
+            // A neighbour rendered after the column is on screen fades in.
+            let shown = isActive && pageColumn?.isVisible(in: root) == true
             for (page, top) in placed {
+                let arriving = shown && page.location != current.location && pageLayers[page.location] == nil
                 let layer = pageLayer(page)
                 HUDMotion.perform {
                     if layer.contents as! CGImage? !== page.image { layer.contents = page.image }
                     layer.contentsRect = columnCrop(page)
                     layer.frame = CGRect(x: 0, y: top, width: viewportSize.width, height: columnHeight(page))
                 }
+                if arriving { HUDMotion.enter(layer, from: .zero, env: env) }
             }
             return
         }
@@ -672,7 +685,7 @@ final class ReaderCanvas: HUDDesignCanvas {
 
     private func confirmRemove(_ book: ReaderBook) {
         confirm(HUDConfirmRequest(id: "readerRemove", title: L10n.text("Remove \(book.title) from the library?", "从书库移除 \(book.title)？"),
-                                  message: L10n.text("The file itself stays on disk.", "文件本身仍保留在磁盘上。"),
+                                  message: L10n.text("The file itself stays on disk", "文件本身仍保留在磁盘上"),
                                   confirmTitle: L10n.text("Remove", "移除"), danger: true, icon: .trash)) { [weak self] in
             self?.pendingRemoval = true
             self?.controller.removeBook(book.id)

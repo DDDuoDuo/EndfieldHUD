@@ -272,7 +272,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 860, height: 650),
                             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         Self.configurePanelPresentation(panel, relativeTo: parent)
-        panel.title = region == .mainland ? "EndfieldHUD · 森空岛" : "EndfieldHUD · SKPORT"
+        panel.title = region == .mainland ? "EndfieldHUD / 森空岛" : "EndfieldHUD / SKPORT"
         panel.minSize = NSSize(width: 680, height: 540)
         if #available(macOS 11, *) {} else {
             // Older WebKit has no layout zoom; preserve the site's desktop width.
@@ -286,8 +286,8 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
         let title = NSTextField(labelWithString: L10n.text("Connect through the official website", "通过官方网站关联"))
         title.font = HUDFontResolver.nsFont(size: 20, weight: .semibold)
         let detail = NSTextField(wrappingLabelWithString: L10n.text(
-            "Sign in to the official website in a private session. EndfieldHUD will save only this community session in this Mac’s Keychain to read your game profile. Your password and passport token are not collected. This is an unofficial integration.",
-            "在独立会话中登录官方网站。EndfieldHUD 仅将此次社区会话保存在本机钥匙串，用于读取游戏资料，不收集密码或通行证令牌。这是非官方关联功能。"))
+            "Sign in to the official website in a private session. EndfieldHUD will save only this community session in this Mac’s Keychain to read your game profile. Your password and passport token are not collected. This is an unofficial integration",
+            "在独立会话中登录官方网站。EndfieldHUD 仅将此次社区会话保存在本机钥匙串，用于读取游戏资料，不收集密码或通行证令牌。这是非官方关联功能"))
         detail.font = HUDFontResolver.nsFont(size: 13); detail.textColor = .secondaryLabelColor
         let site = NSTextField(labelWithString: HypergryphAccountLoginPolicy.siteURL(region).absoluteString)
         site.font = HUDFontResolver.nsFont(size: 13)
@@ -394,7 +394,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
     }
     private func showPageFailure() {
         loadDeadline?.cancel(); loadDeadline = nil
-        statusLabel?.stringValue = L10n.text("The sign-in page could not load. Retry to continue.", "登录页面未能载入，请重试。")
+        statusLabel?.stringValue = L10n.text("The sign-in page could not load. Retry to continue", "登录页面未能载入，请重试")
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard isPresenting, hasConsented, let owner = message.webView, owns(owner) else { return }
@@ -474,7 +474,7 @@ final class HypergryphAccountLogin: NSObject, NSWindowDelegate, WKNavigationDele
 
     private func showUnsupportedNavigation() {
         onDiagnostic?(.navigationBlocked)
-        statusLabel?.stringValue = L10n.text("This sign-in route is not supported here. Use the official page’s email or phone sign-in, or cancel.", "此登录方式暂不支持，请使用官方页面的邮箱或手机号登录，或取消。")
+        statusLabel?.stringValue = L10n.text("This sign-in route is not supported here. Use the official page’s email or phone sign-in, or cancel", "此登录方式暂不支持，请使用官方页面的邮箱或手机号登录，或取消")
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard webView === self.webView else { return }

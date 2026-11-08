@@ -85,9 +85,9 @@ final class AppShortcutCanvas: HUDDesignCanvas {
 
     /// Adds the one application in `urls` (chooser, drop or paste).
     @discardableResult func importURLs(_ urls: [URL]) -> Bool {
-        guard let store else { showError(L10n.text("Shortcut storage is unavailable.", "快捷方式存储不可用。")); return false }
+        guard let store else { showError(L10n.text("Shortcut storage is unavailable", "快捷方式存储不可用")); return false }
         guard urls.count == 1, let url = urls.first else {
-            showError(L10n.text("Choose one application to customize.", "请选择一个应用进行设置。")); return false
+            showError(L10n.text("Choose one application to customize", "请选择一个应用进行设置")); return false
         }
         do {
             let candidate = try store.inspect(url: url)
@@ -315,7 +315,7 @@ final class AppShortcutCanvas: HUDDesignCanvas {
 
     private func confirmRemove(_ item: AppShortcut) {
         confirm(HUDConfirmRequest(id: "apps:remove", title: L10n.text("Remove \(item.name)?", "移除 \(item.name)？"),
-                                  message: L10n.text("The app itself stays installed.", "应用本身不会被卸载。"),
+                                  message: L10n.text("The app itself stays installed", "应用本身不会被卸载"),
                                   confirmTitle: L10n.text("Remove", "移除"), danger: true, icon: .trash)) { [weak self] in
             guard let self, let store = self.store else { return }
             do {

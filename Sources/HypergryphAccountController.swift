@@ -190,7 +190,7 @@ final class HypergryphAccountController {
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: fileURL, options: [.atomic])
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-            } catch { statusMessage = L10n.text("Profile cache could not be saved.", "无法保存账户缓存。") }
+            } catch { statusMessage = L10n.text("Profile cache could not be saved", "无法保存账户缓存") }
         }
         Array(observers.values).forEach { $0() }
     }
@@ -212,7 +212,7 @@ final class HypergryphAccountController {
         var result = HUDAccountPresentation()
         result.region = region == .mainland ? .china : .global
         result.isLinked = record.linked
-        result.statusMessage = record.requiresReconnect ? L10n.text("Sign in again to continue syncing.", "请重新登录以继续同步。") : statusMessage
+        result.statusMessage = record.requiresReconnect ? L10n.text("Sign in again to continue syncing", "请重新登录以继续同步") : statusMessage
         result.status = isPresentingLogin ? .connecting : hasActiveRequest ? .refreshing : !result.statusMessage.isEmpty ? .failed : record.linked ? .connected : .disconnected
         result.roles = record.roles.map { .init(id: $0.id,
             title: ($0.game == .endfield ? "Endfield" : "Arknights") + " / " + ($0.name ?? $0.roleID), subtitle: $0.serverName ?? "") }
@@ -284,7 +284,7 @@ final class HypergryphAccountController {
             case .success(let value): self.acceptLogin(cred: value.cred, region: value.region,
                 signingToken: value.signingToken, deviceID: value.deviceID)
             case .failure(let error):
-                if error != .cancelled { self.statusMessage = L10n.text("Sign-in could not finish. Please try again.", "登录未完成，请重试。") }
+                if error != .cancelled { self.statusMessage = L10n.text("Sign-in could not finish. Please try again", "登录未完成，请重试") }
                 self.changed()
             }
         }
@@ -356,7 +356,7 @@ final class HypergryphAccountController {
                 case .failure:
                     if self.region == region, self.generation == token {
                         self.busy = false
-                        self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。")
+                        self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试")
                         self.changed()
                     }
                 }
@@ -387,7 +387,7 @@ final class HypergryphAccountController {
                     self.onEvent?("unlinked"); self.changed(save: true)
                 case .failure:
                     if self.region == region {
-                        self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。")
+                        self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试")
                         self.changed()
                     }
                 }
@@ -441,7 +441,7 @@ final class HypergryphAccountController {
                 self.pendingCredentialCommits = max(0, self.pendingCredentialCommits - 1)
                 guard self.generation == token else { return }
                 guard case .success = result else {
-                    self.busy = false; self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。"); self.changed(); return
+                    self.busy = false; self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试"); self.changed(); return
                 }
                 self.credentials[region] = value; self.credentialDates[region] = self.now(); completion()
             }
@@ -480,7 +480,7 @@ final class HypergryphAccountController {
     private func fetchNext(_ roles: [HypergryphRole], credentials: HypergryphCredentials, token: Int) {
         guard let role = roles.first else {
             busy = false; request = nil; failures = 0; nextRefresh = now().addingTimeInterval(Self.automaticRefreshInterval)
-            if record.roles.isEmpty { statusMessage = L10n.text("No linked game account found.", "未找到已绑定的游戏账户。") }
+            if record.roles.isEmpty { statusMessage = L10n.text("No linked game account found", "未找到已绑定的游戏账户") }
             applyProfile(); applyAvatar()
             if manualRefreshPending && selectedSnapshot != nil && statusMessage.isEmpty { onEvent?("synced") }
             manualRefreshPending = false
@@ -503,8 +503,8 @@ final class HypergryphAccountController {
         nextRefresh = now().addingTimeInterval(min(900, 60 * pow(2, Double(failures - 1))))
         if error == .authenticationExpired || error == .invalidCredentials {
             cache.records[region.rawValue, default: RegionRecord()].requiresReconnect = true
-            statusMessage = L10n.text("Sign in again to continue syncing.", "请重新登录以继续同步。")
-        } else { statusMessage = L10n.text("Sync unavailable. Saved data is preserved.", "暂时无法同步，已保留上次数据。") }
+            statusMessage = L10n.text("Sign in again to continue syncing", "请重新登录以继续同步")
+        } else { statusMessage = L10n.text("Sync unavailable. Saved data is preserved", "暂时无法同步，已保留上次数据") }
         changed(save: true)
     }
     private func applyProfile() {
@@ -530,7 +530,7 @@ final class HypergryphAccountController {
                 if let count = snapshot.weaponCount { value.weaponsCount = count }
                 if let count = snapshot.documentCount { value.archivesCount = count }
             }
-        } } catch { statusMessage = L10n.text("The personal profile could not be saved.", "无法保存个人名片。") }
+        } } catch { statusMessage = L10n.text("The personal profile could not be saved", "无法保存个人名片") }
     }
     private func applyAvatar() {
         guard visible, cache.syncAvatar, record.linked, let snapshot = selectedSnapshot, snapshot.role.game == .endfield,
@@ -546,7 +546,7 @@ final class HypergryphAccountController {
                 self.applyingGameAvatar = true
                 defer { self.applyingGameAvatar = false }
                 do { try data.write(to: file); try profile.importImage(from: file, kind: .avatar); self.avatarURL = url }
-                catch { self.statusMessage = L10n.text("Game avatar is unavailable.", "游戏头像暂不可用。"); self.changed() }
+                catch { self.statusMessage = L10n.text("Game avatar is unavailable", "游戏头像暂不可用"); self.changed() }
             }
         }
     }

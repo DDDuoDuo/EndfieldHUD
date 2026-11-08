@@ -100,12 +100,12 @@ enum ArchiveError: LocalizedError {
     case invalid, unavailable, newerVersion, full, passwordMissing, keychainUnavailable
     var errorDescription: String? {
         switch self {
-        case .invalid: return L10n.text("This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。")
-        case .unavailable: return L10n.text("The archive could not be saved.", "无法保存档案。")
-        case .newerVersion: return L10n.text("This archive needs a newer app version.", "此档案需要更新版本的应用。")
-        case .full: return L10n.text("The archive is full.", "档案库已满。")
-        case .passwordMissing: return L10n.text("This document's password is missing from the Keychain. It stays classified.", "钥匙串中缺少此文档的密码，文档仍保持机密。")
-        case .keychainUnavailable: return L10n.text("The Keychain could not be read. The document stays classified.", "无法读取钥匙串，文档仍保持机密。")
+        case .invalid: return L10n.text("This archive could not be read. The original was preserved", "无法读取档案，原始数据已保留")
+        case .unavailable: return L10n.text("The archive could not be saved", "无法保存档案")
+        case .newerVersion: return L10n.text("This archive needs a newer app version", "此档案需要更新版本的应用")
+        case .full: return L10n.text("The archive is full", "档案库已满")
+        case .passwordMissing: return L10n.text("This document's password is missing from the Keychain. It stays classified", "钥匙串中缺少此文档的密码，文档仍保持机密")
+        case .keychainUnavailable: return L10n.text("The Keychain could not be read. The document stays classified", "无法读取钥匙串，文档仍保持机密")
         }
     }
 }

@@ -47,11 +47,11 @@ enum HUDCenterLogoError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            return L10n.text("Choose a readable image file.", "请选择可读取的图片文件。")
+            return L10n.text("Choose a readable image file", "请选择可读取的图片文件")
         case .imageTooLarge:
-            return L10n.text("Choose an image no larger than 32 MB.", "请选择不超过 32 MB 的图片。")
+            return L10n.text("Choose an image no larger than 32 MB", "请选择不超过 32 MB 的图片")
         case .imageDimensionsTooLarge:
-            return L10n.text("Choose an image no larger than 64 megapixels or 16,384 pixels on either side.", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片。")
+            return L10n.text("Choose an image no larger than 64 megapixels or 16,384 pixels on either side", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片")
         case .persistence(let detail):
             return L10n.text("The center logo could not be saved: ", "无法保存中心标志：") + detail
         }

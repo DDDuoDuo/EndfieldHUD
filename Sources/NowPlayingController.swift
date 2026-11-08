@@ -92,12 +92,12 @@ enum NowPlayingFailure: Error, Equatable {
     var isAutomationGrant: Bool { self == .permissionRequired || self == .permissionDenied }
     var message: String {
         switch self {
-        case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks.", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器。")
-        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD.", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面。")
-        case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls.", "请允许辅助功能访问以读取此播放器的控制。")
-        case .unsupported: return L10n.text("This version of the player does not expose the required playback controls.", "此版本的播放器未提供所需的播放控制。")
-        case .timedOut: return L10n.text("The player did not respond. Try refreshing.", "播放器未响应，请尝试刷新。")
-        case .unavailable, .cancelled: return L10n.text("Play music in a supported player to connect automatically.", "在支持的播放器中播放音乐即可自动连接。")
+        case .permissionRequired: return L10n.text("Allow EndfieldHUD to control this player when macOS asks", "请在 macOS 询问时允许 EndfieldHUD 控制此播放器")
+        case .permissionDenied: return L10n.text("Allow this player in System Settings > Privacy & Security > Automation, then reopen the HUD", "请在系统设置 > 隐私与安全性 > 自动化中允许此播放器，然后重新打开界面")
+        case .accessibilityRequired: return L10n.text("Allow Accessibility access to read this player's controls", "请允许辅助功能访问以读取此播放器的控制")
+        case .unsupported: return L10n.text("This version of the player does not expose the required playback controls", "此版本的播放器未提供所需的播放控制")
+        case .timedOut: return L10n.text("The player did not respond. Try refreshing", "播放器未响应，请尝试刷新")
+        case .unavailable, .cancelled: return L10n.text("Play music in a supported player to connect automatically", "在支持的播放器中播放音乐即可自动连接")
         }
     }
 }
@@ -185,10 +185,13 @@ final class NowPlayingController {
         return loader
     }()
     var artworkImage: CGImage? { artworkLoader.image }
+    /// The shown cover with its native size and, for a small one, its backdrop.
+    var artwork: NowPlayingArtworkImage? { artworkLoader.artwork }
     /// Decoded cover size in pixels: the drawn slot's longer side in points times
     /// its backing scale (`NowPlayingArtworkLoader.pixelSize(points:scale:)`).
-    /// 720 px until the UI sets it. Covers are never decoded larger; a change
-    /// re-decodes the shown cover, which stays visible until replaced.
+    /// 720 px until the UI sets it. Covers are never decoded larger, and a
+    /// small one is enlarged at most twice; a change re-decodes the shown
+    /// cover, which stays visible until replaced.
     var artworkPixelSize: Int {
         get { artworkLoader.pixelSize }
         set { artworkLoader.setPixelSize(newValue) }

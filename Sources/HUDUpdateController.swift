@@ -58,7 +58,7 @@ final class HUDUpdateController: NSObject, UNUserNotificationCenterDelegate {
                 controller.updater.automaticallyDownloadsUpdates = state.automaticallyInstalls
                 state.installationSupported = true
             } catch {
-                signedError = L10n.text("The signed updater could not start.", "签名更新服务无法启动。")
+                signedError = L10n.text("The signed updater could not start", "签名更新服务无法启动")
                 sparkle = nil
             }
         }
@@ -109,8 +109,8 @@ final class HUDUpdateController: NSObject, UNUserNotificationCenterDelegate {
         #endif
         if installHandler != nil {
             state.detail = enabled
-                ? L10n.text("Installs after 30 idle seconds, or when you quit.", "空闲 30 秒后或退出时自动安装。")
-                : L10n.text("Already downloaded; installs on next quit. Automatic restarts are off.", "更新已下载，将在下次退出时安装。已关闭自动重启。")
+                ? L10n.text("Installs after 30 idle seconds, or when you quit", "空闲 30 秒后或退出时自动安装")
+                : L10n.text("Already downloaded; installs on next quit. Automatic restarts are off", "更新已下载，将在下次退出时安装。已关闭自动重启")
         }
         publish(); environmentDidChange()
     }
@@ -194,9 +194,9 @@ final class HUDUpdateController: NSObject, UNUserNotificationCenterDelegate {
                     let content = UNMutableNotificationContent()
                     content.title = L10n.text("EndfieldHUD update available", "EndfieldHUD 发现新版本")
                     content.body = self.state.installationSupported && self.state.automaticallyInstalls
-                        ? L10n.text("\(version) is available. Signed updates install automatically when the HUD, Work Mode and audio controls are idle.",
-                                    "\(version) 已发布。签名更新将在浮层、工作模式和音量控制空闲时自动安装。")
-                        : L10n.text("\(version) is available. Open About to see the release.", "\(version) 已发布。打开关于页面查看。")
+                        ? L10n.text("\(version) is available. Signed updates install automatically when the HUD, Work Mode and audio controls are idle",
+                                    "\(version) 已发布。签名更新将在浮层、工作模式和音量控制空闲时自动安装")
+                        : L10n.text("\(version) is available. Open About to see the release", "\(version) 已发布。打开关于页面查看")
                     center.add(UNNotificationRequest(identifier: Self.notificationID, content: content, trigger: nil))
                 }
             }
@@ -224,11 +224,11 @@ final class HUDUpdateController: NSObject, UNUserNotificationCenterDelegate {
     private func publish() { onChange?(state) }
     private static func releaseErrorDescription(_ error: HUDGitHubReleaseError) -> String {
         switch error {
-        case .rateLimited: return L10n.text("GitHub is limiting requests. Try again later.", "GitHub 暂时限制请求，请稍后重试。")
-        case .noPublishedReleases: return L10n.text("No published release found on GitHub.", "GitHub 上暂无已发布版本。")
-        case .noMatchingReleases: return L10n.text("No release is available for this update channel.", "此更新通道暂无已发布版本。")
-        case .invalidCurrentVersion: return L10n.text("This build has no valid release version.", "此构建没有有效的版本号。")
-        default: return L10n.text("Could not check GitHub. Check your connection and retry.", "无法检查 GitHub。请检查网络后重试。")
+        case .rateLimited: return L10n.text("GitHub is limiting requests. Try again later", "GitHub 暂时限制请求，请稍后重试")
+        case .noPublishedReleases: return L10n.text("No published release found on GitHub", "GitHub 上暂无已发布版本")
+        case .noMatchingReleases: return L10n.text("No release is available for this update channel", "此更新通道暂无已发布版本")
+        case .invalidCurrentVersion: return L10n.text("This build has no valid release version", "此构建没有有效的版本号")
+        default: return L10n.text("Could not check GitHub. Check your connection and retry", "无法检查 GitHub。请检查网络后重试")
         }
     }
     static func canInstall(bundleURL: URL) -> Bool {
@@ -262,7 +262,7 @@ extension HUDUpdateController: SPUUpdaterDelegate, SPUStandardUserDriverDelegate
                  immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         installGate.reset(); installHandler = immediateInstallHandler
         state.phase = .ready
-        state.detail = L10n.text("Installs after 30 idle seconds, or when you quit.", "空闲 30 秒后或退出时自动安装。")
+        state.detail = L10n.text("Installs after 30 idle seconds, or when you quit", "空闲 30 秒后或退出时自动安装")
         publish()
         DispatchQueue.main.async { [weak self] in self?.environmentDidChange() }
         return true
@@ -279,7 +279,7 @@ extension HUDUpdateController: SPUUpdaterDelegate, SPUStandardUserDriverDelegate
         if nsError.domain == SUSparkleErrorDomain && nsError.code == SUError.noUpdateError.rawValue { return }
         onRestartCancelled?()
         installHandler = nil; installGate.reset(); signedVersion = nil
-        signedError = L10n.text("Signed update unavailable. Retry or view the GitHub release.", "签名更新暂不可用。请重试或查看 GitHub 版本。")
+        signedError = L10n.text("Signed update unavailable. Retry or view the GitHub release", "签名更新暂不可用。请重试或查看 GitHub 版本")
         state.phase = .failed; state.detail = signedError; publish()
     }
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
@@ -289,7 +289,7 @@ extension HUDUpdateController: SPUUpdaterDelegate, SPUStandardUserDriverDelegate
         if metadataIsCurrent && !metadataChecking { state.phase = .current; publish() }
         if state.phase == .checking && !metadataChecking { state.phase = .current; publish() }
         if state.phase == .available {
-            state.detail = L10n.text("Waiting for a compatible signed update package.", "正在等待兼容的签名更新包。")
+            state.detail = L10n.text("Waiting for a compatible signed update package", "正在等待兼容的签名更新包")
             publish()
         }
     }

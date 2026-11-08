@@ -13,6 +13,11 @@ final class HUDFacilityTagStack {
     static let width: CGFloat = 272
     static let tagHeight: CGFloat = 28
     static let gap: CGFloat = 6
+    /// A dismissal's tracks (the strike, the collapse and the column closing
+    /// up) and a new tag's slide-in, which the HUD's close keeps so a tag
+    /// already leaving or arriving finishes inside it instead of jumping.
+    static let leaveKeys: Set<String> = ["hud.transform.scale.x", "hud.opacity", "hud.bounds.size.height", "hud.position",
+                                         "hud.position.y", "hud.transform.translation.y", "hud.enter"]
 
     let layer = HUDLayer.plain("facility.tags")
     let env: HUDDesignEnvironment

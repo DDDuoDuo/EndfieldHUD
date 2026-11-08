@@ -258,8 +258,8 @@ final class StorageCanvas: HUDDesignCanvas {
 
     static func localizedError(_ value: String?) -> String {
         switch value {
-        case "The startup filesystem is unavailable.": return L10n.text("The startup filesystem is unavailable.", "启动文件系统不可用。")
-        case "Storage capacity is unavailable.", nil: return L10n.text("Storage capacity is unavailable.", "无法读取存储容量。")
+        case "The startup filesystem is unavailable": return L10n.text("The startup filesystem is unavailable", "启动文件系统不可用")
+        case "Storage capacity is unavailable", nil: return L10n.text("Storage capacity is unavailable", "无法读取存储容量")
         case let value?: return value
         }
     }

@@ -518,9 +518,14 @@ final class HUDArchiveTile: HUDControl {
         return stamp
     }
 
-    /// A media thumbnail filling the well in place of the doc glyph (nil restores the glyph).
-    func setPoster(_ image: CGImage?) {
+    /// A media thumbnail filling the well in place of the doc glyph (nil
+    /// restores the glyph). `animated`: one arriving on a shown tile
+    /// cross-fades with the glyph, in one fade of the well.
+    func setPoster(_ image: CGImage?, animated: Bool = false) {
         guard style == .standard, image != nil || poster != nil else { return }
+        if animated, image != nil, poster?.isHidden != false {
+            HUDMotion.crossFade(well, duration: HUDDuration.hover, env: env)
+        }
         HUDMotion.perform {
             if poster == nil, image != nil {
                 let layer = HUDLayer.plain("tile.poster")

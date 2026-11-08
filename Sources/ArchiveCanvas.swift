@@ -122,7 +122,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         controller.lockSelected()
         Self.owners[ObjectIdentifier(controller)] = ObjectIdentifier(self)
         controller.onChange = { [weak self] in self?.controllerChanged() }
-        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image) }
+        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image, animated: true) }
     }
 
     deinit {
@@ -146,6 +146,8 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         if renderedLanguage != nil, renderedLanguage == L10n.resolvedLanguage, needsRefresh || structure != renderedStructure { rerender() }
         let content = super.makeContent(for: module, style: style)
         bodyArea?.attach()
+        // The list's posters load from now, not from the end of the entrance.
+        loadVisibleThumbnails()
         return content
     }
 
@@ -175,15 +177,20 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         leaving = true
         finishOpening(announce: false)
         unlocking = nil
-        bodyArea?.suspend()
-        clearMedia()
+        // The text and the picture or frame shown leave drawn with the page;
+        // the picture is released shortly after, with its decoder already gone.
+        bodyArea?.suspend(keepingArtwork: true)
+        // A video or audio item comes back paused, as a new presentation did;
+        // a GIF keeps the playback it had.
+        if presentation?.reference.kind == .video { presentation?.pause() }
+        presentation?.setVisible(false, preserveArtworkOnHide: true)
         thumbnailGeneration += 1; metadataRequests.removeAll(); thumbnails.clear()
         panel?.cancel(nil); panel = nil; importTicket.cancel(); importTicket = ArchiveImportTicket()
         reportEdits()
         controller.flush()
         // Leaving the module relocks a classified document; its text leaves memory with the editor.
         if controller.selectedClassification != .unclassified, !controller.isSelectedLocked {
-            discardDocument()
+            discardDocument(); clearMedia()
             controller.lockSelected()
         }
     }
@@ -462,7 +469,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmRemoveCategory() {
         guard case .category(let id) = filter, let category = controller.categories.first(where: { $0.id == id }) else { return }
         confirm(HUDConfirmRequest(id: "removeCategory", title: L10n.text("Remove \(category.name)?", "删除\(category.name)？"),
-                                  message: L10n.text("Its documents move to Uncategorized.", "其中的文档将移至未分类。"),
+                                  message: L10n.text("Its documents move to Uncategorized", "其中的文档将移至未分类"),
                                   confirmTitle: L10n.text("Remove", "删除"), danger: true, icon: .trash)) { [weak self] in
             guard let self else { return }
             self.filter = .all
@@ -803,7 +810,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmDeclassify() {
         guard controller.selected != nil else { return }
         confirm(HUDConfirmRequest(id: "declassify", title: L10n.text("Remove classification?", "取消机密？"),
-                                  message: L10n.text("The password is deleted and the text stays readable.", "密码将被删除，文本保持可读。"),
+                                  message: L10n.text("The password is deleted and the text stays readable", "密码将被删除，文本保持可读"),
                                   confirmTitle: L10n.text("Declassify", "取消机密"), icon: .unlock)) { [weak self] in
             self?.controller.declassifySelected { [weak self] result in
                 switch result {
@@ -1073,7 +1080,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     private func openMediaMenu(_ anchor: HUDControl) {
         guard let entry = controller.selected, entry.media.count < 16 else {
-            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items.", "每个文档最多 16 项。"))
+            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items", "每个文档最多 16 项"))
             return
         }
         let choices = shelfChoices?() ?? []
@@ -1317,8 +1324,9 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     // MARK: Gallery thumbnails
 
+    /// From the module's showing until it leaves.
     private func loadVisibleThumbnails() {
-        guard isActive, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
+        guard !leaving, renderedLanguage != nil, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
         let visible = shownDocuments.filter { tiles[$0.id] != nil && !$0.isClassified && $0.mediaCount > 0 }
             .prefix(ArchiveGalleryThumbnails.wantedLimit)
         let ids = Set(visible.map(\.id))
@@ -1630,6 +1638,8 @@ final class ArchiveBodyArea: HUDControl {
     weak var formatBar: NotesFormatBar?
     private let forwarder = NotesPressForwarder()
     private var surface: HUDProjectedTextEditor?
+    /// A suspended editor whose last text stays drawn while its module leaves.
+    private var departed: HUDProjectedTextEditor?
     private let placeholder: HUDTextLayer
     var isFocused: Bool { textView.window != nil && textView.window?.firstResponder === textView }
     var isAttached: Bool { surface != nil }
@@ -1683,6 +1693,7 @@ final class ArchiveBodyArea: HUDControl {
         guard layer.bounds.size != size else { return }
         let attached = surface != nil, focused = isFocused
         surface?.dispose(); surface = nil
+        dropDeparted()
         HUDMotion.perform {
             layer.bounds = CGRect(origin: .zero, size: size)
             placeholder.lineFrame = CGRect(x: textRect.minX, y: textRect.minY, width: textRect.width, height: 14 * 1.3)
@@ -1695,6 +1706,7 @@ final class ArchiveBodyArea: HUDControl {
     /// Projects the editor onto the plane; nil hits while the module is not interactive.
     func attach() {
         guard surface == nil, let canvas, let host = canvas.context.host else { return }
+        dropDeparted()
         let editor = HUDProjectedTextEditor(textView: textView, rect: textRect, host: host, parent: layer)
         editor.project = { [weak self] rect in
             guard let self, let canvas = self.canvas else { return rect }
@@ -1711,7 +1723,22 @@ final class ArchiveBodyArea: HUDControl {
         editor.captureVisibleArtwork()
     }
 
-    func suspend() { blur(); surface?.dispose(); surface = nil }
+    /// `keepingArtwork` (the module leaving): the text stays drawn to leave
+    /// with the page until the next attach, suspend or dispose.
+    func suspend(keepingArtwork: Bool = false) {
+        blur()
+        dropDeparted()
+        surface?.dispose(keepingArtwork: keepingArtwork)
+        if keepingArtwork { departed = surface }
+        surface = nil
+    }
+
+    /// Removes text kept drawn by `suspend(keepingArtwork:)`.
+    func dropDeparted() {
+        guard let editor = departed else { return }
+        departed = nil
+        HUDMotion.perform { editor.artwork.removeFromSuperlayer() }
+    }
 
     func dispose() {
         suspend()
