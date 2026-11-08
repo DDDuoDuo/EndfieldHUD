@@ -173,11 +173,22 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
     override func didDeactivate() {
         cancelReorder()
         saveNote()
-        // The text leaves drawn with the page.
-        noteArea?.suspend(keepingArtwork: true)
+        suspendNoteForLeave()
     }
 
-    override func willLeave() { saveNote() }
+    /// A switch to Notes overtaken before it activated never deactivates it,
+    /// so leaving also lets go of the editor attached for its entrance.
+    override func willLeave() {
+        saveNote()
+        suspendNoteForLeave()
+    }
+
+    /// The text leaves drawn with the page; an editor already suspended keeps
+    /// the text it left drawn.
+    private func suspendNoteForLeave() {
+        guard let area = noteArea, area.isAttached else { return }
+        area.suspend(keepingArtwork: true)
+    }
 
     override func recordingModeChanged() {
         endEditing(commit: true)
