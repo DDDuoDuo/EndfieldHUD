@@ -608,9 +608,7 @@ void SettingsCanvas::dragModule(const std::string& module, d::DragGrip::Phase ph
     case d::DragGrip::Phase::moved: {
         if (!moduleDrag_ || moduleDrag_->module != module) return;
         // Near an edge the list follows the pointer (on pointer events only).
-        const double shown = y - scroll->offset(), edge = 36, height = scroll->layer().bounds().height;
-        if (shown < edge) scroll->scroll(-std::min(12., edge - shown));
-        else if (shown > height - edge) scroll->scroll(std::min(12., shown - height + edge));
+        if (const double step = d::DragGrip::edgeScrollStep(y - scroll->offset(), scroll->layer().bounds().height); step != 0) scroll->scroll(step);
         const double top = std::min(double(order.size() - 1) * modulePitch, std::max(0., y - moduleDrag_->grab));
         plate.setValue(d::Channel::translateY, top - row.top);
         const int slot = std::min(int(order.size()) - 1, std::max(0, int(std::round(top / modulePitch))));

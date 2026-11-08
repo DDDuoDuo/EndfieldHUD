@@ -422,6 +422,10 @@ void gripRules() {
         && !d::DragGrip::cursor(false, grips, std::nullopt, w.root), "No cursor over a hidden grip, elsewhere or without a pointer");
     check(d::DragGrip::cursor(true, grips, std::nullopt, w.root) == d::Cursor::closedHand && d::DragGrip::cursor(true, {}, Point{300, 400}, w.root) == d::Cursor::closedHand,
         "The closed hand anywhere while a row is lifted");
+    check(d::DragGrip::edgeScrollStep(100, 300) == 0 && d::DragGrip::edgeScrollStep(30, 300) == -6 && d::DragGrip::edgeScrollStep(10, 300) == -12
+        && d::DragGrip::edgeScrollStep(-40, 300) == -12, "Within 36 points of the top: up to 12 points toward it");
+    check(d::DragGrip::edgeScrollStep(270, 300) == 6 && d::DragGrip::edgeScrollStep(299, 300) == 12 && d::DragGrip::edgeScrollStep(400, 300) == 12
+        && d::DragGrip::edgeScrollStep(264, 300) == 0, "Within 36 points of the bottom or past it: up to 12 points toward it");
 }
 
 // HUDListReorder (Mac 3c7088a): the lifted row rises and follows the pointer,

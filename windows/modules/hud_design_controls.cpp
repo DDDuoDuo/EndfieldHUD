@@ -676,6 +676,12 @@ std::optional<Cursor> DragGrip::cursor(bool lifted, std::span<DragGrip* const> g
     const bool over = std::any_of(grips.begin(), grips.end(), [&](const DragGrip* grip) { return grip && grip->underPointer(*rootPoint, root); });
     return over ? std::optional<Cursor>(Cursor::openHand) : std::nullopt;
 }
+double DragGrip::edgeScrollStep(double offset, double length) noexcept {
+    constexpr double band = 36, step = 12;
+    if (offset < band) return -std::min(step, band - offset);
+    if (offset > length - band) return std::min(step, offset - length + band);
+    return 0;
+}
 
 // ---------------------------------------------------------------------------
 // HUDListReorder (HUDDesignButtons.swift, Mac 3c7088a)
