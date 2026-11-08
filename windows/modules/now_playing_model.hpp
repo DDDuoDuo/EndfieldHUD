@@ -1,4 +1,5 @@
 #pragma once
+#include "core/data/file_shelf_store.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -80,8 +81,21 @@ struct NowPlayingSession {
     std::uint64_t token{}; // unique within one visible service activation
     std::string appUserModelID,displayName;
     NowPlayingSessionOrigin origin{NowPlayingSessionOrigin::mediaSession};
+    // For an explicit AppUserModelID ("Chrome", "MSEdge"): the executable its
+    // Start shortcut launches and that file's identity, once resolved
+    // (NativeNowPlayingService). Empty otherwise. A per-user path names the
+    // user: it never reaches a description, report or event.
+    std::string executablePath;
+    std::optional<ehud::data::ShelfFileIdentity>executableIdentity;
     bool operator==(const NowPlayingSession&)const=default;
 };
+// GSMTC Win32 identity ("Player.exe", optionally with a directory) rather than
+// a packaged/explicit AppUserModelID.
+bool nowPlayingWin32Identity(std::string_view)noexcept;
+// An explicit AppUserModelID a desktop app sets for itself ("Chrome",
+// "MSEdge", Firefox's hash): neither a Win32 identity nor a packaged
+// "Family!App". Its Start shortcut tells which executable it launches.
+bool nowPlayingExplicitIdentity(std::string_view)noexcept;
 // What the owner publishes for the canvas (the Mac canvas reads
 // controller.snapshot, controller.lyrics, artworkImage and the volume
 // routes): one immutable value per content event.

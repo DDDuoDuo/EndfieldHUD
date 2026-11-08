@@ -116,6 +116,15 @@ NowPlayingControls nowPlayingControls(const NowPlayingViewInput&input)noexcept{
     c.previous=transport&&k.previous;c.playPause=transport&&(k.toggle||(playing?k.pause:k.play));c.next=transport&&k.next;c.volume=c.lyrics=track;
     c.seek=track&&input.track->supportsSeeking&&input.track->duration&&input.track->position&&!input.failed&&k.seek;return c;
 }
+bool nowPlayingWin32Identity(std::string_view id)noexcept{
+    const auto lower=[](char c){return c>='A'&&c<='Z'?static_cast<char>(c-'A'+'a'):c;};
+    const auto slash=id.find_last_of("\\/");const auto name=slash==std::string_view::npos?id:id.substr(slash+1);
+    if(name.size()<=4||id.find('!')!=std::string_view::npos)return false;
+    const auto suffix=id.substr(id.size()-4);return suffix[0]=='.'&&lower(suffix[1])=='e'&&lower(suffix[2])=='x'&&lower(suffix[3])=='e';
+}
+bool nowPlayingExplicitIdentity(std::string_view id)noexcept{
+    return !id.empty()&&id.size()<=4096&&id.find('!')==std::string_view::npos&&!nowPlayingWin32Identity(id);
+}
 unsigned nowPlayingCoverPixelSize(double points,double scale)noexcept{
     const double pixels=points*scale;if(!std::isfinite(pixels)||pixels<=0)return nowPlayingDefaultCoverPixels;
     return static_cast<unsigned>(std::clamp(std::ceil(std::min(double(nowPlayingMaximumCoverPixels),pixels)-1e-6),double(nowPlayingMinimumCoverPixels),double(nowPlayingMaximumCoverPixels)));

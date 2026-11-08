@@ -33,9 +33,12 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     struct Command {modules::NowPlayingCommand value;std::uint64_t session{},metadata{};modules::NowPlayingTrack track;NowPlayingCommandReceipt receipt;};
     app::UtilityExecutor&executor;Factory factory;std::function<void()>notify;std::function<double()>now;double timeout;std::optional<double>deadline;const std::thread::id owner=std::this_thread::get_id();
     std::shared_ptr<NowPlayingProvider>provider;app::UtilityExecutor::Route route{};NowPlayingServiceSnapshot published;
+    // Launch targets of explicit AppUserModelIDs (most recent last).
+    NowPlayingLaunchResolver resolver;app::UtilityExecutor::Route resolveRoute{};
+    struct Launch{std::string id;std::optional<NowPlayingLaunchTarget>target;};std::vector<Launch>launches;std::optional<std::string>resolving;
     std::atomic<std::uint64_t>generation{1},events{};std::mutex mutex;std::optional<Message>message;bool notified{},changed{};
     bool alive{true},ready{},inFlight{},pendingRead{},pendingResync{};std::optional<Command>pendingCommand;std::optional<NowPlayingCommandReceipt>executingCommand;std::uint64_t serial{},commandToken{};Phase phase{Phase::idle};
-    Impl(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>clock,double bound):executor(e),factory(std::move(f)),notify(std::move(n)),now(std::move(clock)),timeout(bound){need(bool(factory)&&bool(notify)&&bool(now)&&std::isfinite(timeout)&&timeout>0&&timeout<=30,"Now Playing needs provider, owner clock/wake and bounded timeout");}
+    Impl(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>clock,double bound,NowPlayingLaunchResolver resolve):executor(e),factory(std::move(f)),notify(std::move(n)),now(std::move(clock)),timeout(bound),resolver(std::move(resolve)){need(bool(factory)&&bool(notify)&&bool(now)&&std::isfinite(timeout)&&timeout>0&&timeout<=30,"Now Playing needs provider, owner clock/wake and bounded timeout");}
     void check()const{if(owner!=std::this_thread::get_id())throw std::logic_error("Now Playing service belongs to its owner thread");}
     void wake(std::uint64_t expected,std::optional<Message>next={}){
         if(generation.load(std::memory_order_acquire)!=expected)return;bool post{};{
@@ -44,12 +47,13 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
         }if(post)try{notify();}catch(...){std::lock_guard lock(mutex);notified=false;}
     }
     void stop(){
-        check();generation.fetch_add(1,std::memory_order_acq_rel);auto old=std::move(provider);if(route){executor.invalidate(route);route=0;}
+        check();generation.fetch_add(1,std::memory_order_acq_rel);auto old=std::move(provider);if(route){executor.invalidate(route);route=0;}if(resolveRoute){executor.invalidate(resolveRoute);resolveRoute=0;}resolving.reset();
         ready=inFlight=pendingRead=pendingResync=false;deadline.reset();pendingCommand.reset();executingCommand.reset();phase=Phase::idle;{std::lock_guard lock(mutex);message.reset();changed=notified=false;}
         const auto revision=published.revision+1;published={};published.revision=revision;if(old)old->stop();
     }
     void activate(){
         check();if(!alive)return;const auto expected=generation.load(std::memory_order_acquire);published.active=true;published.busy=true;published.fresh=false;++published.revision;
+        std::erase_if(launches,[](const Launch&l){return !l.target;});
         try{auto next=factory();need(bool(next),"Now Playing provider factory returned no provider");if(!alive||!published.active||generation.load()!=expected){next->stop();return;}provider=std::move(next);route=executor.makeRoute();pendingRead=true;schedule();}
         catch(...){if(alive&&generation.load()==expected){published.busy=false;published.failure=NowPlayingServiceFailure::unavailable;++published.revision;}}
     }
@@ -77,7 +81,7 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
     void accept(NowPlayingReadResult result){
         if(result.failure!=NowPlayingServiceFailure::none){published.failure=result.failure;published.nativeError=result.nativeError;return;}
         auto&value=result.value;need(value.sessions.size()<=128,"Now Playing session list exceeds its bounded snapshot");
-        for(std::size_t n=0;n<value.sessions.size();++n){const auto&s=value.sessions[n];need(s.token&&s.appUserModelID.size()<=4096&&s.displayName.size()<=4096&&ehud::data::Json::validUtf8(s.appUserModelID)&&ehud::data::Json::validUtf8(s.displayName),"Invalid Now Playing session identity");for(std::size_t prior=0;prior<n;++prior)need(value.sessions[prior].token!=s.token,"Duplicate Now Playing session token");}
+        for(std::size_t n=0;n<value.sessions.size();++n){const auto&s=value.sessions[n];need(s.token&&s.appUserModelID.size()<=4096&&s.displayName.size()<=4096&&ehud::data::Json::validUtf8(s.appUserModelID)&&ehud::data::Json::validUtf8(s.displayName)&&s.executablePath.size()<=32767*3&&ehud::data::Json::validUtf8(s.executablePath)&&s.executablePath.find('\0')==std::string::npos&&(!s.executableIdentity||!s.executablePath.empty()),"Invalid Now Playing session identity");for(std::size_t prior=0;prior<n;++prior)need(value.sessions[prior].token!=s.token,"Duplicate Now Playing session token");}
         if(value.session){need(value.session->token!=0,"Now Playing session requires native identity");need(std::find(value.sessions.begin(),value.sessions.end(),*value.session)!=value.sessions.end(),"Selected Now Playing session must be in the same snapshot");}
         else need(!value.track&&!value.artwork&&!value.progress&&!value.artworkURL,"Media needs its selected session");
         if(value.artwork)need(value.artwork->size()<=modules::nowPlayingMaximumArtworkBytes,"Now Playing artwork exceeds source byte limit");
@@ -85,6 +89,43 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
         if(value.artworkURL)need(value.artworkURL->size()<=2048&&ehud::data::Json::validUtf8(*value.artworkURL),"Invalid player cover address");
         if(value.track)value.track=modules::NowPlayingTrack::bounded(std::move(*value.track));
         published.media=std::move(value);published.failure=NowPlayingServiceFailure::none;published.nativeError=0;published.fresh=true;++published.mediaReadRevision;
+        launched();resolve();
+    }
+    // Fills each explicit media session's launch target from the cache.
+    bool launched(){
+        bool changed{};
+        const auto fill=[&](modules::NowPlayingSession&s){
+            if(s.origin!=modules::NowPlayingSessionOrigin::mediaSession||!s.executablePath.empty()||!modules::nowPlayingExplicitIdentity(s.appUserModelID))return;
+            const auto found=std::find_if(launches.begin(),launches.end(),[&](const Launch&l){return l.id==s.appUserModelID;});
+            if(found==launches.end()||!found->target)return;s.executablePath=found->target->path;s.executableIdentity=found->target->identity;changed=true;
+        };
+        for(auto&s:published.media.sessions)fill(s);if(published.media.session)fill(*published.media.session);
+        return changed;
+    }
+    // Starts the one resolution job for the first explicit media session
+    // whose launch target is not known yet.
+    void resolve(){
+        if(!resolver||resolving||!alive||!published.active)return;
+        std::optional<std::string>next;
+        for(const auto&s:published.media.sessions)if(s.origin==modules::NowPlayingSessionOrigin::mediaSession&&s.executablePath.empty()&&modules::nowPlayingExplicitIdentity(s.appUserModelID)
+            &&std::none_of(launches.begin(),launches.end(),[&](const Launch&l){return l.id==s.appUserModelID;})){next=s.appUserModelID;break;}
+        if(!next)return;
+        if(!resolveRoute)resolveRoute=executor.makeRoute();
+        auto result=std::make_shared<std::optional<NowPlayingLaunchTarget>>();const auto weak=weak_from_this();const auto expected=generation.load(std::memory_order_acquire);
+        const bool accepted=executor.submit(resolveRoute,[result,resolve=resolver,id=*next]{*result=resolve(id);},
+            [weak,expected,result,id=*next](std::exception_ptr error){
+                const auto self=weak.lock();if(!self||!self->alive)return;
+                if(self->resolving&&*self->resolving==id)self->resolving.reset();
+                std::optional<NowPlayingLaunchTarget>target;
+                if(!error&&*result&&!(*result)->path.empty()&&(*result)->path.size()<=32767*3&&ehud::data::Json::validUtf8((*result)->path)&&(*result)->path.find('\0')==std::string::npos)target=std::move(*result);
+                std::erase_if(self->launches,[&](const Launch&l){return l.id==id;});
+                if(self->launches.size()>=nowPlayingLaunchTargetCache)self->launches.erase(self->launches.begin());
+                self->launches.push_back({id,std::move(target)});
+                if(self->generation.load(std::memory_order_acquire)!=expected||!self->published.active)return;
+                if(self->launched())++self->published.revision;
+                self->resolve();
+            });
+        if(accepted)resolving=*next;
     }
     void completed(const NowPlayingCommandReceipt&request,NowPlayingCommandResult result){
         const auto time=now();need(std::isfinite(time),"Now Playing completion clock must be finite");
@@ -107,7 +148,7 @@ struct NativeNowPlayingService::Impl:std::enable_shared_from_this<Impl> {
         if(updated)++published.revision;schedule();return updated;
     }
 };
-NativeNowPlayingService::NativeNowPlayingService(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>now,double timeout):impl_(std::make_shared<Impl>(e,std::move(f),std::move(n),std::move(now),timeout)){}
+NativeNowPlayingService::NativeNowPlayingService(app::UtilityExecutor&e,Factory f,std::function<void()>n,std::function<double()>now,double timeout,NowPlayingLaunchResolver resolve):impl_(std::make_shared<Impl>(e,std::move(f),std::move(n),std::move(now),timeout,std::move(resolve))){}
 NativeNowPlayingService::~NativeNowPlayingService(){auto i=impl_;i->check();i->alive=false;i->stop();}
 void NativeNowPlayingService::setActive(bool value){auto i=impl_;i->check();if(i->published.active==value)return;if(value)i->activate();else i->stop();}
 void NativeNowPlayingService::refresh(){auto i=impl_;i->check();if(!i->published.active)return;if(!i->provider){i->stop();i->activate();return;}i->pendingRead=true;i->schedule();}
@@ -131,6 +172,10 @@ const NowPlayingServiceSnapshot&NativeNowPlayingService::snapshot()const{impl_->
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <propsys.h>
+#include <wrl/client.h>
+#include "native/apps_folder.hpp"
+#include "native/file_shelf_files.hpp"
 
 namespace endfield::native {
 namespace {
@@ -273,6 +318,34 @@ public:
     void perform(std::uint64_t token,std::uint64_t revision,modules::NowPlayingCommand command,Ready completion)override{Apartment apartment;commandWindows(state_,token,revision,command,std::move(completion));}
     void stop()noexcept override{state_->stop();}
 };
+}
+std::optional<NowPlayingLaunchTarget>nowPlayingAppsFolderExecutable(const std::string&id){
+    try{
+        if(!modules::nowPlayingExplicitIdentity(id)||!ehud::data::Json::validUtf8(id))return {};
+        const int count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,id.data(),static_cast<int>(id.size()),nullptr,0);if(count<=0)return {};
+        std::wstring aumid(static_cast<std::size_t>(count),L'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,id.data(),static_cast<int>(id.size()),aumid.data(),count)!=count)return {};
+        struct Com{HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);~Com(){if(SUCCEEDED(hr))CoUninitialize();}}com;if(FAILED(com.hr)&&com.hr!=RPC_E_CHANGED_MODE)return {};
+        Microsoft::WRL::ComPtr<IShellItem2>item;if(FAILED(openAppsFolderItem(aumid,item.GetAddressOf()))||!item)return {};
+        // System.Link.TargetParsingPath (propkey.h PKEY_Link_TargetParsingPath).
+        constexpr PROPERTYKEY targetParsingPath{{0xB9B4B3FC,0x2B51,0x4A42,{0xB5,0xD8,0x32,0x41,0x46,0xAF,0xCF,0x25}},2};
+        LPWSTR raw{};if(FAILED(item->GetString(targetParsingPath,&raw))||!raw){CoTaskMemFree(raw);return {};}
+        std::wstring path(raw);CoTaskMemFree(raw);if(path.empty()||path.size()>32767)return {};
+        // "{known folder GUID}\rest" (the live probe saw plain paths only).
+        if(path.front()==L'{'){
+            if(path.size()<39||path[37]!=L'}'||path[38]!=L'\\')return {};GUID folder{};if(FAILED(CLSIDFromString(path.substr(0,38).c_str(),&folder)))return {};
+            PWSTR base{};const auto hr=SHGetKnownFolderPath(folder,KF_FLAG_DEFAULT,nullptr,&base);std::wstring root=SUCCEEDED(hr)&&base?std::wstring(base):std::wstring();CoTaskMemFree(base);if(root.empty())return {};
+            path=root+path.substr(38);
+        }
+        const bool drive=path.size()>3&&((path[0]>=L'A'&&path[0]<=L'Z')||(path[0]>=L'a'&&path[0]<=L'z'))&&path[1]==L':'&&path[2]==L'\\';
+        const bool share=path.size()>2&&path[0]==L'\\'&&path[1]==L'\\'&&path[2]!=L'?'&&path[2]!=L'.';
+        const auto lower=[](wchar_t c){return c>=L'A'&&c<=L'Z'?static_cast<wchar_t>(c-L'A'+L'a'):c;};
+        const bool exe=path.size()>4&&path[path.size()-4]==L'.'&&lower(path[path.size()-3])==L'e'&&lower(path[path.size()-2])==L'x'&&lower(path[path.size()-1])==L'e';
+        if(!(drive||share)||!exe)return {};
+        const int bytes=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(bytes<=0)return {};
+        std::string text(static_cast<std::size_t>(bytes),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),text.data(),bytes,nullptr,nullptr)!=bytes)return {};
+        auto file=nativeRegularFile(text);if(!file)return {};
+        return NowPlayingLaunchTarget{std::move(file->path),file->identity};
+    }catch(...){return {};}
 }
 NativeNowPlayingService::Factory windowsNowPlayingProvider(std::function<double()>now){need(bool(now),"GSMTC needs the host monotonic clock");return [now=std::move(now)]{return std::make_shared<WindowsMediaProvider>(now);};}
 }

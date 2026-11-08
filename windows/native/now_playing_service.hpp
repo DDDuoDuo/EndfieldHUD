@@ -104,13 +104,25 @@ struct NowPlayingServiceSnapshot {
     // A seek acknowledgement must come after completion.mediaReadRevision.
     std::uint64_t mediaReadRevision{};
 };
+// The executable an explicit AppUserModelID's Start shortcut launches, with
+// its file identity (nowPlayingAppsFolderExecutable).
+struct NowPlayingLaunchTarget {std::string path;ehud::data::ShelfFileIdentity identity;};
+using NowPlayingLaunchResolver=std::function<std::optional<NowPlayingLaunchTarget>(const std::string&appUserModelID)>;
+// Launch targets kept across activations; a failure is kept until the next
+// activation (a Start shortcut installed meanwhile is then found).
+inline constexpr std::size_t nowPlayingLaunchTargetCache=16;
 class NativeNowPlayingService final {
 public:
     using Factory=std::function<std::shared_ptr<NowPlayingProvider>()>;
     // notify only posts one owner message; it must not directly drain or run
     // UI from a provider/worker callback. executor outlives this owner.
+    // resolve (optional) runs as its own utility job, one at a time, after a
+    // read published a media session with an explicit AppUserModelID
+    // (nowPlayingExplicitIdentity) not yet resolved; the snapshot is then
+    // republished with the session's executablePath (Now Playing's volume
+    // route, source d09780d). Never inside a read or its deadline.
     NativeNowPlayingService(app::UtilityExecutor&,Factory,std::function<void()>notify,
-        std::function<double()>now,double requestTimeout=3);
+        std::function<double()>now,double requestTimeout=3,NowPlayingLaunchResolver resolve={});
     ~NativeNowPlayingService();
     NativeNowPlayingService(const NativeNowPlayingService&)=delete;
     NativeNowPlayingService&operator=(const NativeNowPlayingService&)=delete;
@@ -134,6 +146,12 @@ public:
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 #ifdef _WIN32
+// The AppsFolder (Start) item of an explicit AppUserModelID and its
+// System.Link.TargetParsingPath: an absolute path to an existing regular
+// .exe file (a known-folder GUID prefix expanded, else refused), with the
+// file's identity. None for an unknown AppUserModelID (KF_FLAG_DONT_VERIFY
+// returns an item for any name). Utility worker only.
+std::optional<NowPlayingLaunchTarget>nowPlayingAppsFolderExecutable(const std::string&appUserModelID);
 // Factory construction is IO-free. Actual RequestAsync begins only in start.
 // now is the host's thread-safe monotonic clock; the provider creates no clock.
 NativeNowPlayingService::Factory windowsNowPlayingProvider(std::function<double()>now);

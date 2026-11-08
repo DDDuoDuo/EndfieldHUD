@@ -246,7 +246,11 @@ public:
         }
         // Each activation (selection of a visible Now Playing) creates one provider.
         provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
-        service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock);
+        // An explicit AppUserModelID's player executable comes from its Start
+        // shortcut (production only; fixtures name no installed browser).
+        gpu::NowPlayingLaunchResolver launch;
+        if (mode_ == ApplicationAreaMode::production) launch = gpu::nowPlayingAppsFolderExecutable;
+        service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock, 3., std::move(launch));
 
         tools::NowPlayingSessionOptions options;
         // Covers are decoded (WIC Fant, scaled down only) to the size the

@@ -16,9 +16,6 @@ bool caseless(std::string_view a,std::string_view b)noexcept{
 std::string_view fileName(std::string_view path)noexcept{const auto slash=path.find_last_of("\\/");return slash==std::string_view::npos?path:path.substr(slash+1);}
 bool hasDirectory(std::string_view value)noexcept{return value.find_first_of("\\/")!=std::string_view::npos;}
 }
-bool nowPlayingWin32Identity(std::string_view id)noexcept{
-    return id.size()>4&&caseless(id.substr(id.size()-4),".exe")&&id.find('!')==std::string_view::npos&&!fileName(id).empty()&&fileName(id).size()>4;
-}
 namespace {
 // One file: the same file identity when both sides carry one, else (replays
 // and fixtures, which carry none) the same path.

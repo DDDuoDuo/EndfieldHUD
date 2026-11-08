@@ -471,6 +471,15 @@ void volume(){
     check(worker.owner->volumeRoute()=="10:1"&&worker.bridge.identityCalls==0,"Captured process identities resolve the packaged player without a process query");
     Fixture none(false,true);none.bridge.routes={{"5:1",5,"C:\\x\\chrome.exe",true,S::direct,{}}};none.ready(media("Chrome"));
     check(none.owner->volumeRoute().empty()&&!none.input().volumeAvailable&&m::nowPlayingControls(none.input()).volume,"Unresolved player keeps the source unavailable submenu");
+    // Source d09780d: Chrome resolved to its executable plays through its
+    // audio-service helper (the same chrome.exe), not its silent main process.
+    const std::string chrome="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    Fixture browser(false,true);browser.bridge.routes={{"100:1",100,chrome,true,S::direct,{}},{"101:1",101,chrome,true,S::direct,{}}};
+    for(auto&r:browser.bridge.routes)r.appUserModelID="";browser.bridge.routes[0].rendering=false;browser.bridge.routes[1].rendering=true;
+    auto resolved=media("Chrome");resolved.value.sessions[0].executablePath=chrome;resolved.value.session=resolved.value.sessions[0];browser.ready(resolved);
+    check(browser.owner->volumeRoute()=="101:1"&&browser.input().volumeAvailable&&browser.bridge.identityCalls==0,"A resolved Chrome adjusts its playing helper");
+    browser.bridge.routes[1].rendering=false;++browser.bridge.revision;browser.owner->audioChanged(browser.now);
+    check(browser.owner->volumeRoute().empty()&&!browser.input().volumeAvailable,"Two silent Chrome processes are never guessed between");
     Fixture refused(false,true);refused.bridge.routes={{"1:1",1,"Spotify.exe",true,S::direct,{}}};refused.bridge.refuse=true;refused.ready(media("Spotify.exe"));
     check(!refused.owner->dispatch({m::NowPlayingIntentKind::volume,1,.3},refused.now)&&refused.input().volume==1.,"A refused write leaves the actual value");
 }

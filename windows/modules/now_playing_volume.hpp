@@ -1,5 +1,6 @@
 #pragma once
 #include "core/data/file_shelf_store.hpp"
+#include "modules/now_playing_model.hpp"
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -68,9 +69,6 @@ struct NowPlayingAppVolume {
     std::function<bool(const std::string&route,double gain)>setGain;
     std::function<bool(const std::string&route)>stop;
 };
-// GSMTC Win32 identity ("Player.exe", optionally with a directory) rather than
-// a packaged/explicit AppUserModelID.
-bool nowPlayingWin32Identity(std::string_view)noexcept;
 using NowPlayingProcessIdentity=std::function<std::optional<std::string>(const NowPlayingAudioRoute&)>;
 // Whether a route belongs to the player (source d09780d: the player's own
 // process or a helper inside its app):

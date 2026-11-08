@@ -196,7 +196,11 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    if(remote&&!(sharpen&&cover.broken))artwork=std::move(remote);
   }else stopCover();
   sourcesDirty=false;input.lyrics=sources->lyrics();
-  const auto rendering=applyVolume(input,modules::NowPlayingAudioSource{application,{},{}});
+  // An explicit AppUserModelID ("Chrome") carries the executable its Start
+  // shortcut launches once the service resolved it.
+  modules::NowPlayingAudioSource player{application,{},{}};
+  if(s.media.session){player.executablePath=s.media.session->executablePath;player.executableIdentity=s.media.session->executableIdentity;}
+  const auto rendering=applyVolume(input,player);
   const bool playerWindow=s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow;
   // The time comes from the player's own window: a window-title session, or a
   // media session of the same player whose timeline is unusable (NetEase's

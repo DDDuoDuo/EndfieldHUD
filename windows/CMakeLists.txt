@@ -1249,7 +1249,8 @@ add_library(hud_now_playing_service native/now_playing_service.cpp)
 target_include_directories(hud_now_playing_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_now_playing_service PUBLIC hud_now_playing hud_utility PRIVATE hud_data)
 if(WIN32)
-  target_link_libraries(hud_now_playing_service PRIVATE windowsapp runtimeobject ole32)
+  # Launch targets: the AppsFolder item and the executable's file lease.
+  target_link_libraries(hud_now_playing_service PRIVATE windowsapp runtimeobject ole32 shell32 hud_shelf_files)
 endif()
 endif()
 
