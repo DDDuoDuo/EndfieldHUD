@@ -610,6 +610,41 @@ void contracts() {
     check(committed().string("applicationIcon") == "babel", "An app icon tile picks the icon");
     w.hide(M::display);
     check(w[M::display].section() == "main", "Other sub-pages return to the main page when Display is left");
+    // Display > Open on (openModuleRow): Last opened, then every module the
+    // navigation opens by its title (no Add App); a pick saves
+    // hudOverlayLayout.openModule and the current choice writes nothing.
+    w.show(M::display);
+    check(accessibilityValue(M::display, "openModule") == "Last opened", "Open on reads Last opened by default");
+    w.activate(M::display, "openModule");
+    {
+        std::vector<d::AccessibilityItem> items; w[M::display].accessibilityItems(items);
+        std::vector<std::string> ids, labels;
+        for (const auto& i : items) if (i.id.starts_with("openModule:")) { ids.push_back(i.id.substr(11)); labels.push_back(i.label); }
+        std::vector<std::string> expected{"last"};
+        for (const auto module : ehud::data::ModuleLayout::openable) expected.emplace_back(module);
+        check(ids == expected && labels.front() == "Last opened" && labels[1] == "System" && labels[7] == "Notes", "Open on lists Last opened, then every openable module by its title");
+        check(std::find(ids.begin(), ids.end(), "addApp") == ids.end(), "Add App is never a choice");
+        const auto last = std::find_if(items.begin(), items.end(), [](const auto& i) { return i.id == "openModule:last"; });
+        check(last != items.end() && last->on, "Last opened is selected while nothing is chosen");
+    }
+    {
+        const auto saves = w.saved.size();
+        check(w[M::display].performAccessibilityAction("openModule:last", w.now) && w.saved.size() == saves && !committed().fields.contains("hudOverlayLayout"),
+            "Choosing the current Last opened writes nothing");
+    }
+    w.activate(M::display, "openModule");
+    check(w[M::display].performAccessibilityAction("openModule:calendar", w.now) && committed().overlayLayout().openModule == std::optional<std::string>("calendar")
+        && committed().fields["hudOverlayLayout"]["openModule"].string() == "calendar" && accessibilityValue(M::display, "openModule") == "Calendar",
+        "A module pick saves hudOverlayLayout.openModule and the field shows its title");
+    {
+        const auto saves = w.saved.size();
+        w.activate(M::display, "openModule");
+        check(w[M::display].performAccessibilityAction("openModule:calendar", w.now) && w.saved.size() == saves, "Choosing the current module writes nothing");
+    }
+    w.activate(M::display, "openModule");
+    check(w[M::display].performAccessibilityAction("openModule:last", w.now) && !committed().overlayLayout().openModule && !committed().fields.contains("hudOverlayLayout"),
+        "Last opened clears the choice (the layout at its defaults is removed)");
+    w.hide(M::display);
     // Display's Restore (restoreRow(.display), the last Display row): enabled
     // while Display differs from its defaults; it drops a pending scale
     // preview (no countdown, the default written at once), clears a staged

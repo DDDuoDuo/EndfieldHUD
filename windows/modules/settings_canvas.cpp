@@ -694,6 +694,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     binders_.push_back([this, &style] { style.setValue(clockStyleTitle(stringOr(config(), "clockStyle"))); });
     rows.push_back(&row("clockStyle", text("Clock style", "时钟样式"), style, page));
     rows.push_back(&logoRow(page));
+    rows.push_back(&openModuleRow(page));
     rows.push_back(&modulesRow(page));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
@@ -720,6 +721,37 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
     page.restoreOffset(scroll);
     header().configure({"DISPLAY"}, "SYS-02", title("Display", "显示"), d::format::pad2(std::int64_t(rows.size())), false);
+}
+// openModuleRow (:631-640): Display > Open on, the module a new HUD opens on
+// (hudOverlayLayout.openModule; nil is Last opened).
+d::RowPlate& SettingsCanvas::openModuleRow(d::Page& page) {
+    auto& opening = dropdown(page, "openModule", text("Open on", "打开时显示"), openModuleTitle(config().overlayLayout().openModule), std::nullopt,
+        [this](const d::Dropdown& anchor) { openModuleMenu(anchor); });
+    binders_.push_back([this, &opening] { opening.setValue(openModuleTitle(config().overlayLayout().openModule)); });
+    return row("openModule", text("Open on", "打开时显示"), opening, page);
+}
+std::string SettingsCanvas::openModuleTitle(const std::optional<std::string>& module) const {
+    if (module) if (auto title = moduleTitle(*module, env().language)) return *title;
+    return text("Last opened", "上次打开的模块");
+}
+// openModuleMenu (:646-657): Last opened, then every module the navigation
+// can open (not Add App); choosing the current value writes nothing.
+void SettingsCanvas::openModuleMenu(const d::Control& anchor) {
+    const auto chosen = config().overlayLayout().openModule;
+    std::vector<d::Menu::Item> items;
+    auto last = menuItem("last", openModuleTitle(std::nullopt)); last.selected = !chosen; items.push_back(std::move(last));
+    for (std::size_t index = 0; index < ehud::data::ModuleLayout::openable.size(); ++index) {
+        const std::string module(ehud::data::ModuleLayout::openable[index]);
+        auto item = menuItem(module, openModuleTitle(module));
+        item.selected = chosen == module; item.separatorBefore = index == 0;
+        items.push_back(std::move(item));
+    }
+    openMenu("openModule", std::move(items), anchor, std::nullopt, [this](const d::Menu::Item& item) {
+        // HUDModule(rawValue:): anything else, "last" included, is nil.
+        const auto module = ehud::data::ModuleLayout::isOpenable(item.id) ? std::optional(item.id) : std::nullopt;
+        if (module == config().overlayLayout().openModule) return;
+        update([&](Settings& s) { auto layout = s.overlayLayout(env().characters.prefix); layout.openModule = module; s.setOverlayLayout(layout, env().characters.prefix); });
+    });
 }
 // Switching the facility alerts off asks first, in red: both answers shut
 // the "defence system" down; only Esc or a press outside keeps it (:487-494).

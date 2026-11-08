@@ -164,6 +164,7 @@ private:
     void setArrangingModules(bool);
     void buildModules(design::Page&);void renderModuleStates();void layoutModuleRows(const std::vector<std::string>&order,bool animated);
     void moveModule(const std::string&,int offset);void dragModule(const std::string&,design::DragGrip::Phase,design::Point);void confirmModulesReset();
+    design::RowPlate& openModuleRow(design::Page&);std::string openModuleTitle(const std::optional<std::string>&)const;void openModuleMenu(const design::Control&);
     void buildDisplay(design::Page&);void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);
     design::RowPlate& paletteRow(design::Page&);
     void buildBattery(design::Page&);std::string shownDisplayMode()const;
