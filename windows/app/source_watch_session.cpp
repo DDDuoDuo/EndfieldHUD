@@ -215,9 +215,10 @@ struct SourceWatchSession::Impl {
             low=Vec2{std::min(low?(*low)[0]:(*p)[0],(*p)[0]),std::min(low?(*low)[1]:(*p)[1],(*p)[1])};high=Vec2{std::max(high?(*high)[0]:(*p)[0],(*p)[0]),std::max(high?(*high)[1]:(*p)[1],(*p)[1])};}
         return Slot{{((*low)[0]+(*high)[0])/2,((*low)[1]+(*high)[1])/2},{((*high)[0]-(*low)[0])/2,((*high)[1]-(*low)[1])/2}};
     }
-    // The list viewport's plane for a client point (the navigation drag's projection).
-    std::optional<Point> viewportPoint(Point point,const ResolvedNode&viewportNode)const{
-        return Projection::viewport(rendered.camera.projection*rendered.camera.view*rendered.camera.worldRoot*viewportNode.worldMatrix,environment.viewport[0],environment.viewport[1]).unproject(point);
+    // The list viewport's plane as drawn (the navigation drag, the edge
+    // scroll and the Arrange on HUD tile unproject client points through it).
+    Projection viewportPlane(const ResolvedNode&viewportNode)const{
+        return Projection::viewport(rendered.camera.projection*rendered.camera.view*rendered.camera.worldRoot*viewportNode.worldMatrix,environment.viewport[0],environment.viewport[1]);
     }
     // Each frame: the bound buttons drawn away from their slots, the one drawn
     // above the others, and the dragged tile's button held hovered. Rebinding
@@ -305,7 +306,7 @@ void SourceWatchSession::pointerDown(Point point,double time){
     if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return;
     const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||info->hiddenLength<=0)return;
     const auto*node=p.resolved(info->viewportID);if(!node||!node->rect||!p.insidePlane(point,*node,*node->rect))return;
-    const auto plane=Projection::viewport(p.rendered.camera.projection*p.rendered.camera.view*p.rendered.camera.worldRoot*node->worldMatrix,p.environment.viewport[0],p.environment.viewport[1]);
+    const auto plane=p.viewportPlane(*node);
     if(const auto local=plane.unproject(point))p.navigationDrag=Impl::NavigationDrag{point,plane,local->y,info->hiddenLength,false};
 }
 std::optional<WatchActivation> SourceWatchSession::pointerUp(Point point,double time){
@@ -344,7 +345,7 @@ bool SourceWatchSession::scrollDirection(int direction,bool animated,double time
 bool SourceWatchSession::scrollTowardEdge(Point point,double time){
     need(finite(point),"Invalid Watch pointer");auto&p=*impl_;if(!p.hasFrame)return false;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info)return false;
     const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;const auto&rect=*node->rect;
-    const auto local=p.viewportPoint(point,*node);if(!local||local->x<rect.origin[0]||local->x>rect.origin[0]+rect.size[0])return false;
+    const auto local=p.viewportPlane(*node).unproject(point);if(!local||local->x<rect.origin[0]||local->x>rect.origin[0]+rect.size[0])return false;
     // Source UI space is y-up: the list's top edge is its rect's maxY. The
     // band and the step are measured on screen.
     const double unitsPerPoint=std::max(std::numeric_limits<double>::epsilon(),p.unitsPerPoint(*node,rect));
@@ -356,7 +357,7 @@ void SourceWatchSession::setArrangeDrag(std::optional<std::uint64_t> action,std:
     if(action&&pointer){
         need(finite(*pointer),"Invalid Watch pointer");if(!p.hasFrame)return;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info)return;
         const auto*viewport=p.resolved(info->viewportID);if(!viewport||!viewport->rect)return;const auto&rect=*viewport->rect;
-        const auto local=p.viewportPoint(*pointer,*viewport);const auto button=p.rightButton(*action);if(!local||!button)return;
+        const auto local=p.viewportPlane(*viewport).unproject(*pointer);const auto button=p.rightButton(*action);if(!local||!button)return;
         const auto slot=p.slot(*button);if(!slot)return;
         if(p.arrange.lifted()!=action){p.arrange.lift(*action,p.arrange.shown(*action,slot->center,*at,reduce),{local->x,local->y});p.lastHit.reset();}
         const Vec2 half{std::min(slot->half[0],rect.size[0]/2),std::min(slot->half[1],rect.size[1]/2)};
