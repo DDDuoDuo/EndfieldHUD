@@ -659,7 +659,6 @@ enum LocalizationCatalog {
         "Confirm (Return)\u{1F}确认（回车）": "확인 (Return)",
         "Experimental app volume requires macOS 14.2 or later\u{1F}实验性应用音量需要 macOS 14.2 或更新版本": "실험적 앱 음량 기능을 사용하려면 macOS 14.2 이상이 필요합니다",
         "Choose another process with active audio output\u{1F}请选择正在输出音频的其他进程": "오디오를 재생 중인 다른 프로세스를 선택하세요",
-        "App volume needs an output device without a microphone or other input\u{1F}应用音量需要不带麦克风或其他输入的输出设备": "앱 음량에는 마이크 등 입력이 없는 출력 기기가 필요합니다",
         "This output device does not support app volume routing\u{1F}此输出设备暂不支持应用音量路由": "이 출력 기기는 앱 음량 라우팅을 지원하지 않습니다",
         "This app uses a different output route\u{1F}此应用使用其他输出路由": "이 앱은 다른 출력 경로를 사용합니다",
         "Choose a finite app volume between 0% and 100%\u{1F}请选择 0% 至 100% 之间的有效应用音量": "앱 음량을 0%~100% 사이의 유한한 값으로 설정하세요",
@@ -1527,7 +1526,6 @@ enum LocalizationCatalog {
         // PerAppAudioController.swift
         Entry("Experimental app volume requires macOS 14.2 or later", "实验性应用音量需要 macOS 14.2 或更新版本", "實驗性應用程式音量需要 macOS 14.2 或更新版本", "実験的なアプリ音量機能にはmacOS 14.2以降が必要です"),
         Entry("Choose another process with active audio output", "请选择正在输出音频的其他进程", "請選擇正在輸出音訊的其他程序", "音声を出力中の別のプロセスを選択してください"),
-        Entry("App volume needs an output device without a microphone or other input", "应用音量需要不带麦克风或其他输入的输出设备", "應用程式音量需要不帶麥克風或其他輸入的輸出裝置", "アプリ音量には、マイクなどの入力がない出力デバイスが必要です"),
         Entry("This output device does not support app volume routing", "此输出设备暂不支持应用音量路由", "此輸出裝置暫不支援應用程式音量路由", "この出力デバイスはアプリ音量のルーティングに対応していません"),
         Entry("This app uses a different output route", "此应用使用其他输出路由", "此應用程式使用其他輸出路由", "このアプリは別の出力ルートを使用しています"),
         Entry("Choose a finite app volume between 0% and 100%", "请选择 0% 至 100% 之间的有效应用音量", "請選擇 0% 至 100% 之間的有效應用程式音量", "0%〜100%の範囲で有効なアプリ音量を選択してください"),

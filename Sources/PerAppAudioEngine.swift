@@ -254,6 +254,10 @@ protocol PerAppAudioHardware: AnyObject {
     func startIO(_ device: AudioObjectID, id: AudioDeviceIOProcID) -> OSStatus
     func stopIO(_ device: AudioObjectID, id: AudioDeviceIOProcID) -> OSStatus
     func setDescription(_ device: AudioObjectID, description: CATapDescription) -> OSStatus
+    /// kAudioDevicePropertyIOProcStreamUsage for one IOProc's input streams:
+    /// one flag per input stream of the device, in its stream order.
+    func setInputStreamUsage(_ device: AudioObjectID, id: AudioDeviceIOProcID, enabled: [Bool]) -> OSStatus
+    func inputStreamUsage(_ device: AudioObjectID, id: AudioDeviceIOProcID, count: Int) -> [Bool]?
 }
 
 @available(macOS 14.2, *)
@@ -280,6 +284,73 @@ final class SystemPerAppAudioHardware: PerAppAudioHardware {
                 AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UnsafeMutableRawPointer>.size), $0)
             }
         }
+    }
+    func setInputStreamUsage(_ device: AudioObjectID, id: AudioDeviceIOProcID, enabled: [Bool]) -> OSStatus {
+        withStreamUsage(id: id, count: enabled.count, flags: enabled) { address, size, usage in
+            AudioObjectSetPropertyData(device, &address, 0, nil, size, usage)
+        }.status
+    }
+    func inputStreamUsage(_ device: AudioObjectID, id: AudioDeviceIOProcID, count: Int) -> [Bool]? {
+        let result = withStreamUsage(id: id, count: count, flags: nil) { address, size, usage in
+            var dataSize = size
+            return AudioObjectGetPropertyData(device, &address, 0, nil, &dataSize, usage)
+        }
+        return result.status == noErr ? result.flags : nil
+    }
+    /// The variable-length AudioHardwareIOProcStreamUsage: the IOProc, a stream
+    /// count and one UInt32 per stream. A get fills in the flags it returns.
+    private func withStreamUsage(id: AudioDeviceIOProcID, count: Int, flags: [Bool]?,
+                                 _ body: (inout AudioObjectPropertyAddress, UInt32, UnsafeMutableRawPointer) -> OSStatus) -> (status: OSStatus, flags: [Bool]) {
+        let offset = MemoryLayout<AudioHardwareIOProcStreamUsage>.offset(of: \.mStreamIsOn) ?? 12
+        let size = max(MemoryLayout<AudioHardwareIOProcStreamUsage>.size, offset + count * MemoryLayout<UInt32>.size)
+        let usage = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: MemoryLayout<AudioHardwareIOProcStreamUsage>.alignment)
+        defer { usage.deallocate() }
+        usage.initializeMemory(as: UInt8.self, repeating: 0, count: size)
+        let header = usage.assumingMemoryBound(to: AudioHardwareIOProcStreamUsage.self)
+        header.pointee.mIOProc = unsafeBitCast(id, to: UnsafeMutableRawPointer.self)
+        header.pointee.mNumberStreams = UInt32(count)
+        let streams = (usage + offset).bindMemory(to: UInt32.self, capacity: count)
+        for (index, on) in (flags ?? []).enumerated() { streams[index] = on ? 1 : 0 }
+        var address = AudioHALProperty(object: 0, selector: kAudioDevicePropertyIOProcStreamUsage, scope: kAudioDevicePropertyScopeInput).address
+        let status = body(&address, UInt32(size), usage)
+        let reported = min(count, Int(header.pointee.mNumberStreams))
+        return (status, (0..<reported).map { streams[$0] != 0 })
+    }
+}
+
+/// Where the tap sits among a route aggregate's input streams. The aggregate
+/// stacks the output device, so an output with a microphone (a Bluetooth or
+/// USB headset) adds its own input streams; the route keeps those switched off
+/// and reads only the tap. An output without inputs has the tap alone.
+struct PerAppAudioInputLayout: Equatable {
+    let streamCount: Int
+    let tapStream: Int
+    let firstBuffer: Int
+    let bufferCount: Int
+    /// The IOProc's input stream usage: only the tap's stream is on.
+    var streamUsage: [Bool] { (0..<streamCount).map { $0 == tapStream } }
+
+    /// The tap is the one stream whose removal leaves exactly the device's own
+    /// input streams, in order, by channel count and layout, or the only
+    /// stream when the aggregate leaves the device's inputs out. When two
+    /// positions fit (a stereo microphone shaped like the tap) the route is
+    /// refused rather than risk switching on the microphone.
+    static func locate(aggregate: [AudioStreamBasicDescription], device: [AudioStreamBasicDescription],
+                       isTap: (AudioStreamBasicDescription) -> Bool) -> PerAppAudioInputLayout? {
+        let device = aggregate.count == 1 ? [] : device
+        guard aggregate.count == device.count + 1 else { return nil }
+        func planar(_ format: AudioStreamBasicDescription) -> Bool { format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 }
+        func buffers(_ format: AudioStreamBasicDescription) -> Int { planar(format) ? Int(format.mChannelsPerFrame) : 1 }
+        let fits = aggregate.indices.filter { index in
+            guard isTap(aggregate[index]) else { return false }
+            var others = aggregate; others.remove(at: index)
+            return zip(others, device).allSatisfy {
+                $0.mChannelsPerFrame == $1.mChannelsPerFrame && $0.mChannelsPerFrame > 0 && planar($0) == planar($1)
+            }
+        }
+        guard fits.count == 1, let tap = fits.first else { return nil }
+        return PerAppAudioInputLayout(streamCount: aggregate.count, tapStream: tap,
+            firstBuffer: aggregate[..<tap].reduce(0) { $0 + buffers($1) }, bufferCount: buffers(aggregate[tap]))
     }
 }
 
@@ -310,6 +381,10 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     private var stopping = false
     private var generation = 0
     private var formatProperties: Set<AudioHALProperty> = []
+    /// The output device's own input channels, read at start. Zero keeps the
+    /// route exactly as on an output without a microphone.
+    private var microphoneChannels = 0
+    private var inputLayout: PerAppAudioInputLayout?
     var isStopped: Bool { tap == 0 && aggregate == 0 && ioProc == nil }
 
     init(application: AudioApplicationInfo, output: AudioDeviceInfo, hardware: PerAppAudioHardware = SystemPerAppAudioHardware(),
@@ -329,6 +404,8 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         do {
             try checkCancellation()
             try validatePhysicalRoute()
+            microphoneChannels = try channels(output.id, scope: kAudioDevicePropertyScopeInput)
+            inputLayout = nil
             let description = CATapDescription(stereoMixdownOfProcesses: [application.id])
             description.name = "EndfieldCharge App Audio"
             description.isPrivate = true
@@ -359,8 +436,8 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
                 kAudioAggregateDeviceIsStackedKey: true,
                 kAudioAggregateDeviceMainSubDeviceKey: output.uid,
                 kAudioAggregateDeviceTapAutoStartKey: false,
-                // Use live hardware channel counts. Preflight excludes input
-                // devices, and aggregate layout is validated again below.
+                // Use live hardware channel counts. A device's own input
+                // streams are located below and switched off for the IOProc.
                 kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: output.uid]],
                 kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: tapUID,
                     kAudioSubTapDriftCompensationKey: true]]
@@ -370,21 +447,34 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             guard aggregate != 0 else { throw unsupportedFormat() }
             try waitUntilAggregateReady()
             try checkCancellation()
-            guard try channels(aggregate, scope: kAudioDevicePropertyScopeInput) == 2,
+            guard [2, 2 + microphoneChannels].contains(try channels(aggregate, scope: kAudioDevicePropertyScopeInput)),
                   try channels(aggregate, scope: kAudioDevicePropertyScopeOutput) == 2 else { throw unsupportedFormat() }
-            let inputFormat = try streamFormat(device: aggregate, scope: kAudioDevicePropertyScopeInput)
             let outputFormat = try streamFormat(device: aggregate, scope: kAudioDevicePropertyScopeOutput)
-            guard validPCM(inputFormat), validPCM(outputFormat),
-                  abs(inputFormat.mSampleRate - tapFormat.mSampleRate) < 0.001,
-                  abs(outputFormat.mSampleRate - tapFormat.mSampleRate) < 0.001 else { throw unsupportedFormat() }
+            guard validPCM(outputFormat), abs(outputFormat.mSampleRate - tapFormat.mSampleRate) < 0.001 else { throw unsupportedFormat() }
+            // Also checks the tap's input stream and finds it among the device's own.
             try validateFormats()
+            guard let layout = inputLayout else { throw unsupportedFormat() }
             let bufferFrames: UInt32 = try read(property(aggregate, kAudioDevicePropertyBufferFrameSize))
             guard bufferFrames > 0, bufferFrames <= 16_384 else { throw unsupportedFormat() }
             try checkCancellation()
-            renderState = PerAppAudioPCM.allocate()
+            let state = PerAppAudioPCM.allocate()
+            renderState = state
+            if microphoneChannels > 0 {
+                state.pointee.inputFirstBuffer = Int32(layout.firstBuffer)
+                state.pointee.inputBufferCount = Int32(layout.bufferCount)
+            }
             try check(hardware.createIO(aggregate, context: renderState, id: &ioProc))
             try checkCancellation()
             guard let ioProc else { throw unsupportedFormat() }
+            if microphoneChannels > 0 {
+                // Switch the device's own input streams off for this IOProc
+                // before it starts, so its microphone is never opened and a
+                // Bluetooth headset keeps its playback profile. The setting
+                // is read back: a route never starts with a microphone on.
+                try check(hardware.setInputStreamUsage(aggregate, id: ioProc, enabled: layout.streamUsage))
+                try check(hardware.inputStreamUsage(aggregate, id: ioProc, count: layout.streamCount) == layout.streamUsage
+                    ? noErr : kAudioHardwareUnspecifiedError)
+            }
             try installListeners()
             primingStarted = ProcessInfo.processInfo.systemUptime
             lastCallback = primingStarted; lastTicks = 0; activated = false
@@ -470,7 +560,6 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         try validateOutputUnchanged()
         let transport: UInt32 = try read(property(output.id, kAudioDevicePropertyTransportType))
         if let refusal = PerAppAudioController.outputSupport(transport: transport,
-            inputChannels: try channels(output.id, scope: kAudioDevicePropertyScopeInput),
             outputChannels: try channels(output.id, scope: kAudioDevicePropertyScopeOutput), language: language) {
             throw PerAppAudioEngineError.message(refusal)
         }
@@ -543,6 +632,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
             property(aggregate, kAudioDevicePropertyNominalSampleRate),
             property(aggregate, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput),
             property(aggregate, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)] + Array(formatProperties)
+            + (microphoneChannels > 0 ? [property(output.id, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput)] : [])
         for address in addresses {
             let listener = try hal.listen(address) { [weak self] in
                 guard let self else { return }
@@ -641,20 +731,30 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         let tapFormat: AudioStreamBasicDescription = try read(tapProperty)
         guard validPCM(tapFormat) else { throw unsupportedFormat() }
         var properties: Set<AudioHALProperty> = [tapProperty]
-        for (device, scope) in [(output.id, UInt32(kAudioDevicePropertyScopeOutput)),
-                                 (aggregate, UInt32(kAudioDevicePropertyScopeInput)),
-                                 (aggregate, UInt32(kAudioDevicePropertyScopeOutput))] {
-            let streams = try array(property(device, kAudioDevicePropertyStreams, scope: scope))
-            guard streams.count == 1 else { throw unsupportedFormat() }
-            let address = property(streams[0], kAudioStreamPropertyVirtualFormat)
-            let format: AudioStreamBasicDescription = try read(address)
-            guard validPCM(format), abs(format.mSampleRate - tapFormat.mSampleRate) < 0.001 else { throw unsupportedFormat() }
-            properties.insert(address)
+        let matchesTap = { (format: AudioStreamBasicDescription) in
+            self.validPCM(format) && abs(format.mSampleRate - tapFormat.mSampleRate) < 0.001
         }
-        guard formatProperties.isEmpty || formatProperties == properties else {
+        func formats(_ device: UInt32, _ scope: UInt32) throws -> [AudioStreamBasicDescription] {
+            try array(property(device, kAudioDevicePropertyStreams, scope: scope)).map { stream in
+                let address = property(stream, kAudioStreamPropertyVirtualFormat)
+                properties.insert(address)
+                return try read(address)
+            }
+        }
+        for (device, scope) in [(output.id, UInt32(kAudioDevicePropertyScopeOutput)),
+                                 (aggregate, UInt32(kAudioDevicePropertyScopeOutput))] {
+            let streams = try formats(device, scope)
+            guard streams.count == 1, matchesTap(streams[0]) else { throw unsupportedFormat() }
+        }
+        // The aggregate's input is the tap's stream, after or among the output
+        // device's own input streams when it has a microphone.
+        let microphones = microphoneChannels > 0 ? try formats(output.id, kAudioDevicePropertyScopeInput) : []
+        guard let layout = PerAppAudioInputLayout.locate(aggregate: try formats(aggregate, kAudioDevicePropertyScopeInput),
+                                                         device: microphones, isTap: matchesTap) else { throw unsupportedFormat() }
+        guard formatProperties.isEmpty || formatProperties == properties, inputLayout == nil || inputLayout == layout else {
             throw message("The audio streams changed during startup. Start this route again", "音频流在启动过程中发生更改，请重新启动此路由")
         }
-        formatProperties = properties
+        formatProperties = properties; inputLayout = layout
     }
     private func streamFormat(device: UInt32, scope: UInt32) throws -> AudioStreamBasicDescription {
         let streams: [UInt32] = try array(property(device, kAudioDevicePropertyStreams, scope: scope))
