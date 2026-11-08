@@ -260,7 +260,7 @@ final class NowPlayingArtworkLoader {
         let native = CGSize(width: turned ? height : width, height: turned ? width : height)
         let plan = layout(native: native, pixels: limit)
         guard plan.small else { return NowPlayingArtworkImage(image: image, native: native, backdrop: nil) }
-        let picture = image
+        let picture = trimmingLetterbox(image)
         let canvas = CIImage(cgImage: picture), extent = canvas.extent, clamped = canvas.clampedToExtent()
         let factor = CGFloat(plan.side) / max(extent.width, extent.height)
         let square = min(extent.width, extent.height)
@@ -282,6 +282,35 @@ final class NowPlayingArtworkLoader {
         let long = max(native.width, native.height), short = min(native.width, native.height), slot = CGFloat(pixels)
         guard short > 0, slot / short > fillLimit else { return (false, Int(min(long, slot).rounded())) }
         return (true, Int(min(slot, long * maximumEnlargement).rounded()))
+    }
+
+    /// A video still with near-black bars above and below a 16:9 picture
+    /// (YouTube's 4:3 thumbnails) loses the bars; anything else is returned as
+    /// it is. Only opaque, near-black, nearly equal bars that leave a 16:9
+    /// picture count, so a dark album cover keeps its edges.
+    static func trimmingLetterbox(_ image: CGImage) -> CGImage {
+        let width = image.width, height = image.height
+        guard width > height, width <= maximumPixelSize,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return image }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return image }
+        let pixels = data.assumingMemoryBound(to: UInt8.self), stride = context.bytesPerRow
+        func dark(_ row: Int) -> Bool {
+            (0..<width).allSatisfy { x in
+                let i = row * stride + x * 4
+                return pixels[i + 3] >= 250 && max(pixels[i], pixels[i + 1], pixels[i + 2]) <= 24
+            }
+        }
+        var top = 0, bottom = 0
+        while top < height / 2, dark(top) { top += 1 }
+        while bottom < height / 2, dark(height - 1 - bottom) { bottom += 1 }
+        let kept = height - top - bottom
+        guard top >= 2, bottom >= 2, abs(top - bottom) <= max(2, height / 40), kept > 0,
+              (1.70...1.86).contains(CGFloat(width) / CGFloat(kept)),
+              let cropped = image.cropping(to: CGRect(x: 0, y: top, width: width, height: kept)) else { return image }
+        return cropped
     }
 
     /// NetEase's image CDN serves any requested square: ask for at least the
