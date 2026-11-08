@@ -1077,7 +1077,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         generation += 1 // A transaction completion can fire when animations are removed.
         transitioning = false
         transitionCompletion = nil
-        moduleContent?.cancel()
+        // The close lands a module switch in flight on its new module, held
+        // hidden, instead of showing the old one again only to leave twice.
+        if forRetraction { moduleContent?.settle(concealed: true) } else { moduleContent?.cancel() }
         selectedModule = moduleContent?.selectedModule ?? .power
         if !preservingChargeAnimation { chargeBadge.cancelAnimations() }
         identityCard.resetInteraction()
@@ -1111,9 +1113,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             if let mask = item.mask { remove(mask, keepingEntrance: keepingEntrance, keeping: leaveKeys) }
         }
         if let layer = layer { remove(layer) }
-        // cancel() restores the last committed screen. Its host pose must be
-        // restored as well when an interrupted request crossed Work Mode's
-        // distinct presentation size, before input uses the committed mapping.
+        // cancel() restores the last committed screen (the close's settle
+        // commits the requested one). Its host pose must follow as well when an
+        // interrupted request crossed Work Mode's distinct presentation size,
+        // before input uses the committed mapping.
         if moduleContent != nil {
             notesCanvas.setPresentation(notesSelected: selectedModule == .notes, animated: false)
             // Restoring the committed module host must not reopen the source

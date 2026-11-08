@@ -120,10 +120,17 @@ final class HUDModuleContent {
     }
 
     /// Commit the most recent request immediately, including a queued request.
-    func settle() {
+    /// `concealed` is for the HUD's close: a switch caught in flight (the old
+    /// screen partly left, the new one not yet shown) lands on the requested
+    /// module, kept for the next open, with its screen hidden instead of
+    /// showing only to leave again. Its completion is dropped, as by cancel().
+    func settle(concealed: Bool = false) {
         precondition(Thread.isMainThread)
         pendingInitialModule = nil
-        settle(on: state.requestedModule, notify: true)
+        let inFlight = concealed && state.isTransitioning
+        if concealed { latestCompletion = nil }
+        settle(on: state.requestedModule, notify: !concealed)
+        if inFlight { withoutActions { current.wrapper.isHidden = true } }
     }
 
     /// Close/detach cleanup: invalidate completions and restore the last fully
@@ -219,10 +226,12 @@ final class HUDModuleContent {
 
     /// The HUD's close: the shown redesigned screen leaves back toward the side
     /// its opening entrance came from, the entrance reversed. No selection,
-    /// swap or state changes; cancel() restores the screen. Nothing when reduced.
+    /// swap or state changes; cancel() restores the screen. Nothing when reduced,
+    /// nor for a screen settle(concealed:) hid.
     func leaveForClose() {
         precondition(Thread.isMainThread)
-        guard let content = factories[current.module] as? HUDDirectionalContent, current.wrapper.superlayer != nil else { return }
+        guard let content = factories[current.module] as? HUDDirectionalContent, current.wrapper.superlayer != nil,
+              !current.wrapper.isHidden else { return }
         let offset = HUDShellPosition.entranceOffset(from: nil, to: current.module)
         playLeave(current, toward: CGPoint(x: -offset.x, y: -offset.y), unit: content.contentUnit)
     }
@@ -303,6 +312,7 @@ final class HUDModuleContent {
             removeAnimations(in: screen.wrapper)
             screen.wrapper.transform = CATransform3DIdentity
             screen.wrapper.opacity = 1
+            screen.wrapper.isHidden = false
             screen.wrapper.mask = nil
             screen.wrapper.sublayers?.filter { $0.name == "module.registration" }.forEach { $0.removeFromSuperlayer() }
             if screen === current { layer.masksToBounds = !isDesignScreen(screen.module) }
