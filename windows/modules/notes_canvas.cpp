@@ -66,9 +66,9 @@ void NotesCanvas::didActivate() {
     attachNote();
     if (reportedLoadProblem_) return;
     std::optional<std::string> error;
-    if (!options_.storageAvailable) error = options_.storageError.value_or(text("Notes storage is unavailable.", "便笺存储不可用。"));
+    if (!options_.storageAvailable) error = options_.storageError.value_or(text("Notes storage is unavailable", "便笺存储不可用"));
     else if (store_->loadIssue() == ehud::data::NotesCentreStore::LoadIssue::setAside)
-        error = text("The centre notes could not be read and were set aside.", "无法读取中央便笺，原文件已另存。");
+        error = text("The centre notes could not be read and were set aside", "无法读取中央便笺，原文件已另存");
     if (!error) return;
     reportedLoadProblem_ = true;
     toast(d::Icon::warn, "Notice", "提示", std::move(error));

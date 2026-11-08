@@ -119,8 +119,8 @@ bool AppShortcutCanvas::importDrop(std::span<const std::string> paths) {
     return !urls.empty() && importPaths(urls);
 }
 bool AppShortcutCanvas::importPaths(std::span<const std::string> paths) {
-    if (!store_) { showError(text("Shortcut storage is unavailable.", "快捷方式存储不可用。")); return false; }
-    if (paths.size() != 1) { showError(text("Choose one application to customize.", "请选择一个应用进行设置。")); return false; }
+    if (!store_) { showError(text("Shortcut storage is unavailable", "快捷方式存储不可用")); return false; }
+    if (paths.size() != 1) { showError(text("Choose one application to customize", "请选择一个应用进行设置")); return false; }
     AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::add; request.path = paths.front();
     if (relink_) request.id = *std::exchange(relink_, std::nullopt);
     return submit(std::move(request));
@@ -437,7 +437,7 @@ void AppShortcutCanvas::confirmRemove(const ShortcutRecord& record) {
     request.id = "apps:remove";
     const std::array<std::string_view, 1> argument{record.name};
     request.title = text("Remove {0}?", "移除 {0}？", argument);
-    request.message = text("The app itself stays installed.", "应用本身不会被卸载。");
+    request.message = text("The app itself stays installed", "应用本身不会被卸载");
     request.confirmTitle = text("Remove", "移除");
     request.danger = true; request.icon = d::Icon::trash;
     const std::string id = record.id, name = record.name;

@@ -319,7 +319,7 @@ void storage() {
     controller.refresh(w.now); read = *controller.takeCapacityRequest();
     controller.completeCapacity(read.token, {}, w.now); canvas.controllerChanged(w.now);
     check(w.context.overlay().toastState().current() && w.context.overlay().toastState().current()->title == "Storage unavailable"
-        && w.context.overlay().toastState().current()->caption == "Storage capacity is unavailable.", "A new error toasts Storage unavailable");
+        && w.context.overlay().toastState().current()->caption == "Storage capacity is unavailable", "A new error toasts Storage unavailable");
     w.advance(2); canvas.controllerChanged(w.now);
     check(!w.context.overlay().toastState().current(), "The same error does not toast again");
     // The disk menu: names only, the current one selected; choosing re-enters from below.
@@ -344,8 +344,13 @@ void storage() {
     for (int n = 0; n < 9; ++n) many.push_back(volume("v" + std::to_string(n), "V", 10, 5, n == 0));
     const auto limited = m::limitedStorageVolumes(many, std::string("v8"));
     check(limited.size() == 7 && limited.back().id == "v8" && m::limitedStorageVolumes(many, std::string("v2")).back().id == "v6", "A chosen disk beyond seven takes the last place (MODS-432)");
-    check(m::StorageCanvas::localizedError(std::nullopt, Language::simplifiedChinese) == "无法读取存储容量。"
-        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable."), Language::english) == "The startup filesystem is unavailable.", "Error strings (MODS-453)");
+    check(m::StorageCanvas::localizedError(std::nullopt, Language::simplifiedChinese) == "无法读取存储容量"
+        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable"), Language::english) == "The startup filesystem is unavailable", "Error strings (MODS-453)");
+    // The controller's two sentinels still match their catalog sentences once both lost the final stop (Mac 0b94c8e).
+    check(m::StorageCanvas::localizedError(std::string("Storage capacity is unavailable"), Language::japanese) == endfield::core::localized("Storage capacity is unavailable", "无法读取存储容量", Language::japanese)
+        && m::StorageCanvas::localizedError(std::string("Storage capacity is unavailable"), Language::japanese) != "Storage capacity is unavailable"
+        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable"), Language::japanese) != "The startup filesystem is unavailable",
+        "Storage errors still match their catalog sentences");
 }
 // ---------------------------------------------------------------------------
 // Battery

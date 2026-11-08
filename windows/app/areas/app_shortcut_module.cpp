@@ -52,15 +52,15 @@ void need(bool value, const char* why) { if (!value) throw std::runtime_error(st
 // the five source languages; every other text comes from the shared catalog.
 struct WindowsText { std::string_view english, simplified, traditional, japanese, korean; };
 constexpr std::array<WindowsText, 7> windowsTexts{{
-    {"Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）。",
-     "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください。", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요."},
-    {"Open this shortcut to choose its Windows application.", "请打开此快捷方式，选择对应的 Windows 应用。", "請開啟此捷徑，選擇對應的 Windows 應用程式。",
-     "このショートカットを開いて、対応するWindowsアプリを選択してください。", "이 바로가기를 열어 해당 Windows 앱을 선택하세요."},
-    {"These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。", "這些捷徑由較新版本的 EndfieldHUD 儲存。",
-     "これらのショートカットは新しいバージョンのEndfieldHUDで保存されています。", "이 앱 바로가기는 더 최신 버전의 EndfieldHUD에서 저장되었습니다."},
-    {"App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯。",
-     "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください。", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요."},
-    {"The application is unavailable.", "应用不可用。", "應用程式不可用。", "アプリを利用できません。", "앱을 사용할 수 없습니다."},
+    {"Choose a Windows application (.exe) or its shortcut (.lnk)", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）",
+     "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요"},
+    {"Open this shortcut to choose its Windows application", "请打开此快捷方式，选择对应的 Windows 应用", "請開啟此捷徑，選擇對應的 Windows 應用程式",
+     "このショートカットを開いて、対応するWindowsアプリを選択してください", "이 바로가기를 열어 해당 Windows 앱을 선택하세요"},
+    {"These app shortcuts were saved by a newer version of EndfieldHUD", "这些快捷方式由较新版本的 EndfieldHUD 保存", "這些捷徑由較新版本的 EndfieldHUD 儲存",
+     "これらのショートカットは新しいバージョンのEndfieldHUDで保存されています", "이 앱 바로가기는 더 최신 버전의 EndfieldHUD에서 저장되었습니다"},
+    {"App shortcuts changed outside this window. Restart EndfieldHUD before editing", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯",
+     "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요"},
+    {"The application is unavailable", "应用不可用", "應用程式不可用", "アプリを利用できません", "앱을 사용할 수 없습니다"},
     {"File picker is unavailable", "文件选择器不可用", "檔案選擇器無法使用", "ファイル選択画面を利用できません", "파일 선택기를 사용할 수 없습니다"},
     {"Applications", "应用程序", "應用程式", "アプリケーション", "응용 프로그램"},
 }};
@@ -98,11 +98,11 @@ std::optional<g::AppShortcutSelection> chosenApplication(std::string_view path) 
 std::string errorText(core::Language l, std::optional<m::ShortcutErrorCode> code, bool osWork, std::string_view detail) {
     using C = m::ShortcutErrorCode;
     if (code) switch (*code) {
-    case C::invalidName: return text(l, "Enter a name of 1–128 characters without line breaks.", "请输入 1–128 个字符的名称，不含换行。");
-    case C::duplicate: return text(l, "This application is already saved. Edit its existing shortcut instead.", "此应用已添加，请编辑现有快捷方式。");
-    case C::missing: return text(l, "This app shortcut is no longer available.", "此应用快捷方式已不存在。");
-    case C::applicationChanged: return text(l, "A different application now occupies this location. Choose the application again.", "此位置的应用已更改，请重新选择应用。");
-    case C::invalidRecord: return text(l, "The saved app shortcuts could not be read. The original data has been preserved.", "无法读取应用快捷方式，原始数据已保留。");
+    case C::invalidName: return text(l, "Enter a name of 1–128 characters without line breaks", "请输入 1–128 个字符的名称，不含换行");
+    case C::duplicate: return text(l, "This application is already saved. Edit its existing shortcut instead", "此应用已添加，请编辑现有快捷方式");
+    case C::missing: return text(l, "This app shortcut is no longer available", "此应用快捷方式已不存在");
+    case C::applicationChanged: return text(l, "A different application now occupies this location. Choose the application again", "此位置的应用已更改，请重新选择应用");
+    case C::invalidRecord: return text(l, "The saved app shortcuts could not be read. The original data has been preserved", "无法读取应用快捷方式，原始数据已保留");
     case C::newerVersion: return text(l, "These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。");
     case C::changedOnDisk: return text(l, "App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。");
     case C::unavailable: return text(l, "The application is unavailable.", "应用不可用。");
@@ -1296,7 +1296,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         syntheticClipboard_->files = {Driver::utf8(applications / "Readme.txt")};
         step.check(!canvas_->keyDown(paste, d.t) && syntheticClipboard_->fileReads == reads + 1 && file_.items.size() == 5 && !d.toast(), "Ctrl+V without an application is left unhandled");
         syntheticClipboard_->files = {Driver::utf8(applications / "Gamma.exe"), Driver::utf8(applications / "Delta.lnk")};
-        step.check(canvas_->keyDown(paste, d.t) && d.toast() && d.toast()->caption == text(language_, "Choose one application to customize.", "请选择一个应用进行设置。"),
+        step.check(canvas_->keyDown(paste, d.t) && d.toast() && d.toast()->caption == text(language_, "Choose one application to customize", "请选择一个应用进行设置"),
                    "Pasting two applications asks for one");
         d.clearToast();
         syntheticClipboard_->files = {Driver::utf8(applications / "Delta.lnk")};

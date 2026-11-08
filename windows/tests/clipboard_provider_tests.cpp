@@ -165,11 +165,11 @@ void links() {
 void statuses() {
     namespace s = n::clipboard_status; using L = endfield::core::Language;
     check(!n::clipboardStatusText(0, L::english) && !n::clipboardStatusText(1, L::english) && !n::clipboardStatusText(s::pending, L::korean), "Success and a pending image validation show no status");
-    check(n::clipboardStatusText(s::cacheFull, L::english) == "The cache is full of pinned items. Unpin or remove an item to capture more.", "A cache full of pinned items uses the source message");
-    check(n::clipboardStatusText(s::textTooLarge, L::simplifiedChinese) == "已跳过超过 1 MB 的文本。", "Oversized text uses the source message");
-    check(n::clipboardStatusText(s::imageTooLarge, L::japanese) == "64 MBを超える画像はスキップしました。", "An image over 64 MB uses the catalog translation");
-    check(n::clipboardStatusText(s::imageDimensionsTooLarge, L::korean) == "1억 픽셀을 초과하는 이미지를 건너뛰었습니다.", "An image over 100 megapixels uses the catalog translation");
-    check(n::clipboardStatusText(s::tooManyFiles, L::traditionalChinese) == "此檔案選擇過大，無法快取。", "A file selection too large to cache uses the catalog translation");
+    check(n::clipboardStatusText(s::cacheFull, L::english) == "The cache is full of pinned items. Unpin or remove an item to capture more", "A cache full of pinned items uses the source message");
+    check(n::clipboardStatusText(s::textTooLarge, L::simplifiedChinese) == "已跳过超过 1 MB 的文本", "Oversized text uses the source message");
+    check(n::clipboardStatusText(s::imageTooLarge, L::japanese) == "64 MBを超える画像はスキップしました", "An image over 64 MB uses the catalog translation");
+    check(n::clipboardStatusText(s::imageDimensionsTooLarge, L::korean) == "1억 픽셀을 초과하는 이미지를 건너뛰었습니다", "An image over 100 megapixels uses the catalog translation");
+    check(n::clipboardStatusText(s::tooManyFiles, L::traditionalChinese) == "此檔案選擇過大，無法快取", "A file selection too large to cache uses the catalog translation");
     const auto busy = std::int32_t(0x80070005u);
     check(n::clipboardStatusText(busy, L::english) == "Clipboard unavailable" && n::clipboardStatusText(busy, L::simplifiedChinese) == "剪贴板不可用" && n::clipboardStatusText(busy, L::korean) == "클립보드를 사용할 수 없습니다",
         "Other failures keep the Windows-only notice in every language");

@@ -62,9 +62,9 @@ inline constexpr TranslationEntry imageFilesFilter{"Images","图片","圖片","�
 // GlobalShortcutController.statusDescription (.unavailable) with the
 // Windows place of the app's menu (the notification area, Setup's term)
 // for the Mac's menu bar; otherwise the Mac catalog row word for word.
-inline constexpr TranslationEntry summonShortcutUnavailable{"{0} is unavailable or in use. Open from the notification area.",
-    "{0} 不可用或已被占用，请从通知区域打开浮层。","{0} 不可用或已被佔用，請從通知區域開啟浮層。","{0}は利用できないか使用中です。通知領域から開いてください。",
-    "{0} 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요."};
+inline constexpr TranslationEntry summonShortcutUnavailable{"{0} is unavailable or in use. Open from the notification area",
+    "{0} 不可用或已被占用，请从通知区域打开浮层","{0} 不可用或已被佔用，請從通知區域開啟浮層","{0}は利用できないか使用中です。通知領域から開いてください",
+    "{0} 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요"};
 const TranslationEntry* translationEntry(std::string_view english,std::string_view simplified) noexcept;
 // Each numeric placeholder is rendered once. Inserted text is never rescanned.
 std::optional<std::string> renderTranslation(std::string_view,std::span<const std::string_view> arguments);

@@ -251,7 +251,7 @@ public:
         step.check(gpu::storageVolumeTitle("", "Local Disk (C:)", "C:\\", "Startup disk") == "Local Disk" && gpu::storageVolumeTitle("", "", "C:\\", "启动磁盘") == "启动磁盘",
                    "An unlabelled volume takes Explorer's name");
         step.check(!gpu::clipboardStatusText(gpu::clipboard_status::pending, core::Language::english) &&
-                   gpu::clipboardStatusText(gpu::clipboard_status::tooManyFiles, core::Language::english) == "This file selection is too large to cache.",
+                   gpu::clipboardStatusText(gpu::clipboard_status::tooManyFiles, core::Language::english) == "This file selection is too large to cache",
                    "Clipboard capture statuses use the source messages");
 
         additions(step, cycle);

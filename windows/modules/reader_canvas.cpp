@@ -773,7 +773,7 @@ void ReaderCanvas::confirmRemove(const ReaderBook& book) {
     d::ConfirmRequest request;
     request.id = "readerRemove";
     request.title = text("Remove {0} from the library?", "从书库移除 {0}？", arguments);
-    request.message = text("The file itself stays on disk.", "文件本身仍保留在磁盘上。");
+    request.message = text("The file itself stays on disk", "文件本身仍保留在磁盘上");
     request.confirmTitle = text("Remove", "移除");
     request.danger = true; request.icon = d::Icon::trash;
     const std::string id = book.id;

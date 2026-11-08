@@ -1052,7 +1052,7 @@ private:
             step.check(w.login.isPresenting(), "Reconnect presents the login again");
             step.check(w.login.finish(std::nullopt, h::LoginFailure::pageUnavailable), "The fake site fails to load");
             d.settle();
-            step.check(controller().record().linked && says(controller().presentation().statusMessage, "Sign-in could not finish. Please try again."),
+            step.check(controller().record().linked && says(controller().presentation().statusMessage, "Sign-in could not finish. Please try again"),
                        "An unfinished sign-in reports the Mac failure and keeps the link");
             // Windows: no WebView2 Runtime, and the explanation page was closed.
             controller().perform(reconnect);
@@ -1068,7 +1068,7 @@ private:
         controller().refresh(true);
         d.settle();
         const auto requests = w.host.requests().size();
-        step.check(controller().record().requiresReconnect && says(controller().presentation().statusMessage, "Sign in again to continue syncing.") &&
+        step.check(controller().record().requiresReconnect && says(controller().presentation().statusMessage, "Sign in again to continue syncing") &&
                    owner_->gauge().model().value() == d.expectedGauge() && d.expectedGauge().find(" / 360") != std::string::npos &&
                    w.profileStore.profileSyncLocked(), "An expired session keeps cached sanity and the profile lock and asks for a new sign-in");
         w.wall += 900;

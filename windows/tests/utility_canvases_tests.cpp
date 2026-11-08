@@ -235,7 +235,7 @@ void eventLogCanvas() {
     const double now = 812000000;
     for (int i = 0; i < 500; ++i) store.state.events.push_back(event(i + 1, i % 3 ? m::EventKind::shelfAdded : m::EventKind::workStarted, now - i * 60, {{"filename", "F.pdf"}}));
     store.state.events.insert(store.state.events.begin(), event(900, m::EventKind::overlayOpened, now));
-    store.state.status = "Saved log could not be read; the original file is preserved.";
+    store.state.status = "Saved log could not be read; the original file is preserved";
     m::EventLogCanvas canvas(w.context, store.callbacks(), utc, [&] { return now; });
     w.show(canvas);
     check(canvas.header().counterText() == "500" && canvas.events().size() == 500, "The counter lists every record but navigation (:239, :288)");
@@ -250,10 +250,10 @@ void eventLogCanvas() {
     check(canvas.scroll({300, 300}, {0, 46}, w.now) && canvas.listOffsetForTesting() == 46 && !canvas.scroll({300, 100}, {0, 46}, w.now), "The wheel scrolls only over the list (:397-401)");
     // The top visible row stays in place when records arrive (:269-319).
     store.state.events.insert(store.state.events.begin() + 1, event(901, m::EventKind::shelfRemoved, now + 1));
-    store.state.status = "The log could not be saved. New events are kept in this session.";
+    store.state.status = "The log could not be saved. New events are kept in this session";
     canvas.storeChanged();
     check(canvas.listOffsetForTesting() == 92 && canvas.header().counterText() == "501", "A new record keeps the top row in view");
-    check(w.toasts()[0] == "Event log|The log could not be saved. New events are kept in this session.", "A failure that appears while open toasts (:262-267)");
+    check(w.toasts()[0] == "Event log|The log could not be saved. New events are kept in this session", "A failure that appears while open toasts (:262-267)");
     // A return to the module starts the list at the top (:244-245); while it is shown,
     // a refresh and an in-place re-render keep the scroll.
     canvas.storeChanged(); canvas.rerender();
@@ -281,7 +281,7 @@ void eventLogCanvas() {
     check(canvas.filter() == m::EventLogFilter::timer, "Switching modules keeps the filter");
     canvas.resetSession();
     check(canvas.filter() == m::EventLogFilter::all && canvas.listOffsetForTesting() == 0, "A new HUD session shows All at the top");
-    store.state.status = "This log uses a newer format; the original file is preserved.";
+    store.state.status = "This log uses a newer format; the original file is preserved";
     canvas.storeChanged(); w.context.overlay().reset();
     check(w.toasts().empty(), "The store is observed only while active");
 }
@@ -777,7 +777,7 @@ void volumeOracle(Oracle& o) {
     // The Mac's route start sets the per-app status (a rebuild) and its
     // activation clears it (another): the list is rebuilt, its bar hidden.
     auto starting = volumeOf((*o.row("volume", "appsRouted"))["input"]);
-    starting.perAppStatus = "Allow System Audio Recording if asked, then play audio in the selected app to activate.";
+    starting.perAppStatus = "Allow System Audio Recording if asked, then play audio in the selected app to activate";
     canvas->receive(starting);
     canvas->receive(volumeOf((*o.row("volume", "appsRouted"))["input"]));
     o.scene("volume", "appsRouted", *canvas);

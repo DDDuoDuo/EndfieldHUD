@@ -150,7 +150,7 @@ std::vector<BootLogLine> bootLogLines(const BootLogDate& date, double uptime, co
     }
     const auto name = trimmed(operatorName, true);
     const auto greeting = uppercase ? uppercase(name.empty() ? "ENDMINISTRATOR" : name) : d::asciiUppercase(name.empty() ? "ENDMINISTRATOR" : name);
-    lines.push_back(BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, " + greeting + "."));
+    lines.push_back(BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, " + greeting));
     return lines;
 }
 int bootLogWorkStreak(std::span<const std::int64_t> days, std::int64_t today) {

@@ -20,7 +20,7 @@
 // expanded slot; the reorder glides are translations from each card's built
 // slot. The pixels and the model hit geometry are the Mac's. The storage
 // problem notice is localized when it shows (the Mac localizes the default
-// "Notes storage is unavailable." when the canvas is made).
+// "Notes storage is unavailable" when the canvas is made).
 #include "core/data/notes_centre_store.hpp"
 #include "modules/archive_body_area.hpp"
 #include "modules/archive_rich_text.hpp"
@@ -34,7 +34,7 @@ namespace endfield::modules {
 struct NotesCanvasOptions {
     // NotesStore was unavailable (Mac: store == nil): no tabs, the empty
     // state, no Hide/Show, the add buttons disabled. `storageError` is the
-    // store's own message; nullopt shows "Notes storage is unavailable.".
+    // store's own message; nullopt shows "Notes storage is unavailable".
     bool storageAvailable{true};
     std::optional<std::string> storageError;
     // workspace.perform(actionID: "tool:<kind>") (text, todo, image, drawing):

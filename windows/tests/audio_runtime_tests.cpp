@@ -1,5 +1,6 @@
 #include "native/audio_runtime.hpp"
 #include "native/volume_strings.hpp"
+#include "tests/interface_text_rules.hpp"
 #include "modules/volume_canvas.hpp"
 #ifdef EHUD_AUDIO_RUNTIME_REGISTRY
 #include "app/application_audio.hpp"
@@ -167,9 +168,17 @@ void volume(){
     // Localized failure text follows the language without a new provider.
     check(h.runtime->setLanguage(c::Language::simplifiedChinese)&&!h.runtime->setLanguage(c::Language::simplifiedChinese),"Language changes once");
     check(!h.runtime->volume().callbacks().setVolume("{0.0.0.00000000}.{speaker}",.4),"A gesture bound to the previous output is refused");
-    check(delivered.status=="音频设备已更改，请重试。","The refusal shows the source localized device-changed message");
+    check(delivered.status=="音频设备已更改，请重试","The refusal shows the source localized device-changed message");
     {std::lock_guard l(h.world->m);check(std::abs(h.world->master-.25f)<1e-6f,"The refused gesture never reached a device");}
     check(h.runtime->language()==c::Language::simplifiedChinese,"Language is retained");
+    // The production failure texts (volumeErrorText, wired by the runtime): no final full stop, and the
+    // native code ends the message (Mac 0b94c8e AudioDeviceError: "... (-5)").
+    {const auto native=n::volumeErrorText(c::Language::japanese)({n::VolumeProviderFailureKind::native,-5});
+        check(native.size()>4&&native.ends_with("(-5)"),"A native failure ends with its code, without a stop");
+        check(n::volumeErrorText(c::Language::simplifiedChinese)({n::VolumeProviderFailureKind::deviceChanged,0})=="音频设备已更改，请重试","The device-changed text has no final stop");
+        for(unsigned l=0;l<6;++l)for(const auto kind:{n::VolumeProviderFailureKind::unavailable,n::VolumeProviderFailureKind::unsupported,n::VolumeProviderFailureKind::deviceChanged,
+                n::VolumeProviderFailureKind::invalidValue,n::VolumeProviderFailureKind::native})
+            check(endfield::tests::followsInterfaceTextRules(n::volumeErrorText(static_cast<c::Language>(l))({kind,-5})),"Audio failure texts have no final full stop and no dot separator");}
     // The Output menu switches the default device through the runtime's binding.
     check(callbacks.setDefaultOutput("{0.0.0.00000000}.{speaker}"),"The Output menu's choice is accepted");
     h.until([&]{return delivered.outputID=="{0.0.0.00000000}.{speaker}"&&!delivered.status;},"The switched default reaches the Volume UI and clears the status");

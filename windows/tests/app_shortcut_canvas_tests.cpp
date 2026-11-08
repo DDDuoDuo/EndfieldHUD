@@ -142,7 +142,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     w.show(canvas);
     check(!control(canvas, "apps:add")->enabled() && w.toast() && w.toast()->caption == "Synthetic failure", "Without a store Add App is disabled and the error toasts");
     const std::array one{std::string("C:\\A.exe")};
-    check(!canvas.importPaths(one) && owner.requests.empty() && w.toast()->caption == "Shortcut storage is unavailable.", "importURLs without a store (:73)");
+    check(!canvas.importPaths(one) && owner.requests.empty() && w.toast()->caption == "Shortcut storage is unavailable", "importURLs without a store (:73)");
     w.context.overlay().clearToast(); canvas.setActive(false, w.now);
     // A store: header, rows (:99-145).
     canvas.setStore(fileOf({record("A", "Alpha", "original"), record("B", "Bravo", "camera"), record("M", "Mac import", "star", false)}));
@@ -188,7 +188,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     check(!canvas.chooserOpen(), "A chooser that cannot open leaves the screen interactive");
     // importURLs (:71-95): exactly one application; the answer toasts.
     const std::array two{std::string("C:\\A.exe"), std::string("C:\\B.exe")};
-    check(!canvas.importPaths(two) && w.toast()->caption == "Choose one application to customize.", "Two applications ask for one (:74-76)");
+    check(!canvas.importPaths(two) && w.toast()->caption == "Choose one application to customize", "Two applications ask for one (:74-76)");
     w.context.overlay().clearToast();
     const std::array gamma{std::string("C:\\Gamma.exe")};
     check(canvas.importPaths(gamma) && owner.requests.back().kind == m::AppShortcutRequest::Kind::add && owner.requests.back().id.empty(), "One application is added");
@@ -200,7 +200,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     owner.requests.clear();
     // A failed request toasts its error (:85, :224-226).
     check(canvas.importPaths(gamma), "A duplicate is asked");
-    canvas.requestFinished(owner.requests.back(), std::nullopt, std::string("This application is already saved. Edit its existing shortcut instead."));
+    canvas.requestFinished(owner.requests.back(), std::nullopt, std::string("This application is already saved. Edit its existing shortcut instead"));
     check(w.toast() && w.toast()->title == "Notice" && w.toast()->caption.starts_with("This application"), "The store error toasts Notice");
     w.context.overlay().clearToast(); owner.requests.clear();
     // Ctrl+V (:277-284): application files only; none leaves the key alone.
@@ -220,7 +220,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     // Remove (:224-237): the confirm bar, then the store; Esc sends nothing.
     control(canvas, "apps:G:remove")->activate();
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->id == "apps:remove" && request->title == "Remove Gamma?" && request->message == "The app itself stays installed." && request->danger &&
+    check(request && request->id == "apps:remove" && request->title == "Remove Gamma?" && request->message == "The app itself stays installed" && request->danger &&
           request->glyph() == d::Icon::trash && request->confirmTitle == "Remove", "Remove asks through the confirm bar");
     d::KeyInput escape; escape.virtualKey = d::key::escape;
     w.context.overlay().handleKey(escape);

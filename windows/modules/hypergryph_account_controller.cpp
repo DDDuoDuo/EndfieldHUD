@@ -125,7 +125,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
     void changed(bool save=false) {
         if(save&&writesAllowed&&file) {
             try {file->write(encodeCacheBytes(cache));}
-            catch(const std::exception&) {statusMessage=t("Profile cache could not be saved.","无法保存账户缓存。");}
+            catch(const std::exception&) {statusMessage=t("Profile cache could not be saved","无法保存账户缓存");}
         }
         const auto lock=gameSyncedFields();
         if(profile&&lastLock!=lock) {lastLock=lock;profile->setProfileSyncLocked(lock);}
@@ -142,8 +142,8 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
         auto& count=failureCounts[region()];count=std::min(5,count+1);
         nextRefreshDates[region()]=now()+std::min(900.0,60*std::pow(2.0,static_cast<double>(count-1)));
         if(error.kind==ErrorKind::authenticationExpired||error.kind==ErrorKind::invalidCredentials) {
-            mutableRecord(region()).requiresReconnect=true;statusMessage=t("Sign in again to continue syncing.","请重新登录以继续同步。");
-        } else statusMessage=t("Sync unavailable. Saved data is preserved.","暂时无法同步，已保留上次数据。");
+            mutableRecord(region()).requiresReconnect=true;statusMessage=t("Sign in again to continue syncing","请重新登录以继续同步");
+        } else statusMessage=t("Sync unavailable. Saved data is preserved","暂时无法同步，已保留上次数据");
         changed(true);
     }
     std::vector<Role> rolesNeeded() const {
@@ -163,7 +163,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
         if(fields.contains(F::awakening)) update.awakeningDate=snapshot->createdAt;
         if(fields.contains(F::levels)) {update.permissionLevel=snapshot->level;update.explorationLevel=snapshot->worldLevel;}
         if(fields.contains(F::counts)) {update.operatorsCount=snapshot->operatorCount;update.weaponsCount=snapshot->weaponCount;update.archivesCount=snapshot->documentCount;}
-        try {profile->applyGameProfile(update);} catch(const std::exception&) {statusMessage=t("The personal profile could not be saved.","无法保存个人名片。");}
+        try {profile->applyGameProfile(update);} catch(const std::exception&) {statusMessage=t("The personal profile could not be saved","无法保存个人名片");}
     }
     void applyAvatar() {
         const auto* snapshot=selectedSnapshot();
@@ -177,7 +177,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
             if(png&&self->profile) {
                 self->applyingGameAvatar=true;
                 try {self->knownAvatarFilename=self->profile->importGameAvatar(*png);self->avatarURL=url;}
-                catch(const std::exception&) {self->statusMessage=self->t("Game avatar is unavailable.","游戏头像暂不可用。");self->changed();}
+                catch(const std::exception&) {self->statusMessage=self->t("Game avatar is unavailable","游戏头像暂不可用");self->changed();}
                 self->applyingGameAvatar=false;
             }
         });
@@ -201,7 +201,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
                 if(self->generation==token&&self->region()==r&&self->visible) self->fetchBindings(value,token);
                 else if(self->region()==r) self->busy=false;
             } else if(self->region()==r&&self->generation==token) {
-                self->busy=false;self->statusMessage=self->t("Keychain could not be updated. Try again.","无法更新钥匙串，请重试。");self->changed();
+                self->busy=false;self->statusMessage=self->t("Keychain could not be updated. Try again","无法更新钥匙串，请重试");self->changed();
             }
         });
     }
@@ -223,7 +223,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
             auto self=weak.lock();if(!self) return;
             self->pendingCredentialCommits=std::max(0,self->pendingCredentialCommits-1);
             if(self->generation!=token) return;
-            if(error) {self->busy=false;self->statusMessage=self->t("Keychain could not be updated. Try again.","无法更新钥匙串，请重试。");self->changed();return;}
+            if(error) {self->busy=false;self->statusMessage=self->t("Keychain could not be updated. Try again","无法更新钥匙串，请重试");self->changed();return;}
             self->credentials[r]=value;self->credentialDates[r]=self->now();completion();
         });
     }
@@ -259,7 +259,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
     void fetchNext(std::vector<Role> roles,std::size_t index,const Credentials& c,int token) {
         if(index>=roles.size()) {
             busy=false;request.reset();failureCounts[region()]=0;nextRefreshDates[region()]=now()+automaticRefreshInterval;
-            if(record().roles.empty()) statusMessage=t("No linked game account found.","未找到已绑定的游戏账户。");
+            if(record().roles.empty()) statusMessage=t("No linked game account found","未找到已绑定的游戏账户");
             applyProfile();applyAvatar();
             if(manualRefreshPending&&selectedSnapshot()&&statusMessage.empty()) event("synced");
             manualRefreshPending=false;
@@ -336,7 +336,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
                 if(self->region()==r) {self->avatarURL.reset();self->statusMessage.clear();}
                 self->event("unlinked");self->changed(true);
             } else if(self->region()==r) {
-                self->statusMessage=self->t("Keychain could not be updated. Try again.","无法更新钥匙串，请重试。");self->changed();
+                self->statusMessage=self->t("Keychain could not be updated. Try again","无法更新钥匙串，请重试");self->changed();
             }
         });
     }
@@ -352,7 +352,7 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
                 // (no Mac counterpart; Mac wording keeps the Mac text).
                 if(failure==LoginFailure::runtimeUnavailable&&self->options.wording==AccountWording::windows)
                     self->statusMessage=webView2RuntimeStrings(self->options.language).status;
-                else if(failure!=LoginFailure::cancelled) self->statusMessage=self->t("Sign-in could not finish. Please try again.","登录未完成，请重试。");
+                else if(failure!=LoginFailure::cancelled) self->statusMessage=self->t("Sign-in could not finish. Please try again","登录未完成，请重试");
                 self->changed();
             }
         });
@@ -451,13 +451,13 @@ void HypergryphAccountController::profileAvatarChanged(const std::optional<std::
 }
 void HypergryphAccountController::profileAvatarBaseline(const std::optional<std::string>& filename) {impl_->knownAvatarFilename=filename;}
 void HypergryphAccountController::cacheWriteFailed() {
-    auto& i=*impl_;i.statusMessage=i.t("Profile cache could not be saved.","无法保存账户缓存。");i.changed();
+    auto& i=*impl_;i.statusMessage=i.t("Profile cache could not be saved","无法保存账户缓存");i.changed();
 }
 AccountPresentation HypergryphAccountController::presentation() const {
     const auto& i=*impl_;AccountPresentation p;
     p.region=i.region()==Region::mainland?AccountPresentation::RegionChoice::china:AccountPresentation::RegionChoice::global;
     p.isLinked=i.record().linked;
-    p.statusMessage=i.record().requiresReconnect?i.t("Sign in again to continue syncing.","请重新登录以继续同步。"):i.statusMessage;
+    p.statusMessage=i.record().requiresReconnect?i.t("Sign in again to continue syncing","请重新登录以继续同步"):i.statusMessage;
     using S=AccountPresentation::Status;
     p.status=i.isPresentingLogin()?S::connecting:i.hasActiveRequest()?S::refreshing:!p.statusMessage.empty()?S::failed:p.isLinked?S::connected:S::disconnected;
     for(const auto& r:i.record().roles) p.roles.push_back({r.id(),std::string(r.game==Game::endfield?"Endfield":"Arknights")+" / "+r.name.value_or(r.roleID),r.serverName.value_or("")});

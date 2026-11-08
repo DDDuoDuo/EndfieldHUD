@@ -151,8 +151,8 @@ void MapOwner::setGeography(std::shared_ptr<const modules::MapGeography> g, doub
     if (!i.geography) return;
     auto& env = i.context.env();
     env.now = std::max(env.now, i.time);
-    if (i.geography->terrainFailed) i.canvas->reportError(core::localized("Terrain data could not be loaded.", "无法载入地形数据。", env.language));
-    if (i.geography->countriesFailed) i.canvas->reportError(core::localized("Country shapes could not be loaded.", "无法载入地图轮廓。", env.language));
+    if (i.geography->terrainFailed) i.canvas->reportError(core::localized("Terrain data could not be loaded", "无法载入地形数据", env.language));
+    if (i.geography->countriesFailed) i.canvas->reportError(core::localized("Country shapes could not be loaded", "无法载入地图轮廓", env.language));
 }
 bool MapOwner::utilityCompleted(double t) { auto& i = *impl_; i.clock(t); return i.raster->submitPending(i.time); }
 bool MapOwner::perform(std::string_view id, double t) {

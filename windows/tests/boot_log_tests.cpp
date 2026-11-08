@@ -42,7 +42,7 @@ void content() {
         "> SANITY ................ 180 / 240  NEXT +1 IN 04:32",
         "> WORK MODE STREAK ...... 3 DAYS  12.3 H TOTAL",
         "> FACILITY .............. DISK 8% FREE",
-        "ALL SYSTEMS ONLINE. WELCOME BACK, PERLICA."};
+        "ALL SYSTEMS ONLINE. WELCOME BACK, PERLICA"};
     check(texts.size() == expected.size(), "line count " + std::to_string(texts.size()));
     for (std::size_t i = 0; i < expected.size(); ++i) check(texts[i] == expected[i], "line " + std::to_string(i) + ": [" + texts[i] + "]");
     // Tones: battery green, facility warning orange, footer status green, values yellow.
@@ -56,7 +56,7 @@ void content() {
     check(sparse.size() == 5, "unavailable sources are left out");
     check(flat(sparse[1], palette) == "> UPTIME ................ 0D 00H 00M", "a negative uptime counts as 0");
     check(flat(sparse[2], palette) == "> CALENDAR .............. 1 EVENT TODAY", "one event, singular");
-    check(flat(sparse[4], palette) == "ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR.", "default greeting");
+    check(flat(sparse[4], palette) == "ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR", "default greeting");
     const auto nominal = b::bootLogLines(date, 60, b::BootLogBattery{15, false, b::BootLogBattery::Level::red}, {}, b::BootLogSanity{1, 2, std::nullopt},
         b::BootLogWorkStreak{1, 0}, b::BootLogDisk{40, false}, "x", d::asciiUppercase);
     check(flat(nominal[2], palette) == "> POWER ................. 15%  POWER MODE" && nominal[2].segments(palette)[2].color == d::fixed::red, "battery red tone, POWER MODE");
@@ -137,7 +137,7 @@ void panel() {
     at(51.38);
     check(finished == 1 && !log.isPlaying() && log.layer().hidden() && !log.isBlinking() && log.rowTexts().empty(), "finished and reset");
     // A full run without skipping: 900 ms after the last line.
-    log.play({b::BootLogLine::header("BOOT SEQUENCE", "x"), b::BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, X.")}, "1.3.0");
+    log.play({b::BootLogLine::header("BOOT SEQUENCE", "x"), b::BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, X")}, "1.3.0");
     at(51.661); at(51.921);
     check(log.revealedCount() == 2, "both lines revealed");
     at(52.82); check(!log.isFinishing(), "the tail lasts 900 ms");

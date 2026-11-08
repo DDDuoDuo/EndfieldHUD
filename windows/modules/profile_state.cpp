@@ -51,17 +51,17 @@ template<std::size_t N>std::optional<std::array<std::int64_t,N>>dateParts(std::s
 
 std::string profileFailureMessage(ProfileFailure failure,core::Language language,std::string_view detail){
     switch(failure){
-    case ProfileFailure::name:return L("Enter a name of 1–20 characters without line breaks.","请输入 1–20 个字符的名称，不含换行。",language);
-    case ProfileFailure::tag:return L("Enter a tag of 1–10 characters without spaces or #.","请输入 1–10 个字符的编号，不含空格或 #。",language);
-    case ProfileFailure::value:return L("Enter a number within the allowed range.","请输入允许范围内的数字。",language);
-    case ProfileFailure::image:return L("Choose a readable image file.","请选择可读取的图片文件。",language);
-    case ProfileFailure::imageTooLarge:return L("Choose an image smaller than 128 MB.","请选择小于 128 MB 的图片。",language);
-    case ProfileFailure::imageDimensions:return L("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side.","请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像。",language);
-    case ProfileFailure::record:return L("The personal card could not be read. The saved data has been preserved.","无法读取个人名片，已保留原始数据。",language);
-    case ProfileFailure::newerVersion:return L("This personal card was saved by a newer version of EndfieldHUD.","此个人名片由较新版本的 EndfieldHUD 保存。",language);
-    case ProfileFailure::changedOnDisk:return L("The personal card changed in another app instance. Restart before editing.","个人名片已由另一个应用实例更改，请重启后编辑。",language);
+    case ProfileFailure::name:return L("Enter a name of 1–20 characters without line breaks","请输入 1–20 个字符的名称，不含换行",language);
+    case ProfileFailure::tag:return L("Enter a tag of 1–10 characters without spaces or #","请输入 1–10 个字符的编号，不含空格或 #",language);
+    case ProfileFailure::value:return L("Enter a number within the allowed range","请输入允许范围内的数字",language);
+    case ProfileFailure::image:return L("Choose a readable image file","请选择可读取的图片文件",language);
+    case ProfileFailure::imageTooLarge:return L("Choose an image smaller than 128 MB","请选择小于 128 MB 的图片",language);
+    case ProfileFailure::imageDimensions:return L("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side","请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像",language);
+    case ProfileFailure::record:return L("The personal card could not be read. The saved data has been preserved","无法读取个人名片，已保留原始数据",language);
+    case ProfileFailure::newerVersion:return L("This personal card was saved by a newer version of EndfieldHUD","此个人名片由较新版本的 EndfieldHUD 保存",language);
+    case ProfileFailure::changedOnDisk:return L("The personal card changed in another app instance. Restart before editing","个人名片已由另一个应用实例更改，请重启后编辑",language);
     case ProfileFailure::persistence:return L("The personal card could not be saved: ","无法保存个人名片：",language)+std::string(detail.substr(0,1024));
-    case ProfileFailure::unavailable:return L("Profile storage is unavailable.","个人名片存储不可用。",language);
+    case ProfileFailure::unavailable:return L("Profile storage is unavailable","个人名片存储不可用",language);
     }
     return {};
 }

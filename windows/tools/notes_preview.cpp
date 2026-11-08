@@ -37,13 +37,13 @@ struct WindowsText {std::string_view english,simplified,traditional,japanese,kor
 std::string windowsText(const WindowsText& t,core::Language l){switch(l){case core::Language::simplifiedChinese:return std::string(t.simplified);case core::Language::traditionalChinese:return std::string(t.traditional);
     case core::Language::japanese:return std::string(t.japanese);case core::Language::korean:return std::string(t.korean);default:return std::string(t.english);}}
 // One paragraph exceeds the painted editor leaf (the record itself is valid).
-constexpr WindowsText paragraphCapacity{"A paragraph in this note is too long to edit. The note is unchanged and can still be viewed and scrolled.",
-    "这条便笺中有一段文字过长，无法编辑。内容已保留，仍可查看和滚动。","這則便箋中有一段文字過長，無法編輯。內容已保留，仍可檢視和捲動。",
-    "このメモには長すぎて編集できない段落があります。内容はそのまま保持され、表示とスクロールは引き続き可能です。","이 메모에 편집하기에 너무 긴 단락이 있습니다. 내용은 그대로 유지되며 계속 보고 스크롤할 수 있습니다."};
+constexpr WindowsText paragraphCapacity{"A paragraph in this note is too long to edit. The note is unchanged and can still be viewed and scrolled",
+    "这条便笺中有一段文字过长，无法编辑。内容已保留，仍可查看和滚动","這則便箋中有一段文字過長，無法編輯。內容已保留，仍可檢視和捲動",
+    "このメモには長すぎて編集できない段落があります。内容はそのまま保持され、表示とスクロールは引き続き可能です","이 메모에 편집하기에 너무 긴 단락이 있습니다. 내용은 그대로 유지되며 계속 보고 스크롤할 수 있습니다"};
 // HUDNotesInteraction's field help ("Escape or Command-Return saves...") with
 // the Windows finish keys this owner implements (Escape, Ctrl+Enter).
-constexpr WindowsText editHelp{"Escape or Ctrl+Enter saves. Text notes support multiple lines.","按 Esc 或 Ctrl+Enter 保存。文字便笺支持多行。","按 Esc 或 Ctrl+Enter 儲存。文字便箋支援多行。",
-    "Esc または Ctrl+Enter で保存します。テキストメモは複数行に対応しています。","Esc 또는 Ctrl+Enter를 누르면 저장됩니다. 텍스트 메모는 여러 줄을 지원합니다."};
+constexpr WindowsText editHelp{"Escape or Ctrl+Enter saves. Text notes support multiple lines","按 Esc 或 Ctrl+Enter 保存。文字便笺支持多行","按 Esc 或 Ctrl+Enter 儲存。文字便箋支援多行",
+    "Esc または Ctrl+Enter で保存します。テキストメモは複数行に対応しています","Esc 또는 Ctrl+Enter를 누르면 저장됩니다. 텍스트 메모는 여러 줄을 지원합니다"};
 // UTF-8 from an automation client (UIA ValuePattern) as UTF-16; none if invalid.
 std::optional<std::u16string> automationUTF16(std::string_view s){
     if(s.empty())return std::u16string{};if(s.size()>static_cast<std::size_t>(INT_MAX))return std::nullopt;
@@ -51,7 +51,7 @@ std::optional<std::u16string> automationUTF16(std::string_view s){
     std::u16string out(static_cast<std::size_t>(n),u'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),n)!=n)return std::nullopt;return out;
 }
 // The Windows store's explicit record bound (NotesStore 10,000 records).
-constexpr WindowsText recordLimit{"Notes can hold at most 10,000 notes.","便笺最多可保存 10,000 条。","便箋最多可儲存 10,000 則。","メモは最大10,000件まで保存できます。","메모는 최대 10,000개까지 저장할 수 있습니다."};
+constexpr WindowsText recordLimit{"Notes can hold at most 10,000 notes","便笺最多可保存 10,000 条","便箋最多可儲存 10,000 則","メモは最大10,000件まで保存できます","메모는 최대 10,000개까지 저장할 수 있습니다"};
 std::string sourceText(mod::NotesSourceText t,core::Language l){return core::localized(t.english,t.simplifiedChinese,l);}
 // Source NotesCanvas media captions and NotesMediaError descriptions.
 void localizeMedia(gpu::NativeNotesWorkspaceStyle& s,core::Language l){
@@ -223,7 +223,7 @@ struct NotesPreview::Impl {
         if(state->notes().size()>=10000){setMediaError(windowsText(recordLimit,language()));return true;}
         gpu::NotesManagedImage image;
         try{image=gpu::notesManagedImageFromData(bytes);}catch(const gpu::NotesMediaFailure& failure){
-            setMediaError(failure.error==mod::NotesMediaError::imageTooLarge?core::localized("Choose an image smaller than 128 MB.","请选择小于 128 MB 的图片。",language()):core::localized("This file could not be opened as an image.","无法将此文件作为图片打开。",language()));return true;}
+            setMediaError(failure.error==mod::NotesMediaError::imageTooLarge?core::localized("Choose an image smaller than 128 MB","请选择小于 128 MB 的图片",language()):core::localized("This file could not be opened as an image","无法将此文件作为图片打开",language()));return true;}
         std::string name;try{name=gpu::writeNotesManagedImage(dataRoot,image.png);}catch(const std::exception& e){setMediaError(core::localized("Notes could not be saved or opened: ","无法保存或打开便笺：",language())+e.what());return true;}
         const auto id=data::makeUUID();bool created{};
         try{created=workspace->createManagedImage(id,data::foundationNow(),name,image.pixelWidth,image.pixelHeight,point);}catch(...){gpu::removeNotesManagedImage(dataRoot,name);throw;}
@@ -468,8 +468,8 @@ struct NotesPreview::Impl {
         catch(const gpu::NativeNotesEditorCapacityError&){setMediaError(windowsText(paragraphCapacity,language()));return false;}
     }
     void drawingStatus(){switch(workspace->drawingIssue()){case gpu::NativeNotesDrawingIssue::none:break;
-        case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError(core::localized("Stroke limit reached. Release to start a new stroke.","笔画长度已满，松开后可开始下一笔。",language()));break;
-        case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError(core::localized("Drawing limit reached. Create another drawing note.","画画容量已满，请新建画画便笺。",language()));break;}}
+        case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError(core::localized("Stroke limit reached. Release to start a new stroke","笔画长度已满，松开后可开始下一笔",language()));break;
+        case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError(core::localized("Drawing limit reached. Create another drawing note","画画容量已满，请新建画画便笺",language()));break;}}
     // The deletion confirmation under a physical point: 0 cancel, 1 confirm.
     std::optional<std::size_t> confirmationAt(core::Point p)const{
         if(!confirmationVisible)return std::nullopt;const auto rects=state->deletionControls();const auto q=workspaceProjection.unproject(p);if(!rects||!q)return std::nullopt;

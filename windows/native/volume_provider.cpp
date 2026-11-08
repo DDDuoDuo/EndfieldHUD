@@ -10,11 +10,11 @@ namespace {
 using Failure=VolumeProviderFailure;using Kind=VolumeProviderFailureKind;
 bool failed(std::int32_t value){return value<0;}
 std::string errorText(Failure f){switch(f.kind){
-case Kind::unavailable:return "Audio device information is unavailable.";
-case Kind::unsupported:return "This device does not support this control.";
-case Kind::deviceChanged:return "The audio device changed. Try the control again.";
-case Kind::invalidValue:return "The audio control value is invalid.";
-case Kind::native:return "Windows could not complete the audio operation ("+std::to_string(f.status)+").";
+case Kind::unavailable:return "Audio device information is unavailable";
+case Kind::unsupported:return "This device does not support this control";
+case Kind::deviceChanged:return "The audio device changed. Try the control again";
+case Kind::invalidValue:return "The audio control value is invalid";
+case Kind::native:return "Windows could not complete the audio operation ("+std::to_string(f.status)+")";
 }return {};}
 // Endpoint guards run against the latest service snapshot, not the last UI
 // event. Compare UTF-16/32 to UTF-8 without allocating during a slider write.

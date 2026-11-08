@@ -169,7 +169,7 @@ void workerStatus(){
     check(gpu::volumeProviderFailure(static_cast<std::int32_t>(0x80070057u)).kind==K::invalidValue&&gpu::volumeProviderFailure(static_cast<std::int32_t>(0x8000000Au)).kind==K::unavailable,"Invalid value and pending map to their source categories");
     check(gpu::volumeProviderFailure(-5).kind==K::native&&gpu::volumeProviderFailure(-5).status==-5,"Other native statuses keep their code");
     Graph graph;gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
-    graph.audio.commandError=static_cast<std::int32_t>(0x8007048Fu);graph.changed();check(binding.snapshot().status=="The audio device changed. Try the control again.","An asynchronous worker command failure is surfaced with the source text");
+    graph.audio.commandError=static_cast<std::int32_t>(0x8007048Fu);graph.changed();check(binding.snapshot().status=="The audio device changed. Try the control again","An asynchronous worker command failure is surfaced with the source text");
     graph.audio.commandError=0;graph.changed();check(!binding.snapshot().status,"A later successful command clears the asynchronous status");
     graph.audio.routeError=-5;graph.changed();check(binding.snapshot().perAppStatus&&binding.snapshot().perAppStatus->find("(-5)")!=std::string::npos&&!binding.snapshot().status&&!binding.snapshot().applicationMessage,"A per-app command failure is the per-app status line, not a toast or the empty-list reason");
     graph.audio.routeError=0;graph.changed();check(!binding.snapshot().perAppStatus,"A per-app command that succeeds clears the status line");

@@ -315,8 +315,8 @@ std::string LoginSession::statusText(core::Language l) const {
     if(status_=="site") return login_policy::siteURL(region_);
     if(status_=="loading") return t("Loading…","正在载入…");
     if(status_=="host") return host_;
-    if(status_=="failed") return t("The sign-in page could not load. Retry to continue.","登录页面未能载入，请重试。");
-    if(status_=="blocked") return t("This sign-in route is not supported here. Use the official page’s email or phone sign-in, or cancel.","此登录方式暂不支持，请使用官方页面的邮箱或手机号登录，或取消。");
+    if(status_=="failed") return t("The sign-in page could not load. Retry to continue","登录页面未能载入，请重试");
+    if(status_=="blocked") return t("This sign-in route is not supported here. Use the official page’s email or phone sign-in, or cancel","此登录方式暂不支持，请使用官方页面的邮箱或手机号登录，或取消");
     return {};
 }
 const std::vector<std::string>& LoginSession::diagnostics() const noexcept {return diagnostics_;}

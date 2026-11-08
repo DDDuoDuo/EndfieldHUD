@@ -769,7 +769,7 @@ void contracts() {
     staged.onChange(1.7, false);
     w.activate(M::display, "displayRestore");
     check(overlay.confirmState().request()->id == "displayRestore" && overlay.confirmState().request()->title == "Restore default settings?"
-        && overlay.confirmState().request()->message == "Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept."
+        && overlay.confirmState().request()->message == "Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept"
         && overlay.decide(d::ConfirmState::Decision::confirm), "Display's Restore asks with its own message");
     (void)w.context.advance(w.now + 1);
     check(!w.controller->scalePending() && !w.controller->confirmationRemaining(w.now) && !overlay.confirmState().isOpen()
@@ -817,7 +817,7 @@ void contracts() {
     check(!committed().isDefault(Settings::Scope::hudElements), "Facility alerts off differs from HUD elements' defaults");
     w.activate(M::display, "overlayRestore");
     check(overlay.confirmState().request()->id == "overlayRestore" && overlay.confirmState().request()->title == "Restore HUD elements?"
-        && overlay.confirmState().request()->message == "Only this page's settings change." && overlay.confirmState().request()->confirmTitle == "Restore"
+        && overlay.confirmState().request()->message == "Only this page's settings change" && overlay.confirmState().request()->confirmTitle == "Restore"
         && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore asks with its own copy");
     (void)w.context.advance(w.now + 1);
     check(toastTitle() == "HUD elements restored" && committed().facilityAlerts() && committed().isDefault(Settings::Scope::hudElements),
@@ -831,7 +831,7 @@ void contracts() {
     w.update([](Settings& s) { s.set("facilityAlerts", false); });
     check(w[M::display].section() == "overlay", "A language change keeps HUD elements shown");
     w.activate(M::display, "overlayRestore");
-    check(overlay.confirmState().request()->title == "HUD 요소를 기본값으로 복원할까요?" && overlay.confirmState().request()->message == "이 페이지의 설정만 복원됩니다."
+    check(overlay.confirmState().request()->title == "HUD 요소를 기본값으로 복원할까요?" && overlay.confirmState().request()->message == "이 페이지의 설정만 복원됩니다"
         && overlay.decide(d::ConfirmState::Decision::confirm), "HUD elements' Restore copy comes from the catalog");
     (void)w.context.advance(w.now + 1);
     check(toastTitle() == "HUD 요소 복원됨", "HUD elements' toast comes from the catalog");

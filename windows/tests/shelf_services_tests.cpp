@@ -189,11 +189,11 @@ struct Hud {
 void text() {
     using T = mod::ShelfText; using L = core::Language;
     const auto error = [](data::StoreErrorCode code, const char* what, Failure failure, L language) { return tools::shelfErrorText(data::StoreError(code, what), failure, language); };
-    check(error(data::StoreErrorCode::unavailable, "Item is no longer on the shelf", Failure::action, L::english) == "This item is no longer on the shelf.", "Missing items use the source text");
-    check(error(data::StoreErrorCode::unavailable, "Original shelf item is unavailable; a different item occupies its former location", Failure::action, L::simplifiedChinese) == "原始项目不可用，其他项目已占用了原来的位置。",
+    check(error(data::StoreErrorCode::unavailable, "Item is no longer on the shelf", Failure::action, L::english) == "This item is no longer on the shelf", "Missing items use the source text");
+    check(error(data::StoreErrorCode::unavailable, "Original shelf item is unavailable; a different item occupies its former location", Failure::action, L::simplifiedChinese) == "原始项目不可用，其他项目已占用了原来的位置",
           "A replaced original uses the source text");
-    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 5)", Failure::importing, L::english) == "Choose a file or folder that is available on this PC.", "Import failures ask for an available item");
-    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 2)", Failure::action, L::english) == "This item is unavailable: the original may have been deleted, or it is not accessible.",
+    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 5)", Failure::importing, L::english) == "Choose a file or folder that is available on this PC", "Import failures ask for an available item");
+    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 2)", Failure::action, L::english) == "This item is unavailable: the original may have been deleted, or it is not accessible",
           "Action failures explain the missing original");
     check(error(data::StoreErrorCode::changedOnDisk, "Saved data changed in another instance", Failure::changing, L::japanese) == mod::shelfText(T::changedOnDisk, L::japanese), "External changes use the Windows wording");
     check(error(data::StoreErrorCode::tooLarge, "Shelf metadata exceeds the explicit archive byte bound", Failure::importing, L::korean) == mod::shelfText(T::tooManyReferences, L::korean), "An oversized archive is explained");
@@ -252,7 +252,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     effect = DROPEFFECT_COPY; ok(target->DragEnter(virtualSource.Get(), MK_LBUTTON, point, &effect), "Virtual drag enters");
     effect = DROPEFFECT_COPY; ok(target->Drop(virtualSource.Get(), MK_LBUTTON, point, &effect), "Virtual drop");
     check(effect == DROPEFFECT_NONE, "Virtual files are refused"); hud.pump();
-    check(hud.toast() == "Notice|This item isn't a file on disk. Save it to a folder first, then add it.", "The refusal is a Notice toast");
+    check(hud.toast() == "Notice|This item isn't a file on disk. Save it to a folder first, then add it", "The refusal is a Notice toast");
     check(hud.canvas().itemCount() == 3, "No reference was added for virtual files");
     // An external route (another module's drop) takes the target while it is set.
     std::vector<std::string> routed;
@@ -327,7 +327,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     // A failure is the canvas's notice; a choice the user cancelled (S_FALSE) shows nothing.
     { std::lock_guard lock(shell.mutex); shell.result = E_ACCESSDENIED; }
     shelf.open(reportID, hud.time); settleOpen();
-    check(hud.toast() == "Notice|This item could not be opened.", "A failed Open shows the notice");
+    check(hud.toast() == "Notice|This item could not be opened", "A failed Open shows the notice");
     { std::lock_guard lock(shell.mutex); shell.result = S_FALSE; }
     {   const auto shown = toasts();
         shelf.open(reportID, hud.time); settleOpen();

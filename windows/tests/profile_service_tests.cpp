@@ -206,7 +206,7 @@ void loadFailures(){
     {
         Owner o;write(o.temporary.root/"Profile"/"profile.json","{not json");o.service->start();
         check(!o.service->flush()&&o.loadFailure==m::ProfileFailure::record,"Unreadable record shows the source invalid-record message");
-        check(m::profileFailureMessage(*o.loadFailure,endfield::core::Language::english)=="The personal card could not be read. The saved data has been preserved.","Source message");
+        check(m::profileFailureMessage(*o.loadFailure,endfield::core::Language::english)=="The personal card could not be read. The saved data has been preserved","Source message");
     }
 }
 }

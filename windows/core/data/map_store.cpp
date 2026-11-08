@@ -7,7 +7,7 @@
 namespace ehud::data {
 namespace {
 namespace m=endfield::modules;
-constexpr const char*invalid="The saved map could not be read. The original data has been preserved.";
+constexpr const char*invalid="The saved map could not be read. The original data has been preserved";
 void need(bool condition){if(!condition)throw StoreError(StoreErrorCode::invalid,invalid);}
 std::string canonical(std::string value){for(auto&c:value)if(c>='a'&&c<='f')c=char(c-'a'+'A');return value;}
 double number(const Json&j){need(j.isNumber());const auto value=j.number();need(std::isfinite(value));return value;}
@@ -16,7 +16,7 @@ const char*styleName(m::MapPinStyle value){switch(value){case m::MapPinStyle::ye
 m::MapSnapshot canonicalSnapshot(m::MapSnapshot value){try{return m::migrateMapSnapshot(std::move(value),4);}catch(const StoreError&){throw;}catch(...){throw StoreError(StoreErrorCode::invalid,invalid);}}
 void setNumber(Json&j,const char*key,double value){if(!j[key].isNumber()||j[key].number()!=value)j[key]=value;}
 Json document(const m::MapSnapshot&value,const Json&preserved){
-    need(preserved.isObject());if(preserved.contains("version")){need(preserved["version"].isNumber());const auto v=preserved["version"].integer();if(v>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD.");need(v>=1);}
+    need(preserved.isObject());if(preserved.contains("version")){need(preserved["version"].isNumber());const auto v=preserved["version"].integer();if(v>4)throw StoreError(StoreErrorCode::newerVersion,"This map was saved by a newer version of EndfieldHUD");need(v>=1);}
     Json root=preserved;root["version"]=4;
     // Archive.current (WorldMapStore.swift:93-97): a camera below v1.2.0's
     // floor stores the floor in viewport and the real zoom as wideZoom; any

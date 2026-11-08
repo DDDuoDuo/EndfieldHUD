@@ -15,8 +15,8 @@ std::string tr(core::Language l,std::string_view en,std::string_view zh){return 
 // SummonShortcut.validationError's reserved-chord sentence without macOS
 // (Windows protects only its Control editing chords): Windows-only text in
 // the five source languages, worded as the Mac catalog row.
-constexpr core::TranslationEntry reservedEditingChord{"That combination is reserved for common editing commands.","该组合用于常见编辑命令，请选择其他快捷键。",
-    "該組合用於常見編輯命令，請選擇其他快速鍵。","この組み合わせは編集操作で使われます。別のショートカットを選択してください。","일반적인 편집 명령에 예약된 조합입니다."};
+constexpr core::TranslationEntry reservedEditingChord{"That combination is reserved for common editing commands","该组合用于常见编辑命令，请选择其他快捷键",
+    "該組合用於常見編輯命令，請選擇其他快速鍵","この組み合わせは編集操作で使われます。別のショートカットを選択してください","일반적인 편집 명령에 예약된 조합입니다"};
 std::string keyTitle(std::uint32_t key){
     if((key>='A'&&key<='Z')||(key>='0'&&key<='9'))return std::string(1,static_cast<char>(key));
     if(key>=0x70&&key<=0x87)return "F"+std::to_string(key-0x6f);
@@ -26,9 +26,9 @@ std::string keyTitle(std::uint32_t key){
 void putShortcut(Settings&settings,SettingsShortcut key){settings.set("windowsSummonShortcut",Json::Object{{"virtualKey",static_cast<std::int64_t>(key.key)},{"modifiers",static_cast<std::int64_t>(key.modifiers)}});}
 }
 std::optional<std::string>validateSettingsShortcut(SettingsShortcut key,core::Language language){
-    if(key.modifiers&~15u)return tr(language,"That modifier is not supported.","不支持该修饰键。");
-    const auto count=std::popcount(key.modifiers);if(count<1||count>2)return tr(language,"Use one key with one or two modifiers (up to three keys).","请使用一个普通键加一至两个修饰键（最多三个键）。");
-    if(keyTitle(key.key).empty())return tr(language,"Choose a letter, number, punctuation, arrow, or function key.","请选择字母、数字、标点、方向键或功能键。");
+    if(key.modifiers&~15u)return tr(language,"That modifier is not supported","不支持该修饰键");
+    const auto count=std::popcount(key.modifiers);if(count<1||count>2)return tr(language,"Use one key with one or two modifiers (up to three keys)","请使用一个普通键加一至两个修饰键（最多三个键）");
+    if(keyTitle(key.key).empty())return tr(language,"Choose a letter, number, punctuation, arrow, or function key","请选择字母、数字、标点、方向键或功能键");
     // Windows editing commands are protected in their native Control form.
     // Reserved OS/registered chords still fail through the injected platform.
     if((key.modifiers==2||key.modifiers==6)&&std::string_view("ACFHNOPQSTVWXZ").find(static_cast<char>(key.key))!=std::string_view::npos&&key.key<=127)

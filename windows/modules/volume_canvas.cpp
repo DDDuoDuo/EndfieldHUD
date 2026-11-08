@@ -322,7 +322,7 @@ void VolumeCanvas::buildApplications(d::Page& page) {
         // Windows' own unsupported message stands for the Mac's macOS 14.2 requirement.
         const std::optional<std::string> detail = snapshot_.applicationActivitySupported ? snapshot_.applicationMessage
             : snapshot_.applicationMessage ? snapshot_.applicationMessage
-            : std::optional(text("Active audio app information is unavailable.", "活跃音频应用信息不可用。"));
+            : std::optional(text("Active audio app information is unavailable", "活跃音频应用信息不可用"));
         auto& empty = d::emptyState::make(page.builder(), "volume.apps.empty", heading, detail, std::nullopt, {d::metric::boxWidth, viewport.height});
         empty.setOrigin({0, listTop});
         page.layer().add(empty);

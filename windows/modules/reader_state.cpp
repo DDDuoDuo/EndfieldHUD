@@ -8,7 +8,7 @@
 namespace endfield::modules {
 namespace {
 void need(bool value,const char*reason){if(!value)throw std::invalid_argument(reason);}
-std::string message(std::exception_ptr e){try{std::rethrow_exception(e);}catch(const std::exception&v){return v.what();}catch(...){return "This book could not be read.";}}
+std::string message(std::exception_ptr e){try{std::rethrow_exception(e);}catch(const std::exception&v){return v.what();}catch(...){return "This book could not be read";}}
 std::optional<ReaderErrorCode>code(std::exception_ptr e){try{std::rethrow_exception(e);}catch(const ReaderError&v){return v.code();}catch(...){return std::nullopt;}}
 // Bounded record of confirmed-write actions awaiting their write (user edits
 // only; a write that keeps failing cannot grow it without limit).

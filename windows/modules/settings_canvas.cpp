@@ -416,15 +416,15 @@ SettingsCanvas::RestoreCopy SettingsCanvas::restoreCopy(Settings::Scope scope) c
     switch (scope) {
     case Settings::Scope::system:
         return {"restore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
-            text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept.", "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式。"),
+            text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept", "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式"),
             "Settings restored", "已恢复默认设置"};
     case Settings::Scope::display:
         return {"displayRestore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
-            text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept.", "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式。"),
+            text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept", "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式"),
             "Settings restored", "已恢复默认设置"};
     case Settings::Scope::hudElements:
         return {"overlayRestore", text("Restore defaults", "恢复默认"), text("Restore HUD elements?", "恢复界面元素默认设置？"),
-            text("Only this page's settings change.", "仅恢复本页设置。"), "HUD elements restored", "已恢复界面元素"};
+            text("Only this page's settings change", "仅恢复本页设置"), "HUD elements restored", "已恢复界面元素"};
     }
     return restoreCopy(Settings::Scope::system);
 }
@@ -641,7 +641,7 @@ void SettingsCanvas::dragModule(const std::string& module, d::DragGrip::Phase ph
 void SettingsCanvas::confirmModulesReset() {
     d::ConfirmRequest request;
     request.id = "modulesReset"; request.title = text("Restore default layout?", "恢复默认布局？");
-    request.message = text("All modules are shown in their original order.", "所有模块按原顺序显示。");
+    request.message = text("All modules are shown in their original order", "所有模块按原顺序显示");
     request.confirmTitle = text("Restore", "恢复"); request.icon = d::Icon::reset;
     confirm(std::move(request), [this] {
         update([](Settings& s) { s.setModuleLayout({}); });

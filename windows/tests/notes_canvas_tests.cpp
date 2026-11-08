@@ -303,14 +303,14 @@ void unavailable() {
     m::NotesCanvas canvas(w.context, *store, options);
     w.show(canvas);
     // didActivate (:172-177): the storage notice toasts once.
-    check(w.toast() == "Notice|Notes storage is unavailable.", "The storage notice toasts: " + w.toast());
+    check(w.toast() == "Notice|Notes storage is unavailable", "The storage notice toasts: " + w.toast());
     for (const auto* kind : {"text", "todo", "image", "drawing"}) check(!control(canvas, std::string("notes.new.") + kind)->enabled(), "Add buttons are disabled without storage");
     canvas.setActive(false, w.now);
     // MODS-638: the Mac builds a new NotesCanvas at every HUD open (:112): the notice once per session.
     w.context.overlay().reset(); canvas.setActive(true, w.now);
     check(w.toast().empty(), "Not again in the same session");
     canvas.setActive(false, w.now); canvas.resetSession(); canvas.setActive(true, w.now);
-    check(w.toast() == "Notice|Notes storage is unavailable.", "A new HUD session tells the storage notice again");
+    check(w.toast() == "Notice|Notes storage is unavailable", "A new HUD session tells the storage notice again");
     canvas.setActive(false, w.now);
 }
 

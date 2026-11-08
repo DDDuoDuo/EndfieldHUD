@@ -53,25 +53,25 @@ template<class F>R mapRect(R r,F&&transform)noexcept{
 std::span<const Item>mediaAssemblyFilters()noexcept{return filters;}
 std::string mediaAssemblyErrorMessage(MediaAssemblyError e,core::Language l){
     switch(e){
-    case MediaAssemblyError::unsupported:return core::localized("This media format is not supported for editing.","此媒体格式不支持编辑。",l);
-    case MediaAssemblyError::invalidAdjustment:return core::localized("Choose a valid crop, adjustment or trim range.","请选择有效的裁剪、调整或剪辑范围。",l);
-    case MediaAssemblyError::unavailable:return core::localized("The original media is unavailable.","原始媒体不可用。",l);
-    case MediaAssemblyError::changedOnDisk:return core::localized("The original changed. Open it again before exporting.","原文件已更改，请重新打开后再导出。",l);
+    case MediaAssemblyError::unsupported:return core::localized("This media format is not supported for editing","此媒体格式不支持编辑",l);
+    case MediaAssemblyError::invalidAdjustment:return core::localized("Choose a valid crop, adjustment or trim range","请选择有效的裁剪、调整或剪辑范围",l);
+    case MediaAssemblyError::unavailable:return core::localized("The original media is unavailable","原始媒体不可用",l);
+    case MediaAssemblyError::changedOnDisk:return core::localized("The original changed. Open it again before exporting","原文件已更改，请重新打开后再导出",l);
     case MediaAssemblyError::unsupportedExport:{
         // Source sentence with this platform's name and Windows' writable
         // formats; MOV is absent because Media Foundation has no MOV sink.
         switch(l){
-        case core::Language::simplifiedChinese:return "此电脑无法导出所选格式，请选择 PNG、JPEG、TIFF、HEIC 或 MP4。";
-        case core::Language::traditionalChinese:return "此電腦無法匯出所選格式，請選擇 PNG、JPEG、TIFF、HEIC 或 MP4。";
-        case core::Language::japanese:return "このPCでは選択した形式で書き出せません。PNG、JPEG、TIFF、HEIC、MP4のいずれかを選んでください。";
-        case core::Language::korean:return "이 PC에서는 선택한 형식으로 내보낼 수 없습니다. PNG, JPEG, TIFF, HEIC 또는 MP4를 선택하세요.";
-        default:return "This PC cannot export the selected format. Choose PNG, JPEG, TIFF, HEIC or MP4.";
+        case core::Language::simplifiedChinese:return "此电脑无法导出所选格式，请选择 PNG、JPEG、TIFF、HEIC 或 MP4";
+        case core::Language::traditionalChinese:return "此電腦無法匯出所選格式，請選擇 PNG、JPEG、TIFF、HEIC 或 MP4";
+        case core::Language::japanese:return "このPCでは選択した形式で書き出せません。PNG、JPEG、TIFF、HEIC、MP4のいずれかを選んでください";
+        case core::Language::korean:return "이 PC에서는 선택한 형식으로 내보낼 수 없습니다. PNG, JPEG, TIFF, HEIC 또는 MP4를 선택하세요";
+        default:return "This PC cannot export the selected format. Choose PNG, JPEG, TIFF, HEIC or MP4";
         }
     }
-    case MediaAssemblyError::exportFailed:return core::localized("Export failed. The original file was preserved.","导出失败，原文件已保留。",l);
-    case MediaAssemblyError::cancelled:return core::localized("Export cancelled.","导出已取消。",l);
-    case MediaAssemblyError::exists:return core::localized("The destination already exists. Confirm overwrite or choose another name.","目标文件已存在，请确认覆盖或选择其他名称。",l);
-    case MediaAssemblyError::sourceUnavailable:return core::localized("The original media file is unavailable. Choose it again to restore access.","原始媒体文件不可用，请重新选择以恢复访问。",l);
+    case MediaAssemblyError::exportFailed:return core::localized("Export failed. The original file was preserved","导出失败，原文件已保留",l);
+    case MediaAssemblyError::cancelled:return core::localized("Export cancelled","导出已取消",l);
+    case MediaAssemblyError::exists:return core::localized("The destination already exists. Confirm overwrite or choose another name","目标文件已存在，请确认覆盖或选择其他名称",l);
+    case MediaAssemblyError::sourceUnavailable:return core::localized("The original media file is unavailable. Choose it again to restore access","原始媒体文件不可用，请重新选择以恢复访问",l);
     }
     throw std::invalid_argument("Unknown Media Assembly error");
 }

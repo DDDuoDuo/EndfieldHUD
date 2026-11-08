@@ -199,7 +199,7 @@ void run(const std::filesystem::path& shader) {
     const auto has = [&](std::string_view s) { return std::find(rows.begin(), rows.end(), s) != rows.end(); };
     check(has("> BOOT SEQUENCE  2026.10.23 09:30") && has("> UPTIME ................ 1D 01H 01M") && has("> POWER ................. 82%  CHARGE MODE")
         && has("> CALENDAR .............. 1 EVENT TODAY") && has("Stand-up") && has("> FACILITY .............. NOMINAL")
-        && has("ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR."), "The lines come from the sources, the monitor's disk and the defaults");
+        && has("ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR"), "The lines come from the sources, the monitor's disk and the defaults");
     check(owner->bootLog().terminalText() == "ENDFIELD INDUSTRIES TERMINAL v1.3.0", "The terminal names the version");
     frame(1.6);
     // Any key skips: the wipe-up, then the centre enters from below and the alerts are checked.

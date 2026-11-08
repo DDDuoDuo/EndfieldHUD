@@ -1,4 +1,5 @@
 #include "modules/settings.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -25,10 +26,12 @@ void run(const Json&oracle){
     rejectShortcut=true;const auto prior=controller.committed();check(controller.setShortcut({0x78,2})==std::optional<std::string>("Synthetic conflict")&&controller.committed()==prior,"Registration failure preserves prior binding/preferences");const auto registrations=registered;check(controller.setShortcut({'C',2}).has_value()&&registered==registrations,"Reserved common Windows editor chord rejects before platform mutation");
     check(validateSettingsShortcut({'A',0},core::Language::english).has_value()&&validateSettingsShortcut({'A',7},core::Language::english).has_value()&&validateSettingsShortcut({0x10,2},core::Language::english).has_value(),"Capture requires one ordinary key plus one/two supported modifiers");
     // Windows' reserved Control editing chords: the Windows-only sentence in the five languages.
-    check(validateSettingsShortcut({'C',2},core::Language::english)=="That combination is reserved for common editing commands."&&
-          validateSettingsShortcut({'V',6},core::Language::japanese)=="この組み合わせは編集操作で使われます。別のショートカットを選択してください。"&&
-          validateSettingsShortcut({'Z',2},core::Language::korean)=="일반적인 편집 명령에 예약된 조합입니다."&&
-          validateSettingsShortcut({'X',2},core::Language::traditionalChinese)=="該組合用於常見編輯命令，請選擇其他快速鍵。","Reserved editing chords are refused in every language");
+    check(validateSettingsShortcut({'C',2},core::Language::english)=="That combination is reserved for common editing commands"&&
+          validateSettingsShortcut({'V',6},core::Language::japanese)=="この組み合わせは編集操作で使われます。別のショートカットを選択してください"&&
+          validateSettingsShortcut({'Z',2},core::Language::korean)=="일반적인 편집 명령에 예약된 조합입니다"&&
+          validateSettingsShortcut({'X',2},core::Language::traditionalChinese)=="該組合用於常見編輯命令，請選擇其他快速鍵","Reserved editing chords are refused in every language");
+    for(unsigned n=0;n<6;++n)check(validateSettingsShortcut({'C',2},static_cast<core::Language>(n)).has_value()&&
+        endfield::tests::followsInterfaceTextRules(*validateSettingsShortcut({'C',2},static_cast<core::Language>(n))),"The reserved chord refusal has no final full stop and no dot separator");
     // Scoped Restore (restoreDefaults(_:), Mac 6591116): no Restore touches the hotkey or its capture; System leaves the
     // pending scale preview to Keep or Revert; Display writes the default scale at once and drops the countdown.
     rejectShortcut=false;controller.previewScale(.2,100);controller.beginShortcutCapture();const auto shortcut=settingsShortcut(controller.committed());const auto captures=capture.size();

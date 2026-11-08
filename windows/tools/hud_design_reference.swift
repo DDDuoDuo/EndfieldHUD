@@ -654,7 +654,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         var bars: [[String: Any]] = []
         func requests() -> [(String, HUDConfirmRequest)] {
             [("standard", HUDConfirmRequest(id: "restore", title: L10n.text("Restore default settings?", "恢复默认设置？"),
-                                            message: L10n.text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。"),
+                                            message: L10n.text("Notes, files and shortcuts are kept", "保留便笺、文件与应用快捷方式"),
                                             confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)),
              ("danger", HUDConfirmRequest(id: "clipboard.clear", title: L10n.text("Clear clipboard history?", "清空剪贴板记录？"),
                                           message: L10n.text("\(12) entries", "\(12) 条记录"), confirmTitle: L10n.text("Clear", "清空"), danger: true, icon: .trash)),

@@ -68,7 +68,7 @@
   "notice": "Original-game wallet sprites, unchanged ownership; prepared by the unchanged Mac gauge artwork code.",
   "pixelFormat": "premultiplied-RGBA8-sRGB-top-left",
   "schemaVersion": 1,
-  "sourceCommit": "2c047e0024aa337b11ab7d1e2577f7a918bace78",
+  "sourceCommit": "79bc6651959977d3c6aa89c8faeedb155a15f20d",
   "sourcePins": {
     "Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_1--cfe92272--8572312840272182184.png": "9aac8d0d5eedf04aa3e279cef1496f335113bcbb076c7cbe56c528154fd02220",
     "Resources/WatchSource/Scene/sprites/source-textures/bg_walletbar_2--cfe92272--7683125525266349835.png": "f243988a5778a6d1e027dc955156c88ca0be93bc79b9401a60f9bd6275f69ea3",

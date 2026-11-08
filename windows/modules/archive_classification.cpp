@@ -23,7 +23,7 @@ namespace endfield::modules {
 namespace {
 using ehud::data::StoreError;using ehud::data::StoreErrorCode;using J=ArchiveJson;
 void need(bool value,const char*message){if(!value)throw StoreError(StoreErrorCode::invalid,message);}
-[[noreturn]]void unavailable(){throw StoreError(StoreErrorCode::unavailable,"The archive could not be saved.");}
+[[noreturn]]void unavailable(){throw StoreError(StoreErrorCode::unavailable,"The archive could not be saved");}
 std::string upper(std::string_view value){std::string out(value);for(auto&c:out)if(c>='a'&&c<='z')c=static_cast<char>(c-'a'+'A');return out;}
 bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 #ifdef _WIN32
@@ -73,14 +73,14 @@ void archiveWipe(std::string&value)noexcept{
 ArchiveClassificationError::ArchiveClassificationError(ArchiveClassificationErrorCode code):std::runtime_error(archiveClassificationErrorText(code,core::Language::english)),code_(code){}
 std::string archiveClassificationErrorText(ArchiveClassificationErrorCode code,core::Language language){
     using L=core::Language;
-    if(code==ArchiveClassificationErrorCode::cancelled)return "Recovery was cancelled.";
+    if(code==ArchiveClassificationErrorCode::cancelled)return "Recovery was cancelled";
     const bool missing=code==ArchiveClassificationErrorCode::passwordMissing;
     switch(language){
-    case L::simplifiedChinese:return missing?"你的 Windows 账户受保护存储中缺少此文档的密码，文档仍保持机密。":"无法读取你的 Windows 账户受保护存储，文档仍保持机密。";
-    case L::traditionalChinese:return missing?"你的 Windows 帳戶受保護儲存區中缺少此文件的密碼，文件仍保持機密。":"無法讀取你的 Windows 帳戶受保護儲存區，文件仍保持機密。";
-    case L::japanese:return missing?"この文書のパスワードが Windows アカウントの保護されたストレージにありません。文書は機密のままです。":"Windows アカウントの保護されたストレージを読み取れませんでした。文書は機密のままです。";
-    case L::korean:return missing?"Windows 계정의 보호된 저장소에 이 문서의 암호가 없습니다. 문서는 기밀로 유지됩니다.":"Windows 계정의 보호된 저장소를 읽을 수 없습니다. 문서는 기밀로 유지됩니다.";
-    default:return missing?"This document's password is missing from your Windows account's protected storage. It stays classified.":"Your Windows account's protected storage could not be read. The document stays classified.";
+    case L::simplifiedChinese:return missing?"你的 Windows 账户受保护存储中缺少此文档的密码，文档仍保持机密":"无法读取你的 Windows 账户受保护存储，文档仍保持机密";
+    case L::traditionalChinese:return missing?"你的 Windows 帳戶受保護儲存區中缺少此文件的密碼，文件仍保持機密":"無法讀取你的 Windows 帳戶受保護儲存區，文件仍保持機密";
+    case L::japanese:return missing?"この文書のパスワードが Windows アカウントの保護されたストレージにありません。文書は機密のままです":"Windows アカウントの保護されたストレージを読み取れませんでした。文書は機密のままです";
+    case L::korean:return missing?"Windows 계정의 보호된 저장소에 이 문서의 암호가 없습니다. 문서는 기밀로 유지됩니다":"Windows 계정의 보호된 저장소를 읽을 수 없습니다. 문서는 기밀로 유지됩니다";
+    default:return missing?"This document's password is missing from your Windows account's protected storage. It stays classified":"Your Windows account's protected storage could not be read. The document stays classified";
     }
 }
 std::optional<ArchivePasswordIssue>archivePasswordIssue(std::string_view password,const std::optional<std::string>&confirmation,const ArchiveTextRules&rules){

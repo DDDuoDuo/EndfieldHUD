@@ -3373,7 +3373,7 @@ int Application::Impl::runHiddenVerification(){
                  const auto language=designOverlay->context().env().language;
                  lifecycleCheck(quitPromptOpen&&overlay.capturesInput()&&request&&request->id=="quit"&&request->danger&&request->icon==modules::design::Icon::power&&
                      request->title==core::localized("Quit EndfieldHUD?","退出 EndfieldHUD？",language)&&
-                     request->message==core::localized("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。",language)&&
+                     request->message==core::localized("Notes, shelf files and settings are saved","便笺、暂存文件与设置均已保存",language)&&
                      request->confirmTitle==core::localized("Quit","退出",language)&&request->cancelTitle.empty(),
                      state.c_str());}
                 lifecycleCheck(registry.covers({metrics.width*.5,metrics.height*.5})&&registry.covers({1,1}),"The bar covers every underlying control");

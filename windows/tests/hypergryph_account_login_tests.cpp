@@ -3,6 +3,7 @@
 // browser, network, login page or credential is used.
 #include "modules/hypergryph_account_login.hpp"
 #include "core/data/file_io.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -86,7 +87,7 @@ void session() {
     check(s.consent(100)&&!s.consent(101)&&s.nextDeadline()==100+h::LoginSession::sessionExpiry,"Consent arms only the 900 s session expiry");
     s.pageStarted(100);check(s.nextDeadline()==125&&s.statusText(endfield::core::Language::english)=="Loading…","Loading arms the 25 s page deadline");
     check(!s.deadline(124.9)&&s.status()=="loading","Early deadline wake changes nothing");
-    check(!s.deadline(125)&&s.status()=="failed"&&s.statusText(endfield::core::Language::english)=="The sign-in page could not load. Retry to continue.","Page timeout shows the retry text");
+    check(!s.deadline(125)&&s.status()=="failed"&&s.statusText(endfield::core::Language::english)=="The sign-in page could not load. Retry to continue","Page timeout shows the retry text");
     check(s.retry(130),"Retry reloads the official page");
     s.pageStarted(130);s.pageFinished(true,"www.skland.com");check(s.status()=="host"&&s.nextDeadline()==1000,"Loaded page clears its deadline and shows the host");
     check(s.allowNavigation("https://user.hypergryph.com/login",true,false)&&!s.allowNavigation("https://evil.example/",true,false)&&s.status()=="blocked","Navigation allowlist; blocked routes show the supported-route hint");
@@ -127,6 +128,7 @@ void wording() {
         for(const std::string_view word:{"Keychain","Mac","钥匙串","鑰匙圈","キーチェーン","키체인"})
             check(windows.find(word)==std::string::npos&&vault.find(word)==std::string::npos,"Windows wording never mentions the Mac Keychain");
         check(h::accountText("Retry","重试",l,h::AccountWording::windows)==endfield::core::localized("Retry","重试",l),"Other account strings are the Mac catalog text");
+        check(endfield::tests::followsInterfaceTextRules(windows)&&endfield::tests::followsInterfaceTextRules(vault),"The Windows account wording has no final full stop and no dot separator");
     }
     // WebView2 Runtime explanation (Windows only): every language names the
     // runtime, links to Microsoft's official page and never offers a bundled
@@ -137,7 +139,7 @@ void wording() {
     std::vector<std::string> titles;
     for(const auto l:{L::english,L::simplifiedChinese,L::traditionalChinese,L::japanese,L::korean}) {
         const auto r=h::webView2RuntimeStrings(l);
-        for(const auto* value:{&r.title,&r.detail,&r.downloadLabel,&r.checkLabel,&r.stillMissing,&r.status}) check(!value->empty(),"Every runtime text is present");
+        for(const auto* value:{&r.title,&r.detail,&r.downloadLabel,&r.checkLabel,&r.stillMissing,&r.status}) check(!value->empty()&&endfield::tests::followsInterfaceTextRules(*value),"Every runtime text is present, with no final full stop and no dot separator");
         check(r.title.find("WebView2")!=std::string::npos&&r.detail.find("WebView2")!=std::string::npos&&r.status.find("WebView2")!=std::string::npos,"The texts name the WebView2 Runtime");
         check(r.detail.find(r.checkLabel)!=std::string::npos,"The explanation refers to the Check Again button by its label");
         check(r.site==std::string(h::webView2DownloadURL),"The page shows the official download link");

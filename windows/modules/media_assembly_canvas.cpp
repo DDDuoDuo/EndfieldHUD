@@ -491,7 +491,7 @@ void MediaAssemblyCanvas::addSticker(MediaAssemblyStickerKind kind) {
 void MediaAssemblyCanvas::confirmReset() {
     d::ConfirmRequest request;
     request.id = "mediaReset"; request.title = text("Reset all edits?", "重置所有编辑？");
-    request.message = text("Filters, adjustments, crop and stickers.", "滤镜、调整、裁剪与贴纸。");
+    request.message = text("Filters, adjustments, crop and stickers", "滤镜、调整、裁剪与贴纸");
     request.confirmTitle = text("Reset", "重置"); request.icon = d::Icon::reset;
     confirm(std::move(request), [this] {
         if (!isEditable()) return;
@@ -562,7 +562,7 @@ void MediaAssemblyCanvas::confirmClose() {
     const bool edited = controller_->session().adjustments() != MediaAssemblyAdjustments{};
     d::ConfirmRequest request;
     request.id = "mediaClose"; request.title = text("Close this file?", "关闭此文件？");
-    request.message = edited ? text("Unexported edits are discarded.", "未导出的编辑将被丢弃。") : document->name;
+    request.message = edited ? text("Unexported edits are discarded", "未导出的编辑将被丢弃") : document->name;
     request.confirmTitle = text("Close", "关闭"); request.danger = edited; request.icon = d::Icon::x;
     confirm(std::move(request), [this, id = document->id] {
         const auto& current = controller_->session().document();

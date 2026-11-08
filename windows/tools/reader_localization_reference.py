@@ -32,7 +32,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTHORITY = "2c047e0024aa337b11ab7d1e2577f7a918bace78"
+AUTHORITY = "79bc6651959977d3c6aa89c8faeedb155a15f20d"
 ZIP, CANVAS = "Sources/ReaderZIP.swift", "Sources/ReaderCanvas.swift"
 CATALOG, REDESIGN = "Sources/LocalizationCatalog.swift", "Sources/LocalizationCatalogRedesign.swift"
 PINS = [ZIP, CANVAS, CATALOG, REDESIGN]

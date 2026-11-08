@@ -174,8 +174,8 @@ void StorageCanvas::applyReadings(bool animated) {
 
 // localizedError (:259-265): the controller's two messages, also for none.
 std::string StorageCanvas::localizedError(const std::optional<std::string>& value, core::Language language) {
-    if (value && *value == "The startup filesystem is unavailable.") return core::localized("The startup filesystem is unavailable.", "启动文件系统不可用。", language);
-    if (!value || *value == "Storage capacity is unavailable.") return core::localized("Storage capacity is unavailable.", "无法读取存储容量。", language);
+    if (value && *value == "The startup filesystem is unavailable") return core::localized("The startup filesystem is unavailable", "启动文件系统不可用", language);
+    if (!value || *value == "Storage capacity is unavailable") return core::localized("Storage capacity is unavailable", "无法读取存储容量", language);
     return *value;
 }
 } // namespace endfield::modules

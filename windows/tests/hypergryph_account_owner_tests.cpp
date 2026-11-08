@@ -152,7 +152,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         owner.resize({0,0,96,1,0,0});owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);openingMS=since(opening);
         const auto expected=controller.record().snapshots.at(role.id()).sanityPresentation(now);
         check(expected&&expected->current==44&&owner.gauge().model().value()=="44 / 360"&&owner.gauge().model().canOpen(),"Header wallet projects cached sanity locally (never below the reported 42)");
-        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.canvas().presentation().isLinked,"The Account page asks for a fresh sign-in");
+        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing"&&owner.canvas().presentation().isLinked,"The Account page asks for a fresh sign-in");
         const auto wake=owner.nextWakeTime(clock);const double untilNext=*expected->nextRecoveryAt-now;
         check(wake&&std::abs(*wake-(clock+untilNext))<1e-6&&untilNext>0&&untilNext<=432,"Only the next local recovery point is scheduled (no API refresh while reconnecting)");
         check(owner.activeRequests()==0,"No community request is ever started for a reconnect-required region");
@@ -427,7 +427,7 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
         modules.setDesignScreen(core::Module::account,true);
         {const auto sample=modules.sample(clock).presentation;owner.update(app::ModuleFrame{core::Matrix4{},settings,sample,1,clock,true},1);}
-        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.canvas().presentation().isLinked,
+        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing"&&owner.canvas().presentation().isLinked,
               "The page asks for a new Windows sign-in");
         const auto wallet=controller.gaugeValue(h::WorkModeGaugeInput{true,1500,61.5}).value;
         check(owner.gauge().model().value()==wallet&&wallet.find(" / ")!=std::string::npos&&owner.gauge().model().canOpen(),"The header wallet shows the cached sanity");

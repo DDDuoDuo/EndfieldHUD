@@ -99,8 +99,8 @@ std::string shelfErrorText(const std::exception& error, Failure failure, core::L
     using C = data::StoreErrorCode; const std::string_view message = error.what();
     const auto persistence = [&] { return core::localized("The file shelf could not be saved or opened: ", "无法保存或打开暂存架：", language) + std::string(message); };
     const auto unavailable = [&] { return core::localized("This item is unavailable: ", "此项目不可用：", language) + mod::shelfText(mod::ShelfText::unavailableReason, language); };
-    if (contains(message, "no longer on the shelf")) return core::localized("This item is no longer on the shelf.", "此项目已不在暂存架中。", language);
-    if (contains(message, "different item occupies")) return core::localized("The original item is unavailable. A different item now occupies its old location.", "原始项目不可用，其他项目已占用了原来的位置。", language);
+    if (contains(message, "no longer on the shelf")) return core::localized("This item is no longer on the shelf", "此项目已不在暂存架中", language);
+    if (contains(message, "different item occupies")) return core::localized("The original item is unavailable. A different item now occupies its old location", "原始项目不可用，其他项目已占用了原来的位置", language);
     const auto* store = dynamic_cast<const data::StoreError*>(&error);
     if (!store) return persistence();
     switch (store->code()) {
@@ -699,7 +699,7 @@ bool ShelfService::paste(double t) {
 // HUDFileShelfInteraction.open(id:): the identity is revalidated, the Shell
 // opens the item with its default verb (S_FALSE: the user cancelled the
 // Shell's "open with" choice: no toast, no notice); failure: "This item
-// could not be opened."
+// could not be opened"
 void ShelfService::open(std::string_view id, double t) {
     auto& i = *impl_;
     auto* c = i.at(t);
@@ -724,7 +724,7 @@ void ShelfService::opened(std::string_view id, HRESULT result, std::uint64_t clo
     auto* c = i.canvas();
     if (!c) return;
     if (result == S_OK) { if (closings == i.closings) c->opened(id); }
-    else if (FAILED(result)) c->deferError(core::localized("This item could not be opened.", "无法打开此项目。", i.language()));
+    else if (FAILED(result)) c->deferError(core::localized("This item could not be opened", "无法打开此项目", i.language()));
 }
 ehud::data::ShelfFileAccess ShelfService::access(std::string_view id) {
     auto& i = *impl_;

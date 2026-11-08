@@ -178,10 +178,10 @@ CenterLogoBitmap centerLogoWordmark(const CenterLogoBitmap& source) {
 }
 std::string centerLogoErrorText(CenterLogoError error, core::Language language, std::string_view detail) {
     switch (error) {
-    case CenterLogoError::invalidImage: return core::localized("Choose a readable image file.", "请选择可读取的图片文件。", language);
-    case CenterLogoError::imageTooLarge: return core::localized("Choose an image no larger than 32 MB.", "请选择不超过 32 MB 的图片。", language);
+    case CenterLogoError::invalidImage: return core::localized("Choose a readable image file", "请选择可读取的图片文件", language);
+    case CenterLogoError::imageTooLarge: return core::localized("Choose an image no larger than 32 MB", "请选择不超过 32 MB 的图片", language);
     case CenterLogoError::imageDimensionsTooLarge:
-        return core::localized("Choose an image no larger than 64 megapixels or 16,384 pixels on either side.", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片。", language);
+        return core::localized("Choose an image no larger than 64 megapixels or 16,384 pixels on either side", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片", language);
     case CenterLogoError::persistence: return core::localized("The center logo could not be saved: ", "无法保存中心标志：", language) + std::string(detail);
     }
     return {};

@@ -28,7 +28,7 @@ constexpr std::array<std::pair<m::ReaderErrorCode, const char*>, 7> errors{{{m::
     {m::ReaderErrorCode::unavailable, "unavailable"}, {m::ReaderErrorCode::encrypted, "encrypted"}, {m::ReaderErrorCode::changedOnDisk, "changedOnDisk"}}};
 
 void source(const J& root) {
-    check(root["source"]["authority"].string() == "2c047e0024aa337b11ab7d1e2577f7a918bace78", "Fixture comes from the pinned Mac 1.3.1 authority");
+    check(root["source"]["authority"].string() == "79bc6651959977d3c6aa89c8faeedb155a15f20d", "Fixture comes from the pinned Mac 1.3.1 authority");
     for (const auto& [code, key] : errors) {
         const auto& row = root["errors"][key];
         const auto pair = m::readerErrorText(code);

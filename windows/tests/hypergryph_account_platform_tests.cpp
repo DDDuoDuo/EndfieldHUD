@@ -276,7 +276,7 @@ void services() {
         check(c.cacheWritesAllowed()&&!c.record().linked&&c.gaugeValue({true,1500,0}).value=="25 / 25","Fresh Windows install starts unlinked with Work Mode minutes");
         c.setVisible(true,true);h::AccountAction connect;connect.kind=h::AccountAction::Kind::connect;connect.region=h::AccountPresentation::RegionChoice::china;c.perform(connect);
         bundle.drain();
-        check(c.presentation().statusMessage=="Sign-in could not finish. Please try again."&&!c.isPresentingLogin(),"Without WebView2 the official login reports a clear failure");
+        check(c.presentation().statusMessage=="Sign-in could not finish. Please try again"&&!c.isPresentingLogin(),"Without WebView2 the official login reports a clear failure");
         h::AccountAction header;header.kind=h::AccountAction::Kind::selectHeaderMode;header.headerMode=h::AccountPresentation::HeaderMode::arknights;c.perform(header);
         check(events==std::vector<std::string>{"settings"},"Preference change records one settings event");
         for(int i=0;i<50&&!std::filesystem::exists(temp.path/L"Account"/L"profile-cache.json");++i) {WaitForSingleObject(event,20);executor.drain();bundle.drain();}
@@ -310,7 +310,7 @@ void importedCache() {
         n::HypergryphAccountServices bundle(executor,options);auto& c=bundle.controller();
         check(c.record().linked&&c.record().requiresReconnect&&c.record().roles.size()==1&&c.cache().header=="arknights"&&c.cache().syncProfile,
               "The restarted owner reads the imported roles and settings");
-        check(c.presentation().statusMessage=="Sign in again to continue syncing."&&c.gaugeValue({false,0,0}).value=="120 / 135","Cached sanity stays visible while a new sign-in is required");
+        check(c.presentation().statusMessage=="Sign in again to continue syncing"&&c.gaugeValue({false,0,0}).value=="120 / 135","Cached sanity stays visible while a new sign-in is required");
         c.setVisible(true,true);c.tick();
         for(int i=0;i<100&&!n::ownerOnly(file);++i) {WaitForSingleObject(event,20);executor.drain();bundle.drain();}
         check(n::ownerOnly(file)&&n::readBoundedFile(file,h::maximumCacheBytes)==std::optional<std::string>(bytes),"The imported cache is re-secured owner-only in place, byte for byte");

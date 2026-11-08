@@ -347,7 +347,7 @@ void projectionContracts() {
         canvas.show(w.now); canvas.setActive(true, w.now);
         check(on(canvas, "color:custom") && need(canvas, "clear").enabled(), "Activation captures the workspace: a custom colour, Clear all enabled (:20-23)");
         need(canvas, "clear").activate();
-        check(w.confirm() == "Clear the projection canvas?|Source files stay intact.|Clear all|danger", "Clear all asks first (:210-219)");
+        check(w.confirm() == "Clear the projection canvas?|Source files stay intact|Clear all|danger", "Clear all asks first (:210-219)");
         w.context.overlay().decide(d::ConfirmState::Decision::confirm);
         check(model.drawing().strokes().empty() && w.toast() == "Canvas cleared|" && !need(canvas, "clear").enabled(), "Confirmed: cleared, toasted, disabled");
         w.context.overlay().reset();

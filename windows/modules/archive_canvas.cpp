@@ -21,7 +21,7 @@ std::optional<std::size_t> indexOf(std::span<const ArchiveSummary> entries, std:
     return std::nullopt;
 }
 std::string failureMessage(std::exception_ptr failure) {
-    try { if (failure) std::rethrow_exception(failure); } catch (const std::exception& e) { return e.what(); } catch (...) { return "The archive could not be saved."; }
+    try { if (failure) std::rethrow_exception(failure); } catch (const std::exception& e) { return e.what(); } catch (...) { return "The archive could not be saved"; }
     return {};
 }
 // A disabled control around a static layer (HUDControl(id:env:layer:), the
@@ -781,7 +781,7 @@ void ArchiveCanvas::confirmRemoveCategory() {
     d::ConfirmRequest request;
     request.id = "removeCategory";
     request.title = text("Remove {0}?", "删除{0}？", names);
-    request.message = text("Its documents move to Uncategorized.", "其中的文档将移至未分类。");
+    request.message = text("Its documents move to Uncategorized", "其中的文档将移至未分类");
     request.confirmTitle = text("Remove", "删除");
     request.danger = true; request.icon = d::Icon::trash;
     confirm(std::move(request), [this, id] {
@@ -1123,7 +1123,7 @@ void ArchiveCanvas::confirmDeclassify() {
     d::ConfirmRequest request;
     request.id = "declassify";
     request.title = text("Remove classification?", "取消机密？");
-    request.message = text("The password is deleted and the text stays readable.", "密码将被删除，文本保持可读。");
+    request.message = text("The password is deleted and the text stays readable", "密码将被删除，文本保持可读");
     request.confirmTitle = text("Declassify", "取消机密");
     request.icon = d::Icon::unlock;
     confirm(std::move(request), [this] {
@@ -1398,7 +1398,7 @@ void ArchiveCanvas::recover(const std::string& id, std::optional<std::string> pa
 void ArchiveCanvas::openMediaMenu(const d::Control& anchor) {
     const auto& selected = state_->selected();
     if (!selected || selected->media.size() >= maximumMedia) {
-        toast(d::Icon::warn, "Media not added", "未添加媒体", text("A document holds up to 16 items.", "每个文档最多 16 项。"));
+        toast(d::Icon::warn, "Media not added", "未添加媒体", text("A document holds up to 16 items", "每个文档最多 16 项"));
         return;
     }
     const auto choices = services_.shelfChoices ? services_.shelfChoices() : std::vector<NotesShelfChoice>{};
@@ -1714,11 +1714,11 @@ std::string archiveErrorText(std::string_view message, core::Language language) 
     // unreadable archive "The archive ..." where the Mac says "This archive ...".
     struct Pair { std::string_view windows, english, chinese; };
     static constexpr std::array<Pair, 5> pairs{{
-        {"The archive could not be read. The original was preserved.", "This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。"},
-        {"This archive could not be read. The original was preserved.", "This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。"},
-        {"The archive could not be saved.", "The archive could not be saved.", "无法保存档案。"},
-        {"This archive needs a newer app version.", "This archive needs a newer app version.", "此档案需要更新版本的应用。"},
-        {"The archive is full.", "The archive is full.", "档案库已满。"}}};
+        {"The archive could not be read. The original was preserved", "This archive could not be read. The original was preserved", "无法读取档案，原始数据已保留"},
+        {"This archive could not be read. The original was preserved", "This archive could not be read. The original was preserved", "无法读取档案，原始数据已保留"},
+        {"The archive could not be saved", "The archive could not be saved", "无法保存档案"},
+        {"This archive needs a newer app version", "This archive needs a newer app version", "此档案需要更新版本的应用"},
+        {"The archive is full", "The archive is full", "档案库已满"}}};
     for (const auto& p : pairs) if (message == p.windows) return core::localized(p.english, p.chinese, language);
     for (const auto code : {ArchiveClassificationErrorCode::passwordMissing, ArchiveClassificationErrorCode::vaultUnavailable})
         if (message == archiveClassificationErrorText(code, core::Language::english)) return archiveClassificationErrorText(code, language);

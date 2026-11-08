@@ -73,15 +73,15 @@ J record(const ShortcutRecord& value, const ShortcutTextRules& rules) {
 }
 }
 ShortcutError::ShortcutError(ShortcutErrorCode c)
-    : std::runtime_error(c == ShortcutErrorCode::invalidName ? "Enter a name of 1–128 characters without line breaks."
-        : c == ShortcutErrorCode::duplicate ? "This application is already saved. Edit its existing shortcut instead."
-        : c == ShortcutErrorCode::missing ? "This app shortcut is no longer available."
-        : c == ShortcutErrorCode::applicationChanged ? "The application changed. Choose it again."
-        : c == ShortcutErrorCode::newerVersion ? "These shortcuts were saved by a newer version."
-        : c == ShortcutErrorCode::changedOnDisk ? "App shortcuts changed outside this window. Restart before editing."
-        : c == ShortcutErrorCode::unavailable ? "The application is unavailable."
-        : c == ShortcutErrorCode::capacity ? "App shortcut metadata exceeds its storage limit."
-        : "The saved app shortcuts could not be read. The original data has been preserved."), code_(c) {}
+    : std::runtime_error(c == ShortcutErrorCode::invalidName ? "Enter a name of 1–128 characters without line breaks"
+        : c == ShortcutErrorCode::duplicate ? "This application is already saved. Edit its existing shortcut instead"
+        : c == ShortcutErrorCode::missing ? "This app shortcut is no longer available"
+        : c == ShortcutErrorCode::applicationChanged ? "The application changed. Choose it again"
+        : c == ShortcutErrorCode::newerVersion ? "These shortcuts were saved by a newer version"
+        : c == ShortcutErrorCode::changedOnDisk ? "App shortcuts changed outside this window. Restart before editing"
+        : c == ShortcutErrorCode::unavailable ? "The application is unavailable"
+        : c == ShortcutErrorCode::capacity ? "App shortcut metadata exceeds its storage limit"
+        : "The saved app shortcuts could not be read. The original data has been preserved"), code_(c) {}
 bool validShortcutIcon(std::string_view s) noexcept {
     constexpr std::array<std::string_view, 14> icons{"original", "bolt", "star", "terminal", "globe",
         "folder", "music", "play", "brush", "code", "game", "camera", "grid", "textBubble"};

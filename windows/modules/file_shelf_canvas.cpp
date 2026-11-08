@@ -46,21 +46,21 @@ constexpr std::array<TextRow, 15> windowsText{{
     {"Needs relinking", "需要重新关联", "需要重新連結", "再リンクが必要", "다시 연결 필요"},
     {"Relink “{0}”", "重新关联“{0}”", "重新連結「{0}」", "「{0}」を再リンク", "‘{0}’ 다시 연결"},
     {"Relink", "重新关联", "重新連結", "再リンク", "다시 연결"},
-    {"Choose exactly one item to relink.", "请只选择一个项目进行重新关联。", "請只選擇一個項目進行重新連結。", "再リンクする項目を1つだけ選択してください。", "다시 연결할 항목을 하나만 선택하세요."},
-    {"The file chooser could not open.", "无法打开文件选择窗口。", "無法開啟檔案選擇視窗。", "ファイル選択ウインドウを開けませんでした。", "파일 선택 창을 열 수 없습니다."},
-    {"This item isn't a file on disk. Save it to a folder first, then add it.", "此项目不是磁盘上的文件。请先将其保存到文件夹，再添加。",
-     "此項目不是磁碟上的檔案。請先將其儲存到資料夾，再新增。", "この項目はディスク上のファイルではありません。フォルダに保存してから追加してください。",
-     "이 항목은 디스크에 있는 파일이 아닙니다. 먼저 폴더에 저장한 다음 추가하세요."},
-    {"Choose a file or folder that is available on this PC.", "请选择此电脑上可访问的文件或文件夹。", "請選擇此電腦上可存取的檔案或資料夾。",
-     "このPCでアクセスできるファイルまたはフォルダを選択してください。", "이 PC에서 사용할 수 있는 파일이나 폴더를 선택하세요."},
-    {"the original may have been deleted, or it is not accessible.", "原始项目可能已被删除或无法访问。", "原始項目可能已被刪除或無法存取。",
-     "元の項目が削除されたか、アクセスできない可能性があります。", "원본 항목이 삭제되었거나 액세스할 수 없습니다."},
-    {"The shelf has too many references to save.", "暂存架引用过多，无法保存。", "暫存架引用過多，無法儲存。", "シェルフの参照が多すぎて保存できません。", "보관함 참조가 너무 많아 저장할 수 없습니다."},
-    {"The saved shelf changed outside this window. Restart EndfieldHUD before making changes.", "暂存架数据已在外部更改，请重新启动 EndfieldHUD 后再编辑。",
-     "暫存架資料已在外部更改，請重新啟動 EndfieldHUD 後再編輯。", "保存済みのシェルフが外部で変更されました。EndfieldHUDを再起動してから編集してください。",
-     "다른 창이나 앱에서 보관함이 변경되었습니다. EndfieldHUD를 재시작한 후 변경하세요."},
-    {"This file shelf was saved by a newer version of EndfieldHUD.", "此暂存架由较新版本的 EndfieldHUD 保存。", "此暫存架由較新版本的 EndfieldHUD 儲存。",
-     "このファイルシェルフは新しいバージョンのEndfieldHUDで保存されています。", "이 파일 보관함은 더 최신 버전의 EndfieldHUD에서 저장되었습니다."},
+    {"Choose exactly one item to relink", "请只选择一个项目进行重新关联", "請只選擇一個項目進行重新連結", "再リンクする項目を1つだけ選択してください", "다시 연결할 항목을 하나만 선택하세요"},
+    {"The file chooser could not open", "无法打开文件选择窗口", "無法開啟檔案選擇視窗", "ファイル選択ウインドウを開けませんでした", "파일 선택 창을 열 수 없습니다"},
+    {"This item isn't a file on disk. Save it to a folder first, then add it", "此项目不是磁盘上的文件。请先将其保存到文件夹，再添加",
+     "此項目不是磁碟上的檔案。請先將其儲存到資料夾，再新增", "この項目はディスク上のファイルではありません。フォルダに保存してから追加してください",
+     "이 항목은 디스크에 있는 파일이 아닙니다. 먼저 폴더에 저장한 다음 추가하세요"},
+    {"Choose a file or folder that is available on this PC", "请选择此电脑上可访问的文件或文件夹", "請選擇此電腦上可存取的檔案或資料夾",
+     "このPCでアクセスできるファイルまたはフォルダを選択してください", "이 PC에서 사용할 수 있는 파일이나 폴더를 선택하세요"},
+    {"the original may have been deleted, or it is not accessible", "原始项目可能已被删除或无法访问", "原始項目可能已被刪除或無法存取",
+     "元の項目が削除されたか、アクセスできない可能性があります", "원본 항목이 삭제되었거나 액세스할 수 없습니다"},
+    {"The shelf has too many references to save", "暂存架引用过多，无法保存", "暫存架引用過多，無法儲存", "シェルフの参照が多すぎて保存できません", "보관함 참조가 너무 많아 저장할 수 없습니다"},
+    {"The saved shelf changed outside this window. Restart EndfieldHUD before making changes", "暂存架数据已在外部更改，请重新启动 EndfieldHUD 后再编辑",
+     "暫存架資料已在外部更改，請重新啟動 EndfieldHUD 後再編輯", "保存済みのシェルフが外部で変更されました。EndfieldHUDを再起動してから編集してください",
+     "다른 창이나 앱에서 보관함이 변경되었습니다. EndfieldHUD를 재시작한 후 변경하세요"},
+    {"This file shelf was saved by a newer version of EndfieldHUD", "此暂存架由较新版本的 EndfieldHUD 保存", "此暫存架由較新版本的 EndfieldHUD 儲存",
+     "このファイルシェルフは新しいバージョンのEndfieldHUDで保存されています", "이 파일 보관함은 더 최신 버전의 EndfieldHUD에서 저장되었습니다"},
 }};
 static_assert(windowsText.size() == std::size_t(ShelfText::newerVersion) + 1);
 }
@@ -763,7 +763,7 @@ void FileShelfCanvas::confirmClear() {
     d::ConfirmRequest request;
     request.id = "shelf.clear";
     request.title = text("Remove {0} files from the shelf?", "从暂存架移除 {0} 个文件？", argument);
-    request.message = text("Original files stay where they are.", "原文件保持不变。");
+    request.message = text("Original files stay where they are", "原文件保持不变");
     request.confirmTitle = text("Remove all", "全部移除");
     request.danger = true;
     request.icon = d::Icon::trash;
@@ -815,7 +815,7 @@ void FileShelfCanvas::showError(std::string message) {
 void FileShelfCanvas::deferError(std::string message) {
     if (isActive()) showError(std::move(message)); else pendingError_ = std::move(message);
 }
-void FileShelfCanvas::reportUnavailable() { showError(text("File shelf storage is unavailable.", "文件暂存架存储不可用。")); }
+void FileShelfCanvas::reportUnavailable() { showError(text("File shelf storage is unavailable", "文件暂存架存储不可用")); }
 
 bool FileShelfCanvas::perform(std::string_view value) {
     if (value == "shelf:add") { chooseFiles(); return true; }

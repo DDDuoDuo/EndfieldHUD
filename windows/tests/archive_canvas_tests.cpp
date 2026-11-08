@@ -239,9 +239,9 @@ void strings() {
             check(m::archiveErrorText(m::archiveClassificationErrorText(c, L::english), l) == t, "The English what() maps to the language's wording");
         }
     check(std::string(m::ArchiveClassificationError(C::passwordMissing).what()) == m::archiveClassificationErrorText(C::passwordMissing, L::english), "what() is the English text");
-    check(m::archiveErrorText("The archive is full.", L::simplifiedChinese) == "档案库已满。" && m::archiveErrorText("The archive could not be read. The original was preserved.", L::simplifiedChinese) == "无法读取档案，原始数据已保留。",
+    check(m::archiveErrorText("The archive is full", L::simplifiedChinese) == "档案库已满" && m::archiveErrorText("The archive could not be read. The original was preserved", L::simplifiedChinese) == "无法读取档案，原始数据已保留",
         "Store errors show the Mac pairs");
-    check(m::archiveErrorText("Archive file queue is busy. Retry after pending work completes.", L::japanese) == "Archive file queue is busy. Retry after pending work completes.", "Windows diagnostics pass unchanged");
+    check(m::archiveErrorText("Archive file queue is busy. Retry after pending work completes", L::japanese) == "Archive file queue is busy. Retry after pending work completes", "Windows diagnostics pass unchanged");
 }
 
 // BatchSix testCategories (:137-157).
@@ -276,7 +276,7 @@ void categories() {
     // Remove asks on the confirm bar.
     w.press("removeCategory");
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->id == "removeCategory" && request->title == "Remove Field notes?" && request->danger && request->message == "Its documents move to Uncategorized.", "Remove asks on the confirm bar (DOCS-408)");
+    check(request && request->id == "removeCategory" && request->title == "Remove Field notes?" && request->danger && request->message == "Its documents move to Uncategorized", "Remove asks on the confirm bar (DOCS-408)");
     (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
     check(w.state.categories().empty() && c.filter().kind == m::ArchiveCanvas::FilterKind::all && w.toast() == "Category removed|", "Confirmed: All, removed, toast");
 }
@@ -659,7 +659,7 @@ struct Oracle {
     }
     static J windows(const J& row, std::string_view language) {
         const auto l = language == "zh-Hans" ? L::simplifiedChinese : L::english;
-        J out = replaced(row, "This document's password is missing from the Keychain. It stays classified.",
+        J out = replaced(row, "This document's password is missing from the Keychain. It stays classified",
             m::archiveClassificationErrorText(m::ArchiveClassificationErrorCode::passwordMissing, l));
         return fieldRoles(out);
     }

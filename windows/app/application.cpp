@@ -103,8 +103,8 @@ std::string text5(core::Language l,std::string_view en,std::string_view hans,std
 modules::SettingsUpdateStatus updateStatus(core::Language l){
     modules::SettingsUpdateStatus u;
     u.title=text5(l,"Open GitHub releases ↗","打开 GitHub 发布页 ↗","打開 GitHub 發佈頁 ↗","GitHub のリリースを開く ↗","GitHub 릴리스 열기 ↗");
-    u.detail=text5(l,"Automatic updates are not available on Windows yet. New versions are published on GitHub.","Windows 版暂不支持自动更新，新版本发布在 GitHub。",
-        "Windows 版暫不支援自動更新，新版本發佈於 GitHub。","Windows 版ではまだ自動アップデートを利用できません。新しいバージョンは GitHub で公開されます。","Windows 버전은 아직 자동 업데이트를 지원하지 않습니다. 새 버전은 GitHub에 게시됩니다.");
+    u.detail=text5(l,"Automatic updates are not available on Windows yet. New versions are published on GitHub","Windows 版暂不支持自动更新，新版本发布在 GitHub",
+        "Windows 版暫不支援自動更新，新版本發佈於 GitHub","Windows 版ではまだ自動アップデートを利用できません。新しいバージョンは GitHub で公開されます","Windows 버전은 아직 자동 업데이트를 지원하지 않습니다. 새 버전은 GitHub에 게시됩니다");
     u.releaseURL=std::string(releasesURL);u.canCheck=true;u.canSetAutomatic=false;u.automaticallyInstalls=false;
     return u;
 }
@@ -1146,7 +1146,7 @@ void Application::Impl::constructMap(){
         // publish at once; a failed save returns them to the archive on disk and toasts the
         // reason MapState's commit-before-publish shows (WorldMapSurface.onError).
         mapSaves=std::make_unique<LatestFileSave>(*utility,mapStore->path(),ehud::data::MapStore::maximumArchiveBytes,mapStore->persisted(),[this](std::exception_ptr error){
-            std::string reason="The map could not be saved or opened.";try{std::rethrow_exception(error);}catch(const std::exception&e){reason=e.what();}catch(...){}
+            std::string reason="The map could not be saved or opened";try{std::rethrow_exception(error);}catch(const std::exception&e){reason=e.what();}catch(...){}
             mapSaves->discardWaiting();mapStore->restore(mapSaves->onDisk());
             if(map){auto&canvas=map->canvas();(void)canvas.state().restore(mapStore->value());canvas.stateChanged();canvas.reportError(reason);}
         });
@@ -1694,7 +1694,7 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     // unless the low-level hook path can deliver it on its own.
     options.callbacks.registerShortcut=[this](auto value)->std::optional<std::string>{
         // GlobalShortcutController.applyShortcut's refusal (the Hotkeys toast's detail).
-        const auto refused=[this]{return core::localized("That shortcut is already in use or unavailable. Choose another combination.","该快捷键已被占用或不可用，请选择其他组合。",settingsLanguage(configuration));};
+        const auto refused=[this]{return core::localized("That shortcut is already in use or unavailable. Choose another combination","该快捷键已被占用或不可用，请选择其他组合",settingsLanguage(configuration));};
         if(!tray)return refused();
         if(!summonHotkeyEnabled()){updateTrayMenu();return {};}
         const bool registered=tray->setHotkey(gpu::TrayHotkey{value.modifiers,value.key});
@@ -2714,7 +2714,7 @@ void Application::Impl::presentQuitConfirmation(double time){
         if(isolateService(quitPreemptionService,"quit",[&]{dismissed=(*preempt)(hostTime(time),true);})&&dismissed){automationChanged();refresh(time);return;}}
     quitPromptOpen=true;
     modules::design::ConfirmRequest request;request.id="quit";
-    request.title=context.text("Quit EndfieldHUD?","退出 EndfieldHUD？");request.message=context.text("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。");
+    request.title=context.text("Quit EndfieldHUD?","退出 EndfieldHUD？");request.message=context.text("Notes, shelf files and settings are saved","便笺、暂存文件与设置均已保存");
     request.confirmTitle=context.text("Quit","退出");request.danger=true;request.icon=modules::design::Icon::power;
     (void)registry.guard(*designOverlay,[&]{context.confirm(std::move(request),
         // confirmQuit: accepted synchronously, so focus loss cannot cancel it.

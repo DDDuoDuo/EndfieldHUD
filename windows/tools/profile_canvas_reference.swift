@@ -290,7 +290,7 @@ private struct OracleAccount { let name: String; let uid: String; let picture: D
         }
         // A failed store (the canvas's nil store): defaults, disabled editing, the Notice toast.
         do {
-            let (canvas, context) = canvasFor(nil, error: "The personal card could not be read. The saved data has been preserved.")
+            let (canvas, context) = canvasFor(nil, error: "The personal card could not be read. The saved data has been preserved")
             try record(canvas, context, nil, state: "unavailable")
             canvas.setActive(false)
         }

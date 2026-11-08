@@ -14,15 +14,15 @@ std::string readerTranslation(const core::TranslationEntry& e, core::Language la
 // Sources/ReaderZIP.swift ReaderError.errorDescription.
 ReaderErrorText readerErrorText(ReaderErrorCode code) noexcept {
     switch (code) {
-    case ReaderErrorCode::unsupported: return {"Choose a PDF, EPUB or TXT book.", "请选择 PDF、EPUB 或 TXT 书籍。"};
-    case ReaderErrorCode::invalidArchive: return {"This EPUB archive is damaged or unsafe.", "此 EPUB 压缩包已损坏或不安全。"};
-    case ReaderErrorCode::tooLarge: return {"This book exceeds the reader's safety limits.", "此书籍超过阅读器的安全限制。"};
-    case ReaderErrorCode::unavailable: return {"The original book is unavailable. Choose it again.", "原始书籍不可用，请重新选择。"};
-    case ReaderErrorCode::encrypted: return {"Encrypted books are not supported.", "暂不支持加密书籍。"};
-    case ReaderErrorCode::changedOnDisk: return {"The reader library changed on disk. Restart the app before saving.", "阅读器书库已在磁盘上更改，请重新启动应用后保存。"};
+    case ReaderErrorCode::unsupported: return {"Choose a PDF, EPUB or TXT book", "请选择 PDF、EPUB 或 TXT 书籍"};
+    case ReaderErrorCode::invalidArchive: return {"This EPUB archive is damaged or unsafe", "此 EPUB 压缩包已损坏或不安全"};
+    case ReaderErrorCode::tooLarge: return {"This book exceeds the reader's safety limits", "此书籍超过阅读器的安全限制"};
+    case ReaderErrorCode::unavailable: return {"The original book is unavailable. Choose it again", "原始书籍不可用，请重新选择"};
+    case ReaderErrorCode::encrypted: return {"Encrypted books are not supported", "暂不支持加密书籍"};
+    case ReaderErrorCode::changedOnDisk: return {"The reader library changed on disk. Restart the app before saving", "阅读器书库已在磁盘上更改，请重新启动应用后保存"};
     case ReaderErrorCode::invalidBook: break;
     }
-    return {"This book could not be read.", "无法读取此书籍。"};
+    return {"This book could not be read", "无法读取此书籍"};
 }
 
 std::string readerErrorMessage(ReaderErrorCode code, core::Language language) {

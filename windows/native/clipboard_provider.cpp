@@ -104,11 +104,11 @@ ClipboardProviderStats NativeClipboardProvider::stats()const{impl_->thread();aut
 std::optional<std::string>clipboardStatusText(std::int32_t status,core::Language language){
     if(status>=0||status==clipboard_status::pending)return {};
     switch(status){
-    case clipboard_status::cacheFull:return core::localized("The cache is full of pinned items. Unpin or remove an item to capture more.","缓存已被固定项目占满，请取消固定或移除项目后继续记录。",language);
-    case clipboard_status::textTooLarge:return core::localized("Text over 1 MB was skipped.","已跳过超过 1 MB 的文本。",language);
-    case clipboard_status::imageTooLarge:return core::localized("An image over 64 MB was skipped.","已跳过超过 64 MB 的图像。",language);
-    case clipboard_status::imageDimensionsTooLarge:return core::localized("An image over 100 megapixels was skipped.","已跳过超过 1 亿像素的图像。",language);
-    case clipboard_status::tooManyFiles:return core::localized("This file selection is too large to cache.","此文件选择过大，无法缓存。",language);
+    case clipboard_status::cacheFull:return core::localized("The cache is full of pinned items. Unpin or remove an item to capture more","缓存已被固定项目占满，请取消固定或移除项目后继续记录",language);
+    case clipboard_status::textTooLarge:return core::localized("Text over 1 MB was skipped","已跳过超过 1 MB 的文本",language);
+    case clipboard_status::imageTooLarge:return core::localized("An image over 64 MB was skipped","已跳过超过 64 MB 的图像",language);
+    case clipboard_status::imageDimensionsTooLarge:return core::localized("An image over 100 megapixels was skipped","已跳过超过 1 亿像素的图像",language);
+    case clipboard_status::tooManyFiles:return core::localized("This file selection is too large to cache","此文件选择过大，无法缓存",language);
     default:break;
     }
     // Windows-only state (the Mac pasteboard is never "busy"); not in the

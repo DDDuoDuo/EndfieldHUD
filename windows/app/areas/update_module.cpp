@@ -475,7 +475,7 @@ void UpdatesArea::coverage(app::ModuleCoverage& step) {
         expect(check(t), "Windows updates: a check is sent");
         settle();
         expect(st.phase == u::Phase::failed && st.detail.error.kind == u::CheckErrorKind::noPublishedReleases &&
-              settingsStatus(core::Language::english).detail == "No published release found on GitHub.",
+              settingsStatus(core::Language::english).detail == "No published release found on GitHub",
               "Windows updates: Mac releases are never offered to Windows");
         routes_->clear();
         routes_->serve(endpoint, {200, {}, currentReleaseFeed(buildVersion()), {}});

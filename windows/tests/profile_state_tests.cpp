@@ -159,7 +159,7 @@ void native(){
     const auto refuses=[](auto&&f){try{f();}catch(const m::ProfileError&e){return e.code()==m::ProfileFailure::unavailable;}return false;};
     check(!unavailable.persistent()&&refuses([&]{unavailable.update([](m::PersonalProfile&v){v.name="x";});})&&refuses([&]{unavailable.removeImage(m::ProfileImageKind::avatar);}),
           "Unavailable profile storage");
-    check(m::profileErrorText(m::ProfileError(m::ProfileFailure::unavailable),Language::simplifiedChinese)=="个人名片存储不可用。","The store's localized message");
+    check(m::profileErrorText(m::ProfileError(m::ProfileFailure::unavailable),Language::simplifiedChinese)=="个人名片存储不可用","The store's localized message");
     // A rejected owner commit keeps the committed profile; its text is the localized store message.
     m::ProfilePersistence failing;failing.commit=[](const m::PersonalProfile&)->m::PersonalProfile{throw ehud::data::StoreError(ehud::data::StoreErrorCode::changedOnDisk,"changed");};
     m::ProfileState rejected(p,text,n::nativeProfileDateRules(u"UTC"),failing);

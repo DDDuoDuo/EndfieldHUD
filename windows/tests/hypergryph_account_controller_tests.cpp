@@ -254,7 +254,7 @@ void lifecycle() {
     check(presenter.presenting&&withLogin.isPresentingLogin()&&withLogin.presentation().status==h::AccountPresentation::Status::connecting&&withLogin.region()==h::Region::global,"Connect opens the official login for the chosen region");
     withLogin.perform(connect);check(presenter.presenting,"A second Connect while presenting is ignored");
     presenter.presenting=false;auto done=std::move(presenter.done);done(std::nullopt,h::LoginFailure::pageUnavailable);
-    check(withLogin.presentation().statusMessage=="Sign-in could not finish. Please try again.","Failed login reports the Mac message");
+    check(withLogin.presentation().statusMessage=="Sign-in could not finish. Please try again","Failed login reports the Mac message");
     // Windows: the user closed the WebView2 Runtime explanation page.
     withLogin.perform(connect);presenter.presenting=false;done=std::move(presenter.done);done(std::nullopt,h::LoginFailure::runtimeUnavailable);
     check(withLogin.presentation().statusMessage==h::webView2RuntimeStrings(endfield::core::Language::english).status&&
@@ -265,7 +265,7 @@ void lifecycle() {
         h::HypergryphAccountController mac(api,vault,queue,nullptr,nullptr,&macPresenter,nullptr,macOptions);
         mac.setVisible(true,true);mac.perform(connect);macPresenter.presenting=false;auto macDone=std::move(macPresenter.done);
         macDone(std::nullopt,h::LoginFailure::runtimeUnavailable);
-        check(mac.presentation().statusMessage=="Sign-in could not finish. Please try again.","Mac wording (oracle replays) keeps the Mac failure text");
+        check(mac.presentation().statusMessage=="Sign-in could not finish. Please try again","Mac wording (oracle replays) keeps the Mac failure text");
     }
     withLogin.perform(connect);presenter.presenting=false;done=std::move(presenter.done);
     done(h::LoginResult{h::Region::global,"SYNTHETIC-G","synthetic-gt","synthetic-gd"},h::LoginFailure::cancelled);queue.pump();
@@ -273,7 +273,7 @@ void lifecycle() {
     withLogin.perform(connect);check(!presenter.presenting,"Connect is ignored while the first sync is busy (Mac guard)");
     check(!api.pending.empty()&&api.pending.back().kind=="bindings","Login starts the first binding read");
     auto first=std::move(api.pending.back());api.pending.pop_back();first.resolve(Json::Object{{"ok",Json::Array{}}});queue.pump();
-    check(withLogin.presentation().statusMessage=="No linked game account found.","Empty binding list reports the Mac message");
+    check(withLogin.presentation().statusMessage=="No linked game account found","Empty binding list reports the Mac message");
     withLogin.perform(connect);check(presenter.presenting,"Reconnect presents again");
     withLogin.setVisible(false,false);check(!presenter.presenting&&presenter.cancels>=1,"Closing the HUD cancels and disposes the login");
 }
@@ -311,7 +311,7 @@ void avatarSync() {
     now+=700;c.tick();answer(url);check(loader.urls.size()==1,"An unchanged avatar URL is not downloaded again");
     now+=700;c.tick();answer("https://assets.skland.com/avatar/next.png");check(loader.urls.size()==2,"A new avatar URL downloads once");
     sink.fail=true;done=std::move(loader.pending);done(std::vector<std::uint8_t>(5,1));
-    check(c.presentation().statusMessage=="Game avatar is unavailable.","Import failure reports the Mac message");
+    check(c.presentation().statusMessage=="Game avatar is unavailable","Import failure reports the Mac message");
     sink.fail=false;now+=700;c.tick();answer("https://assets.skland.com/avatar/third.png");
     avatar.enabled=false;const int before=loader.cancels;c.perform(avatar);
     check(loader.cancels==before+1&&!c.cache().syncAvatar,"Disabling avatar sync cancels the in-flight download");
@@ -356,12 +356,12 @@ void vaultWording() {
     h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
     h::HypergryphAccountController c(api,vault,queue,nullptr,nullptr,nullptr,nullptr,o);
     c.setVisible(true,true);vault.failSave=true;c.acceptLogin("SYNTHETIC-L",h::Region::mainland,"synthetic-t","synthetic-d");queue.pump();
-    check(c.presentation().statusMessage=="The saved sign-in could not be updated. Try again."&&!c.record().linked&&vault.values.empty(),
+    check(c.presentation().statusMessage=="The saved sign-in could not be updated. Try again"&&!c.record().linked&&vault.values.empty(),
           "A failed DPAPI save reports the Windows store, keeps the region unlinked and stores nothing");
     vault.failSave=false;o.language=endfield::core::Language::simplifiedChinese;o.wording=h::AccountWording::mac;
     h::HypergryphAccountController mac(api,vault,queue,nullptr,nullptr,nullptr,nullptr,o);
     mac.setVisible(true,true);vault.failRemove=true;mac.disconnect();queue.pump();
-    check(mac.presentation().statusMessage=="无法更新钥匙串，请重试。","Mac wording keeps the Keychain text for oracle replays");
+    check(mac.presentation().statusMessage=="无法更新钥匙串，请重试","Mac wording keeps the Keychain text for oracle replays");
 }
 void avatarPolicy(const Json& rows) {
     for(const auto& row:rows.array()) check(h::avatarURLAllowed(row["url"].string())==row["allowed"].boolean(),"Avatar host allowlist matches Mac: "+row["url"].string());
@@ -576,7 +576,7 @@ void importedCache(const Json& oracle) {
     check(record.linked&&record.requiresReconnect&&record.roles==reference->record().roles&&record.snapshots==reference->record().snapshots&&
           record.selectedRoleID==reference->record().selectedRoleID,"The owner reads the imported roles and snapshots");
     const auto p=restarted->presentation();
-    check(p.isLinked&&p.statusMessage=="Sign in again to continue syncing."&&p.roles.size()==reference->presentation().roles.size()&&
+    check(p.isLinked&&p.statusMessage=="Sign in again to continue syncing"&&p.roles.size()==reference->presentation().roles.size()&&
           p.headerMode==reference->presentation().headerMode,"The face lists the cached roles and asks for a new Windows sign-in");
     for(const h::WorkModeGaugeInput work:{h::WorkModeGaugeInput{true,1500,0},h::WorkModeGaugeInput{false,0,90}})
         check(restarted->gaugeValue(work).value==reference->gaugeValue(work).value&&restarted->gaugeValue(work).value.find(" / ")!=std::string::npos,

@@ -928,7 +928,7 @@ void imagePaste(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&for
     check(image.kind==data::NoteKind::image&&image.imageName&&!image.media&&image.x==110&&image.y==75&&image.width==210&&image.height==129,"The note is a source managed image at the paste point");
     const auto path=f.root.path/"Notes"/"Images"/std::filesystem::u8path(*image.imageName);check(std::filesystem::exists(path)&&std::filesystem::file_size(path)>8,"Its managed PNG copy is under Notes/Images");
     clipboard->files.clear();clipboard->image=std::vector<std::uint8_t>(64,7);
-    check(f.key(app::KeyKind::down,'V',control)&&f.preview->mediaError()&&(*f.preview->mediaError()=="无法将此文件作为图片打开。"||*f.preview->mediaError()=="This file could not be opened as an image.")&&savedNotes(f.root.path).size()==2,"Unreadable image data shows the source invalid-image text and adds nothing");
+    check(f.key(app::KeyKind::down,'V',control)&&f.preview->mediaError()&&(*f.preview->mediaError()=="无法将此文件作为图片打开"||*f.preview->mediaError()=="This file could not be opened as an image")&&savedNotes(f.root.path).size()==2,"Unreadable image data shows the source invalid-image text and adds nothing");
     std::size_t files{};for(const auto&e:std::filesystem::directory_iterator(path.parent_path())){(void)e;++files;}check(files==1,"A failed paste leaves no file");
     check(f.key(app::KeyKind::down,VK_DELETE),"Delete asks to remove the selected image note");f.tick(.3);
     check(f.pointer(app::PointerKind::down,confirmationPoint(image,true))&&(f.pointer(app::PointerKind::up,confirmationPoint(image,true)),true),"Confirm the deletion");f.tick(.5);

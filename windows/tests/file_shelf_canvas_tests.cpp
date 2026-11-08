@@ -271,7 +271,7 @@ void canvasRules() {
     // Clear (:544-578) under Reduce Motion: confirm, then empty at once.
     canvas.confirmClear();
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->title == "Remove 6 files from the shelf?" && request->message == "Original files stay where they are." && request->confirmTitle == "Remove all" && request->danger,
+    check(request && request->title == "Remove 6 files from the shelf?" && request->message == "Original files stay where they are" && request->confirmTitle == "Remove all" && request->danger,
         "Clear asks through the confirm bar");
     w.context.overlay().decide(d::ConfirmState::Decision::confirm); w.advance(.2);
     check(store.items.empty() && store.cleared == std::vector<std::size_t>{6} && w.toast() == "Shelf cleared|", "Confirming clears the references and toasts");

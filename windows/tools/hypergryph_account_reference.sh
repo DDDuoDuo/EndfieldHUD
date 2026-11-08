@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 [[ ! -e "$1/reference.json" ]] || { echo 'Refusing to overwrite an existing oracle run' >&2; exit 1; }
 mkdir -p "$1/.compiler"
 OUT="$(cd "$1" && pwd)"
-PIN='2c047e0024aa337b11ab7d1e2577f7a918bace78'
+PIN='79bc6651959977d3c6aa89c8faeedb155a15f20d'
 (cd "$ROOT" && git diff --quiet "$PIN" -- Sources Resources) || { echo 'Mac Sources/Resources differ from the pinned authority' >&2; exit 1; }
 SDK="$(bash "$ROOT/windows/tools/mac_sdk.sh")"
 SOURCES=()

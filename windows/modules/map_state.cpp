@@ -26,9 +26,9 @@ bool finite(P p){return std::isfinite(p.x)&&std::isfinite(p.y);}
 std::string canonical(std::string value){for(auto&c:value)if(c>='a'&&c<='f')c=char(c-'a'+'A');return value;}
 bool sameUUID(std::string_view a,std::string_view b){if(a.size()!=b.size())return false;for(std::size_t i=0;i<a.size();++i){auto x=a[i],y=b[i];if(x>='a'&&x<='f')x=char(x-'a'+'A');if(y>='a'&&y<='f')y=char(y-'a'+'A');if(x!=y)return false;}return true;}
 void validatePins(std::span<const MapPin>pins){
-    need(pins.size()<=MapState::maximumPins,"The map can hold up to 128 pins. Remove a pin before adding another.");
+    need(pins.size()<=MapState::maximumPins,"The map can hold up to 128 pins. Remove a pin before adding another");
     for(std::size_t i=0;i<pins.size();++i){const auto&p=pins[i];
-        need(ehud::data::validUUID(p.id)&&std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.createdAt)&&p.x>=0&&p.x<1&&p.y>=0&&p.y<=1,"The saved map could not be read. The original data has been preserved.");
+        need(ehud::data::validUUID(p.id)&&std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.createdAt)&&p.x>=0&&p.x<1&&p.y>=0&&p.y<=1,"The saved map could not be read. The original data has been preserved");
         need(p.style==MapPinStyle::yellow||p.style==MapPinStyle::green||p.style==MapPinStyle::player,"Invalid map pin style");
         for(std::size_t j=0;j<i;++j)need(!sameUUID(pins[j].id,p.id),"Repeated map pin UUID");
     }
@@ -36,7 +36,7 @@ void validatePins(std::span<const MapPin>pins){
 }
 MapPinStyle nextMapPinStyle(MapPinStyle s)noexcept{return s==MapPinStyle::yellow?MapPinStyle::green:s==MapPinStyle::green?MapPinStyle::player:MapPinStyle::yellow;}
 double mapWrappedX(double x)noexcept{const auto r=std::fmod(x,1.);const auto v=r<0?r+1:r;return v>=1?0:v;}
-MapViewport mapNormalized(MapViewport v){need(std::isfinite(v.centerX)&&std::isfinite(v.centerY)&&std::isfinite(v.zoom),"The map position is invalid.");return {mapWrappedX(v.centerX),std::clamp(v.centerY,0.,1.),std::clamp(v.zoom,MapViewport::minimumZoom,MapViewport::maximumZoom)};}
+MapViewport mapNormalized(MapViewport v){need(std::isfinite(v.centerX)&&std::isfinite(v.centerY)&&std::isfinite(v.zoom),"The map position is invalid");return {mapWrappedX(v.centerX),std::clamp(v.centerY,0.,1.),std::clamp(v.zoom,MapViewport::minimumZoom,MapViewport::maximumZoom)};}
 MapViewport mapConstrained(MapViewport v)noexcept{if(!std::isfinite(v.centerX)||!std::isfinite(v.centerY)||!std::isfinite(v.zoom))v={};else{v.centerX=mapWrappedX(v.centerX);v.centerY=std::clamp(v.centerY,0.,1.);v.zoom=std::clamp(v.zoom,MapViewport::minimumZoom,MapViewport::maximumZoom);}const auto half=std::min(.5,220/(220*v.zoom));v.centerY=std::clamp(v.centerY,half,1-half);return v;}
 P mapScreen(double x,double y,MapViewport v)noexcept{double dx=x-v.centerX;dx-=std::round(dx);return {220+dx*440*v.zoom,220+(y-v.centerY)*220*v.zoom};}
 std::string mapCoordinateDescription(double x,double y){need(std::isfinite(x)&&std::isfinite(y),"Invalid map coordinates");const auto longitude=mapWrappedX(x)*360-180,latitude=90-y*180;std::ostringstream out;out.imbue(std::locale::classic());out<<std::fixed<<std::setprecision(2)<<std::abs(latitude)<<"°"<<(latitude<0?"S":"N")<<"  "<<std::abs(longitude)<<"°"<<(longitude<0?"W":"E");return out.str();}
@@ -61,12 +61,12 @@ bool G::contains(P point)noexcept{return contains(point,radius);}
 bool G::contains(P point,double limit)noexcept{return finite(point)&&std::hypot(point.x-center.x,point.y-center.y)<=limit;}
 
 void validateMapSnapshot(const MapSnapshot&s){validatePins(s.pins);need(mapNormalized(s.viewport)==s.viewport,"The saved map could not be read. The original data has been preserved.");}
-MapSnapshot migrateMapSnapshot(MapSnapshot s,unsigned version){need(version>=1&&version<=4,version>4?"This map was saved by a newer version of EndfieldHUD.":"Invalid map archive version");validatePins(s.pins);if(version==1){const auto&v=s.viewport;need(std::isfinite(v.centerX)&&v.centerX>=0&&v.centerX<1&&std::isfinite(v.centerY)&&v.centerY>=0&&v.centerY<=1&&std::isfinite(v.zoom)&&v.zoom>=1&&v.zoom<=16,"Invalid legacy map camera");s.viewport={};}else{validateMapSnapshot(s);auto old=MapViewport{};old.zoom=version==2?24:72;if(version<4&&s.viewport==old)s.viewport={};}for(auto&p:s.pins)p.id=canonical(std::move(p.id));return s;}
+MapSnapshot migrateMapSnapshot(MapSnapshot s,unsigned version){need(version>=1&&version<=4,version>4?"This map was saved by a newer version of EndfieldHUD":"Invalid map archive version");validatePins(s.pins);if(version==1){const auto&v=s.viewport;need(std::isfinite(v.centerX)&&v.centerX>=0&&v.centerX<1&&std::isfinite(v.centerY)&&v.centerY>=0&&v.centerY<=1&&std::isfinite(v.zoom)&&v.zoom>=1&&v.zoom<=16,"Invalid legacy map camera");s.viewport={};}else{validateMapSnapshot(s);auto old=MapViewport{};old.zoom=version==2?24:72;if(version<4&&s.viewport==old)s.viewport={};}for(auto&p:s.pins)p.id=canonical(std::move(p.id));return s;}
 
 MapState::MapState(MapSnapshot s,MapPersistence p):persisted_(std::move(s)),persistence_(std::move(p)){validateMapSnapshot(persisted_);for(auto&pin:persisted_.pins)pin.id=canonical(std::move(pin.id));need(!persistence_.commit||(persistence_.newID&&persistence_.foundationNow),"Editable map needs injected UUID/date factories");camera_=G::constrained(persisted_.viewport);}
 const MapPin*MapState::selectedPin()const noexcept{if(!selected_)return nullptr;for(const auto&p:persisted_.pins)if(p.id==*selected_)return &p;return nullptr;}
 // The store's commit-before-publish: memory changes only after the write.
-bool MapState::commit(MapSnapshot next,MapChange&change){if(!editable())return false;try{if(next==persisted_)return true;validateMapSnapshot(next);persistence_.commit(next);persisted_=std::move(next);return true;}catch(const std::exception&e){change.error=e.what();return false;}catch(...){change.error="The map could not be saved or opened.";return false;}}
+bool MapState::commit(MapSnapshot next,MapChange&change){if(!editable())return false;try{if(next==persisted_)return true;validateMapSnapshot(next);persistence_.commit(next);persisted_=std::move(next);return true;}catch(const std::exception&e){change.error=e.what();return false;}catch(...){change.error="The map could not be saved or opened";return false;}}
 // applyCamera (:411-424): the raster and pins follow; animated cameras ease from what is on screen.
 void MapState::apply(MapViewport next,bool animated){camera_=next;cameraAnimated_=animated;++cameraRevision_;++revision_;}
 void MapState::pinsChanged(MapChange&change){change.changed=change.pinsChanged=true;++pinRevision_;++revision_;}

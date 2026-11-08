@@ -514,7 +514,7 @@ private:
         fs::remove(photo);
         step.check(run.perform("tool:mirror"), "Mirror edits the removed source"); run.settle();
         step.check(session.error() == mod::MediaAssemblyError::sourceUnavailable &&
-                   mod::mediaAssemblyErrorMessage(*session.error(), core::Language::english) == "The original media file is unavailable. Choose it again to restore access.",
+                   mod::mediaAssemblyErrorMessage(*session.error(), core::Language::english) == "The original media file is unavailable. Choose it again to restore access",
                    "A removed source asks to be chosen again");
         writeSyntheticPNG(photo, 320, 200, 0);
         {   const std::array<std::string, 2> dropped{gpu::mediaAssemblyUTF8(photo), gpu::mediaAssemblyUTF8(shelfStill)};

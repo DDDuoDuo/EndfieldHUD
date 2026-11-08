@@ -1012,7 +1012,7 @@ bool ProfileCanvas::isValid(ProfileField field, std::string_view raw, const Prof
 // commit (:815-840).
 void ProfileCanvas::commit(ProfileField field, const std::string& raw) {
     if (!canEdit(field)) return;
-    if (!store_) { showError(core::localized("Profile storage is unavailable.", "个人名片存储不可用。", env().language)); return; }
+    if (!store_) { showError(core::localized("Profile storage is unavailable", "个人名片存储不可用", env().language)); return; }
     const auto input = text_.trim(raw, true);
     errorMessage_.reset();
     try {
@@ -1246,7 +1246,7 @@ void ProfileCanvas::chooserFinished(ProfileImageKind kind, std::optional<std::st
     if (context().onInputStateChange) context().onInputStateChange();
     if (!isActive()) return;
     if (!path) return;
-    if (!store_) { showError(core::localized("Profile storage is unavailable.", "个人名片存储不可用。", env().language)); return; }
+    if (!store_) { showError(core::localized("Profile storage is unavailable", "个人名片存储不可用", env().language)); return; }
     if (services_.importImage) (void)services_.importImage(kind, *path);
 }
 void ProfileCanvas::chooseColor(std::array<double, 3> initial) {
