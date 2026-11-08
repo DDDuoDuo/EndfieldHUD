@@ -332,6 +332,6 @@ bool NativeSanityGaugeScene::park(Renderer* r) {
     i.tipDirty={true,true,true,true};std::fill(i.tipText.begin(),i.tipText.end(),std::string("\x01"));i.tipShown={};
     ++i.stats.popoverParks;return true;
 }
-NativeSanityGaugeStats NativeSanityGaugeScene::stats() const noexcept {auto out=impl_->stats;out.popoverLoaded=impl_->popoverLoaded;out.popoverUploaded=impl_->popoverUploaded;return out;}
+NativeSanityGaugeStats NativeSanityGaugeScene::stats() const noexcept {auto out=impl_->stats;out.popoverLoaded=impl_->popoverLoaded;out.popoverUploaded=impl_->popoverUploaded;out.popoverOpacity=impl_->popoverOpacity;return out;}
 }
 #endif

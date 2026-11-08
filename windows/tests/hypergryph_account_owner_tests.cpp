@@ -213,6 +213,21 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         }
         check(owner.key({app::KeyKind::down,VK_ESCAPE},0,clock+=.05)&&!owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),"Esc dismisses only the recovery popover");
         clock+=.5;frame({});
+        // The HUD close dismisses an open recovery menu with its .16 s fade
+        // (48584b5, accountGauge.dismiss(animated: true)): it is drawn on the
+        // top layer, fading, until then. A reopen during the close goes on.
+        check(owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&owner.gauge().model().popoverOpen(),"The wallet opens the recovery menu again");
+        (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+        clock+=.3;frame({});
+        {
+            const double closedAt=clock+=.05;owner.overlayClosing(closedAt);
+            clock=closedAt+.08;frame({});const double fading=owner.gauge().sceneStats().popoverOpacity;
+            check(!owner.gauge().model().popoverOpen()&&!owner.capturesPointer()&&owner.recoveryEntries().size()==1&&fading>0&&fading<1,
+                  ("At +.08 s the closed recovery menu still fades out on the top layer ("+std::to_string(fading)+")").c_str());
+            clock=closedAt+.17;frame({});
+            check(owner.recoveryEntries().empty()&&owner.gauge().sceneStats().popoverOpacity==0,"It is gone once its .16 s fade ends");
+            owner.setOverlayVisible(true,clock+=.05);clock+=.3;frame({});
+        }
         // Steady tilt frames through the bundle: no allocation.
         frame({});const auto beforeRaster=raster.stats();allocations=0;counting=true;
         try {

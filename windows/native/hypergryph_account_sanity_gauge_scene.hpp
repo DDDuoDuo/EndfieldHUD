@@ -22,6 +22,7 @@ struct NativeSanityGaugeStats {
     std::uint64_t artworkRasters{},iconRasters{},numberRasters{},tooltipRasters{},popoverLoads{},poseUpdates{},groupUploads{},groupRedraws{};
     std::uint64_t popoverParks{};
     bool popoverLoaded{},popoverUploaded{}; // the recovery card's rasters / GPU group right now
+    double popoverOpacity{};                // the recovery card's posed opacity right now (its fade times the frame's)
 };
 // HUDAccountGauge.renderText through the shared rasterizer (content events):
 // `text` in the gauge's style (modules::hypergryph::gaugeTextLayer) drawn at
