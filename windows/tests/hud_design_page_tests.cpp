@@ -247,6 +247,15 @@ Point pillCentre(d::CenterOverlay& o, std::size_t index) {
 void overlayTraces(RecordedMeasurer& measurer, const J& overlay) {
     const auto completions = [](World& w) { w.advance(.25); };   // the .18 s collapse / .24 s fade (CA completion blocks)
     const auto scheduled = [](World& w) { w.advance(1.6); };     // the 120 ms callback and the 1.5 s toast timer
+    {   // HUDCenterOverlay.suspendInput, the HUD's close (48584b5).
+        World w(measurer); w.appearance(Language::english);
+        Trace t(w, overlay["trace.suspendKeepsBar"], "suspendKeepsBar");
+        t.o.confirm(twinRequest(), [&] { t.events.push_back("confirm"); }, [&] { t.events.push_back("cancel"); }); t.step("confirm");
+        t.o.suspendInput(); t.step("suspended");
+        scheduled(w); completions(w); t.step("timersRan");
+        t.o.reset(); t.step("reset");
+        t.finish();
+    }
     {
         World w(measurer); w.appearance(Language::english);
         Trace t(w, overlay["trace.returnConfirms"], "returnConfirms");
@@ -920,6 +929,19 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
         auto& header = canvas.header().layer();
         check(header.presented(d::Channel::opacity, w.now) == 1 && header.value(d::Channel::opacity) == 1 && !header.tracks().slots[std::size_t(d::MotionSlot::hold)][0].present()
             && canvas.header().crumbTexts().size() == 5, "The next page and its header land, opaque, with no hold (2def26e)");
+    }
+    {   // Popups leave with their module (2e08932): the menu closed by the leave
+        // stays in the top layer until the next showing (the Mac's counts, as deltas).
+        const auto top = [&] { return double(canvas.top().children().size()); };
+        canvas.pointerDown(centre(*canvas.dropdown, root), press, w.now); canvas.pointerUp(centre(*canvas.dropdown, root), w.now);
+        const J& opened = run.step(canvas, "menuOpenedBeforeLeave");
+        const double windowsOpen = top(), macOpen = opened["topCount"].number();
+        canvas.prepareToLeave(w.now);
+        const J& left = run.step(canvas, "menuLeavesWithModule");
+        check(top() - windowsOpen == left["topCount"].number() - macOpen, "The closed menu stays drawn in the top layer while the module leaves");
+        canvas.show(w.now);
+        const J& removed = run.step(canvas, "menuRemovedByMakeContent");
+        check(top() - windowsOpen == removed["topCount"].number() - macOpen, "The next showing removes it");
     }
     canvas.depth = 0;
     w.appearance(Language::english, "FAD41F", false, true);

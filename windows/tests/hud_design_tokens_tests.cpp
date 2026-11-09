@@ -647,17 +647,13 @@ void oracle(const char* path) {
             check(tokens["durations"][name].isNumber() && near(tokens["durations"][name].number(), value, 1e-9), std::string("Oracle duration ") + name);
     }
     // HUDMotion.closingFade and SystemHUDView.sourceRevealDuration as the
-    // oracle exports them (present from the fixture regenerated with them).
-    // The guard is temporary: the committed fixture predates the export, and
-    // it is regenerated once, with the batch 5 library changes (E, B5-2, B5-4
-    // and C1/C2). The commit that regenerates hud-design-source.json drops
-    // this `if`, so a fixture without these keys fails.
-    if (tokens["closingFade"].isArray()) {
+    // oracle exports them.
+    {
         const auto number = [](const J& v) {
             if (v.isNumber()) return v.number();
             return v.string() == "inf" ? std::numeric_limits<double>::infinity() : std::nan("");
         };
-        check(!tokens["closingFade"].array().empty(), "Oracle closing fade cases");
+        check(tokens["closingFade"].isArray() && !tokens["closingFade"].array().empty(), "Oracle closing fade cases");
         for (const auto& v : tokens["closingFade"].array()) {
             const auto f = c::DesignMotion::closingFade(number(v["length"]), number(v["reveal"]));
             check(near(f.delay, v["delay"].number(), 1e-9) && near(f.duration, v["duration"].number(), 1e-9), "Oracle closing fade " + v.encode());

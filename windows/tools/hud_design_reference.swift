@@ -892,6 +892,14 @@ private final class FakeCanvas: HUDDesignCanvas {
             o.reset(); step("reset")
             o.setCountdown(1); step("countdownAfterReset")
         }
+        // The HUD's close (48584b5): the bar stays drawn and dimmed, deciding
+        // nothing (no handler, no control), until reset() at the hidden HUD.
+        try trace("suspendKeepsBar") { o, step, events in
+            o.confirm(twin, onConfirm: { events.append("confirm") }, onCancel: { events.append("cancel") }); step("confirm")
+            o.suspendInput(); step("suspended")
+            runScheduled(); completions(); step("timersRan")
+            o.reset(); step("reset")
+        }
         // HUDConfirmState as pure state.
         var state = HUDConfirmState()
         var stateRows: [[String: Any]] = []
@@ -1023,6 +1031,15 @@ private final class FakeCanvas: HUDDesignCanvas {
         try record("prepareToLeaveConcealed")
         _ = canvas.makeContent(for: .clipboard, style: HUDModuleContentStyle(dark: true, accent: .yellow, contentsScale: 2))
         try record("revealedByMakeContent")
+        // Popups leave with their module (2e08932): a menu open when the module
+        // leaves closes but stays drawn in the top layer until makeContent.
+        let topCount = { (canvas.top.sublayers ?? []).count }
+        _ = canvas.pointerDown(at: dropPoint); canvas.pointerUp(at: dropPoint)
+        try record("menuOpenedBeforeLeave", extra: ["topCount": topCount()])
+        canvas.prepareToLeave()
+        try record("menuLeavesWithModule", extra: ["topCount": topCount()])
+        _ = canvas.makeContent(for: .clipboard, style: HUDModuleContentStyle(dark: true, accent: .yellow, contentsScale: 2))
+        try record("menuRemovedByMakeContent", extra: ["topCount": topCount()])
         canvas.depth = 0
         reduce = true; canvas.navigate(dx: -1); reduce = false
         try record("navigateReduceMotion")
