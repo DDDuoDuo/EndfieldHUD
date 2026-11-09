@@ -1640,6 +1640,55 @@ void suspendsInput(RecordedMeasurer& measurer) {
 // opacity falling); the departing wrapper is ModulePresentationSample::departing.
 // The Mac keeps the departing wrapper (transparent) until the next change;
 // Windows drops it once its .13 s leave ended, after these steps.
+// Each module.leave's values come from the Mac too: the recorded group's
+// duration, timing curve and opacity from / to give the opacity at +.08, +.12
+// and +.131 of its start (the switch for a leave a switch began, the close for
+// one leaveForClose added), and the additive translation's progress between
+// +.08 and +.12 (the plane's units differ from the wrapper's px; the axes
+// that move and the horizontal direction are the Mac's).
+void moduleLeaveValues(const J& leave, const endfield::core::ModulePresentation& at, double start, const std::string& where) {
+    using endfield::core::CubicTiming;
+    const auto& curve = leave["timing"].array();
+    const CubicTiming timing{curve[0].number(), curve[1].number(), curve[2].number(), curve[3].number()};
+    const double duration = leave["duration"].number();
+    const bool departing = leave["role"].string() == "departing";
+    check(std::abs(duration - .13) < 1e-9, where + ": the module leave lasts .13 s");
+    const auto surface = [&](double e) -> std::optional<endfield::core::ModulePresentationSurface> {
+        auto copy = at;
+        const auto s = copy.sample(start + e).presentation;
+        if (departing) return s.departing;
+        return s.current;
+    };
+    for (const auto& a : leave["animations"].array()) {
+        const std::string key = a["keyPath"].string();
+        const double from = a["from"].number(), to = a["to"].number();
+        if (key == "opacity") {
+            for (const double e : {.08, .12}) {
+                const auto s = surface(e);
+                const double want = from + (to - from) * timing.value(e / duration);
+                check(s && std::abs(s->opacity - want) < 1e-4, where + ": the leave's opacity at +" + std::to_string(e) + " is the Mac's");
+            }
+            const auto end = surface(.131);
+            check(departing ? (!end || end->opacity == 0) : (end && std::abs(end->opacity - to) < 1e-9), where + ": the leave has ended at +.131");
+        } else {
+            const bool horizontal = key == "transform.translation.x";
+            check(horizontal || key == "transform.translation.y", where + ": the leave moves along one axis per animation");
+            check(a["additive"].boolean() && from == 0 && to != 0, where + ": the leave's move is additive from 0");
+            const auto s8 = surface(.08), s12 = surface(.12);
+            check(s8 && s12, where + ": the leaving surface is sampled");
+            const double p8 = horizontal ? s8->planeOffset.x : s8->planeOffset.y, p12 = horizontal ? s12->planeOffset.x : s12->planeOffset.y;
+            check(p12 != 0 && std::abs(p8 / p12 - timing.value(.08 / duration) / timing.value(.12 / duration)) < 1e-4, where + ": the leave's move follows the Mac's curve");
+            if (horizontal) check((p12 > 0) == (to > 0), where + ": the leave moves the Mac's way");
+        }
+    }
+    // An axis the Mac does not move stays still.
+    for (const bool horizontal : {true, false}) {
+        bool moves = false;
+        for (const auto& a : leave["animations"].array()) moves |= a["keyPath"].string() == (horizontal ? "transform.translation.x" : "transform.translation.y");
+        const auto s = surface(.08);
+        if (!moves && s) check((horizontal ? s->planeOffset.x : s->planeOffset.y) == 0, where + ": an axis the Mac leaves still does not move");
+    }
+}
 void moduleCloseOracle(const J& cases) {
     using endfield::core::Module;
     using endfield::core::ModulePresentation;
@@ -1653,6 +1702,8 @@ void moduleCloseOracle(const J& cases) {
         if (name == "forward") { p.select(Module::eventLog, t); t += .05; }
         else if (name == "reversed") { p.select(Module::eventLog, t); p.select(Module::clipboard, t + .02); t += .05; }
         else if (name == "landed") { p.select(Module::eventLog, t); t += .16; (void)p.sample(t); }
+        const double selectedAt = 10;
+        std::vector<std::string> switchLeaves;   // the roles on a leave the switch began
         // A surface on a leave fades: the sample a moment later shows it below 1.
         const auto leaving = [](const endfield::core::ModulePresentationSurface& s) { return s.attached && s.opacity < 1 - 1e-9; };
         for (const auto& m : c["steps"].array()) {
@@ -1661,6 +1712,16 @@ void moduleCloseOracle(const J& cases) {
             if (step == "settled") s = p.settleForClose(t).presentation;
             else if (step == "leaveForClose") s = p.leaveForClose(t).presentation;
             else s = p.cancel(t).presentation;
+            if (m.contains("leaves")) {
+                const auto& leaves = m["leaves"].array();
+                check(int(leaves.size()) == int(m["leaving"].number()), where + ": one recorded leave per leaving wrapper");
+                for (const auto& leave : leaves) {
+                    const std::string role = leave["role"].string();
+                    if (step == "settled") switchLeaves.push_back(role);
+                    const bool fromSwitch = std::find(switchLeaves.begin(), switchLeaves.end(), role) != switchLeaves.end();
+                    moduleLeaveValues(leave, p, fromSwitch ? selectedAt : t, where + " (" + role + ")");
+                }
+            } else check(false, where + ": the oracle records each leave's values");
             const auto later = p.sample(t + .01).presentation;   // a moment later, inside every leave
             check(std::string(endfield::core::moduleIdentifier(s.selected)) == m["selected"].string() && s.transitioning == m["transitioning"].boolean(), where + ": committed module");
             check(!s.current.attached == m["currentHidden"].boolean(), where + ": landed screen hidden");

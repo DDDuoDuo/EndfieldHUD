@@ -1102,10 +1102,24 @@ private final class FakeCanvas: HUDDesignCanvas {
                 let wrappers = content.layer.sublayers ?? []
                 let current = content.activeContentLayer?.superlayer
                 let leaving = wrappers.filter { $0.animation(forKey: "module.leave") != nil }
+                // Each module.leave as HUDMotion.leave added it: the group's duration and
+                // timing curve, and its opacity and additive translation from / to values.
+                let leaves: [[String: Any]] = leaving.map { wrapper in
+                    let group = wrapper.animation(forKey: "module.leave") as? CAAnimationGroup
+                    var first: [Float] = [0, 0], second: [Float] = [0, 0]
+                    group?.timingFunction?.getControlPoint(at: 1, values: &first)
+                    group?.timingFunction?.getControlPoint(at: 2, values: &second)
+                    let parts: [[String: Any]] = (group?.animations ?? []).compactMap { $0 as? CABasicAnimation }.map {
+                        ["keyPath": $0.keyPath ?? "", "from": ($0.fromValue as? NSNumber)?.doubleValue ?? 0,
+                         "to": ($0.toValue as? NSNumber)?.doubleValue ?? 0, "additive": $0.isAdditive]
+                    }
+                    return ["role": wrapper === current ? "current" : "departing", "duration": group?.duration ?? 0,
+                            "timing": [first[0], first[1], second[0], second[1]].map { Double($0) }, "animations": parts]
+                }
                 return ["step": step, "selected": content.selectedModule.rawValue, "transitioning": content.isTransitioning,
                         "contentLayers": content.contentLayerCount, "wrappers": wrappers.count,
                         "currentHidden": current?.isHidden ?? true, "currentLeaving": current?.animation(forKey: "module.leave") != nil,
-                        "departing": wrappers.count > content.contentLayerCount, "leaving": leaving.count]
+                        "departing": wrappers.count > content.contentLayerCount, "leaving": leaving.count, "leaves": leaves]
             }
             var rows: [[String: Any]] = []
             content.settle(concealed: true); rows.append(state("settled"))
