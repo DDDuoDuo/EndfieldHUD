@@ -151,6 +151,7 @@ NowPlayingImageResult wic(std::span<const std::uint8_t>bytes,const std::function
  const auto profile=colorContext(factory.Get(),frame.Get());ComPtr<IWICColorContext>srgb;ComPtr<IWICColorTransform>color;if(profile){checked(factory->CreateColorContext(&srgb));checked(srgb->InitializeFromExifColorSpace(1));checked(factory->CreateColorTransformer(&color));checked(color->Initialize(source.Get(),profile.Get(),srgb.Get(),GUID_WICPixelFormat32bppRGBA));source=color;}
  ComPtr<IWICFormatConverter>converter;checked(factory->CreateFormatConverter(&converter));checked(converter->Initialize(source.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));auto image=std::make_shared<NotesImageFrame>();image->width=tw;image->height=th;image->straightRGBA.resize(std::size_t(tw)*th*4);checked(converter->CopyPixels(nullptr,tw*4,static_cast<UINT>(image->straightRGBA.size()),image->straightRGBA.data()));
  NowPlayingImageResult out{std::move(image)};out.nativeWidth=nativeWidth;out.nativeHeight=nativeHeight;return out;
+}
 }}
 #endif
 namespace endfield::native {
