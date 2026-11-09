@@ -16,7 +16,7 @@ MapPlayerImages loadMapPlayerImages(const std::filesystem::path&explicitAbsolute
 // of the original Terrain.bin and Countries.bin.
 struct MapGeographyPins {
     std::string terrainSHA256{"5356727bab11c5f96d69a94658d4f884a2e56b01e89f837670d57660e66635dd"};
-    std::string countriesSHA256{"d07bc277b1f96dbfc74ec348e49360fcbf2471b7c75b39e9592f9ab04e6ce839"};
+    std::string countriesSHA256{"b4fd270f78e46f877126b41465da706d1f85d90a0ff82cdd777ac0c869aa64a7"};
 };
 // Source WorldMapTerrain.load() and WorldMapCountries.load(), each in its own
 // Result: Terrain.bin and Countries.bin are read (bounded), checked against
