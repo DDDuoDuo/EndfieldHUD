@@ -111,11 +111,12 @@ std::vector<const native::VolumeApplication*> VolumeCanvas::listedApplications()
         if (app.state != VolumeAppState::direct || (app.available && currentOutput())) out.push_back(&app);
     return out;
 }
-// The Mac keys `supported` on both tabs, but only the App volume page reads it
-// (the Devices page never does; the tabs' dot is a binder). Keyed on tab 1
-// only, the worker's first read after launch (which adds the per-app support)
-// fills the Devices page in place instead of rebuilding it under the entrance
-// of the first switch to Volume (an owner-requested fix; the Mac rebuilds).
+// Only the App volume page reads `supported` (the Devices page never does;
+// the tabs' dot is a binder), so it counts on tab 1 only, as on the Mac since
+// 62c9b07 (VolumeCanvas.swift `supported: tab == 1 && ...`): the worker's
+// first read after launch (which adds the per-app support) fills the Devices
+// page in place instead of rebuilding it under the entrance of the first
+// switch to Volume. The empty list's reason is keyed on tab 1 too.
 VolumeCanvas::Structure VolumeCanvas::structure() const {
     Structure s{env().language, tab_, {}, tab_ == 1 && snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value(), std::nullopt};
     if (tab_ == 1) for (const auto* app : listedApplications()) s.apps.push_back(app->id);
