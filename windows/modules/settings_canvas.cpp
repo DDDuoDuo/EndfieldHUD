@@ -14,32 +14,43 @@ namespace {
 constexpr std::array<std::string_view, 6> languages{"system", "english", "simplifiedChinese", "traditionalChinese", "japanese", "korean"};
 constexpr std::array<std::string_view, 3> themes{"dark", "light", "system"};
 constexpr std::array<std::string_view, 2> clockFormats{"twentyFourHour", "twelveHour"};
-constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
-constexpr std::array<std::string_view, 6> metrics{"battery", "ram", "cpu", "network", "disk", "gpu"}; // HUDChargeMetric.allCases
-constexpr std::array<std::string_view, 3> methods{"whenChargingStarts", "always", "never"};
+// The record's own choice lists, so a value the reader shows and the Restore
+// check (Settings::isDefault) agree.
+constexpr auto& clockStyles = ehud::data::SettingsChoices::clockStyles;
+constexpr auto& metrics = ehud::data::SettingsChoices::alertMetrics; // HUDChargeMetric.allCases
+constexpr auto& methods = ehud::data::SettingsChoices::displayModes;
 constexpr std::array<std::string_view, 2> placements{"topCenter", "custom"};
-constexpr std::array<std::string_view, 4> presetLogos{"endfield", "rhodesIsland", "babel", "rhineLab"};
+constexpr auto presetLogos = std::span(ehud::data::SettingsChoices::centerLogos).first<4>(); // every HUDCenterLogo but Custom
 constexpr double modulePitch = d::metric::rowHeight + d::metric::rowGap;
 constexpr d::Size logoTile{120, 44};
 constexpr double logoFieldHeight = 16;
 // A saved value another build wrote reads as the first choice (the decoders' fallback).
-std::string_view knownOr(std::string_view value, std::span<const std::string_view> values) {
-    const auto found = std::find(values.begin(), values.end(), value);
-    return found == values.end() ? values.front() : *found;
-}
+using ehud::data::knownOr;
 int indexOf(std::string_view value, std::span<const std::string_view> values) {
     const auto found = std::find(values.begin(), values.end(), value);
     return found == values.end() ? 0 : int(found - values.begin());
 }
 std::string stringOr(const Settings& s, std::string_view key) { const auto& v = s.fields[key]; return v.isString() ? v.string() : std::string(); }
+// The HUD elements switches (\.overlayLayout.showsTitle / .showsSanity),
+// named by their place in the record: fields of the hudOverlayLayout object.
+constexpr std::string_view overlayShowsTitle{"hudOverlayLayout.showsTitle"}, overlayShowsSanity{"hudOverlayLayout.showsSanity"};
 // AppConfiguration's Bool keys (the 1.3.0 ones through their typed readers).
 bool flag(const Settings& s, std::string_view key) {
+    if (key == overlayShowsTitle) return s.overlayLayout().showsTitle;
+    if (key == overlayShowsSanity) return s.overlayLayout().showsSanity;
     if (key == "summonHotkeyEnabled") return s.summonHotkeyEnabled();
     if (key == "recordingMode") return s.recordingMode();
     if (key == "dailyBootLog") return s.dailyBootLog();
     if (key == "facilityAlerts") return s.facilityAlerts();
+    if (key == "showsCloseHint") return s.showsCloseHint();
     const auto& v = s.fields[key];
     return v.isBool() && v.boolean();
+}
+void setFlag(Settings& s, std::string_view key, bool on, const ehud::data::CharacterPrefix& characters) {
+    if (key != overlayShowsTitle && key != overlayShowsSanity) { s.set(std::string(key), on); return; }
+    auto layout = s.overlayLayout(characters);
+    (key == overlayShowsTitle ? layout.showsTitle : layout.showsSanity) = on;
+    s.setOverlayLayout(layout, characters);
 }
 // URL.host / URL.path of an explicit https link (SettingsController::openLink refuses others).
 std::pair<std::string, std::string> hostAndPath(std::string_view url) {
@@ -78,12 +89,12 @@ std::optional<Json> glyphNode(const std::string& id, const Json& tree, double si
     }
     return std::nullopt;
 }
-// HUDApplicationIcon.title (HUDApplicationIcon.swift:65-136): the icons whose
+// HUDApplicationIcon.title (HUDApplicationIcon.swift:72-141): the icons whose
 // names the Mac localizes (the roster's titles are the English ones; the
 // game-menu icons and Endfield, D.D.D., S.W.E.E.P., Project Red stay English).
 struct IconName { std::string_view id, english, simplifiedChinese; };
 constexpr std::array<IconName, 32> localizedIcons{{
-    {"battery", "Battery", "电池"},
+    {"watch", "Watch", "腕表"},
     {"originium", "Originium", "源石"},
     {"orundum", "Orundum", "合成玉"},
     {"perlica", "Perlica", "佩丽卡"},
@@ -198,12 +209,17 @@ void SettingsCanvas::didActivate() {
 }
 void SettingsCanvas::didDeactivate() {
     cancelCapture();
+    setArrangingModules(false);
     // An interrupted drag never creates a preview after the HUD has gone;
     // an unanswered layout preview is reverted with its prompt.
     stagedScale_.reset(); stagedX_.reset(); stagedY_.reset();
     if (layoutPromptOpen_) { layoutPromptOpen_ = false; controller_->revertLayout(); }
     if (section_ != Section::main && (module() != core::Module::display || section_ != Section::battery)) section_ = Section::main;
     cancel(checkTimer_); checkProgress_.reset();
+}
+void SettingsCanvas::show(double now) {
+    if (renderedLanguage() && structure() != renderedStructure_) { env().now = now; rerender(); }
+    Canvas::show(now);
 }
 void SettingsCanvas::resetSession() {
     if (isActive()) return;
@@ -214,9 +230,8 @@ void SettingsCanvas::resetSession() {
 
 SettingsCanvas::Structure SettingsCanvas::structure() const {
     const bool about = module() == core::Module::about;
-    return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), stringOr(config(), "applicationIcon"),
-        stringOr(config(), "accentHex"), about ? controller_->updateStatus().phase : SettingsUpdatePhase::idle,
-        about ? controller_->updateStatus().latestVersion : std::string()};
+    return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), config().applicationIcon(),
+        stringOr(config(), "accentHex"), about && !controller_->updateStatus().releaseURL.empty()};
 }
 
 // controllerChanged (:103-112). The Mac rebuilds every built canvas at once
@@ -285,6 +300,7 @@ void SettingsCanvas::setCustomLogo(std::string revision) {
 void SettingsCanvas::showImportError(std::string error) { toast(d::Icon::warn, "Import failed", "导入失败", std::move(error)); }
 std::string_view SettingsCanvas::section() const noexcept {
     switch (section_) {
+    case Section::overlay: return "overlay";
     case Section::battery: return "battery";
     case Section::icons: return "icons";
     case Section::credits: return "credits";
@@ -297,16 +313,27 @@ std::string_view SettingsCanvas::section() const noexcept {
 // MARK: Pages (:145-164)
 void SettingsCanvas::buildPage(d::Page& page) {
     binders_.clear(); updateCells_ = nullptr; updateText_ = nullptr; updateSpoken_ = nullptr; updateStamp_ = nullptr; updateStrip_ = nullptr; aboutPage_ = nullptr; keycaps_ = nullptr;
-    moduleRows_.clear(); modulesScroll_ = nullptr; moduleDrag_.reset();
+    moduleRows_.clear(); modulesScroll_ = nullptr; moduleDrag_.reset(); arrangeToggle_ = nullptr;
+    // Arranging lasts while Modules is shown (a re-render there keeps it).
+    if (section_ != Section::modules) setArrangingModules(false);
     renderedStructure_ = structure();
     switch (module()) {
-    case core::Module::system: section_ == Section::modules ? buildModules(page) : buildSystem(page); break;
-    case core::Module::display: section_ == Section::battery ? buildBattery(page) : section_ == Section::icons ? buildIcons(page) : buildDisplay(page); break;
+    case core::Module::system: buildSystem(page); break;
+    case core::Module::display:
+        switch (section_) {
+        case Section::modules: buildModules(page); break;
+        case Section::overlay: buildOverlay(page); break;
+        case Section::battery: buildBattery(page); break;
+        case Section::icons: buildIcons(page); break;
+        default: buildDisplay(page); break;
+        }
+        break;
     case core::Module::hotkeys: buildHotkeys(page); break;
     default: section_ == Section::credits ? buildCredits(page) : buildAbout(page); break;
     }
 }
 void SettingsCanvas::go(Section next, bool forward) {
+    if (next != Section::modules) setArrangingModules(false);
     section_ = next;
     navigate(forward ? 1 : -1);
 }
@@ -336,20 +363,8 @@ void SettingsCanvas::buildSystem(d::Page& page) {
     auto& screen = dropdown(page, "screen", text("Display", "显示器"), displaySelectionTitle(), std::nullopt, [this](const d::Dropdown& anchor) { openDisplayMenu(anchor); });
     binders_.push_back([this, &screen] { screen.setValue(displaySelectionTitle()); });
     rows.push_back(&row("screen", text("Display", "显示器"), screen, page));
-    // Battery alerts live on Display > Battery alert (its Display method).
-    auto& shown = page.own<d::Chip>("modules.count", modulesCount(), d::Chip::Variant::dark);
-    const auto modulesTitle = text("Modules", "模块");
-    auto& modules = navRow("modules", modulesTitle, page, [this] { go(Section::modules, true); }, "›", {&shown.layer()});
-    modules.label = modulesTitle + ", " + modulesCount();
-    binders_.push_back([this, &shown, &modules, modulesTitle] { shown.setTitle(modulesCount()); modules.label = modulesTitle + ", " + modulesCount(); });
-    rows.push_back(&modules);
-    auto& restore = page.make<d::Button>("restore", text("Restore", "恢复"), d::Icon::reset, d::Button::Kind::secondary, d::Button::Height::compact);
-    restore.place({0, 0});
-    restore.onActivate = [this] { confirmRestore(); };
-    rows.push_back(&row("restore", text("Restore default settings", "恢复默认设置"), {&restore.layer()}, page, {}, {&restore}));
-    // Windows only: the macImport area's entry, as a nav row.
-    if (hooks_.macImportTitle) if (auto title = hooks_.macImportTitle(env().language))
-        rows.push_back(&navRow("macImport", *title, page, [this] { if (hooks_.macImport) hooks_.macImport(); }));
+    // Battery alerts live on Display > Battery alert, and Modules on Display > Modules.
+    rows.push_back(&restoreRow(Settings::Scope::system, page));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"SYSTEM"}, "SYS-01", title("System", "系统设置"), d::format::pad2(std::int64_t(rows.size())), false);
 }
@@ -396,31 +411,92 @@ std::string SettingsCanvas::displaySelectionTitle() const {
     const auto name = stringOr(c, "windowsDisplayName");
     return (name.empty() ? text("Saved display", "已选显示器") : name) + text(" (disconnected)", "（未连接）");
 }
-// confirmRestore (:238-245).
-void SettingsCanvas::confirmRestore() {
+// MARK: Restore defaults (System, Display, Display > HUD elements, :243-291)
+SettingsCanvas::RestoreCopy SettingsCanvas::restoreCopy(Settings::Scope scope) const {
+    switch (scope) {
+    case Settings::Scope::system:
+        return {"restore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
+            text("Only System is reset. Display, the hotkey, notes, files and shortcuts are kept", "仅恢复系统设置。保留显示设置、快捷键、便笺、文件与应用快捷方式"),
+            "Settings restored", "已恢复默认设置"};
+    case Settings::Scope::display:
+        return {"displayRestore", text("Restore default settings", "恢复默认设置"), text("Restore default settings?", "恢复默认设置？"),
+            text("Only Display and its pages are reset. System, the hotkey, notes, files and shortcuts are kept", "仅恢复显示设置及其子页面。保留系统设置、快捷键、便笺、文件与应用快捷方式"),
+            "Settings restored", "已恢复默认设置"};
+    case Settings::Scope::hudElements:
+        return {"overlayRestore", text("Restore defaults", "恢复默认"), text("Restore HUD elements?", "恢复界面元素默认设置？"),
+            text("Only this page's settings change", "仅恢复本页设置"), "HUD elements restored", "已恢复界面元素"};
+    }
+    return restoreCopy(Settings::Scope::system);
+}
+// The Restore row for `scope`: enabled while something it resets differs
+// from its default, and it asks before resetting.
+d::RowPlate& SettingsCanvas::restoreRow(Settings::Scope scope, d::Page& page) {
+    const auto copy = restoreCopy(scope);
+    auto& restore = page.make<d::Button>(copy.id, text("Restore", "恢复"), d::Icon::reset, d::Button::Kind::secondary, d::Button::Height::compact);
+    restore.place({0, 0});
+    restore.onActivate = [this, scope] { confirmRestore(scope); };
+    restore.setEnabled(!controller_->isDefault(scope));
+    binders_.push_back([this, &restore, scope] { restore.setEnabled(!controller_->isDefault(scope)); });
+    return row(copy.id, copy.title, {&restore.layer()}, page, {}, {&restore});
+}
+void SettingsCanvas::confirmRestore(Settings::Scope scope) {
+    const auto copy = restoreCopy(scope);
     d::ConfirmRequest request;
-    request.id = "restore"; request.title = text("Restore default settings?", "恢复默认设置？");
-    request.message = text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。");
+    request.id = copy.id; request.title = copy.question; request.message = copy.message;
     request.confirmTitle = text("Restore", "恢复"); request.icon = d::Icon::reset;
-    confirm(std::move(request), [this] {
-        controller_->restoreDefaults();
-        toast(d::Icon::reset, "Settings restored", "已恢复默认设置");
+    confirm(std::move(request), [this, scope, toastEnglish = copy.toastEnglish, toastChinese = copy.toastChinese] {
+        // A slider mid-drag must not show its old value.
+        if (scope == Settings::Scope::display) { stagedScale_.reset(); stagedX_.reset(); stagedY_.reset(); }
+        controller_->restoreDefaults(scope);
+        toast(d::Icon::reset, toastEnglish, toastChinese);
     });
 }
 
-// MARK: Modules (System > Modules, :249-398)
+// MARK: Modules (Display > Modules, :302-489)
 std::string SettingsCanvas::modulesCount() const {
     const auto layout = config().moduleLayout();
     return std::to_string(layout.visible().size()) + " / " + std::to_string(layout.order.size());
 }
+// modulesRow (:310-322): the Display row that opens Modules, with the shown / total count.
+d::RowPlate& SettingsCanvas::modulesRow(d::Page& page) {
+    auto& shown = page.own<d::Chip>("modules.count", modulesCount(), d::Chip::Variant::dark);
+    const auto modulesTitle = text("Modules", "模块");
+    auto& modules = navRow("modules", modulesTitle, page, [this] { go(Section::modules, true); }, "›", {&shown.layer()});
+    modules.label = modulesTitle + ", " + modulesCount();
+    binders_.push_back([this, &shown, &modules, modulesTitle] { shown.setTitle(modulesCount()); modules.label = modulesTitle + ", " + modulesCount(); });
+    return modules;
+}
+// setArrangingModules (:403-411): Arrange on HUD on or off (the switch, Back,
+// leaving the page or the HUD); it turns on only on this page.
+void SettingsCanvas::setArrangingModules(bool on) {
+    const bool next = on && module() == core::Module::display && section_ == Section::modules;
+    if (next == arranging_) { if (arrangeToggle_) arrangeToggle_->setOn(next, true); return; }
+    arranging_ = next;
+    if (arrangeToggle_) arrangeToggle_->setOn(next, true);
+    if (!next) previewModuleOrder(std::nullopt);
+    if (hooks_.arrangeModules) hooks_.arrangeModules(next);
+}
+// previewModuleOrder (:413-420).
+void SettingsCanvas::previewModuleOrder(std::optional<std::vector<std::string>> order) {
+    if (order == previewedModuleOrder_) return;
+    previewedModuleOrder_ = std::move(order);
+    if (!moduleDrag_ && !moduleRows_.empty()) layoutModuleRows(previewedModuleOrder_ ? *previewedModuleOrder_ : config().moduleLayout().order, true);
+}
 // Order and visibility of the right-hand list: drag a row by its grip (the
 // others reflow) or use its move buttons; the switch shows or hides it.
+// Above the list, Arrange on HUD lets the HUD's own module buttons be dragged.
 // Windows: a row's slot is its model translateY from where it was built (the
 // Mac animates position.y; same model geometry for hits, same .24 s SNAP).
 void SettingsCanvas::buildModules(d::Page& page) {
     const auto layout = config().moduleLayout();
     const double width = rowWidth();
-    auto& scroll = page.scrollArea("modules", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
+    const auto arrangeTitle = text("Arrange on HUD", "在界面上排列"), hint = text("Drag the module buttons on the right", "拖动右侧的模块按钮");
+    // A screen reader hears the hint with the switch: the row itself is not spoken.
+    auto& arrange = page.make<d::Toggle>("modulesArrange", arrangeTitle + ", " + hint, arranging_);
+    arrange.onChange = [this](bool on) { setArrangingModules(on); };
+    arrangeToggle_ = &arrange;
+    stack({&row("modulesArrange", arrangeTitle, {&arrange.layer()}, page, hint, {&arrange})}, page.layer(), page, d::metric::headerHeight, width);
+    auto& scroll = page.scrollArea("modules", {0, d::metric::headerHeight + modulePitch, d::metric::boxWidth, d::metric::bodyHeight - modulePitch});
     modulesScroll_ = &scroll;
     std::vector<d::RowPlate*> plates;
     for (const auto& module : layout.order) {
@@ -460,11 +536,11 @@ void SettingsCanvas::buildModules(d::Page& page) {
     binders_.push_back([this, &restore] {
         renderModuleStates();
         restore.setEnabled(!config().moduleLayout().isDefault());
-        // A drag in progress owns the positions until it drops.
-        if (!moduleDrag_) layoutModuleRows(config().moduleLayout().order, true);
+        // A drag in progress (here or on the HUD) owns the positions until it drops.
+        if (!moduleDrag_) layoutModuleRows(previewedModuleOrder_ ? *previewedModuleOrder_ : config().moduleLayout().order, true);
     });
     restore.setEnabled(!layout.isDefault());
-    header().configure({"SYSTEM", "MODULES"}, "SYS-01", title("Modules", "模块"), d::format::pad2(std::int64_t(layout.order.size())), true);
+    header().configure({"DISPLAY", "MODULES"}, "SYS-02", title("Modules", "模块"), d::format::pad2(std::int64_t(layout.order.size())), true);
     wireBack(page, [this] { go(Section::main, false); });
 }
 // renderModuleStates (:312-325): switches, move buttons and the hidden rows' dimmed glyph.
@@ -536,9 +612,7 @@ void SettingsCanvas::dragModule(const std::string& module, d::DragGrip::Phase ph
     case d::DragGrip::Phase::moved: {
         if (!moduleDrag_ || moduleDrag_->module != module) return;
         // Near an edge the list follows the pointer (on pointer events only).
-        const double shown = y - scroll->offset(), edge = 36, height = scroll->layer().bounds().height;
-        if (shown < edge) scroll->scroll(-std::min(12., edge - shown));
-        else if (shown > height - edge) scroll->scroll(std::min(12., shown - height + edge));
+        if (const double step = d::DragGrip::edgeScrollStep(y - scroll->offset(), scroll->layer().bounds().height); step != 0) scroll->scroll(step);
         const double top = std::min(double(order.size() - 1) * modulePitch, std::max(0., y - moduleDrag_->grab));
         plate.setValue(d::Channel::translateY, top - row.top);
         const int slot = std::min(int(order.size()) - 1, std::max(0, int(std::round(top / modulePitch))));
@@ -567,7 +641,7 @@ void SettingsCanvas::dragModule(const std::string& module, d::DragGrip::Phase ph
 void SettingsCanvas::confirmModulesReset() {
     d::ConfirmRequest request;
     request.id = "modulesReset"; request.title = text("Restore default layout?", "恢复默认布局？");
-    request.message = text("All modules are shown in their original order.", "所有模块按原顺序显示。");
+    request.message = text("All modules are shown in their original order", "所有模块按原顺序显示");
     request.confirmTitle = text("Restore", "恢复"); request.icon = d::Icon::reset;
     confirm(std::move(request), [this] {
         update([](Settings& s) { s.setModuleLayout({}); });
@@ -576,14 +650,10 @@ void SettingsCanvas::confirmModulesReset() {
 }
 // cursor(at:) (:391-398).
 std::optional<d::Cursor> SettingsCanvas::cursor(std::optional<d::Point> point) const {
-    if (moduleDrag_) return d::Cursor::closedHand;
-    if (!isActive() || section_ != Section::modules || !point) return std::nullopt;
-    for (const auto& [module, row] : moduleRows_) {
-        const auto& grip = row.grip->layer();
-        if (!d::isVisible(grip, root()) || !d::isUnclipped(grip, *point, root())) continue;
-        if (const auto local = d::convert(*point, root(), grip); local && row.grip->contains(*local)) return d::Cursor::openHand;
-    }
-    return std::nullopt;
+    if (!moduleDrag_ && !(isActive() && section_ == Section::modules)) return std::nullopt;
+    std::vector<d::DragGrip*> grips;
+    for (const auto& [module, row] : moduleRows_) grips.push_back(row.grip);
+    return d::DragGrip::cursor(moduleDrag_.has_value(), grips, point, root());
 }
 bool SettingsCanvas::inputLocked() const { return Canvas::inputLocked() || capturingShortcut(); }
 
@@ -635,6 +705,9 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     binders_.push_back([this, &style] { style.setValue(clockStyleTitle(stringOr(config(), "clockStyle"))); });
     rows.push_back(&row("clockStyle", text("Clock style", "时钟样式"), style, page));
     rows.push_back(&logoRow(page));
+    rows.push_back(&openModuleRow(page));
+    rows.push_back(&modulesRow(page));
+    rows.push_back(&navRow("overlay", text("HUD elements", "界面元素"), page, [this] { go(Section::overlay, true); }));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
     const auto metric = std::string(knownOr(stringOr(c, "alertMetric"), metrics));
@@ -647,6 +720,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
         reading.setTitle(d::asciiUppercase(title)); batteryRow.label = batteryTitle + ", " + title;
     });
     rows.push_back(&batteryRow);
+    rows.push_back(&toggleRow("closeHint", text("Close hint", "关闭提示"), "showsCloseHint", page));
     rows.push_back(&toggleRow("ambient", text("Ambient animation", "持续环境动画"), "ambientAnimation", page));
     rows.push_back(&toggleRow("motion", text("Reduce Motion", "减少动态效果"), "reduceMotion", page));
     rows.push_back(&toggleRow("lowPower", text("Low Power visual mode", "低功耗视觉模式"), "lowPowerVisualMode", page));
@@ -655,10 +729,84 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
         else toast(d::Icon::eye, "Recording mode off", "私密内容已恢复");
     }));
     rows.push_back(&toggleRow("bootLog", text("Daily boot log", "每日启动日志"), "dailyBootLog", page));
-    rows.push_back(&toggleRow("facility", text("Facility alerts", "设施警报"), "facilityAlerts", page, [this](std::function<void()> commit) { confirmFacilityOff(std::move(commit)); }));
+    rows.push_back(&restoreRow(Settings::Scope::display, page));
     scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
     page.restoreOffset(scroll);
     header().configure({"DISPLAY"}, "SYS-02", title("Display", "显示"), d::format::pad2(std::int64_t(rows.size())), false);
+}
+// MARK: HUD elements (Display > HUD elements, :583-629)
+// The HUD's title, Sanity gauge and facility alert tags: whether each shows,
+// the title's text, their places and sizes (set on the HUD itself), and a
+// Restore for this page only.
+void SettingsCanvas::buildOverlay(d::Page& page) {
+    auto& scroll = page.scrollArea("overlay", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
+    std::vector<d::RowPlate*> rows;
+    rows.push_back(&toggleRow("overlayTitle", text("Show title", "显示标题"), std::string(overlayShowsTitle), page));
+    rows.push_back(&overlayTextRow("overlayTitleText", text("Title text", "标题文字"), ehud::data::OverlayLayout::defaultTitle, &ehud::data::OverlayLayout::titleText, page));
+    rows.push_back(&overlayTextRow("overlaySubtitleText", text("Subtitle text", "副标题文字"), ehud::data::OverlayLayout::defaultSubtitle, &ehud::data::OverlayLayout::subtitleText, page));
+    rows.push_back(&toggleRow("overlaySanity", text("Show Sanity", "显示理智"), std::string(overlayShowsSanity), page));
+    // The former Display > Facility alerts switch: off also stops the monitor.
+    rows.push_back(&toggleRow("facility", text("Show facility alerts", "显示设施警报"), "facilityAlerts", page, [this](std::function<void()> commit) { confirmFacilityOff(std::move(commit)); }));
+    rows.push_back(&navRow("overlayEdit", text("Edit position and size", "编辑位置和大小"), page, [this] { if (hooks_.editOverlay) hooks_.editOverlay(); }, "↗"));
+    rows.push_back(&restoreRow(Settings::Scope::hudElements, page));
+    scroll.setContentHeight(stack(rows, scroll.content(), page, 0, d::metric::boxWidth - 10));
+    page.restoreOffset(scroll);
+    header().configure({"DISPLAY", "HUD ELEMENTS"}, "SYS-02", title("HUD elements", "界面元素"), d::format::pad2(std::int64_t(rows.size())), true);
+    wireBack(page, [this] { go(Section::main, false); });
+}
+// overlayTextRow (:609-629): one line of custom text, for every language.
+// Return or a click elsewhere saves it (cleaned: the field shows the cleaned
+// text when cleaning changed it), and an empty field shows `placeholder`.
+// It reads the saved text as the Mac decodes it (normalized, cut to 24
+// Characters), so a longer stored text is shown cut and never written back.
+d::RowPlate& SettingsCanvas::overlayTextRow(const std::string& id, const std::string& rowTitle, std::string_view placeholder,
+    std::string ehud::data::OverlayLayout::* member, d::Page& page) {
+    using ehud::data::OverlayLayout;
+    d::TextField::Options options;
+    options.maximumLength = OverlayLayout::textLimit;
+    auto& field = page.make<d::TextField>(id, rowTitle, config().overlayLayout(env().characters.prefix).*member, std::string(placeholder), d::Size{220, 30}, options);
+    field.onCommit = [this, &field, member](const std::string& typed) {
+        const auto value = OverlayLayout::cleanText(typed, env().characters.prefix);
+        if (value != typed) field.setText(value);
+        update([&](Settings& s) { auto layout = s.overlayLayout(env().characters.prefix); layout.*member = value; s.setOverlayLayout(layout, env().characters.prefix); });
+    };
+    registerField(field);
+    binders_.push_back([this, &field, member] {
+        const auto current = config().overlayLayout(env().characters.prefix).*member;
+        if (!field.editing() && field.text() != current) field.setText(current);
+    });
+    return row(id, rowTitle, {&field.layer()}, page, {}, {&field});
+}
+// openModuleRow (:631-640): Display > Open on, the module a new HUD opens on
+// (hudOverlayLayout.openModule; nil is Last opened).
+d::RowPlate& SettingsCanvas::openModuleRow(d::Page& page) {
+    auto& opening = dropdown(page, "openModule", text("Open on", "打开时显示"), openModuleTitle(config().overlayLayout().openModule), std::nullopt,
+        [this](const d::Dropdown& anchor) { openModuleMenu(anchor); });
+    binders_.push_back([this, &opening] { opening.setValue(openModuleTitle(config().overlayLayout().openModule)); });
+    return row("openModule", text("Open on", "打开时显示"), opening, page);
+}
+std::string SettingsCanvas::openModuleTitle(const std::optional<std::string>& module) const {
+    if (module) if (auto title = moduleTitle(*module, env().language)) return *title;
+    return text("Last opened", "上次打开的模块");
+}
+// openModuleMenu (:646-657): Last opened, then every module the navigation
+// can open (not Add App); choosing the current value writes nothing.
+void SettingsCanvas::openModuleMenu(const d::Control& anchor) {
+    const auto chosen = config().overlayLayout().openModule;
+    std::vector<d::Menu::Item> items;
+    auto last = menuItem("last", openModuleTitle(std::nullopt)); last.selected = !chosen; items.push_back(std::move(last));
+    for (std::size_t index = 0; index < ehud::data::ModuleLayout::openable.size(); ++index) {
+        const std::string module(ehud::data::ModuleLayout::openable[index]);
+        auto item = menuItem(module, openModuleTitle(module));
+        item.selected = chosen == module; item.separatorBefore = index == 0;
+        items.push_back(std::move(item));
+    }
+    openMenu("openModule", std::move(items), anchor, std::nullopt, [this](const d::Menu::Item& item) {
+        // HUDModule(rawValue:): anything else, "last" included, is nil.
+        const auto module = ehud::data::ModuleLayout::isOpenable(item.id) ? std::optional(item.id) : std::nullopt;
+        if (module == config().overlayLayout().openModule) return;
+        update([&](Settings& s) { auto layout = s.overlayLayout(env().characters.prefix); layout.openModule = module; s.setOverlayLayout(layout, env().characters.prefix); });
+    });
 }
 // Switching the facility alerts off asks first, in red: both answers shut
 // the "defence system" down; only Esc or a press outside keeps it (:487-494).
@@ -734,7 +882,7 @@ d::RowPlate& SettingsCanvas::paletteRow(d::Page& page) {
     return row("palette", text("Theme color", "主题颜色"), std::move(layers), page, {}, std::move(controls));
 }
 
-// buildBattery (:558-615).
+// buildBattery (:731-778).
 void SettingsCanvas::buildBattery(d::Page& page) {
     const auto& c = config();
     std::vector<d::RowPlate*> rows;
@@ -776,9 +924,8 @@ void SettingsCanvas::buildBattery(d::Page& page) {
     });
     binders_.push_back([this, &placement] { placement.setValue(placementTitle(stringOr(config(), "placement"))); });
     rows.push_back(&row("placement", text("Display position", "显示位置"), placement, page));
-    rows.push_back(&navRow("editPosition", text("Edit position", "编辑位置"), page, [this] { controller_->editBatteryPosition(); }, "↗"));
-    rows.push_back(&sliderRow("batterySize", text("Size", "大小"), c.number("scale") * 100, {65, 160, 1, std::nullopt}, d::ValueFormat::percent, page,
-        [](const Settings& s) { return s.number("scale") * 100; }, [this](double value, bool) { update([&](Settings& s) { s.set("scale", value / 100); }); }));
+    // Size and Length are set with the position, in the bar's own editor.
+    rows.push_back(&navRow("editPosition", text("Edit position and size", "编辑位置和大小"), page, [this] { controller_->editBatteryPosition(); }, "↗"));
     stack(rows, page.layer(), page, d::metric::headerHeight);
     header().configure({"DISPLAY", "BATTERY ALERT"}, "SYS-02", title("Battery alert", "电池提醒"), d::format::pad2(std::int64_t(rows.size())), true);
     wireBack(page, [this] { go(Section::main, false); });
@@ -831,7 +978,7 @@ void SettingsCanvas::buildIcons(d::Page& page) {
     constexpr double gap = 10;
     const double size = (d::metric::boxWidth - 10 - double(columns - 1) * gap) / columns;
     auto& scroll = page.scrollArea("icons", {0, d::metric::headerHeight, d::metric::boxWidth, d::metric::bodyHeight});
-    const auto selected = stringOr(config(), "applicationIcon");
+    const auto selected = config().applicationIcon();
     for (std::size_t index = 0; index < icons.size(); ++index) {
         const auto& icon = icons[index];
         auto& tile = page.make<SettingsIconTile>("appIcon:" + icon.id, icon, iconTitle(icon.id, icon.title), d::Size{size, 96});
@@ -952,15 +1099,27 @@ void SettingsCanvas::buildAbout(d::Page& page) {
         renderUpdateStrip(true);
     });
     rows.push_back(&row("updates", text("Check for updates", "检查更新"), {&check.layer()}, page, {}, {&check}));
-    const auto latest = update.latestVersion.empty() ? std::string("—") : update.latestVersion.starts_with("v") ? update.latestVersion : "v" + update.latestVersion;
-    std::vector<d::Layer*> latestCluster{&readout(page, "latestRelease", latest)};
+    const auto latest = [](const std::string& version) { return version.empty() ? std::string("—") : version.starts_with("v") ? version : "v" + version; };
+    auto& latestReadout = readout(page, "latestRelease", latest(update.latestVersion));
+    std::vector<d::Layer*> latestCluster{&latestReadout};
     std::vector<d::Control*> latestControls;
+    d::IconButton* latestLink{};
     if (!update.releaseURL.empty()) {
-        auto& open = linkButton(page, "latestRelease", text("Latest GitHub release", "GitHub 最新版本"), update.releaseURL);
-        latestCluster.push_back(&open.layer()); latestControls.push_back(&open);
+        latestLink = &linkButton(page, "latestRelease", text("Latest GitHub release", "GitHub 最新版本"), update.releaseURL);
+        latestCluster.push_back(&latestLink->layer()); latestControls.push_back(latestLink);
     }
     auto& latestRow = row("latestRelease", text("Latest GitHub release", "GitHub 最新版本"), latestCluster, page, {}, latestControls);
-    spokenValue("latestRelease", latestRow, update.latestVersion.empty() ? std::string("—") : update.latestVersion, page);
+    auto& latestSpoken = spokenValue("latestRelease", latestRow, update.latestVersion.empty() ? std::string("—") : update.latestVersion, page);
+    // The daily check's result lands in place (the version, its link), not as a rebuild.
+    binders_.push_back([this, &latestReadout, &latestRow, &latestSpoken, latestLink, latestCluster, latest, shown = std::make_shared<std::string>(update.latestVersion)] {
+        const auto& u = controller_->updateStatus();
+        if (latestLink) setLink(*latestLink, u.releaseURL);
+        if (u.latestVersion == *shown) return;
+        *shown = u.latestVersion;
+        setReadout(latestReadout, latest(*shown));
+        latestRow.setCluster(latestCluster);
+        latestSpoken.value = shown->empty() ? std::string("—") : *shown;
+    });
     rows.push_back(&latestRow);
     // Windows: the windowsUpdates area names its toggle (daily checks) and
     // says whether it can change it.
@@ -1120,7 +1279,7 @@ d::RowPlate& SettingsCanvas::row(const std::string& id, const std::string& title
     return row(id, title, {&field.layer()}, page, {}, {&field});
 }
 double SettingsCanvas::rowWidth() const {
-    return (module() == core::Module::display && section_ == Section::main) || section_ == Section::modules ? d::metric::boxWidth - 10 : d::metric::boxWidth;
+    return (module() == core::Module::display && (section_ == Section::main || section_ == Section::overlay)) || section_ == Section::modules ? d::metric::boxWidth - 10 : d::metric::boxWidth;
 }
 d::RowPlate& SettingsCanvas::navRow(const std::string& id, const std::string& title, d::Page& page, std::function<void()> action, std::string chevron,
     std::vector<d::Layer*> cluster) {
@@ -1138,10 +1297,10 @@ d::RowPlate& SettingsCanvas::toggleRow(const std::string& id, const std::string&
     toggle.onChange = [this, &toggle, key, confirmOff, changed](bool on) {
         if (!on && confirmOff) {
             toggle.setOn(true, true);
-            confirmOff([this, key] { update([&](Settings& s) { s.set(key, false); }); });
+            confirmOff([this, key] { update([&](Settings& s) { setFlag(s, key, false, env().characters.prefix); }); });
             return;
         }
-        update([&](Settings& s) { s.set(key, on); });
+        update([&](Settings& s) { setFlag(s, key, on, env().characters.prefix); });
         if (changed) changed(flag(config(), key));
     };
     binders_.push_back([this, &toggle, key] { toggle.setOn(flag(config(), key), true); });
@@ -1193,24 +1352,30 @@ d::Readout& SettingsCanvas::spokenValue(const std::string& id, d::RowPlate& plat
 }
 // readout + setReadout (:1060-1075): only the line frame; it pads the bounds for the glyphs.
 d::Layer& SettingsCanvas::readout(d::Page& page, const std::string& id, const std::string& value) {
+    d::Layer& layer = page.makeLayer("readout:" + id);
+    setReadout(layer, value);
+    return layer;
+}
+void SettingsCanvas::setReadout(d::Layer& layer, const std::string& value) {
     d::TextBlock block;
     block.runs = {{"[ ", d::type::readoutBracket()}, {value, d::type::readout()}, {" ]", d::type::readoutBracket()}};
     block.alignment = d::TextAlignment::right;
     block.setLineFrame({0, 0, std::ceil(d::preferredWidth(block, env().text)) + 2, 12});
-    d::Layer& layer = page.makeLayer("readout:" + id);
     layer.setText(std::move(block));
-    return layer;
 }
 // linkButton (:1077-1085).
 d::IconButton& SettingsCanvas::linkButton(d::Page& page, const std::string& id, const std::string& label, const std::string& url) {
     auto& button = page.make<d::IconButton>(id + ":open", label, d::Icon::ext, d::IconButton::Style::light);
+    setLink(button, url);
+    return button;
+}
+void SettingsCanvas::setLink(d::IconButton& button, const std::string& url) {
     button.onActivate = [this, url] {
         controller_->openLink(url);
         const auto [host, path] = hostAndPath(url);
         if (host == "github.com") toast(d::Icon::ext, "Opening GitHub", "正在打开 GitHub", path.empty() ? path : path.substr(1));
         else toast(d::Icon::ext, "Opening link", "正在打开链接", host.empty() ? url : host);
     };
-    return button;
 }
 
 // MARK: Titles (:1089-1116)

@@ -32,12 +32,12 @@ void run(const std::filesystem::path& shader) {
     gpu::LayerRasterizer raster;
     std::vector<std::pair<m::EventKind, m::EventMetadata>> events;
     std::vector<m::BatteryReading> readings;
-    std::vector<m::ChargePosition> saved;
+    std::vector<m::ChargeBarLayout> saved;
     unsigned editsFinished{}, reads{};
     t::PowerOwnerCallbacks callbacks;
     callbacks.recordEvent = [&](m::EventKind kind, const m::EventMetadata& metadata) { events.emplace_back(kind, metadata); };
     callbacks.readingChanged = [&](const m::BatteryReading& r) { readings.push_back(r); };
-    callbacks.savePosition = [&](const m::ChargePosition& p) { saved.push_back(p); };
+    callbacks.saveBarLayout = [&](const m::ChargeBarLayout& layout) { saved.push_back(layout); };
     callbacks.positionEditFinished = [&] { ++editsFinished; };
     {
         t::PowerOwner owner(executor, raster, {shader, true}, callbacks, [&] {
@@ -105,8 +105,9 @@ void run(const std::filesystem::path& shader) {
         owner.panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::down, {720, 30}, 21);
         owner.panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::move, {720, 830}, 21);
         owner.panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::up, {720, 830}, 21);
-        check(owner.panel().key(VK_RETURN, 22) && saved.size() == 1 && editsFinished == 1 && saved[0].screenID == 11u &&
-              std::abs(saved[0].y - 70.0 / 900) < 1e-12, "Confirmed position is persisted through the callback");
+        check(owner.panel().key(VK_RETURN, 22) && saved.size() == 1 && editsFinished == 1 && saved[0].position && saved[0].position->screenID == 11u &&
+              std::abs(saved[0].position->y - 70.0 / 900) < 1e-12 && saved[0].scale == 1 && !saved[0].length,
+              "The confirmed bar layout (the dragged position, Size and Length) is persisted through the callback");
         check(owner.coordinator().settings().customPlacement && std::abs(owner.coordinator().settings().customY - 70.0 / 900) < 1e-12,
               "The new placement applies at once");
         // Sleep with a plug change: shown exactly once on wake.

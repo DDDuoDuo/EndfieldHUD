@@ -21,7 +21,7 @@ bool OrbiPomSession::start(std::optional<std::uint32_t>seed){
     const bool restarting=bool(runtime_);
     try{
         if(!runtime_&&prepared_)runtime_=std::move(prepared_);
-        if(!runtime_){if(!callbacks_.makeRuntime)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable.");runtime_=callbacks_.makeRuntime();if(!runtime_)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable.");}
+        if(!runtime_){if(!callbacks_.makeRuntime)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable");runtime_=callbacks_.makeRuntime();if(!runtime_)throw std::runtime_error("Original OrbiPom simulation runtime is unavailable");}
         error_.reset();recordedFinish_=false;manual_=false;runtime_->highScore(best_);runtime_->start(seed);error_=runtime_->error();
     }catch(const std::exception&e){error_=e.what();runtime_.reset();return false;}
     if(!error_&&callbacks_.event)callbacks_.event(restarting?OrbiPomEvent::restarted:OrbiPomEvent::started);

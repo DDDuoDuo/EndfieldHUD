@@ -247,9 +247,9 @@ void contracts() {
     actions.clear();
     // Status messages toast while active (:114-116).
     w.context.overlay().reset();
-    auto failed = unlinked; failed.statusMessage = "Sign-in could not finish. Please try again.";
+    auto failed = unlinked; failed.statusMessage = "Sign-in could not finish. Please try again";
     canvas.update(failed);
-    check(w.toast() == "Notice|Sign-in could not finish. Please try again.", "A new status message toasts Notice");
+    check(w.toast() == "Notice|Sign-in could not finish. Please try again", "A new status message toasts Notice");
     // The HUD closed (the Mac has no canvas then; a new one shows the state at
     // the next opening): the controller's reports reach the page without a
     // slide, a toast or an awaited refresh (updateConcealed).

@@ -22,8 +22,9 @@ struct NativeNowPlayingCover::Impl {
     };
     LayerScene carrier;
     std::string prefix, mesh;
-    std::array<Slot, 2> slots;
-    std::array<DrawObject, 2> draws;
+    // Two images per cover view (its backdrop and its art).
+    std::array<Slot, 4> slots;
+    std::array<DrawObject, 4> draws;
     bool meshResident{};
     NativeNowPlayingCoverStats statistics;
     explicit Impl(LayerRasterizer& r) : carrier(r) {
@@ -31,8 +32,8 @@ struct NativeNowPlayingCover::Impl {
         prefix = "nowPlaying/cover/" + std::to_string(++serial);
         mesh = prefix + "/quad";
         carrier.load(ehud::data::Json::Object{{"bounds", ehud::data::Json::Array{0, 0, 1, 1}}, {"children", ehud::data::Json::Array{}}}, {});
-        for (std::size_t n = 0; n < slots.size(); ++n) {
-            slots[n].texture = prefix + "/texture/" + std::to_string(n);
+        for (std::size_t n = 0; n < slots.size(); ++n) slots[n].texture = prefix + "/texture/" + std::to_string(n);
+        for (std::size_t n = 0; n < draws.size(); ++n) {
             auto& draw = draws[n];
             draw.sourceID = prefix + "/draw/" + std::to_string(n);
             draw.meshID = mesh;
@@ -48,34 +49,44 @@ NativeNowPlayingCover::~NativeNowPlayingCover() = default;
 void NativeNowPlayingCover::updatePose(const NativeDesignScenePose& pose, const d::Layer& root, std::span<const modules::NowPlayingCanvas::CoverView, 2> views) {
     auto& i = *impl_;
     need(pose.boxWorld.finite() && std::isfinite(pose.opacity) && pose.ownerMasks.size() <= 4, "Invalid Now Playing cover pose");
-    // Keep each cover in the slot that already holds it (no re-upload).
-    std::array<std::optional<std::size_t>, 2> chosen{};
-    std::array<bool, 2> taken{};
-    for (std::size_t n = 0; n < views.size(); ++n)
-        for (std::size_t s = 0; s < i.slots.size() && views[n].image; ++s)
-            if (!taken[s] && i.slots[s].image == views[n].image) { taken[s] = true; chosen[n] = s; break; }
-    for (std::size_t n = 0; n < views.size(); ++n) {
-        if (chosen[n] || !views[n].image) continue;
-        for (std::size_t s = 0; s < i.slots.size(); ++s) if (!taken[s]) { taken[s] = true; chosen[n] = s; i.slots[s].image = views[n].image; break; }
+    // Paint order: the bottom view's backdrop and art, then the top view's.
+    std::array<modules::NowPlayingCover, 4> images{};
+    for (std::size_t n = 0; n < views.size(); ++n) { images[n * 2] = views[n].backdrop; images[n * 2 + 1] = views[n].image; }
+    if (!views[0].image) images[0].reset();
+    if (!views[1].image) images[2].reset();
+    // Keep each image in the slot that already holds it (no re-upload).
+    std::array<std::optional<std::size_t>, 4> chosen{};
+    std::array<bool, 4> taken{};
+    for (std::size_t n = 0; n < images.size(); ++n)
+        for (std::size_t s = 0; s < i.slots.size() && images[n]; ++s)
+            if (!taken[s] && i.slots[s].image == images[n]) { taken[s] = true; chosen[n] = s; break; }
+    for (std::size_t n = 0; n < images.size(); ++n) {
+        if (chosen[n] || !images[n]) continue;
+        for (std::size_t s = 0; s < i.slots.size(); ++s) if (!taken[s]) { taken[s] = true; chosen[n] = s; i.slots[s].image = images[n]; break; }
     }
     for (std::size_t s = 0; s < i.slots.size(); ++s) if (!taken[s]) i.slots[s].image.reset();
-    // Paint order: the bottom view's draw first.
-    for (std::size_t n = 0; n < views.size(); ++n) {
+    for (std::size_t n = 0; n < images.size(); ++n) {
         auto& draw = i.draws[n];
         draw.masks.clear();
         draw.opacity = 0;
         draw.shutter = pose.shutter;
-        const auto& view = views[n];
-        if (!view.image || !view.layer || !chosen[n]) { draw.textureID.clear(); draw.world = M{}; continue; }
+        const auto& view = views[n / 2];
+        const bool backdrop = n % 2 == 0;
+        if (!images[n] || !view.layer || !chosen[n]) { draw.textureID.clear(); draw.world = M{}; continue; }
         const auto s = d::sampleLayer(*view.layer, root, pose.time);
         const auto size = view.layer->bounds();
-        const auto& image = *view.image;
+        const auto& image = *images[n];
         if (!s.visible || size.width <= 0 || size.height <= 0 || !image.width || !image.height) { draw.textureID.clear(); continue; }
         const auto world = pose.boxWorld * designMatrix(s.world);
-        // resizeAspectFill: the image covers the layer, centred, cropped by the mask.
-        const double scale = std::max(size.width / image.width, size.height / image.height);
-        const double w = image.width * scale, h = image.height * scale;
-        draw.world = world * M::translation((size.width - w) / 2, (size.height - h) / 2, 0) * M::scale(w, h, 1);
+        if (backdrop) {
+            // resizeAspectFill: the backdrop covers the layer, centred.
+            const double scale = std::max(size.width / image.width, size.height / image.height);
+            const double w = image.width * scale, h = image.height * scale;
+            draw.world = world * M::translation((size.width - w) / 2, (size.height - h) / 2, 0) * M::scale(w, h, 1);
+        } else {
+            // The canvas's frame: aspect-filled, or a small cover at its own pixels.
+            draw.world = world * M::translation(view.frame.x, view.frame.y, 0) * M::scale(view.frame.width, view.frame.height, 1);
+        }
         draw.textureID = i.slots[*chosen[n]].texture;
         draw.opacity = pose.opacity * float(s.opacity);
         draw.masks.push_back({core::source::inverseSourceMatrix(world), {0, 0, size.width, size.height}, 0});
@@ -114,6 +125,7 @@ bool NativeNowPlayingCover::release(Renderer& r) {
 NativeNowPlayingCoverStats NativeNowPlayingCover::stats() const noexcept {
     auto s = impl_->statistics;
     for (const auto& slot : impl_->slots) if (slot.resident) { ++s.residentTextures; if (slot.uploaded) s.residentBytes += slot.uploaded->straightRGBA.size(); }
+    for (const auto& draw : impl_->draws) if (!draw.textureID.empty()) ++s.drawnTextures;
     return s;
 }
 } // namespace endfield::native

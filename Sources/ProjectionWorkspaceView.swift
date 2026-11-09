@@ -23,8 +23,9 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     private let chrome = HUDLayer.plain("projection.chrome")
     private let router = HUDInteractionRouter()
     private var standIns: HUDAccessibilityStandIns?
-    /// The open menu or pop-over: the action that opened it and its controls.
-    private var popup: (id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?)?
+    /// The open menu or pop-over: the action that opened it, its controls and
+    /// the menu or pop-over itself (its close button reaches `onClose` through it).
+    private var popup: (id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, popover: HUDPopover?)?
     var popupID: String? { popup?.id }
     private var chromeTracking = false
     private let background = CALayer(), dots = CAShapeLayer(), strokes = HUDDecorativeContentLayer()
@@ -342,7 +343,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
 
     private func showPopover(_ id: String, _ popover: HUDPopover, controls: [HUDControl], anchor: String) {
         popover.onClose = { [weak self] in self?.closePopup() }
-        open(id, layer: popover.layer, controls: controls + (popover.close.map { [$0] } ?? []), menu: nil, anchor: anchor)
+        open(id, layer: popover.layer, controls: controls + (popover.close.map { [$0] } ?? []), menu: nil, popover: popover, anchor: anchor)
         positionPopup()
         if !reduceMotion { popover.playEntrance() }
     }
@@ -351,16 +352,16 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
         let menu = HUDMenu(id: id, items: items, minimumWidth: 200, env: env)
         menu.onPick = pick
         menu.onClose = { [weak self] in self?.closePopup() }
-        open(id, layer: menu.layer, controls: menu.controls, menu: menu, anchor: anchor)
+        open(id, layer: menu.layer, controls: menu.controls, menu: menu, popover: nil, anchor: anchor)
         positionPopup()
         if !reduceMotion { menu.playEntrance() }
     }
 
     private var popupAnchor: String?
 
-    private func open(_ id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, anchor: String) {
+    private func open(_ id: String, layer: CALayer, controls: [HUDControl], menu: HUDMenu?, popover: HUDPopover?, anchor: String) {
         if popup != nil { closePopup(animated: false) }
-        popup = (id, layer, controls, menu); popupAnchor = anchor
+        popup = (id, layer, controls, menu, popover); popupAnchor = anchor
         HUDMotion.perform { layer.zPosition = 1; chrome.addSublayer(layer) }
         toolbar.setOpen(id)
         refreshRouter(); updateCursor(); refreshControlHighlights()
@@ -424,7 +425,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     }
     private func chooseShelf() {
         let choices = shelfChoices?() ?? []
-        guard !choices.isEmpty else { showMessage(L10n.text("The shelf has no images or videos.", "暂存架中没有图片或视频。")); return }
+        guard !choices.isEmpty else { showMessage(L10n.text("The shelf has no images or videos", "暂存架中没有图片或视频")); return }
         showMenu("shelf", items: choices.map { HUDMenu.Item(id: $0.id.uuidString, title: $0.title, enabled: $0.isSupported && $0.isAvailable) },
                  anchor: "media") { [weak self] item in
             guard let self, let id = UUID(uuidString: item.id) else { return }
@@ -438,7 +439,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
     func importMedia(urls: [URL], at point: CGPoint? = nil, access: ShelfFileAccess? = nil) {
         guard active, !importing, !urls.isEmpty else { access?.close(); return }
         guard urls.count <= ProjectionModel.maximumMedia - model.media.count else {
-            access?.close(); showMessage(L10n.text("Projection supports up to 16 media items.", "投影最多可添加 16 个媒体。")); return
+            access?.close(); showMessage(L10n.text("Projection supports up to 16 media items", "投影最多可添加 16 个媒体")); return
         }
         importing = true; importGeneration += 1
         let ticket = ProjectionImportCancellation(); importTicket = ticket
@@ -560,7 +561,7 @@ final class ProjectionWorkspaceView: NSView, HUDControlFeedbackHost {
                 let retained = strokeLayer(stroke); strokes.addSublayer(retained)
                 strokeLayers.append(retained); renderedStrokes.append(stroke); onEvent?(.strokeCompleted)
             }
-            else { showMessage(L10n.text("This drawing has reached the stroke limit.", "此画布已达到笔画数量上限。")) }
+            else { showMessage(L10n.text("This drawing has reached the stroke limit", "此画布已达到笔画数量上限")) }
         }
         if eraseChanged { onEvent?(.erased) }
         pendingStroke = nil; lastEraserPoint = nil; eraseChanged = false; liveStroke.path = nil

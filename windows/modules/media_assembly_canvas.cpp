@@ -46,6 +46,7 @@ void MediaAssemblyCanvas::setPresented(bool value) {
 void MediaAssemblyCanvas::show(double now) {
     env().now = now;
     enteringStickers();
+    revealReleasedPreview();
     setPresented(true);
     Canvas::show(now);
 }
@@ -55,6 +56,7 @@ void MediaAssemblyCanvas::didActivate() {
     // makeContent): activation after willLeave presents it again, so the
     // session reactivates and renders one fresh preview.
     enteringStickers();
+    revealReleasedPreview();
     setPresented(true);
     const auto& session = controller_->session();
     if (session.exporting() && !exportShown_) exportShown_ = session.progress();
@@ -83,7 +85,7 @@ bool MediaAssemblyCanvas::isEditable() const noexcept {
     return session.document() && !session.busy() && !isExporting() && !closing_;
 }
 void MediaAssemblyCanvas::controllerChanged() {
-    if (services_.now) env().now = std::max(env().now, services_.now());
+    if (services_.now) catchUpClock(services_.now());
     if (!presented_) return;
     if (handlingChange_) { changePending_ = true; return; }
     handlingChange_ = true;
@@ -489,7 +491,7 @@ void MediaAssemblyCanvas::addSticker(MediaAssemblyStickerKind kind) {
 void MediaAssemblyCanvas::confirmReset() {
     d::ConfirmRequest request;
     request.id = "mediaReset"; request.title = text("Reset all edits?", "重置所有编辑？");
-    request.message = text("Filters, adjustments, crop and stickers.", "滤镜、调整、裁剪与贴纸。");
+    request.message = text("Filters, adjustments, crop and stickers", "滤镜、调整、裁剪与贴纸");
     request.confirmTitle = text("Reset", "重置"); request.icon = d::Icon::reset;
     confirm(std::move(request), [this] {
         if (!isEditable()) return;
@@ -560,7 +562,7 @@ void MediaAssemblyCanvas::confirmClose() {
     const bool edited = controller_->session().adjustments() != MediaAssemblyAdjustments{};
     d::ConfirmRequest request;
     request.id = "mediaClose"; request.title = text("Close this file?", "关闭此文件？");
-    request.message = edited ? text("Unexported edits are discarded.", "未导出的编辑将被丢弃。") : document->name;
+    request.message = edited ? text("Unexported edits are discarded", "未导出的编辑将被丢弃") : document->name;
     request.confirmTitle = text("Close", "关闭"); request.danger = edited; request.icon = d::Icon::x;
     confirm(std::move(request), [this, id = document->id] {
         const auto& current = controller_->session().document();
@@ -625,7 +627,7 @@ void MediaAssemblyCanvas::startExport(const std::string& path, bool overwrite, c
     startExportTicker();
 }
 void MediaAssemblyCanvas::exportFinished(std::optional<std::string> target, bool failed, std::string name, bool original) {
-    if (services_.now) env().now = std::max(env().now, services_.now());
+    if (services_.now) catchUpClock(services_.now());
     if (!failed && target) {
         const auto& document = controller_->session().document();
         if (document && services_.samePath && services_.samePath(*target, document->path)) reloadingAfterOverwrite_ = true;
@@ -732,6 +734,13 @@ void MediaAssemblyCanvas::takePreview() {
     if (revealOnPreview_) { revealOnPreview_ = false; stage().setContentOpacity(0, false); stage().setContentOpacity(1, true); }
 }
 void MediaAssemblyCanvas::releasePreview() noexcept { if (stage_) stage_->releaseImages(); }
+// The owner released the stage's picture while the page was hidden (a switch
+// away or a HUD close). The Mac keeps it (a switch back cross-fades the kept
+// artwork) or builds a fresh canvas (a reopen fades the preview in), so the
+// re-rendered preview fades in here instead of popping into the empty stage.
+void MediaAssemblyCanvas::revealReleasedPreview() {
+    if (stage_ && controller_->session().document() && !stage_->image()) revealOnPreview_ = true;
+}
 // Every stage layer from the current state, in place.
 void MediaAssemblyCanvas::layoutStage() {
     if (!renderedLanguage()) return;

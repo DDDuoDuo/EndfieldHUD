@@ -103,6 +103,9 @@ std::span<const DrawObject> NativeLayerGroup::prepareChildren(std::optional<Nati
     std::size_t cursor{};for(std::size_t n=0;n<local.size()+1;++n){if(n==insertion->before)for(const auto&draw:insertion->draws)children_[cursor++]=draw;if(n<local.size())children_[cursor++]=local[n];}
     return children_;
 }
+void NativeLayerGroup::setDensity(double density){
+    need(!borrowed_&&std::isfinite(density)&&density>0&&density<=16,"Invalid retained native group density");density_=density;
+}
 bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Rect> coverage,std::optional<NativeGroupInsertion> insertion){
     need(!renderer_||renderer_==&renderer,"Native group belongs to another renderer");
     need(renderer.stats().initialized,"Native group requires an initialized renderer");

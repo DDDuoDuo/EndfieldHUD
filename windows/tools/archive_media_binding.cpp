@@ -28,8 +28,10 @@ struct ArchiveMediaBinding::Impl : std::enable_shared_from_this<Impl> {
     struct Asset {
         J reference; std::string key; n::NotesImageAccess access; m::NotesMediaKind kind{};
         std::shared_ptr<const n::NotesImageFrame> frame;
-        std::uint64_t observedFrame{}, uploadedFrame{}, appliedPoster{};
-        HRESULT observedError{S_OK};
+        // A movie's worker still: the frame revision given as its poster, the
+        // failure given instead, and the revision of either (Projection's token).
+        std::uint64_t observedFrame{}, uploadedFrame{}, appliedPoster{}, posterToken{};
+        HRESULT observedError{S_OK}, posterError{S_OK};
         bool uploaded{}, imageSubmitted{}, videoSubmitted{}, failed{};
         std::optional<std::string> error;
     };
@@ -171,6 +173,19 @@ void ArchiveMediaBinding::togglePlayback() {
         : i.selected->kind == m::NotesMediaKind::gif ? i.broker.toggleImage(i.client, i.selected->key, i.time) : false;
     if (done) (void)refresh(i.time);
 }
+// NotesMediaPresentation.pause (NotesMedia.swift:402-407) has no visible
+// gate and reports the paused state at once (changeState). No refresh here:
+// it can deliver a finished import, and the canvas pauses during a leave; the
+// frame loop refreshes anyway.
+void ArchiveMediaBinding::pause() {
+    auto& i = *impl_;
+    // Only a movie pauses: the canvas asks only for a video, and the Mac's
+    // generic pause of a GIF has no Windows caller (decision AM-D2).
+    if (!i.selected || i.selected->kind != m::NotesMediaKind::video) return;
+    // A paused movie is not playing: playing() says so before the next
+    // refresh, so a switch reversed before it shows Play.
+    if (i.broker.pauseVideo(i.client, i.selected->key) && i.publishedPlaying) { i.publishedPlaying = false; if (onStateChange) onStateChange(); }
+}
 void ArchiveMediaBinding::seek(double seconds) {
     auto& i = *impl_;
     if (!i.visible || !i.selected || i.selected->kind != m::NotesMediaKind::video || !std::isfinite(seconds)) return;
@@ -201,6 +216,8 @@ void ArchiveMediaBinding::setVisible(bool value, double t) {
     i.visible = value;
     i.requestsDirty = true;
     if (!value) { (void)cancelImport(); if (i.selected) { i.selected->error.reset(); i.selected->observedError = S_OK; } }
+    // Shown again, the movie waits for its still anew: a failure is given again.
+    else if (i.selected) i.selected->posterError = S_OK;
     i.submit();
 }
 bool ArchiveMediaBinding::refresh(double t) {
@@ -229,11 +246,21 @@ bool ArchiveMediaBinding::refresh(double t) {
     std::optional<Frame> frame;
     if (i.selected) {
         auto& a = *i.selected;
-        if (const auto* record = i.broker.findImage(i.client, a.key)) {
-            if (record->frame) {
-                a.frame = record->frame; a.observedFrame = record->frameRevision;
-                if (a.kind == m::NotesMediaKind::video && a.appliedPoster != record->frameRevision
-                    && i.broker.setVideoPoster(i.client, a.key, 1, record->frameRevision, record->frame.get(), record->error)) a.appliedPoster = record->frameRevision;
+        const auto* record = i.broker.findImage(i.client, a.key);
+        // Hidden, the binding's copy of the still and its texture go with the
+        // record's frame, released 0.6 s after a preserved hide
+        // (NotesMedia.swift:320-337); a return decodes the still again.
+        if (!i.visible && !(record && record->frame)) a.frame.reset();
+        if (!a.frame && a.uploaded && i.renderer.removeTexture(a.key)) a.uploaded = false;
+        if (record) {
+            if (record->frame) { a.frame = record->frame; a.observedFrame = record->frameRevision; }
+            // The movie's still settles its poster, and so does its failure:
+            // a still that fails must not block the movie (NotesMedia.swift:370-371).
+            if (a.kind == m::NotesMediaKind::video) {
+                if (FAILED(record->error)) {
+                    if (a.posterError != record->error && i.broker.setVideoPoster(i.client, a.key, 1, a.posterToken + 1, nullptr, record->error)) { ++a.posterToken; a.posterError = record->error; }
+                } else if (record->frame && (a.appliedPoster != record->frameRevision || FAILED(a.posterError))
+                    && i.broker.setVideoPoster(i.client, a.key, 1, a.posterToken + 1, record->frame.get(), S_OK)) { ++a.posterToken; a.appliedPoster = record->frameRevision; a.posterError = S_OK; }
             }
             if (FAILED(record->error) && a.kind != m::NotesMediaKind::video && a.observedError != record->error) { a.error = i.options.errorText(record->error); a.observedError = record->error; }
             if (a.kind == m::NotesMediaKind::gif) playing = record->state == m::NotesMediaState::playing;

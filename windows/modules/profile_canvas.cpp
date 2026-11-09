@@ -328,7 +328,14 @@ void ProfileCanvas::stopHoursTimer() { if (hoursTimer_) { cancel(hoursTimer_); h
 // while the closed pop-over still exists).
 void ProfileCanvas::didClosePopover() {
     popoverBinders_.clear();                     // the Mac's weak captures: the closed pop-over's controls are gone
-    if (side_) { trackArena(nullptr); side_.reset(); }
+    // The button lives inside the pop-over's content: it goes when the
+    // pop-over leaves the tree (at once, or at the next showing when the
+    // module leaving kept it drawn, 2e08932).
+    if (side_) {
+        trackArena(nullptr);
+        std::shared_ptr<ProfileSideArena> side(std::move(side_));
+        retirePopup([side]() mutable { side.reset(); }, keepsClosingPopupsDrawn());
+    }
     revertPreview(true);
 }
 void ProfileCanvas::revertPreview(bool animated) {
@@ -341,7 +348,7 @@ void ProfileCanvas::revertPreview(bool animated) {
 // Mac rebuilt it at once at the new scale; its portrait for that scale is
 // asked now, so the owner's worker has it ready by then.
 void ProfileCanvas::renderScaleChanged() {
-    if (!isShown() && renderedLanguage() && services_.portrait && displayed().avatarFilename) (void)services_.portrait(portraitStep());
+    if (!isShown() && renderedLanguage() && services_.portrait && displayed().avatarKey()) (void)services_.portrait(portraitStep());
     Canvas::renderScaleChanged();
 }
 void ProfileCanvas::recordingModeChanged() {
@@ -407,8 +414,9 @@ void ProfileCanvas::storeChanged() {
     const auto& next = displayed();
     std::vector<ProfileField> changed;
     for (const auto field : shown) if (value(field, old) != value(field, next)) changed.push_back(field);
+    // avatarKey also changes when the Windows account's picture arrives or changes.
     const bool structural = !changed.empty() || old.showsBirthday != next.showsBirthday
-        || old.avatarFilename != next.avatarFilename || old.backgroundFilename != next.backgroundFilename;
+        || old.avatarKey() != next.avatarKey() || old.backgroundFilename != next.backgroundFilename;
     if (structural) {
         if (editing_) { needsRerender_ = true; return; }
         rerender();
@@ -425,12 +433,16 @@ void ProfileCanvas::storeChanged() {
     refreshWorkDuration();
 }
 void ProfileCanvas::imagesChanged() {
-    if (!renderedLanguage()) return;
+    // Never built yet (the first showing after launch): the avatar decode
+    // landed, so its portrait is asked now and the owner's worker has it
+    // ready for the first build, as the Mac builds it synchronously, instead
+    // of landing after the entrance and rebuilding the page.
+    if (!renderedLanguage()) { if (services_.portrait && displayed().avatarKey()) (void)services_.portrait(portraitStep()); return; }
     // A decode landed: the art or the portrait appears (the Mac had it at
     // build time); a prepared zoom step re-lays the portrait in place.
     const bool art = services_.backgroundReady && services_.backgroundReady() && displayed().backgroundFilename;
     const auto portrait = services_.portrait ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
-    const bool wantsPortrait = displayed().avatarFilename && portrait.image;
+    const bool wantsPortrait = displayed().avatarKey() && portrait.image;
     if (art != (refs_.artHost != nullptr) || wantsPortrait != (refs_.portrait != nullptr) || (!portrait.pending && !portrait.image) != (refs_.silhouette != nullptr)) rerenderWhenIdle();
     else layoutPortrait(true);
 }
@@ -530,7 +542,7 @@ void ProfileCanvas::buildIdentity(d::Page& page, Layer& main, std::vector<d::Con
     frame.setFrame(avatarFrame);
     for (Layer* l : {&titleText, &subtitle, &well, &frame}) main.add(*l);
     refs_.frame = &frame; refs_.well = &well;
-    const auto portrait = services_.portrait && p.avatarFilename ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
+    const auto portrait = services_.portrait && p.avatarKey() ? services_.portrait(portraitStep()) : ProfileCanvasServices::Portrait{};
     if (portrait.image) {
         Layer& picture = page.makeLayer("profile.portrait");
         picture.setAnimatable(); picture.setPosition({wellFrame.width / 2, wellFrame.height / 2});
@@ -544,14 +556,14 @@ void ProfileCanvas::buildIdentity(d::Page& page, Layer& main, std::vector<d::Con
     }
     // Name + #tag (max-width 300, padding 0 4).
     auto& name = editable(page, ProfileField::name, main, controls);
-    Layer& nameText = d::makeText(page.builder(), "profile.name.text", p.name, style::name, {});
+    Layer& nameText = d::makeText(page.builder(), "profile.name.text", p.displayedName(), style::name, {});
     Layer& tagText = d::makeText(page.builder(), "profile.tag.text", "#" + p.tag, style::tag, {});
     const double tagWidth = std::ceil(d::preferredWidth(d::textOf(tagText), env().text));
     const double nameWidth = std::min(std::ceil(d::preferredWidth(d::textOf(nameText), env().text)), 292 - 2 - tagWidth);
     d::setLine(nameText, {4, 0, nameWidth + 1, 30});
     d::setLine(tagText, {4 + nameWidth + 2, 0, tagWidth + 1, 30});
     name.setFrame({132, 50, 4 + nameWidth + 2 + tagWidth + 4, 30}, {&nameText, &tagText});
-    name.label = text("Edit name", "修改名称") + ", " + p.name + " #" + p.tag;
+    name.label = text("Edit name", "修改名称") + ", " + p.displayedName() + " #" + p.tag;
     refs_.values[ProfileField::tag] = &name.layer();
     // Registration mark.
     Layer& mark = page.makeLayer("profile.registration");
@@ -904,40 +916,68 @@ void ProfileCanvas::toggleDateKind() {
 // Opens the inline editor exactly over the element: #212121, accent ring and
 // bar, at least 220 wide for name and #, 60 otherwise.
 void ProfileCanvas::beginEdit(ProfileField field) {
-    if (textHidden_ || !canEdit(field) || (field == ProfileField::playerID && env().recordingMode) || !refs_.card) return;
-    const auto anchorIt = refs_.editables.find(field == ProfileField::tag ? ProfileField::name : field);
-    if (anchorIt == refs_.editables.end()) return;
+    const auto anchorField = field == ProfileField::tag ? ProfileField::name : field;
+    if (textHidden_ || !canEdit(field) || (field == ProfileField::playerID && env().recordingMode) || !refs_.card || !refs_.editables.contains(anchorField)) return;
     endEditing(true); closePopups();
+    // A save re-rendered the card: the card and the element are looked up on
+    // the page shown now.
+    const auto anchorIt = refs_.editables.find(anchorField);
+    if (!refs_.card || anchorIt == refs_.editables.end()) return;
     const Rect rect = anchorIt->second->layer().frame();
     const bool wide = field == ProfileField::name || field == ProfileField::tag, intro = field == ProfileField::introduction;
     const d::Size size{std::max(rect.width, wide ? 220. : 60.), rect.height};
-    d::TextFieldOptions options;
-    options.multiline = intro;
-    options.maximumLength = profileTextLimit(field);
-    options.selectsAllOnBegin = true;
-    options.style = d::TextStyle{intro ? 13 : std::min(22., std::max(12., rect.height * .55)), d::FontWeight::bold, ink, intro ? 1.5 : 1};
-    options.inset = {8, intro ? 6. : 0.};
-    options.accent = accent(); options.background = d::rgb(0x212121);
-    options.alignment = profileNumericField(field) ? d::TextAlignment::right : d::TextAlignment::left;
+    const d::TextStyle style{intro ? 13 : std::min(22., std::max(12., rect.height * .55)), d::FontWeight::bold, ink, intro ? 1.5 : 1};
+    const auto label = profileFieldTitle(field, env().language);
     const auto initial = field == ProfileField::tag ? displayed().tag : value(field, displayed());
-    auto& editor = page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), profileFieldTitle(field, env().language), initial, "", size, options);
-    editor.layer().setOrigin({rect.x, rect.y});
-    editor.layer().setZPosition(d::order::menu);
-    // Its own part: joining the card does not load the card again. The card
-    // plate and everything on it stay one part, so a module or HUD fade
-    // composites them as one image (CALayer group opacity); the editor is
-    // never on the card during a fade (leaving ends editing first).
-    editor.layer().setAnimatable(); editor.layer().setPartRoot(true);
-    editor.layer().setValue(d::Channel::opacity, 0);
-    refs_.card->add(editor.layer());
-    d::motion::animate(editor.layer(), d::Channel::opacity, 1, .14, clock(), d::easing::easeOut);
-    editor.onChange = [this, field, &editor](const std::string& t) { editor.setInvalid(!isValid(field, t)); };
-    editor.onCommit = [this, field](const std::string& t) { finishEdit(field, t); };
-    editor.onCancel = [this, field] { finishEdit(field, std::nullopt); };
-    editing_ = Editing{field, &editor};
-    registerField(editor);
+    // The Mac makes a new HUDDesignTextField "edit:<field>" at every open.
+    // The page's arena makes an id once, so the page makes the field's editor
+    // at its first open and every later open on the page (after Esc, an
+    // unchanged, invalid or refused value) takes it again with this open's
+    // text, size, style and card colour: nothing else on the page is built
+    // again, so what it is playing (the entrance, the eye's fade, vChg) plays on.
+    d::TextField* editor{};
+    if (const auto made = refs_.editors.find(field); made != refs_.editors.end()) {
+        editor = made->second;
+        editor->layer().removeAllMotion();
+        editor->clearInteractionState();
+        editor->label = label;
+        editor->setInvalid(false);
+        editor->setAccent(accent());
+        editor->setStyle(style);
+        editor->setSize(size);
+        editor->setText(initial);
+    } else {
+        d::TextFieldOptions options;
+        options.multiline = intro;
+        options.maximumLength = profileTextLimit(field);
+        options.selectsAllOnBegin = true;
+        options.style = style;
+        options.inset = {8, intro ? 6. : 0.};
+        options.accent = accent(); options.background = d::rgb(0x212121);
+        options.alignment = profileNumericField(field) ? d::TextAlignment::right : d::TextAlignment::left;
+        editor = &page().make<d::TextField>("edit:" + std::string(profileFieldID(field)), label, initial, "", size, options);
+        refs_.editors.emplace(field, editor);
+        editor->layer().setZPosition(d::order::menu);
+        // Its own part: joining the card does not load the card again. The
+        // card plate and everything on it stay one part, so a module or HUD
+        // fade composites them as one image (CALayer group opacity); the
+        // editor is never on the card during a fade (leaving ends editing first).
+        editor->layer().setAnimatable(); editor->layer().setPartRoot(true);
+    }
+    editor->layer().setOrigin({rect.x, rect.y});
+    editor->layer().setValue(d::Channel::opacity, 0);
+    refs_.card->add(editor->layer());
+    d::motion::animate(editor->layer(), d::Channel::opacity, 1, .14, clock(), d::easing::easeOut);
+    editor->onChange = [this, field, editor](const std::string& t) { editor->setInvalid(!isValid(field, t)); };
+    editor->onCommit = [this, field](const std::string& t) { finishEdit(field, t); };
+    editor->onCancel = [this, field] { finishEdit(field, std::nullopt); };
+    editing_ = Editing{field, editor};
+    registerField(*editor);
     refreshRouter();
-    editor.beginEditing();
+    editor->beginEditing();
+    // No editor could start (no host, or the host refused one): nothing is
+    // being edited, so the editor leaves as if cancelled.
+    if (!editor->editing() && editing_ && editing_->text == editor) finishEdit(field, std::nullopt);
 }
 // Enter, Tab and a press elsewhere commit; Esc cancels. Invalid values are
 // discarded; a saved value re-renders the card and plays vChg.
@@ -961,7 +1001,7 @@ bool ProfileCanvas::isValid(ProfileField field, std::string_view raw, const Prof
         return n && *n >= lo && *n <= hi;
     };
     switch (field) {
-    case ProfileField::name: return !value.empty() && text_.characters(value) <= 20 && !text_.hasControl(value);
+    case ProfileField::name: return !value.empty() && text_.characters(value) <= ehud::data::Profile::nameLimit && !text_.hasControl(value);
     case ProfileField::tag: {
         const std::string_view tagDigits = value.starts_with('#') ? std::string_view(value).substr(1) : std::string_view(value);
         return !tagDigits.empty() && tagDigits.size() <= 10 && digits(tagDigits);
@@ -979,14 +1019,14 @@ bool ProfileCanvas::isValid(ProfileField field, std::string_view raw, const Prof
 // commit (:815-840).
 void ProfileCanvas::commit(ProfileField field, const std::string& raw) {
     if (!canEdit(field)) return;
-    if (!store_) { showError(core::localized("Profile storage is unavailable.", "个人名片存储不可用。", env().language)); return; }
+    if (!store_) { showError(core::localized("Profile storage is unavailable", "个人名片存储不可用", env().language)); return; }
     const auto input = text_.trim(raw, true);
     errorMessage_.reset();
     try {
         store_->update([&](PersonalProfile& p) {
             switch (field) {
             case ProfileField::playerID: p.playerIDOverride = input; break;
-            case ProfileField::name: p.name = input; break;
+            case ProfileField::name: p.name = input; p.autoName = false; break; // a typed name stops following the account
             case ProfileField::tag: p.tag = input.starts_with('#') ? input.substr(1) : input; break;
             case ProfileField::introduction: p.introduction = input; break;
             case ProfileField::awakeningDate:
@@ -1022,14 +1062,38 @@ void ProfileCanvas::openMoreMenu(const d::Control& anchor) {
         item("tag", text("Edit #", "修改 #"), canEdit(ProfileField::tag)),
         item("picture", text("Change profile picture", "更换头像"), store_ != nullptr),
         item("portrait", text("Adjust portrait", "调整头像")),
-        item("restore", text("Restore default picture", "恢复默认头像"), store_ != nullptr)};
+        item("restore", text("Restore default picture", "恢复默认头像"), store_ != nullptr),
+        item("system", std::string(core::translated(useWindowsAccountInfo, env().language)), canUseSystemAccount())};
+    items.back().separatorBefore = true;
     openMenu("profile.more", std::move(items), anchor, std::nullopt, [this](const d::Menu::Item& picked) {
         if (picked.id == "name") beginEdit(ProfileField::name);
         else if (picked.id == "tag") beginEdit(ProfileField::tag);
         else if (picked.id == "picture") chooseImage(ProfileImageKind::avatar);
         else if (picked.id == "portrait") { if (refs_.more) openPortraitPopover(*refs_.more); }
+        else if (picked.id == "system") useSystemAccount();
         else restoreAvatar();
     });
+}
+// canUseSystemAccount (aaae230, ad93ac5): something the account can fill
+// shows a chosen value instead. The default picture counts only when there
+// is an account picture to show. Off while Recording mode hides the account.
+bool ProfileCanvas::canUseSystemAccount() const {
+    if (!store_ || !profile_.systemAccount.value) return false;
+    return (canEdit(ProfileField::name) && !profile_.followsSystemName())
+        || (canEdit(ProfileField::playerID) && profile_.playerIDOverride)
+        || profile_.avatarFilename || (!profile_.autoAvatar && profile_.systemAccount.value->avatarKey);
+}
+// A field a game sync owns is left to the sync; clearing the picture turns
+// a game avatar sync off through the account owner's avatar observer.
+void ProfileCanvas::useSystemAccount() {
+    if (!store_) return;
+    try {
+        store_->useSystemAccount(canEdit(ProfileField::name), canEdit(ProfileField::playerID));
+        // The result toast (Canvas::toast): the title in the UI language, the English caption elsewhere.
+        const bool english = env().language == core::Language::english;
+        toast(d::ToastRequest{d::Icon::reset, std::string(core::translated(windowsAccountInfoToast, env().language)),
+            english ? std::string() : std::string(windowsAccountInfoToast.english), std::nullopt});
+    } catch (const std::exception& e) { showError(profileErrorText(e, env().language)); }
 }
 void ProfileCanvas::restoreAvatar() {
     if (!store_) return;
@@ -1189,7 +1253,7 @@ void ProfileCanvas::chooserFinished(ProfileImageKind kind, std::optional<std::st
     if (context().onInputStateChange) context().onInputStateChange();
     if (!isActive()) return;
     if (!path) return;
-    if (!store_) { showError(core::localized("Profile storage is unavailable.", "个人名片存储不可用。", env().language)); return; }
+    if (!store_) { showError(core::localized("Profile storage is unavailable", "个人名片存储不可用", env().language)); return; }
     if (services_.importImage) (void)services_.importImage(kind, *path);
 }
 void ProfileCanvas::chooseColor(std::array<double, 3> initial) {

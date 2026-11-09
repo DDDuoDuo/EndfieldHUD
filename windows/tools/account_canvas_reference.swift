@@ -205,7 +205,7 @@ private func presentationJSON(_ p: HUDAccountPresentation) -> [String: Any] {
         try capture("refreshed", scene(cacheText))
         context.overlay.reset()
         // A failure message: the Notice toast.
-        var failed = c.presentation; failed.status = .failed; failed.statusMessage = "Sync unavailable. Saved data is preserved."
+        var failed = c.presentation; failed.status = .failed; failed.statusMessage = "Sync unavailable. Saved data is preserved"
         canvas.update(failed)
         try capture("failed", scene(cacheText, ["status": "failed", "statusMessage": failed.statusMessage]))
         context.overlay.reset()

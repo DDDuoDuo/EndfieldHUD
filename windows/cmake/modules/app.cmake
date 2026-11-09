@@ -6,6 +6,12 @@
 add_library(hud_system_overlay core/system_overlay_state.cpp)
 target_include_directories(hud_system_overlay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_system_overlay PUBLIC hud_motion)
+# Display > HUD elements: where the title, the Sanity gauge and the alert tags
+# sit on the core plane (Mac HUDOverlayGeometry), shared by the host and the
+# account and facility areas.
+add_library(hud_overlay_geometry core/hud_overlay_geometry.cpp)
+target_include_directories(hud_overlay_geometry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_overlay_geometry PUBLIC hud_data hud_scene)
 add_library(hud_application_core core/application_arguments.cpp core/application_event_recorder.cpp core/data/application_root.cpp)
 target_include_directories(hud_application_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_application_core PUBLIC hud_system_overlay hud_data hud_event_log hud_work_mode)
@@ -17,11 +23,12 @@ endif()
 # HUDCenterLogoPresentation): portable artwork, Windows WIC decode/import.
 add_library(hud_display_center_logo modules/display_center_logo.cpp)
 target_include_directories(hud_display_center_logo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_display_center_logo PUBLIC hud_localization)
+# The preference's logo choices and UUID rule come from the settings record.
+target_link_libraries(hud_display_center_logo PUBLIC hud_localization hud_data PRIVATE hud_artwork_scaling)
 if(WIN32)
   target_sources(hud_display_center_logo PRIVATE native/display_center_logo.cpp)
   target_compile_definitions(hud_display_center_logo PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_display_center_logo PUBLIC hud_data hud_packet PRIVATE windowscodecs ole32)
+  target_link_libraries(hud_display_center_logo PUBLIC hud_packet PRIVATE windowscodecs ole32)
 endif()
 if(BUILD_TESTING)
   # Oracle: tools/display_center_logo_reference.sh (unchanged Mac sources).
@@ -64,7 +71,14 @@ if(BUILD_TESTING)
   add_executable(data_store_tests tests/data_store_tests.cpp)
   target_link_libraries(data_store_tests PRIVATE hud_data)
   add_test(NAME data_store_contracts COMMAND data_store_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/profile-state-source.json")
-  foreach(target json_tests data_store_tests)
+  # The shared byte codecs: SHA-256 (core/data/sha256) and base64.
+  add_executable(hud_overlay_geometry_tests tests/hud_overlay_geometry_tests.cpp)
+  target_link_libraries(hud_overlay_geometry_tests PRIVATE hud_overlay_geometry)
+  add_test(NAME hud_overlay_geometry_contracts COMMAND hud_overlay_geometry_tests)
+  add_executable(data_encoding_tests tests/data_encoding_tests.cpp)
+  target_link_libraries(data_encoding_tests PRIVATE hud_data)
+  add_test(NAME data_encoding_contracts COMMAND data_encoding_tests)
+  foreach(target json_tests data_store_tests data_encoding_tests hud_overlay_geometry_tests)
     if(MSVC)
       target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)
     else()
@@ -98,7 +112,7 @@ if(WIN32)
   target_compile_definitions(hud_summon_hotkey PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_summon_hotkey PUBLIC user32)
   add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp app/application_display.cpp
-    app/application_navigation.cpp ${ehud_app_memory_sources} app/hud_automation.cpp app/hud_button_automation.cpp app/presentation_priority.cpp)
+    app/application_navigation.cpp ${ehud_app_memory_sources} app/hud_automation.cpp app/hud_button_automation.cpp app/hud_elements_editor.cpp app/presentation_priority.cpp)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
@@ -107,7 +121,8 @@ if(WIN32)
     hud_map_owner hud_map_store hud_latest_save hud_map_assets hud_orbipom_runtime
     hud_work_mode_canvas hud_calendar_canvas hud_calendar_civil hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
+    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo hud_summon_hotkey hud_design_native
+    hud_hypergryph_account_native hud_overlay_geometry windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi avrt)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)
@@ -137,6 +152,7 @@ if(BUILD_TESTING)
   add_test(NAME application_package_contracts COMMAND application_package_tests)
   add_executable(application_persistence_tests tests/application_persistence_tests.cpp)
   target_include_directories(application_persistence_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(application_persistence_tests PRIVATE hud_data)
   add_test(NAME application_persistence_contracts COMMAND application_persistence_tests)
   # Impl::cleanup drops every module adapter before the shared design Context.
   add_executable(application_teardown_tests tests/application_teardown_tests.cpp)
@@ -213,9 +229,6 @@ if(WIN32)
   add_executable(EndfieldHUD WIN32 app/main.cpp "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.rc" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.manifest")
   target_compile_definitions(EndfieldHUD PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(EndfieldHUD PRIVATE hud_application hud_single_instance hud_application_package shell32)
-  # main.cpp rolls an interrupted Mac import activation back before the root
-  # opens (core/migration/mac_import_work.hpp; target from cmake/modules/import.cmake).
-  target_link_libraries(EndfieldHUD PRIVATE hud_mac_import)
   if(MSVC)
     target_compile_options(EndfieldHUD PRIVATE /W4 /permissive- /EHsc)
     target_compile_options(hud_single_instance PRIVATE /W4 /permissive- /EHsc)
@@ -304,6 +317,18 @@ if(WIN32)
       target_link_libraries(application_utility_idle_tests PRIVATE hud_utility)
       add_test(NAME application_utility_idle_contracts COMMAND application_utility_idle_tests)
     endif()
+    # The thread census the hidden summon-cycle check reads: pool workers by
+    # their ntdll start, busy in a callback, idle on their worker factory.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/process_diagnostics.cpp")
+      add_executable(process_diagnostics_tests tests/process_diagnostics_tests.cpp app/process_diagnostics.cpp)
+      target_include_directories(process_diagnostics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+      target_compile_definitions(process_diagnostics_tests PRIVATE ${EHUD_APP_DEFINITIONS})
+      target_link_libraries(process_diagnostics_tests PRIVATE hud_data psapi dxgi)
+      add_test(NAME process_diagnostics_contracts COMMAND process_diagnostics_tests)
+      if(MSVC)
+        target_compile_options(process_diagnostics_tests PRIVATE /W4 /permissive- /EHsc)
+      endif()
+    endif()
     # The built-in Volume owner's app-row icons on the shared utility queue
     # (native/volume_icon_provider.hpp VolumeQueuedIconProvider).
     add_executable(application_volume_icons_tests tests/application_volume_icons_tests.cpp)
@@ -350,8 +375,10 @@ if(WIN32)
     add_executable(application_executable_tests tests/application_executable_tests.cpp)
     target_compile_definitions(application_executable_tests PRIVATE ${EHUD_APP_DEFINITIONS})
     target_link_libraries(application_executable_tests PRIVATE hud_resource_locator version)
-    add_dependencies(application_executable_tests EndfieldHUD)
-    add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}")
+    # Setup and the uninstaller (cmake/modules/packaging.cmake): their VERSIONINFO copyright only.
+    add_dependencies(application_executable_tests EndfieldHUD endfieldhud_setup_stub endfieldhud_uninstaller)
+    add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}"
+      "$<TARGET_FILE:endfieldhud_setup_stub>" "$<TARGET_FILE:endfieldhud_uninstaller>")
     if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
       # Production Notes/File Shelf roots: the real owners on temporary roots
       # that already hold an earlier run's records, across a restart.
@@ -368,16 +395,20 @@ if(WIN32)
     if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json" AND EXISTS "${ehud_watch_blur}")
       # The production package staged from the configured inputs verifies.
       add_test(NAME endfieldhud_package_contracts COMMAND EndfieldHUD --verify-package)
+      # A --login launch without an input desktop gets past choosing its display.
+      add_test(NAME endfieldhud_login_launch_contracts COMMAND "${CMAKE_COMMAND}" "-DAPP=$<TARGET_FILE:EndfieldHUD>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/login-launch-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_login_launch_check.cmake")
+      set_tests_properties(endfieldhud_login_launch_contracts PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "login launch check skipped")
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=21 -DHOST_CHECKS=244 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=22 -DHOST_CHECKS=465 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=240 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=16 -DHOST_CHECKS=464 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       # The same owner's memory and thread census (launch, every module,

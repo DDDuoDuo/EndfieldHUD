@@ -5,6 +5,7 @@
 #endif
 #include <windows.h>
 #include "native/hypergryph_account_services.hpp"
+#include "core/source_desktop_chrome.hpp"
 #ifdef EHUD_HAS_WEBVIEW2
 #include "native/hypergryph_account_webview.hpp"
 #endif
@@ -146,23 +147,35 @@ void AccountLinkingOwner::setOverlayVisible(bool visible,double t) {
     // (if any) closes now, or with the last request still finishing.
     i.services->setNetworkRetained(visible);
 }
-void AccountLinkingOwner::overlayClosing(double t) {cancelInteraction(t);impl_->page->overlayClosing(t);setOverlayVisible(false,t);}
+void AccountLinkingOwner::overlayClosing(double t) {
+    auto& i=*impl_;i.advance(t);
+    (void)i.gauge->dismiss(i.time);i.page->overlayClosing(i.time);i.gauge->setOverlayVisible(false,i.time);
+    if(i.overlay) {i.overlay=false;i.visibility();i.syncPage(i.time);}
+    i.services->setNetworkRetained(false);
+}
 void AccountLinkingOwner::update(const app::ModuleFrame& frame,float headerOpacity) {
     auto& i=*impl_;i.advance(frame.time);if(!i.resized) return;
     const bool selected=frame.presentation.requested==core::Module::account;
     if(selected!=i.selected) {i.selected=selected;i.visibility();i.syncPage(i.time);}
-    i.page->update(frame);i.gauge->update(frame.center,headerOpacity,i.time);
+    i.page->update(frame);
+    i.gauge->setDesignScale(core::source::DesktopChromeLayout::make(frame.chrome,{},{}).designScale,i.time);
+    i.gauge->update(frame.center,headerOpacity,i.time);
 }
 void AccountLinkingOwner::prewarm(const app::ModuleFrame& frame) {
     auto& i=*impl_;i.advance(frame.time);if(!i.resized) return;
     // The wallet is on every opening frame (unless the header mode hides it);
     // the hidden scene composes nothing, so posing it only enables upload().
+    i.gauge->setDesignScale(core::source::DesktopChromeLayout::make(frame.chrome,{},{}).designScale,i.time);
     i.gauge->update(frame.center,0,i.time);
     i.page->prewarm(frame);
 }
 void AccountLinkingOwner::concealed(double t) {
     auto& i=*impl_;i.advance(t);
     (void)i.page->hostEvent({app::HostEvent::Kind::overlayConcealed,0},i.time);(void)i.gauge->conceal();
+}
+void AccountLinkingOwner::retracted(double t) {
+    auto& i=*impl_;i.advance(t);
+    (void)i.page->hostEvent({app::HostEvent::Kind::overlayRetracted,0},i.time);
 }
 bool AccountLinkingOwner::requiresFrames(double t) const {const auto& i=*impl_;return i.page->requiresFrames(t)||i.gauge->requiresFrames(t);}
 std::optional<double> AccountLinkingOwner::nextWakeTime(double now) const {
@@ -190,6 +203,14 @@ bool AccountLinkingOwner::deadline(double t) {
 void AccountLinkingOwner::upload(gpu::Renderer& r) {auto& i=*impl_;i.page->upload(r);i.gauge->upload(r);}
 std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::moduleEntries() {return impl_->page->entries(core::Module::account);}
 std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::headerEntries() {return impl_->gauge->entries();}
+std::span<const gpu::LayerCompositionEntry> AccountLinkingOwner::recoveryEntries() {return impl_->gauge->popoverEntries();}
+void AccountLinkingOwner::setHeaderPlacement(core::Point origin,double size,modules::hypergryph::GaugePopoverDirection direction,double t) {
+    auto& i=*impl_;i.advance(t);i.gauge->setPlacement(origin,size,direction,i.time);
+}
+void AccountLinkingOwner::setShowsHeaderGauge(bool value,double t) {
+    auto& i=*impl_;i.advance(t);auto& controller=i.services->controller();if(controller.showsHeaderGauge()==value) return;
+    controller.setShowsHeaderGauge(value);i.syncPage(i.time);i.gauge->contentChanged(i.time);
+}
 void AccountLinkingOwner::collected(gpu::Renderer& r) {auto& i=*impl_;i.page->collected(r);i.gauge->collected(r);}
 void AccountLinkingOwner::release(gpu::Renderer& r) {auto& i=*impl_;i.page->release(r);i.gauge->release(r);}
 bool AccountLinkingOwner::covers(core::Point p) const {const auto& i=*impl_;return i.gauge->covers(p)||i.page->covers(p);}
@@ -222,7 +243,7 @@ bool AccountLinkingOwner::message(const app::NativeMessage& m,double t) {
     i.advance(t);i.services->drain();return true;
 }
 std::optional<app::ModuleCursor> AccountLinkingOwner::cursorAt(core::Point p) const {return impl_->page->cursorAt(p);}
-bool AccountLinkingOwner::dismissWalletPopover(double t) {auto& i=*impl_;i.advance(t);if(!i.gauge||!i.gauge->model().popoverOpen())return false;(void)i.gauge->dismiss(i.time);return true;}
+bool AccountLinkingOwner::dismissWalletPopover(double t,bool animated) {auto& i=*impl_;i.advance(t);if(!i.gauge||!i.gauge->model().popoverOpen())return false;(void)i.gauge->dismiss(i.time,animated);return true;}
 void AccountLinkingOwner::cancelInteraction(double t) {auto& i=*impl_;i.advance(t);i.page->cancelInteraction(i.time);i.gauge->dismiss(i.time);}
 bool AccountLinkingOwner::flush(double t) {impl_->advance(t);return impl_->services->flush();}
 void AccountLinkingOwner::profileAvatarChanged(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarChanged(filename);}

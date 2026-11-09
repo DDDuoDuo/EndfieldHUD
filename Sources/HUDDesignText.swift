@@ -256,6 +256,12 @@ final class HUDStandardTextLayer: CATextLayer {
         if font !== resolved { font = resolved }
     }
 
+    /// The width of `string` set on one line in the layer's font (0 when empty).
+    var measuredWidth: CGFloat {
+        guard let string = string as? String, !string.isEmpty, let font = font as? NSFont else { return 0 }
+        return (string as NSString).size(withAttributes: [.font: font]).width
+    }
+
     /// CATextLayer sets HarmonyOS Sans on CoreText's frame line height for the
     /// face (1.44 em), which sinks text a quarter em below where the system
     /// face sat and drops the second line of two-line captions. Lines here

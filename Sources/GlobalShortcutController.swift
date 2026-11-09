@@ -24,13 +24,13 @@ final class GlobalShortcutController {
 
     var statusDescription: String {
         let name = shortcut.displayName
-        if isCapturing { return L10n.text("Press your new shortcut. Escape cancels.", "请按新的快捷键，Escape 取消。") }
+        if isCapturing { return L10n.text("Press your new shortcut. Escape cancels", "请按新的快捷键，Escape 取消") }
         switch status {
-        case .stopped: return L10n.text("\(name) is stopped.", "\(name) 已停用。")
-        case .ready: return L10n.text("\(name) is ready, including in text fields.", "\(name) 已就绪，在文本框中也可使用。")
+        case .stopped: return L10n.text("\(name) is stopped", "\(name) 已停用")
+        case .ready: return L10n.text("\(name) is ready, including in text fields", "\(name) 已就绪，在文本框中也可使用")
         case .unavailable:
-            return L10n.text("\(name) is unavailable or in use. Open from the menu bar.",
-                             "\(name) 不可用或已被占用，请从菜单栏打开浮层。")
+            return L10n.text("\(name) is unavailable or in use. Open from the menu bar",
+                             "\(name) 不可用或已被占用，请从菜单栏打开浮层")
         }
     }
 
@@ -57,8 +57,8 @@ final class GlobalShortcutController {
         if candidate == shortcut, hotKey != nil { return nil }
         if let error = systemConflict(for: candidate) { return error }
         guard installHandlerIfNeeded() else {
-            return L10n.text("Could not register the shortcut. Your previous shortcut is unchanged.",
-                             "无法注册快捷键，原快捷键保持不变。")
+            return L10n.text("Could not register the shortcut. Your previous shortcut is unchanged",
+                             "无法注册快捷键，原快捷键保持不变")
         }
         let nextID = registrationID &+ 1
         var candidateKey: EventHotKeyRef?
@@ -67,8 +67,8 @@ final class GlobalShortcutController {
                                         GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &candidateKey)
         guard result == noErr, let registered = candidateKey else {
             if let unused = candidateKey { UnregisterEventHotKey(unused) }
-            return L10n.text("That shortcut is already in use or unavailable. Choose another combination.",
-                             "该快捷键已被占用或不可用，请选择其他组合。")
+            return L10n.text("That shortcut is already in use or unavailable. Choose another combination",
+                             "该快捷键已被占用或不可用，请选择其他组合")
         }
         if let old = hotKey { UnregisterEventHotKey(old) }
         hotKey = registered
@@ -148,8 +148,8 @@ final class GlobalShortcutController {
     private func systemConflict(for candidate: SummonShortcut) -> String? {
         var copied: Unmanaged<CFArray>?
         guard CopySymbolicHotKeys(&copied) == noErr, let records = copied?.takeRetainedValue() as? [[String: Any]] else {
-            return L10n.text("macOS shortcut conflicts could not be checked. Try again.",
-                             "暂时无法检查 macOS 快捷键冲突，请重试。")
+            return L10n.text("macOS shortcut conflicts could not be checked. Try again",
+                             "暂时无法检查 macOS 快捷键冲突，请重试")
         }
         let conflict = records.contains { record in
             guard let enabled = record[kHISymbolicHotKeyEnabled as String] as? NSNumber, enabled.boolValue,
@@ -158,8 +158,8 @@ final class GlobalShortcutController {
             let supported = UInt32(controlKey | optionKey | shiftKey | cmdKey)
             return key.uint16Value == candidate.keyCode && flags.uint32Value & supported == candidate.modifiers.carbonValue
         }
-        return conflict ? L10n.text("That shortcut is enabled in macOS Keyboard Shortcuts. Choose another combination.",
-                                    "该快捷键已在 macOS 键盘快捷键中启用，请选择其他组合。") : nil
+        return conflict ? L10n.text("That shortcut is enabled in macOS Keyboard Shortcuts. Choose another combination",
+                                    "该快捷键已在 macOS 键盘快捷键中启用，请选择其他组合") : nil
     }
 
     private func unregisterKey() {

@@ -1,13 +1,15 @@
 import AppKit
 import QuartzCore
 
-// Actual-source oracle of Settings (Mac 1.3.0 Sources/HUDSettingsController.swift and
+// Actual-source oracle of Settings (Mac Sources/HUDSettingsController.swift and
 // Sources/HUDSettingsCanvas.swift, with ConfigurationStore on temporary defaults):
 //  - the controller's preference transactions at fixed checkpoints (`controller`, unchanged since
 //    v1.2.0: tests/settings_tests.cpp);
 //  - the four redesigned canvases (System, Display, Hotkeys, About) built by the unchanged Mac code in
 //    scripted states (`pages`: sub-pages, menus, dark / Light, English / Simplified Chinese, a module
-//    layout, alerts switched off, shortcut recording, the update strip) exported as their model layer trees
+//    layout, alerts switched off, shortcut recording, the update strip, Display > Modules and
+//    Display > HUD elements, each scoped Restore asked and the System and Display ones confirmed)
+//    exported as their model layer trees
 //    with the design recorder (tools/hud_design_reference_support.swift), page controls and
 //    accessibility items, plus the scenario's configuration;
 //  - the confirm requests and toasts the canvases raise (`requests`), the Center logo rasters' pixel sizes
@@ -59,7 +61,8 @@ private func toast(_ t: HUDToastRequest?) -> Any {
         let store = ConfigurationStore(defaults: defaults); store.update(initial)
         var now = 0.0
         let controller = HUDSettingsController(store: store, clock: { now }, scheduleTimer: { _, _ in SettingsFixtureTimer() })
-        controller.onLaunchAtLoginChange = { _ in "Synthetic login failure" }
+        var loginFails = true
+        controller.onLaunchAtLoginChange = { _ in loginFails ? "Synthetic login failure" : nil }
         controller.onShortcutChange = { _ in nil }
 
         // MARK: Controller checkpoints (unchanged sequence)
@@ -140,13 +143,6 @@ private func toast(_ t: HUDToastRequest?) -> Any {
         control(.system, "screen").activate(); try row(.system, "menu.screen"); canvases[.system]!.closeMenu()
         control(.system, "restore").activate(); ask("restore", .system); clear()
         controller.setStatus("Synthetic status"); ask("notice", .system); controller.setStatus(nil); clear()
-        control(.system, "modules").activate(); try row(.system, "modules")
-        controller.update { $0.moduleLayout.move(.clipboard, to: 0); _ = $0.moduleLayout.setHidden(.archive, true) }
-        try row(.system, "modules.changed")
-        control(.system, "modulesReset").activate(); ask("modulesReset", .system); clear()
-        controller.update { $0.moduleLayout = HUDModuleLayout() }
-        canvases[.system]!.page.back?()
-        try row(.system, "main.back")
         hide(.system)
         L10n.language = .simplifiedChinese; language = .simplifiedChinese
         show(.system); try row(.system, "main"); hide(.system)
@@ -154,17 +150,26 @@ private func toast(_ t: HUDToastRequest?) -> Any {
         light = true; HUDColor.apply(accentHex: "FAD41F", light: true); context.refreshPalette()
         show(.system); try row(.system, "main"); hide(.system)
         light = false; HUDColor.apply(accentHex: "FAD41F", light: false); context.refreshPalette()
+        // System's Restore confirmed: the System keys reset (launch at login fails, so it stays off), Display
+        // kept, the button disabled while nothing else differs. The script's language is then set back.
+        show(.system)
+        control(.system, "restore").activate(); context.overlay.decide(.confirm); ask("restoreConfirmed", .system)
+        try row(.system, "main.restored"); clear()
+        loginFails = false; controller.update { $0.launchAtLogin = true }
+        try row(.system, "main.atDefaults")
+        controller.update { $0.launchAtLogin = false; $0.language = .english }; loginFails = true
+        hide(.system); controller.setStatus(nil); clear()
 
         // Display
         show(.display)
         try row(.display, "main")
         _ = canvases[.display]!.scroll(at: CGPoint(x: 300, y: 300), delta: CGPoint(x: 0, y: 10000))
         try row(.display, "main.bottom")
-        control(.display, "facility").activate(); ask("facilityOff", .display, extra: ["toggleOn": (control(.display, "facility") as! HUDToggle).isOn]); clear()
+        control(.display, "displayRestore").activate(); ask("displayRestore", .display); clear()
         control(.display, "recording").activate(); ask("recordingOn", .display)
         control(.display, "recording").activate(); ask("recordingOff", .display); clear()
         _ = canvases[.display]!.scroll(at: CGPoint(x: 300, y: 300), delta: CGPoint(x: 0, y: -10000))
-        for menu in ["theme", "clockStyle", "centerLogo"] {
+        for menu in ["theme", "clockStyle", "centerLogo", "openModule"] {
             control(.display, menu).activate(); try row(.display, "menu." + menu); canvases[.display]!.closeMenu()
         }
         controller.previewScale(1.5); ask("layout", .display)
@@ -179,7 +184,29 @@ private func toast(_ t: HUDToastRequest?) -> Any {
         canvases[.display]!.page.back?()
         control(.display, "appIcon").activate(); try row(.display, "icons")
         canvases[.display]!.page.back?()
-        hide(.display)
+        // Display > Modules
+        control(.display, "modules").activate(); try row(.display, "modules")
+        controller.update { $0.moduleLayout.move(.clipboard, to: 0); _ = $0.moduleLayout.setHidden(.archive, true) }
+        try row(.display, "modules.changed")
+        control(.display, "modulesReset").activate(); ask("modulesReset", .display); clear()
+        controller.update { $0.moduleLayout = HUDModuleLayout() }
+        canvases[.display]!.page.back?()
+        try row(.display, "main.back")
+        // Display > HUD elements: its Restore asks, enabled once the page differs from its defaults.
+        control(.display, "overlay").activate(); try row(.display, "overlay")
+        control(.display, "facility").activate(); ask("facilityOff", .display, extra: ["toggleOn": (control(.display, "facility") as! HUDToggle).isOn]); clear()
+        controller.update { $0.overlayLayout.showsTitle = false }
+        try row(.display, "overlay.changed")
+        control(.display, "overlayRestore").activate(); ask("overlayRestore", .display); clear()
+        controller.update { $0.overlayLayout = HUDOverlayLayout() }
+        canvases[.display]!.page.back?()
+        // Display's Restore confirmed during a scale preview: the defaults written at once, no countdown.
+        controller.update { $0.recordingMode = false; $0.clockStyle = .dial }
+        controller.previewScale(1.5)
+        control(.display, "displayRestore").activate(); context.overlay.decide(.confirm); ask("displayRestoreConfirmed", .display)
+        try row(.display, "main.restored"); clear()
+        controller.update { $0.reduceMotion = true }
+        hide(.display); controller.setStatus(nil); clear()
         light = true; HUDColor.apply(accentHex: "FAD41F", light: true); context.refreshPalette()
         show(.display); try row(.display, "main"); hide(.display)
         light = false; HUDColor.apply(accentHex: "FAD41F", light: false); context.refreshPalette()

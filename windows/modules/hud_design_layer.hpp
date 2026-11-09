@@ -41,6 +41,7 @@
 #include "modules/hud_design_motion.hpp"
 #include "modules/hud_design_nodes.hpp"
 #include <deque>
+#include <initializer_list>
 #include <set>
 #include <memory>
 
@@ -69,6 +70,29 @@ inline constexpr std::size_t channelCount = std::size_t(Channel::count);
 // tracks override earlier ones; additive tracks add to the result).
 enum class MotionSlot : std::uint8_t { enter, leave, hold, wipe, fade, pop, grow, effect, count };
 enum class WipeOrigin : std::uint8_t { left, top, centerX };
+// A set of motion slots (one of the Mac's animation key sets).
+struct MotionSlots {
+    std::uint16_t bits{};
+    constexpr MotionSlots() noexcept = default;
+    constexpr MotionSlots(std::initializer_list<MotionSlot> list) noexcept { for (const MotionSlot s : list) bits = std::uint16_t(bits | (1u << unsigned(s))); }
+    constexpr bool contains(MotionSlot s) const noexcept { return ((bits >> unsigned(s)) & 1u) != 0; }
+    constexpr MotionSlots operator|(MotionSlots other) const noexcept { MotionSlots r; r.bits = std::uint16_t(bits | other.bits); return r; }
+};
+// HUDMotion.entranceKeys (HUDDesignMotion.swift:107): the slots a module
+// entrance plays in, enter, the wipe with its fade (also motion::crossFade's
+// fade, as the Mac's two key sets treat hud.wipe.fade and the cross-fade
+// alike) and grow. Not native/hud_design_scene.cpp's entering() set
+// {enter, wipe, pop, grow}, which asks a different question (is a part still
+// arriving); keep the two apart.
+inline constexpr MotionSlots entranceSlots{MotionSlot::enter, MotionSlot::wipe, MotionSlot::fade, MotionSlot::grow};
+// What a motion strip keeps (the Mac's removeAnimations except a key set):
+// every track of the `slots` named, and with `finite` every other track that
+// ends on its own too, so only the endless loops (Track::repeat infinity:
+// blink, scan, sheen, pulse) go.
+struct MotionKeep {
+    MotionSlots slots;
+    bool finite{};
+};
 
 // An invisible hover/press target (HUDControlHighlightLayer.addTarget, Sources/
 // HUDControlHighlightLayer.swift:94-115) in its host layer's coordinates.
@@ -211,6 +235,9 @@ public:
     bool animating(double now) const noexcept;
     void removeMotion(MotionSlot) noexcept;
     void removeAllMotion() noexcept;
+    // Removes this layer's motion except what `keep` names; storage that ends
+    // up empty is given back. Not recursive: motion::removeMotion walks a subtree.
+    void removeAllMotion(MotionKeep keep) noexcept;
 
     LayerArena& arena() const noexcept { return *arena_; }
 private:
@@ -279,9 +306,15 @@ void animate(Layer&, Channel, double to, double duration, const Clock&, core::Cu
 void animateTint(Layer&, Color to, double duration, const Clock&, core::CubicTiming = easing::standard, double delay = 0);
 // stIn: opacity [0, o, o] at [0, .6, 1] and additive translation offset -> 0;
 // group timing `timing` over `duration` composes with the translation's own.
+// A positive `delay` holds the start pose until then (fill backwards); a
+// negative one (enter, stagger, wipe with its fade, grow) resumes an entrance
+// that began that long ago, so a page rebuilt mid-entrance carries on in
+// phase (HUDMotion.enter, Mac d03d5b9).
 void enter(Layer&, Point offset, const Clock&, double duration = duration::entrance, double delay = 0, core::CubicTiming timing = easing::standard);
-// The list stagger: enter(layers[i], offset, delay staggerDelay(i)).
-void stagger(std::span<Layer* const>, Point offset, const Clock&);
+// The list stagger: enter(layers[i], offset, delay + staggerDelay(i)); `delay`
+// holds the whole stagger back (the HUD's open waits for the centre to show)
+// or, negative, resumes it in phase.
+void stagger(std::span<Layer* const>, Point offset, const Clock&, double delay = 0);
 // .13 s ease to opacity 0 and additive -0.6 x offset; holds its end state.
 void leave(Layer&, Point toward, const Clock&);
 // Keeps a layer transparent until released; applies under Reduce Motion too.
@@ -293,6 +326,15 @@ void release(Layer&, MotionSlot);
 void wipe(Layer&, WipeOrigin, double duration, const Clock&, core::CubicTiming = easing::standard, double delay = 0,
     std::optional<double> fadeFrom = {});
 void removeWipe(Layer&);
+// HUDMotion.crossFade (:85-94, b8cc1df): `incoming` fades 0 -> 1 and
+// `outgoing` (if any) from what it shows to 0, ease-in-out over `duration`.
+// Decision X-D1: the tracks live in MotionSlot::fade, the slot of the wipe's
+// fade, so every keep list that keeps one keeps the other (entranceSlots), as
+// the Mac's key sets treat hud.wipe.fade and the cross-fade alike. Models are
+// set at once; nothing animates under Reduce Motion. setValue cancels only
+// property tracks, so an instant path that sets these opacities removes the
+// fade slot itself.
+void crossFade(Layer& incoming, Layer* outgoing, double duration, const Clock&);
 // ruleIn: scaleX 0 -> 1 from the layer's anchor.
 void grow(Layer&, double duration, const Clock&, double delay = 0, core::CubicTiming = easing::standard);
 // pop: scale .4 -> 1, additive rotation -12 deg -> 0, opacity 0 -> o, SNAP group.
@@ -306,6 +348,22 @@ void colorKeyframes(Layer&, std::span<const Color> values, std::span<const doubl
 // A completion block (CATransaction completion): runs at `time` unless the
 // layer's arena died first.
 void after(Layer&, double time, const Clock&, std::function<void()>);
+// The one recursive strip (the Mac's removeAnimations(in:) over a layer and
+// its sublayers): Layer::removeAllMotion(keep) on `root` and every
+// descendant. Now Playing's stop keeps entranceSlots + leave; the HUD
+// close's stopLoops keeps every finite track ({{}, true}).
+void removeMotion(Layer& root, MotionKeep keep);
+// The HUD close's strip at its start (5c8a905, 939926a; decision L-D1, Mac
+// parity): every endless loop under `root` stops (blink, scan, sheen, pulse,
+// danger, the Work Mode dot) and every finite track plays on (entrances,
+// exits, wipes, pops, cross-fades, a module's own one-shots). The Mac keeps
+// an explicit key list (HUDMotion.closeKeys) and so also strips a few other
+// finite paths (scale, colour, translation.x, ...); they all end within the
+// .33 s close (scrolls aside), so Windows lets them finish rather than keep
+// a fragile key list. A canvas that stays active can start a loop again
+// mid-close (Work Mode's blink on a phase change), as on the Mac.
+inline constexpr MotionKeep closeKeep{{}, true};
+void stopLoops(Layer& root);
 }
 
 // ---------------------------------------------------------------------------

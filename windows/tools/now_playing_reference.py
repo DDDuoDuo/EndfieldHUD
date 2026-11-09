@@ -5,7 +5,7 @@ import hashlib,json,os,subprocess,sys
 root=Path(__file__).resolve().parents[2]
 out=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else root/'build/now-playing-reference'
 destination=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else None
-authority='4fda15a03ba50675e0b12d69a83efdb6526c19f6'  # Mac 1.3.0 (origin/main)
+authority='79bc6651959977d3c6aa89c8faeedb155a15f20d'  # Mac 1.3.1 (build 20, windows/source-authority.json)
 paths=['Sources/NowPlayingController.swift','Sources/NowPlayingLyrics.swift','Sources/NowPlayingCanvas.swift','Sources/NowPlayingArtwork.swift','Sources/HUDDesignFormat.swift']
 texts={}
 for path in paths:

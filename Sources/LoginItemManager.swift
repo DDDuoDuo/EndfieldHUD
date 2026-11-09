@@ -35,8 +35,8 @@ final class LoginItemManager {
         precondition(Thread.isMainThread)
         guard let snapshot else { return "" }
         if snapshot.requiresApproval {
-            return L10n.text("Approval needed in System Settings → Login Items.",
-                             "请在系统设置 → 登录项中允许启动。")
+            return L10n.text("Approval needed in System Settings → Login Items",
+                             "请在系统设置 → 登录项中允许启动")
         }
         return snapshot.isEnabled ? L10n.text("Enabled", "已启用") : L10n.text("Disabled", "已停用")
     }
@@ -219,11 +219,11 @@ private enum LoginItemError: LocalizedError {
         switch self {
         case .installFirst:
             return L10n.text(
-                "Move EndfieldHUD.app into Applications (or your home Applications folder), open it from there, then enable Launch at login.",
-                "请将 EndfieldHUD.app 移到“应用程序”文件夹（或个人目录中的“应用程序”文件夹），从那里打开后再启用“登录时启动”。")
+                "Move EndfieldHUD.app into Applications (or your home Applications folder), open it from there, then enable Launch at login",
+                "请将 EndfieldHUD.app 移到“应用程序”文件夹（或个人目录中的“应用程序”文件夹），从那里打开后再启用“登录时启动”")
         case .missingExecutable:
-            return L10n.text("The app’s executable could not be found. Build or reinstall EndfieldHUD.app, then try again.",
-                             "找不到应用程序的可执行文件。请重新构建或安装 EndfieldHUD.app 后再试。")
+            return L10n.text("The app’s executable could not be found. Build or reinstall EndfieldHUD.app, then try again",
+                             "找不到应用程序的可执行文件。请重新构建或安装 EndfieldHUD.app 后再试")
         }
     }
 }

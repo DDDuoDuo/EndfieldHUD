@@ -154,13 +154,13 @@
    "traditionalChinese": "從書庫移除 Q？"
   },
   {
-   "english": "The file itself stays on disk.",
-   "japanese": "ファイル自体はディスクに残ります。",
-   "korean": "파일 자체는 디스크에 남아 있습니다.",
-   "simplifiedChinese": "文件本身仍保留在磁盘上。",
-   "template": "The file itself stays on disk.",
-   "templateSimplifiedChinese": "文件本身仍保留在磁盘上。",
-   "traditionalChinese": "檔案本身仍保留在磁碟上。"
+   "english": "The file itself stays on disk",
+   "japanese": "ファイル自体はディスクに残ります",
+   "korean": "파일 자체는 디스크에 남아 있습니다",
+   "simplifiedChinese": "文件本身仍保留在磁盘上",
+   "template": "The file itself stays on disk",
+   "templateSimplifiedChinese": "文件本身仍保留在磁盘上",
+   "traditionalChinese": "檔案本身仍保留在磁碟上"
   },
   {
    "english": "Remove",
@@ -244,15 +244,6 @@
    "traditionalChinese": "字體"
   },
   {
-   "english": "More",
-   "japanese": "その他",
-   "korean": "더 보기",
-   "simplifiedChinese": "更多",
-   "template": "More",
-   "templateSimplifiedChinese": "更多",
-   "traditionalChinese": "更多"
-  },
-  {
    "english": "Notice",
    "japanese": "お知らせ",
    "korean": "알림",
@@ -327,58 +318,58 @@
  ],
  "errors": {
   "changedOnDisk": {
-   "english": "The reader library changed on disk. Restart the app before saving.",
-   "japanese": "ライブラリが別の場所で変更されました。アプリを再起動してから保存してください。",
-   "korean": "서재 파일이 변경되었습니다. 앱을 다시 시작한 후 저장하세요.",
-   "simplifiedChinese": "阅读器书库已在磁盘上更改，请重新启动应用后保存。",
-   "traditionalChinese": "閱讀器書庫已在磁碟上變更，請重新啟動應用程式後儲存。"
+   "english": "The reader library changed on disk. Restart the app before saving",
+   "japanese": "ライブラリが別の場所で変更されました。アプリを再起動してから保存してください",
+   "korean": "서재 파일이 변경되었습니다. 앱을 다시 시작한 후 저장하세요",
+   "simplifiedChinese": "阅读器书库已在磁盘上更改，请重新启动应用后保存",
+   "traditionalChinese": "閱讀器書庫已在磁碟上變更，請重新啟動應用程式後儲存"
   },
   "encrypted": {
-   "english": "Encrypted books are not supported.",
-   "japanese": "暗号化された書籍には対応していません。",
-   "korean": "암호화된 책은 지원하지 않습니다.",
-   "simplifiedChinese": "暂不支持加密书籍。",
-   "traditionalChinese": "暫不支援加密書籍。"
+   "english": "Encrypted books are not supported",
+   "japanese": "暗号化された書籍には対応していません",
+   "korean": "암호화된 책은 지원하지 않습니다",
+   "simplifiedChinese": "暂不支持加密书籍",
+   "traditionalChinese": "暫不支援加密書籍"
   },
   "invalidArchive": {
-   "english": "This EPUB archive is damaged or unsafe.",
-   "japanese": "このEPUBは破損しているか、安全に読み込めません。",
-   "korean": "이 EPUB 파일이 손상되었거나 안전하지 않습니다.",
-   "simplifiedChinese": "此 EPUB 压缩包已损坏或不安全。",
-   "traditionalChinese": "此 EPUB 壓縮檔已損壞或不安全。"
+   "english": "This EPUB archive is damaged or unsafe",
+   "japanese": "このEPUBは破損しているか、安全に読み込めません",
+   "korean": "이 EPUB 파일이 손상되었거나 안전하지 않습니다",
+   "simplifiedChinese": "此 EPUB 压缩包已损坏或不安全",
+   "traditionalChinese": "此 EPUB 壓縮檔已損壞或不安全"
   },
   "invalidBook": {
-   "english": "This book could not be read.",
-   "japanese": "この書籍を読み込めません。",
-   "korean": "이 책을 읽을 수 없습니다.",
-   "simplifiedChinese": "无法读取此书籍。",
-   "traditionalChinese": "無法讀取此書籍。"
+   "english": "This book could not be read",
+   "japanese": "この書籍を読み込めません",
+   "korean": "이 책을 읽을 수 없습니다",
+   "simplifiedChinese": "无法读取此书籍",
+   "traditionalChinese": "無法讀取此書籍"
   },
   "tooLarge": {
-   "english": "This book exceeds the reader's safety limits.",
-   "japanese": "この書籍はリーダーの上限を超えています。",
-   "korean": "이 책은 리더의 안전 제한을 초과합니다.",
-   "simplifiedChinese": "此书籍超过阅读器的安全限制。",
-   "traditionalChinese": "此書籍超過閱讀器的安全限制。"
+   "english": "This book exceeds the reader's safety limits",
+   "japanese": "この書籍はリーダーの上限を超えています",
+   "korean": "이 책은 리더의 안전 제한을 초과합니다",
+   "simplifiedChinese": "此书籍超过阅读器的安全限制",
+   "traditionalChinese": "此書籍超過閱讀器的安全限制"
   },
   "unavailable": {
-   "english": "The original book is unavailable. Choose it again.",
-   "japanese": "元の書籍が見つかりません。再度選択してください。",
-   "korean": "원본 책을 사용할 수 없습니다. 다시 선택하세요.",
-   "simplifiedChinese": "原始书籍不可用，请重新选择。",
-   "traditionalChinese": "原始書籍無法使用，請重新選擇。"
+   "english": "The original book is unavailable. Choose it again",
+   "japanese": "元の書籍が見つかりません。再度選択してください",
+   "korean": "원본 책을 사용할 수 없습니다. 다시 선택하세요",
+   "simplifiedChinese": "原始书籍不可用，请重新选择",
+   "traditionalChinese": "原始書籍無法使用，請重新選擇"
   },
   "unsupported": {
-   "english": "Choose a PDF, EPUB or TXT book.",
-   "japanese": "PDF・EPUB・TXTの書籍を選択してください。",
-   "korean": "PDF, EPUB 또는 TXT 책을 선택하세요.",
-   "simplifiedChinese": "请选择 PDF、EPUB 或 TXT 书籍。",
-   "traditionalChinese": "請選擇 PDF、EPUB 或 TXT 書籍。"
+   "english": "Choose a PDF, EPUB or TXT book",
+   "japanese": "PDF、EPUB、TXTの書籍を選択してください",
+   "korean": "PDF, EPUB 또는 TXT 책을 선택하세요",
+   "simplifiedChinese": "请选择 PDF、EPUB 或 TXT 书籍",
+   "traditionalChinese": "請選擇 PDF、EPUB 或 TXT 書籍"
   }
  },
  "source": {
   "argument": "Q",
-  "authority": "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
+  "authority": "79bc6651959977d3c6aa89c8faeedb155a15f20d",
   "files": [
    "Sources/ReaderZIP.swift",
    "Sources/ReaderCanvas.swift",

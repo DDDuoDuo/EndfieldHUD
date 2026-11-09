@@ -262,6 +262,43 @@ void keptParts(d::TextMeasurer& measurer) {
     check(e.entered == 3, "Activation on the drawer is");
 }
 
+// The owner releases the stage's picture while the page is hidden (a switch
+// away, a HUD close). Back on screen, the re-rendered preview fades in over
+// .16 s as a new source's does (the Mac keeps or rebuilds it), never popping in.
+const d::Layer* layerEnding(const d::Layer& l, std::string_view suffix) {
+    if (l.id().ends_with(suffix)) return &l;
+    for (const auto* c : l.children()) if (const auto* found = layerEnding(*c, suffix)) return found;
+    return nullptr;
+}
+void releasedPreview(d::TextMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english, false, false);
+    Editor e(w); e.show();
+    auto& c = *e.canvas;
+    e.import("C:\\oracle\\fixture.png"); w.advance(1);
+    const auto* content = layerEnding(c.builtStage()->layer(), "media.content");
+    check(content && c.builtStage()->image() && near(content->presented(d::Channel::opacity, w.now), 1, 1e-9), "The imported preview shows");
+    // Kept artwork (no release): showing again leaves it as it is.
+    c.prepareToLeave(w.now); c.setActive(false, w.now);
+    c.show(w.now); c.setActive(true, w.now); e.q.run();
+    check(near(content->presented(d::Channel::opacity, w.now), 1, 1e-9), "A kept preview does not fade again");
+    w.advance(1);
+    for (const auto* step : {"Switching back", "Reopening"}) {
+        c.prepareToLeave(w.now); c.setActive(false, w.now);
+        c.releasePreview(); w.advance(1);
+        if (std::string_view(step) == "Reopening") c.resetSession();
+        check(!c.builtStage()->image(), std::string(step) + ": the hidden page keeps no preview");
+        c.show(w.now); c.setActive(true, w.now);
+        e.q.run();
+        check(c.builtStage()->image() && content->presented(d::Channel::opacity, w.now) < .05, std::string(step) + ": the re-rendered preview starts hidden");
+        w.advance(.08);
+        const double half = content->presented(d::Channel::opacity, w.now);
+        check(half > .05 && half < .95, std::string(step) + ": it fades in (" + std::to_string(half) + " at .08 s)");
+        w.advance(.1);
+        check(near(content->presented(d::Channel::opacity, w.now), 1, 1e-9), std::string(step) + ": it is fully shown after .16 s");
+        w.advance(1);
+    }
+}
+
 // Animated page swaps and edits (Reduce Motion off): every frame's nodes stay rasterizable.
 void motion(d::TextMeasurer& measurer) {
     World w(measurer); w.appearance(Language::english, false, false);
@@ -572,6 +609,7 @@ int main(int argc, char** argv) {
         FakeMeasurer fake;
         rules(fake);
         keptParts(fake);
+        releasedPreview(fake);
         motion(fake);
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas"}, {"text", "viewport"})) {
             Oracle oracle(*data);

@@ -13,6 +13,8 @@ target_link_libraries(hud_audio_model PUBLIC hud_services)
 add_library(hud_audio_service native/audio_service.cpp native/audio_route_journal.cpp native/volume_audio_access.cpp)
 target_include_directories(hud_audio_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_audio_service PUBLIC hud_audio_model hud_services hud_data hud_scene)
+# The default-device selector runs on the worker (native/audio_default_device.hpp).
+target_link_libraries(hud_audio_service PUBLIC hud_audio_default)
 if(WIN32)
   # Native WASAPI endpoint backend (IMMDeviceEnumerator, IMMNotificationClient,
   # IAudioEndpointVolume); constructed only on the audio worker's MTA.
@@ -99,12 +101,25 @@ if(BUILD_TESTING)
   add_executable(audio_runtime_tests tests/audio_runtime_tests.cpp)
   # The Volume canvas over the runtime's binding (a module switch's entrance).
   target_link_libraries(audio_runtime_tests PRIVATE hud_audio_runtime hud_utility_canvases hud_data)
-  add_test(NAME audio_runtime_contracts COMMAND audio_runtime_tests)
+  if(TARGET hud_module_registry)
+    # The application's audio message under the Volume owner's isolation
+    # (app/application_audio.hpp) over the Windows module registry, and the
+    # app's own calls into it (read from app/).
+    target_compile_definitions(audio_runtime_tests PRIVATE ${EHUD_APP_DEFINITIONS} EHUD_AUDIO_RUNTIME_REGISTRY)
+    target_link_libraries(audio_runtime_tests PRIVATE hud_module_registry)
+    add_test(NAME audio_runtime_contracts COMMAND audio_runtime_tests "${CMAKE_CURRENT_SOURCE_DIR}/app")
+  elseif(WIN32)
+    # app.cmake (sorted before this fragment) defines the registry on
+    # Windows; without it the Volume isolation checks would compile out.
+    message(FATAL_ERROR "audio_runtime_tests needs hud_module_registry (cmake/modules/app.cmake) on Windows")
+  else()
+    add_test(NAME audio_runtime_contracts COMMAND audio_runtime_tests)
+  endif()
 
   if(WIN32)
-    # Native contracts that never open COM/audio: factories are inert, the
-    # undocumented default-device ABI is absent, and CompareStringEx ordering
-    # matches the source ordering for the oracle names.
+    # Native contracts that never change audio: factories are inert, the
+    # IPolicyConfig default-device capability is read (never a write), and
+    # CompareStringEx ordering matches the source ordering for the oracle names.
     add_executable(audio_native_contract_tests tests/audio_native_contract_tests.cpp)
     target_compile_definitions(audio_native_contract_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(audio_native_contract_tests PRIVATE hud_audio_service hud_audio_default hud_data)

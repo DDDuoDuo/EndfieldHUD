@@ -11,6 +11,7 @@
 #include "modules/event_log_canvas.hpp"
 #include "modules/volume_canvas.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -234,7 +235,7 @@ void eventLogCanvas() {
     const double now = 812000000;
     for (int i = 0; i < 500; ++i) store.state.events.push_back(event(i + 1, i % 3 ? m::EventKind::shelfAdded : m::EventKind::workStarted, now - i * 60, {{"filename", "F.pdf"}}));
     store.state.events.insert(store.state.events.begin(), event(900, m::EventKind::overlayOpened, now));
-    store.state.status = "Saved log could not be read; the original file is preserved.";
+    store.state.status = "Saved log could not be read; the original file is preserved";
     m::EventLogCanvas canvas(w.context, store.callbacks(), utc, [&] { return now; });
     w.show(canvas);
     check(canvas.header().counterText() == "500" && canvas.events().size() == 500, "The counter lists every record but navigation (:239, :288)");
@@ -249,10 +250,18 @@ void eventLogCanvas() {
     check(canvas.scroll({300, 300}, {0, 46}, w.now) && canvas.listOffsetForTesting() == 46 && !canvas.scroll({300, 100}, {0, 46}, w.now), "The wheel scrolls only over the list (:397-401)");
     // The top visible row stays in place when records arrive (:269-319).
     store.state.events.insert(store.state.events.begin() + 1, event(901, m::EventKind::shelfRemoved, now + 1));
-    store.state.status = "The log could not be saved. New events are kept in this session.";
+    store.state.status = "The log could not be saved. New events are kept in this session";
     canvas.storeChanged();
     check(canvas.listOffsetForTesting() == 92 && canvas.header().counterText() == "501", "A new record keeps the top row in view");
-    check(w.toasts()[0] == "Event log|The log could not be saved. New events are kept in this session.", "A failure that appears while open toasts (:262-267)");
+    check(w.toasts()[0] == "Event log|The log could not be saved. New events are kept in this session", "A failure that appears while open toasts (:262-267)");
+    // A return to the module starts the list at the top (:244-245); while it is shown,
+    // a refresh and an in-place re-render keep the scroll.
+    canvas.storeChanged(); canvas.rerender();
+    check(canvas.listOffsetForTesting() == 92, "A refresh and a re-render while active keep the list's scroll");
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    w.show(canvas);
+    check(canvas.listOffsetForTesting() == 0 && canvas.rowCountForTesting() == 9 && canvas.header().counterText() == "501", "Left scrolled and shown again, the list starts at the top");
+    canvas.scrollListForTesting(92);
     // Rows: label and readout (:341-364).
     const auto* row = control(canvas, "eventLog.row:00000000-0000-0000-0000-000000000003");
     check(row && row->label == "03:31, Shelf" && dynamic_cast<const d::RowPlate*>(row)->readout == "Added F.pdf" && row->layer().frame().height == 40,
@@ -272,7 +281,7 @@ void eventLogCanvas() {
     check(canvas.filter() == m::EventLogFilter::timer, "Switching modules keeps the filter");
     canvas.resetSession();
     check(canvas.filter() == m::EventLogFilter::all && canvas.listOffsetForTesting() == 0, "A new HUD session shows All at the top");
-    store.state.status = "This log uses a newer format; the original file is preserved.";
+    store.state.status = "This log uses a newer format; the original file is preserved";
     canvas.storeChanged(); w.context.overlay().reset();
     check(w.toasts().empty(), "The store is observed only while active");
 }
@@ -288,7 +297,7 @@ struct VolumeModel {
         c.setVolume = [this](std::string_view id, double v) { writes.push_back("volume " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); state.volume = v; return true; };
         c.setBalance = [this](std::string_view id, double v) { writes.push_back("balance " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
         c.setMute = [this](std::string_view id, bool v) { writes.push_back("mute " + std::string(id) + (v ? " on" : " off")); state.muted = v; if (canvas) canvas->receive(state); return true; };
-        c.setAppGain = [this](std::string_view id, double v) { writes.push_back("gain " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
+        c.setAppGain = [this](std::string_view output, std::string_view id, double v) { if (output != state.outputID) { writes.push_back("stale gain"); return false; } writes.push_back("gain " + std::string(id) + " " + std::to_string(int(std::round(v * 100)))); return true; };
         c.stopApp = [this](std::string_view id) { writes.push_back("stop " + std::string(id)); return true; };
         c.stopAllApps = [this] { writes.push_back("stopAll"); };
         c.setDefaultOutput = [this](std::string_view id) { writes.push_back("output " + std::string(id)); return true; };
@@ -296,7 +305,7 @@ struct VolumeModel {
     }
     static n::VolumeSnapshot initial() {
         n::VolumeSnapshot s;
-        s.outputs = {{"spk", "Speakers"}, {"hp", "Headphones", true, false, false}}; s.inputs = {{"mic", "Microphone"}};
+        s.outputs = {{.id = "spk", .name = "Speakers"}, {.id = "hp", .name = "Headphones", .headphones = true, .canBeDefaultOutput = false}}; s.inputs = {{"mic", "Microphone"}};
         s.outputID = "spk"; s.inputID = "mic"; s.volume = .55; s.balance = -.2; s.muted = false;
         s.canSetVolume = s.canSetMute = s.canSetBalance = s.canSetDefaultOutput = s.canSetDefaultInput = s.applicationActivitySupported = true;
         for (int i = 1; i <= 5; ++i) { n::VolumeApplication a; a.id = std::to_string(900 + i); a.name = "Player " + std::to_string(i); a.pid = 4100u + unsigned(i); a.available = i != 5; s.applications.push_back(a); }
@@ -424,15 +433,164 @@ void volumeCanvas() {
         canvas.settleSwap();
         w.appearance(Language::english);
     }
+    // A snapshot listing one more app while the module entrance plays
+    // rebuilds the App volume page; the rebuilt rows carry the entrance on
+    // in phase (Mac d03d5b9).
+    {
+        w.appearance(Language::english, false, false);   // motion on
+        const double t0 = w.now;
+        canvas.playEntrance({0, 24}, t0);
+        w.advance(.1);
+        auto more = model.state;
+        n::VolumeApplication added; added.id = "906"; added.name = "Player 6"; added.pid = 4106; added.available = true;
+        more.applications.push_back(added);
+        const d::Page* page = &canvas.page();
+        canvas.receive(more);
+        const auto rows = canvas.page().staggered();
+        check(&canvas.page() != page && rows.size() > 2 && canvas.listedApplications().size() == 5, "A new app rebuilds the entering App volume page");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(rows[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                "Rebuilt App volume row " + std::to_string(i) + " enters in phase");
+        check(rows.back()->presented(d::Channel::opacity, w.now) < .05, "The last row is still entering after the rebuild");
+        w.advance(2);
+        canvas.receive(model.state);
+        w.appearance(Language::english);
+    }
     // Unsupported (:286-295).
     model.state.applicationActivitySupported = false; model.state.applicationMessage.reset(); canvas.receive(model.state);
     check(canvas.listedApplications().empty() && !canvas.hasAdjustableApplication(), "Unsupported: no app is listed");
+    // The empty list's reason is part of the App volume page's structure
+    // (14d27e3, Structure.emptyReason): a new reason rebuilds that page, while
+    // Devices never rebuilds for it.
+    {
+        auto empty = model.state; empty.applicationActivitySupported = true; empty.applications.clear(); empty.applicationMessage = "Reason A";
+        canvas.receive(empty);
+        const d::Page* page = &canvas.page();
+        check(canvas.listedApplications().empty() && hasText(canvas.page().layer(), "Reason A"), "An empty App volume list shows its reason");
+        empty.applicationMessage = "Reason B"; canvas.receive(empty);
+        check(&canvas.page() != page && hasText(canvas.page().layer(), "Reason B") && !hasText(canvas.page().layer(), "Reason A"), "A new reason rebuilds the empty list with it");
+        // A rebuild whose only change is the reason carries the module
+        // entrance on in phase, like a listed-app change (Mac d03d5b9).
+        {
+            w.appearance(Language::english, false, false);   // motion on
+            const double t0 = w.now;
+            canvas.playEntrance({0, 24}, t0);
+            w.advance(.1);
+            page = &canvas.page();
+            empty.applicationMessage = "Reason B2"; canvas.receive(empty);
+            const auto rows = canvas.page().staggered();
+            check(&canvas.page() != page && hasText(canvas.page().layer(), "Reason B2") && !rows.empty(), "A new reason rebuilds the entering empty App volume page");
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                check(std::abs(rows[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                    "Rebuilt empty App volume row " + std::to_string(i) + " enters in phase");
+            check(rows.back()->animating(w.now + .02), "The last row is still entering after the reason rebuild");
+            w.advance(2);
+            w.appearance(Language::english);
+        }
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true); canvas.settleSwap();
+        page = &canvas.page();
+        empty.applicationMessage = "Reason C"; canvas.receive(empty);
+        check(canvas.tab() == 0 && &canvas.page() == page, "On Devices a new reason does not rebuild");
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true); canvas.settleSwap();
+        check(canvas.tab() == 1 && hasText(canvas.page().layer(), "Reason C"), "Back on App volume the latest reason shows");
+    }
     canvas.setActive(false, w.now);
     check(model.writes.back() == "stop", "Deactivation stops the controller; routes survive (:67-70)");
     // MODS-638: a new HUD session (the Mac's new VolumeCanvas, :15) shows Devices.
     check(canvas.tab() == 1, "Switching modules keeps the tab");
     canvas.resetSession();
     check(canvas.tab() == 0 && control(canvas, "volume"), "A new HUD session shows Devices");
+}
+// App-row icons (Windows: the Mac sets every icon at build, :353-362). A
+// cached icon (or a known missing one, the grey square) shows at once; one
+// still being extracted keeps its square clear and fades in when it lands (at
+// once under Reduce Motion). A row scrolled out of the request window keeps
+// its icon, scrolling and a page rebuilt while hidden show the cached icons
+// as the request binds them, and Devices asks for the rows App volume opens on.
+void volumeIcons() {
+    using Shows = m::VolumeCanvas::IconSquare::Shows;
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);   // motion on
+    VolumeModel model; model.state = VolumeModel::initial();
+    for (int i = 6; i <= 8; ++i) {
+        n::VolumeApplication a; a.id = std::to_string(900 + i); a.name = "Player " + std::to_string(i); a.pid = 4100u + unsigned(i); a.available = true;
+        model.state.applications.push_back(a);
+    }
+    // The provider: an answer per app (true: an icon, false: none), bound
+    // only while its row is asked for.
+    std::map<std::string, bool, std::less<>> answers;
+    std::vector<std::string> bound;
+    std::vector<std::vector<std::string>> requests;
+    const auto isBound = [&](std::string_view id) { return std::find(bound.begin(), bound.end(), id) != bound.end(); };
+    m::VolumeIconHooks icons;
+    icons.show = [&](std::span<const std::string> ids) { bound.assign(ids.begin(), ids.end()); requests.push_back(bound); };
+    icons.hide = [&] { bound.clear(); };
+    icons.icon = [&](std::string_view id) -> std::optional<d::ImageSource> {
+        const auto answer = answers.find(id);
+        if (!isBound(id) || answer == answers.end() || !answer->second) return std::nullopt;
+        return d::ImageSource{d::ImageSource::Kind::memory, "icon-" + std::string(id), {}, 1};
+    };
+    icons.pending = [&](std::string_view id) { return !isBound(id) || answers.find(id) == answers.end(); };
+    m::VolumeCanvas canvas(w.context, model.state, model.callbacks(), icons);
+    model.canvas = &canvas;
+    w.show(canvas);
+    using Ids = std::vector<std::string>;
+    check(!requests.empty() && requests.back() == Ids{"901", "902", "903", "904"}, "Volume on Devices asks for the icons of the rows App volume opens on");
+    answers["901"] = true; answers["902"] = false;
+    check(!canvas.iconsChanged(w.now), "Icons answered on Devices change no row");
+    static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true); canvas.settleSwap();
+    const auto square = [&](std::string_view id) {
+        const auto* s = canvas.iconSquareForTesting(id);
+        if (!s) throw std::runtime_error("No icon square for app " + std::string(id));
+        return s;
+    };
+    const auto opacity = [&](std::string_view id, double at) { return square(id)->layer->presented(d::Channel::opacity, at); };
+    const auto faded = [&](std::string_view id) { return square(id)->layer->tracks().property[std::size_t(d::Channel::opacity)].present(); };
+    check(requests.back() == Ids{"901", "902", "903", "904"} && square("901")->shows == Shows::icon && opacity("901", w.now) == 1
+        && square("902")->shows == Shows::none && opacity("902", w.now) == 1, "A cached icon and a known missing one (the grey square) show at build");
+    check(square("903")->shows == Shows::clear && opacity("903", w.now) == 0 && !square("903")->layer->content(),
+        "An icon still being extracted keeps its square clear, with no grey placeholder");
+    answers["903"] = true;
+    check(canvas.iconsChanged(w.now) && square("903")->shows == Shows::icon && opacity("903", w.now + .05) > 0 && opacity("903", w.now + .05) < 1,
+        "An icon that lands after its row was built fades in");
+    w.advance(1);
+    check(opacity("903", w.now) == 1 && !canvas.iconsChanged(w.now), "The fade ends on the icon");
+    w.appearance(Language::english);   // Reduce Motion
+    answers["904"] = true;
+    check(canvas.iconsChanged(w.now) && square("904")->shows == Shows::icon && opacity("904", w.now) == 1 && !faded("904"),
+        "Under Reduce Motion a late icon shows at once");
+    w.appearance(Language::english, false, false);
+    // The list's bottom (seven rows, 240 px down): the rows above leave the
+    // request window and keep their icons; a cached icon below shows at once.
+    answers["907"] = true;
+    const auto listPoint = centre(*control(canvas, "app:901"), canvas.root());
+    check(canvas.scroll(listPoint, {0, 400}, w.now) && canvas.applicationScrollOffset() == 240 && requests.back() == Ids{"904", "906", "907", "908"},
+        "The list's bottom asks for its last rows' icons");
+    check(square("901")->shows == Shows::icon && opacity("901", w.now) == 1 && square("902")->shows == Shows::none,
+        "Rows scrolled out of the request window keep their icons");
+    check(square("907")->shows == Shows::icon && opacity("907", w.now) == 1 && !faded("907"), "Scrolling shows a cached icon at once");
+    answers["906"] = true;
+    check(canvas.iconsChanged(w.now) && square("906")->shows == Shows::icon && square("901")->shows == Shows::icon,
+        "A lower row's icon landing keeps the icons of the rows above");
+    w.advance(1);
+    check(canvas.scroll(listPoint, {0, -400}, w.now) && canvas.applicationScrollOffset() == 0 && requests.back() == Ids{"901", "902", "903", "904"}
+        && square("901")->shows == Shows::icon && !canvas.iconsChanged(w.now), "Scrolling back up shows the cached icons");
+    // Another module shows, and the page goes stale meanwhile: it is rebuilt
+    // before it is active (its squares clear, not grey), and the activation
+    // shows the cached icons at once.
+    w.advance(1);
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(bound.empty(), "Leaving Volume withdraws its icon requests");
+    canvas.renderScaleChanged();
+    canvas.show(w.now);
+    check(square("901")->shows == Shows::clear && square("902")->shows == Shows::clear,
+        "A page rebuilt while hidden keeps its squares clear until it is active");
+    canvas.setActive(true, w.now);
+    bool cached = true;
+    for (const auto* id : {"901", "903", "904"}) cached = cached && square(id)->shows == Shows::icon && opacity(id, w.now) == 1 && !faded(id);
+    check(canvas.tab() == 1 && cached && square("902")->shows == Shows::none && !faded("902") && !canvas.iconsChanged(w.now),
+        "Back on App volume the rebuilt rows show the cached icons at once");
+    canvas.setActive(false, w.now);
 }
 
 // --- The Mac oracle -------------------------------------------------------------------------------
@@ -660,7 +818,7 @@ void volumeOracle(Oracle& o) {
     // The Mac's route start sets the per-app status (a rebuild) and its
     // activation clears it (another): the list is rebuilt, its bar hidden.
     auto starting = volumeOf((*o.row("volume", "appsRouted"))["input"]);
-    starting.perAppStatus = "Allow System Audio Recording if asked, then play audio in the selected app to activate.";
+    starting.perAppStatus = "Allow System Audio Recording if asked, then play audio in the selected app to activate";
     canvas->receive(starting);
     canvas->receive(volumeOf((*o.row("volume", "appsRouted"))["input"]));
     o.scene("volume", "appsRouted", *canvas);
@@ -681,7 +839,7 @@ void volumeOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        clipboardFormats(); clipboardCanvas(); eventLogText(); eventLogCanvas(); volumeCanvas();
+        clipboardFormats(); clipboardCanvas(); eventLogText(); eventLogCanvas(); volumeCanvas(); volumeIcons();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"clipboard", "eventLog", "volume"},
                 {"text", "layerDefaults", "clipboardFormat", "eventLogLines", "eventLogTimes", "eventLogMetadata"})) {
             Oracle oracle(*data);

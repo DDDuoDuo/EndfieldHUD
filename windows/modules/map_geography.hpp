@@ -21,7 +21,7 @@ struct MapTerrain {
 struct MapCountryComponent {MapPath path;core::Rect bounds;};
 struct MapCountry {std::string id,name;MapPath path;core::Rect bounds;std::vector<MapCountryComponent>components;};
 struct MapCountries {
-    static constexpr std::size_t maximumBytes=1024*1024,maximumVertices=100000;
+    static constexpr std::size_t maximumBytes=1024*1024,maximumVertices=120000;
     std::vector<MapCountry>countries;std::size_t vertexCount{};
     static MapCountries decode(std::span<const std::uint8_t>);
 };

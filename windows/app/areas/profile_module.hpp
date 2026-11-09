@@ -15,6 +15,8 @@
 //   - records profileCropChanged in the Event Log;
 //   - publishes native::IdCardFeed ("profile.idCard") for the host's
 //     native::IdCardPresenter (native/id_card_presenter.hpp);
+//   - in production only, reads the Windows account for the cards
+//     (native/windows_account.hpp, issue #17), hidden in Recording mode;
 //   - attaches its HypergryphAccountController AccountProfileSink to the
 //     Account Linking area's profile link ("account.profileLink",
 //     app/areas/account_profile_link.hpp) when that area is built.

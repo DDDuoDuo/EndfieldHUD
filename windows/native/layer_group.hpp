@@ -49,6 +49,11 @@ public:
     // (a lazy surface painted) or its local ink left the target (the target
     // grows to the union for the rest of the fade).
     bool updateLocal(Renderer&,std::optional<NativeGroupInsertion> insertion={});
+    // Owned mode, content event: the pixels per point of the target the next
+    // uploadResources configures (a render scale change, 0 ... 16). The
+    // retained target keeps its density until then.
+    void setDensity(double pixelsPerPoint);
+    double density()const noexcept{return density_;}
     // Caller supplies group-root transform/alpha and outer clipping. No child
     // placement or target repaint happens here. Storage stays fixed after load.
     void setPose(const core::Matrix4&,float opacity,std::span<const PlaneMask> masks={},

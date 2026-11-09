@@ -7,6 +7,7 @@
 #include "modules/profile_canvas.hpp"
 #include "native/profile_text.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <functional>
 #include <iostream>
 
 namespace d = endfield::modules::design;
@@ -22,6 +23,12 @@ d::Control* control(d::Canvas& canvas, std::string_view id) {
     return nullptr;
 }
 d::Point centre(const d::Control& c, const d::Layer& root) { const auto r = c.rect(root); return {r.x + r.width / 2, r.y + r.height / 2}; }
+// A layer's drawn backgroundColor / borderColor (content colour times its tint).
+std::optional<d::Color> drawnColour(const d::Layer& l, std::string_view key) {
+    if (!l.content() || !(*l.content())[key].isObject()) return std::nullopt;
+    const auto& c = (*l.content())[key]["sRGB"].array();
+    return multiply(d::Color{c[0].number(), c[1].number(), c[2].number(), c[3].number()}, l.tint());
+}
 constexpr double avatarWidth = 120, avatarHeight = 80;
 
 struct World {
@@ -29,8 +36,8 @@ struct World {
     d::Context context;
     double now{100};
     explicit World(d::TextMeasurer& mm) : measurer(mm), context(mm, d::asciiUppercase) { context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, now); }
-    void appearance(Language language, bool light = false, bool recording = false) {
-        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = true; a.recordingMode = recording; context.apply(a, now);
+    void appearance(Language language, bool light = false, bool recording = false, bool reduceMotion = true) {
+        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = reduceMotion; a.recordingMode = recording; context.apply(a, now);
     }
     void show(d::Canvas& c) { c.show(now); c.setActive(true, now); }
     std::optional<d::ToastRequest> toast() { return context.overlay().toastState().current(); }
@@ -46,10 +53,16 @@ struct Owner {
     std::vector<int> portraitSteps;
     unsigned chooses{}, colors{}, dismissals{}; std::vector<std::string> imports;
     bool refuseCommit{};
+    // A synthetic Windows account (issue #17); never the real one. The source answers at once.
+    std::optional<ehud::data::SystemAccount> account;
     std::unique_ptr<m::ProfileState> store(m::PersonalProfile p) {
         m::ProfilePersistence io;
         io.commit = [this](const m::PersonalProfile& v) { if (refuseCommit) throw m::ProfileError(m::ProfileFailure::persistence, "synthetic"); commits.push_back(v); return v; };
-        return std::make_unique<m::ProfileState>(std::move(p), text, dates, std::move(io));
+        m::ProfileAccountSource source;
+        if (account) source.read = [this](m::ProfileAccountSource::Done done) { done(*account); };
+        auto state = std::make_unique<m::ProfileState>(std::move(p), text, dates, std::move(io), std::move(source));
+        state->refreshSystemAccount(0);
+        return state;
     }
     m::ProfileCanvasServices services() {
         m::ProfileCanvasServices s;
@@ -192,7 +205,15 @@ struct Oracle {
                  {"thumbnailZoom", &m::PersonalProfile::thumbnailZoom}, {"thumbnailOffsetX", &m::PersonalProfile::thumbnailOffsetX},
                  {"thumbnailOffsetY", &m::PersonalProfile::thumbnailOffsetY}, {"accumulatedWorkSeconds", &m::PersonalProfile::accumulatedWorkSeconds}})
             out.*field = p[key].number();
+        if (p["autoName"].isBool()) out.autoName = p["autoName"].boolean();
+        if (p["autoAvatar"].isBool()) out.autoAvatar = p["autoAvatar"].boolean();
         return out;
+    }
+    // Issue #17: the synthetic account the Mac store read (its picture under the first store key, "system-1").
+    static std::optional<ehud::data::SystemAccount> account(const Json& r) {
+        const auto& a = r["input"]["account"];
+        if (!a.isObject()) return std::nullopt;
+        return ehud::data::SystemAccount{a["name"].string(), a["uid"].string(), a["picture"].boolean() ? std::optional<std::string>("system-1") : std::nullopt};
     }
 };
 ehud::data::ProfileSyncFields fieldsOf(const Json& list) {
@@ -208,16 +229,32 @@ void oracleScenes(Oracle& o) {
     for (const auto& r : o.data["states"].array()) cases.push_back({r["state"].string(), r["language"].string(), r["light"].boolean()});
     for (const auto& c : cases) {
         const Json& r = *o.row(c.state, c.language, c.light);
+        // A ⋯ menu as the Mac opens it ends with "Use Mac account info"; Windows shows its
+        // twin (state + "Windows": the same rows through the Mac's openMenu with the Windows
+        // title), compared below. The Mac row only has to list the same items and states.
+        if (const Json* twin = o.row(c.state + "Windows", c.language, c.light)) {
+            ++o.compared;
+            const auto items = [](const Json& row) {
+                std::vector<std::pair<std::string, bool>> out;
+                for (const auto& a : row["accessibility"].array()) if (a["id"].string().starts_with("profile.more:")) out.emplace_back(a["id"].string(), a["enabled"].boolean());
+                return out;
+            };
+            if (items(r) != items(*twin) || items(r).empty() || items(r).back().first != "profile.more:system") o.failures.push_back(c.state + ": the Windows twin lists other items");
+            continue;
+        }
         World w(o.measurer);
         const auto language = c.language == "zh-Hans" ? Language::simplifiedChinese : c.language == "ja" ? Language::japanese : Language::english;
         w.appearance(language, c.light, r["input"]["recording"].boolean());
         Owner owner; owner.best = r["input"]["best"].integer(); owner.work = r["input"]["work"].number();
         auto p = o.profile(r);
         owner.avatar = p.avatarFilename.has_value(); owner.background = p.backgroundFilename.has_value();
+        owner.account = Oracle::account(r);
         std::unique_ptr<m::ProfileState> store;
         m::ProfileCanvas canvas(w.context, owner.text, owner.dates, owner.services());
         if (r["input"]["store"].boolean()) {
             store = owner.store(p);
+            store->setHidesSystemAccount(r["input"]["hidesAccount"].isBool() && r["input"]["hidesAccount"].boolean());
+            owner.avatar = store->profile().avatarKey().has_value();
             store->setSyncLocked(fieldsOf(r["input"]["synced"]));
             canvas.setStore(store.get());
         } else {
@@ -254,7 +291,7 @@ void oracleScenes(Oracle& o) {
         else if (s == "hoverMore") hover("profile:menu");
         else if (s == "hoverEye") hover("profile:visibility");
         else if (s == "hoverTheme") hover("profile:backgroundMenu");
-        else if (s == "moreMenu") canvas.perform("profile:menu", w.now);
+        else if (s.ends_with("MenuWindows")) canvas.perform("profile:menu", w.now);
         else if (s.starts_with("themePopover")) canvas.perform("profile:backgroundMenu", w.now);
         else if (s == "portraitPopover") { canvas.perform("profile:menu", w.now); canvas.perform("profile.more:portrait", w.now); }
         else if (s == "textHidden" || s == "imagesHidden") canvas.perform("profile:visibility", w.now);
@@ -307,6 +344,22 @@ void behaviour() {
     check(!store->profile().themeColorHex, "Follow HUD on clears the colour");
     canvas.perform("theme:follow", w.now);
     check(store->profile().themeColorHex == std::optional<std::string>("6EDFE8"), "and off again restores the one it replaced");
+    // The pop-over leaving with the module (2e08932) keeps its second Follow
+    // HUD button, which lives in its own arena, drawn until the next showing.
+    {
+        std::function<const d::Layer*(const d::Layer&)> follow = [&](const d::Layer& l) -> const d::Layer* {
+            if (l.id().ends_with("theme:follow")) return &l;
+            for (const auto* c : l.children()) if (const auto* f = follow(*c)) return f;
+            return nullptr;
+        };
+        const auto* button = follow(canvas.top());
+        check(canvas.popoverOpen() && button, "The Card theme pop-over shows its Follow HUD button");
+        canvas.prepareToLeave(w.now);
+        check(!canvas.popoverOpen() && follow(canvas.top()) == button && button->parent(), "Left with the module, it stays drawn with its button");
+        canvas.show(w.now);
+        check(!follow(canvas.top()), "The next showing removes both");
+        canvas.perform("profile:backgroundMenu", w.now);
+    }
     canvas.perform("theme:custom", w.now);
     check(o.colors == 1 && canvas.colorPanelOpen() && canvas.presentingPanel() && canvas.inputLocked(), "Custom colour opens the panel and holds the HUD");
     canvas.colorChanged({1, 128. / 255, 0});
@@ -362,6 +415,38 @@ void hiddenScaleChange() {
     check(o.portraitSteps.size() > 1, "Shown again, it re-renders at the new scale");
 }
 
+// The avatar decode lands before the Profile was ever built (the first
+// showing after launch): the portrait is asked at once, so the first build
+// already has it and the page does not rebuild after its entrance.
+void decodeBeforeFirstShow() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner o; auto profile = sample(); profile.avatarFilename = "00000000-0000-4000-8000-000000000001.image"; auto store = o.store(profile);
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get());
+    canvas.imagesChanged();
+    check(o.portraitSteps.empty(), "No avatar decoded yet: no portrait is asked");
+    o.avatar = true; canvas.imagesChanged();
+    check(o.portraitSteps == std::vector<int>{1}, "The decode landing before the first build asks for the portrait");
+    const auto pages = w.context.pagesBuilt();
+    w.show(canvas);
+    check(w.context.pagesBuilt() == pages + 1, "The first showing builds the page once");
+    canvas.imagesChanged(); w.now += 1; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages + 1, "The ready portrait was in that build: nothing rebuilds it");
+}
+
+// The inline editor host: records the open request (its field) and the typed text.
+struct FieldHost final : d::TextEditorHost {
+    std::optional<d::TextEditRequest> request; std::string value;
+    bool refuses{};
+    unsigned begins{};
+    bool begin(const d::TextEditRequest& r) override { if (refuses) return false; request = r; value = r.text; ++begins; return true; }
+    void end(d::TextField&) override { request.reset(); }
+    std::string text(const d::TextField&) const override { return value; }
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> selection(const d::TextField&) const override { return std::nullopt; }
+    bool hasMarkedText(const d::TextField&) const override { return false; }
+    void setText(d::TextField&, std::string_view v) override { value = v; }
+    void reproject(d::TextField&, d::Rect) override {}
+};
 // The design scene's plan over two emissions (native/hud_design_scene.cpp
 // syncContent): a part whose JSON is unchanged is reused, one with the same
 // surfaces rasterizes only the changed ones, any other loads every surface.
@@ -384,6 +469,7 @@ std::size_t rasterized(const d::Artwork& before, const d::Artwork& after) {
 void partsKept() {
     FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
     Owner o; o.avatar = true; auto store = o.store(sample());
+    FieldHost host; w.context.setEditorHost(&host);
     m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
     canvas.setStore(store.get()); w.show(canvas);
     const d::TextServices& text = w.context.env().text;
@@ -410,7 +496,317 @@ void partsKept() {
     check(partOf(after, "edit:name") && partOf(after, "edit:name") != partOf(after, "profile:name"), "The inline editor is its own part");
     oneCard(after, "while editing");
     check(surfaces > 30, "The card has its surfaces (" + std::to_string(surfaces) + ")");
+    // Esc only removes the editor. Opening it again puts the same editor
+    // back on the card (the page builds nothing), so the reopened editor
+    // rasterizes no more than the first one.
+    d::KeyInput esc; esc.virtualKey = d::key::escape;
+    check(host.request && host.request->field->handleEditingKey(esc) && !canvas.editingField(), "Esc closes the editor");
+    const auto closed = artwork();
+    check(rasterized(before, closed) == 0 && closed.parts.size() == before.parts.size(), "Closing the editor rasterizes " + std::to_string(rasterized(before, closed)) + " surfaces (bound 0)");
+    oneCard(closed, "after editing");
+    canvas.perform("profile:name", w.now);
+    check(canvas.editingField() == m::ProfileField::name, "The name's editor opens again");
+    const auto reopened = artwork();
+    check(rasterized(closed, reopened) <= 4, "The reopened editor rasterizes " + std::to_string(rasterized(closed, reopened)) + " of " + std::to_string(surfaces) + " surfaces (bound 4)");
+    // The page is the first open's scene again: the reopen rasterizes
+    // exactly the first editor's surfaces, and none of the card's.
+    check(rasterized(closed, reopened) == count && rasterized(after, reopened) == 0,
+          "The reopen rasterizes only the editor (" + std::to_string(rasterized(closed, reopened)) + " vs " + std::to_string(count) + "; "
+          + std::to_string(rasterized(after, reopened)) + " differ from the first open)");
+    oneCard(reopened, "while editing again");
 }
+
+// Reopening an inline editor (the Windows 11 report: after editing the name
+// or the bio the whole Profile dial went blank). The Mac makes a new
+// HUDDesignTextField "edit:<field>" at every open; the page's arena refuses an
+// id it already made, so making one at every open threw on the next open of an
+// editor that ended without a re-render (Esc, an unchanged, normalized-equal,
+// invalid or refused value) and the owner disabled the module. The page makes
+// the editor once and every later open on it takes that editor again.
+void reopenEditors() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const auto field = [&]() -> d::TextField& { check(host.request && host.request->field, "An editor is open"); return *host.request->field; };
+    const auto attached = [&](const d::TextField& f) { return f.layer().isDescendant(canvas.page().layer()); };
+    const auto open = [&](std::string_view id, m::ProfileField expected, const std::string& when) -> d::TextField& {
+        try { canvas.perform(id, w.now); }
+        catch (const std::exception& e) { throw std::runtime_error("Opening " + std::string(id) + " " + when + " threw: " + e.what()); }
+        check(canvas.editingField() == expected && host.request && host.request->field->editing() && attached(*host.request->field),
+              "The " + std::string(id) + " editor opens " + when);
+        return field();
+    };
+    const auto press = [&](d::TextField& f, std::uint32_t key) { d::KeyInput k; k.virtualKey = key; check(f.handleEditingKey(k), "The editor takes the key"); };
+    const auto escape = [&](d::TextField& f) { press(f, d::key::escape); check(!canvas.editingField() && !attached(f), "Esc closes the editor"); };
+    const auto enter = [&](d::TextField& f, std::string typed) { host.value = std::move(typed); press(f, d::key::enter); check(!canvas.editingField(), "Enter closes the editor"); };
+
+    // Esc, then the same field again (twice more: the dial stayed blank on the second open).
+    escape(open("profile:name", m::ProfileField::name, "the first time"));
+    escape(open("profile:name", m::ProfileField::name, "after Esc"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "the first time"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after Esc"));
+    // Committing the shown value, or one the record normalizes to it, saves nothing and re-renders nothing.
+    enter(open("profile:name", m::ProfileField::name, "again"), "Endministrator");
+    enter(open("profile:name", m::ProfileField::name, "after an unchanged commit"), "Endministrator ");
+    // Mac 1.3.1 (caf78b3): the text differs from the shown name, so it is a
+    // typed name: the same name is stored with autoName off (issue #17).
+    check(store->profile().name == "Endministrator" && !store->profile().autoName && o.commits.size() == 1, "A trailing space is a typed name: it stops following the account");
+    const auto typed = o.commits.size();
+    enter(open("profile:name", m::ProfileField::name, "after a normalized-equal commit"), "");
+    check(store->profile().name == "Endministrator", "An empty name is discarded");
+    escape(open("profile:name", m::ProfileField::name, "after an invalid value"));
+    enter(open("profile:explorationLevel", m::ProfileField::explorationLevel, "the first time"), "05");
+    check(store->profile().explorationLevel == 5 && o.commits.size() == typed, "'05' saves nothing");
+    escape(open("profile:explorationLevel", m::ProfileField::explorationLevel, "after '05'"));
+    enter(open("profile:introduction", m::ProfileField::introduction, "again"), "Talos-II field engineer. Prefers tea.  ");
+    escape(open("profile:introduction", m::ProfileField::introduction, "after a normalized-equal bio"));
+    // The ⋯ menu's Edit # and Edit name (# with its sign is the same tag).
+    canvas.perform("profile:menu", w.now);
+    enter(open("profile.more:tag", m::ProfileField::tag, "from the menu"), "#1018");
+    check(store->profile().tag == "1018" && o.commits.size() == typed, "'#1018' saves nothing");
+    canvas.perform("profile:menu", w.now);
+    escape(open("profile.more:tag", m::ProfileField::tag, "from the menu again"));
+    canvas.perform("profile:menu", w.now);
+    escape(open("profile.more:name", m::ProfileField::name, "from the menu after the name editor"));
+    // A refused save toasts and keeps the field editable.
+    o.refuseCommit = true;
+    enter(open("profile:name", m::ProfileField::name, "before a refused save"), "Refused");
+    check(store->profile().name == "Endministrator" && w.toast() && w.toast()->title == "Notice", "A refused save toasts Notice");
+    o.refuseCommit = false;
+    escape(open("profile:name", m::ProfileField::name, "after a refused save"));
+    // An editor that cannot start (no host, or the host refused it) leaves nothing open.
+    host.refuses = true;
+    canvas.perform("profile:name", w.now);
+    check(!canvas.editingField(), "A refused editor leaves no field editing");
+    store->update([](m::PersonalProfile& p) { p.name = "Elsewhere"; });
+    check(control(canvas, "profile:name") && control(canvas, "profile:name")->label.find("Elsewhere") != std::string::npos,
+          "and a store change re-renders at once (no editor holds it back)");
+    host.refuses = false;
+    escape(open("profile:name", m::ProfileField::name, "after a refused editor"));
+    // Another field invoked (UIA) while one is edited: the first commits and
+    // re-renders the card; the second opens over the new card's element.
+    open("profile:name", m::ProfileField::name, "before invoking the bio");
+    host.value = "Renamed";
+    {
+        const auto commits = o.commits.size();
+        auto& bio = open("profile:introduction", m::ProfileField::introduction, "while the name is edited");
+        check(store->profile().name == "Renamed" && o.commits.size() == commits + 1, "The edited name commits first");
+        const auto anchor = control(canvas, "profile:introduction");
+        check(anchor && bio.layer().parent() && bio.layer().parent()->isDescendant(canvas.page().layer())
+              && bio.layer().frame().x == anchor->layer().frame().x && bio.layer().frame().y == anchor->layer().frame().y,
+              "The bio's editor lies over the re-rendered card's element");
+        escape(bio);
+    }
+    // The name invoked again while its editor holds a longer name: the save
+    // widens the name element, and the new editor takes the new element's
+    // width (an element read before the save would give the old one).
+    open("profile:name", m::ProfileField::name, "before invoking it again");
+    host.value = "Endministrator Talos";
+    {
+        const auto old = control(canvas, "profile:name");
+        const double oldWidth = old ? old->layer().frame().width : 0;
+        auto& again = open("profile:name", m::ProfileField::name, "while it is edited");
+        check(store->profile().name == "Endministrator Talos", "The edited name commits first");
+        const auto anchor = control(canvas, "profile:name");
+        check(anchor && anchor->layer().frame().width > std::max(oldWidth, 220.), "The saved name widens the name element");
+        check(anchor && again.layer().frame().x == anchor->layer().frame().x && again.layer().frame().y == anchor->layer().frame().y
+              && again.layer().frame().width == std::max(anchor->layer().frame().width, 220.),
+              "The reopened name's editor takes the re-rendered element's frame");
+        escape(again);
+    }
+    open("profile:name", m::ProfileField::name, "before invoking the bio unchanged");
+    escape(open("profile:introduction", m::ProfileField::introduction, "while the name is edited unchanged"));
+    escape(open("profile:name", m::ProfileField::name, "after being ended by the bio"));
+    // A card colour chosen between two opens: the new editor carries it.
+    const auto before = open("profile:name", m::ProfileField::name, "before a colour change").layer().id();
+    const auto caretBefore = host.request->caretColor;
+    escape(field());
+    canvas.perform("profile:backgroundMenu", w.now); canvas.perform("theme:6EDFE8", w.now); canvas.closePopover();
+    auto& recoloured = open("profile:name", m::ProfileField::name, "after a colour change");
+    check(recoloured.layer().id() == before, "The editor keeps its id (the page keeps its ids)");
+    check(host.request->caretColor != caretBefore, "The reopened editor takes the new card colour");
+    {
+        const d::Layer* bar{};
+        for (const auto* c : recoloured.layer().children()) if (c->id().ends_with("field.bar")) bar = c;
+        const auto ring = drawnColour(recoloured.layer(), "borderColor");
+        const auto barFill = bar ? drawnColour(*bar, "backgroundColor") : std::nullopt;
+        check(recoloured.frame().focusColor && near(*recoloured.frame().focusColor, host.request->caretColor), "The reopened editor's focus colour is the new card colour");
+        check(ring && near(*ring, host.request->caretColor) && bar && !bar->hidden() && barFill && near(*barFill, host.request->caretColor),
+              "The reopened editor's ring and 3 px bar take the new card colour with its caret");
+    }
+    escape(recoloured);
+    // Leaving the Profile and coming back; closing and reopening the HUD.
+    open("profile:name", m::ProfileField::name, "before leaving");
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now);
+    check(!canvas.editingField(), "Leaving ends the editor");
+    w.show(canvas);
+    escape(open("profile:name", m::ProfileField::name, "after leaving and returning"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after returning"));
+    canvas.setActive(false, w.now); canvas.prepareToLeave(w.now); canvas.resetSession();
+    w.show(canvas);
+    escape(open("profile:name", m::ProfileField::name, "after the HUD closed and reopened"));
+    escape(open("profile:introduction", m::ProfileField::introduction, "after the HUD reopened"));
+    enter(open("profile:name", m::ProfileField::name, "for a real change"), "Endmin");
+    check(store->profile().name == "Endmin", "A changed name still saves");
+    escape(open("profile:name", m::ProfileField::name, "after a saved change"));
+}
+
+// Reopening an editor builds nothing again: the Mac adds a new field to the
+// card and leaves the page alone, so what the page is playing plays on (the
+// entrance after returning to the module, the eye's .22 s fade). The field's
+// editor made at the first open is taken again, on the same page.
+void reopenKeepsPage() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english, false, false, false);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    const std::function<d::Layer*(d::Layer&, std::string_view)> find = [&](d::Layer& l, std::string_view suffix) -> d::Layer* {
+        if (l.id().ends_with(suffix)) return &l;
+        for (d::Layer* c : l.children()) if (auto* f = find(*c, suffix)) return f;
+        return nullptr;
+    };
+    double t = w.now;
+    const auto open = [&](std::string_view id, m::ProfileField expected, const std::string& when) -> d::TextField& {
+        canvas.perform(id, t);
+        check(canvas.editingField() == expected && host.request && host.request->field->editing(), "The " + std::string(id) + " editor opens " + when);
+        return *host.request->field;
+    };
+    const auto escape = [&](d::TextField& f) { d::KeyInput k; k.virtualKey = d::key::escape; check(f.handleEditingKey(k) && !canvas.editingField(), "Esc closes the editor"); };
+    auto& name = open("profile:name", m::ProfileField::name, "the first time");
+    const std::string nameID = name.layer().id();
+    escape(name);
+    auto& bio = open("profile:introduction", m::ProfileField::introduction, "the first time");
+    bio.setInvalid(true);   // an invalid value left the field red
+    escape(bio);
+    // Leaving and returning plays the entrance on the page kept; the eye
+    // hides the text and shows it again (a .22 s fade back in).
+    canvas.setActive(false, t); canvas.prepareToLeave(t);
+    w.show(canvas); canvas.playEntrance({0, 24}, t);
+    canvas.perform("profile:visibility", t);
+    t += .1;
+    canvas.perform("profile:visibility", t);
+    d::Page* page = &canvas.page();
+    const auto builds = w.context.pagesBuilt();
+    d::Layer* wrapper = page->staggered().empty() ? nullptr : page->staggered().front();
+    d::Layer* main = find(page->layer(), "profile.main");
+    d::Layer* card = find(page->layer(), "profile.card");
+    t += .05;
+    check(wrapper && wrapper->animating(t) && main && main->animating(t) && card, "The entrance and the eye's fade are running");
+    auto& again = open("profile:name", m::ProfileField::name, "again");
+    check(&canvas.page() == page && w.context.pagesBuilt() == builds, "Reopening the name builds no page (" + std::to_string(w.context.pagesBuilt() - builds) + " built)");
+    check(wrapper->animating(t) && main->animating(t), "The entrance and the eye's fade still run after the reopen");
+    check(&again == &name && again.layer().id() == nameID, "The name opens on the editor the page made for it");
+    check(again.layer().parent() == card && again.layer().value(d::Channel::opacity) == 1 && again.layer().animating(t), "The editor joins the card and fades in");
+    escape(again);
+    t += .02;
+    auto& bioAgain = open("profile:introduction", m::ProfileField::introduction, "again");
+    check(&bioAgain == &bio && &canvas.page() == page && w.context.pagesBuilt() == builds, "Reopening the bio builds no page");
+    check(bioAgain.frame().state() == d::FieldFrame::State::focused, "The bio's editor opens focused, not red from its last value");
+    check(wrapper->animating(t), "The entrance still runs after the second reopen");
+    escape(bioAgain);
+}
+}
+
+// Issue #17 (PersonalProfileCanvas caf78b3): the name shown and edited is the
+// Windows account's while the card follows it; an unchanged Return stores
+// nothing and keeps following, a typed name is stored and stops following.
+void systemAccountName() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    Owner o; o.account = ehud::data::SystemAccount{"Ada Lovelace", "1001", std::nullopt};
+    auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services());
+    canvas.setStore(store.get()); w.show(canvas);
+    check(control(canvas, "profile:name")->label == "Edit name, Ada Lovelace #1018", "The name control reads the account's name");
+    check(canvas.displayed().displayedUID() == "1001", "The UID line shows the account's UID");
+    const auto press = [&](std::uint32_t key) { d::KeyInput k; k.virtualKey = key; check(host.request && host.request->field->handleEditingKey(k), "The editor takes the key"); };
+    canvas.perform("profile:name", w.now);
+    check(host.request && host.request->text == "Ada Lovelace", "The name editor starts from the shown name");
+    press(d::key::enter);
+    check(o.commits.empty() && store->profile().autoName && store->profile().name == "Endministrator", "An unchanged Return stores nothing and keeps following the account");
+    canvas.perform("profile:name", w.now);
+    host.value = "Endministrator"; press(d::key::enter);
+    check(o.commits.size() == 1 && !store->profile().autoName && store->profile().name == "Endministrator" && canvas.displayed().displayedName() == "Endministrator",
+          "Typing the default name stores it and stops following");
+    canvas.perform("profile:name", w.now);
+    host.value = "Kal'tsit"; press(d::key::enter);
+    check(store->profile().name == "Kal'tsit" && !store->profile().autoName && control(canvas, "profile:name")->label == "Edit name, Kal'tsit #1018", "A typed name is stored and shown");
+    canvas.setActive(false, w.now);
+}
+
+// Issue #17 (aaae230, ad93ac5): the ⋯ menu's sixth item after a separator,
+// "Use Windows account info" in five languages, enabled only while the account
+// was read, Recording mode is off and something shows a chosen value; it puts
+// the account back and toasts.
+void systemAccountMenu() {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    const std::function<d::Layer*(d::Layer&, std::string_view)> find = [&](d::Layer& l, std::string_view id) -> d::Layer* {
+        if (l.id().ends_with(id)) return &l;
+        for (d::Layer* c : l.children()) if (auto* f = find(*c, id)) return f;
+        return nullptr;
+    };
+    const auto item = [&](m::ProfileCanvas& canvas) {
+        canvas.perform("profile:menu", w.now);
+        std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+        const auto it = std::find_if(items.begin(), items.end(), [](const auto& i) { return i.id == "profile.more:system"; });
+        check(it != items.end() && it == items.end() - 1, "Use Windows account info is the menu's last item");
+        const bool separated = find(canvas.top(), "menu.separator.5") != nullptr;
+        canvas.closeMenu();
+        return std::pair{*it, separated};
+    };
+    // No account read (tests, previews, a failed read): listed and off.
+    {
+        Owner o; auto store = o.store(sample());
+        m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services()); canvas.setStore(store.get()); w.show(canvas);
+        const auto [system, separated] = item(canvas);
+        check(system.label == "Use Windows account info" && !system.enabled && separated, "The sixth item, after a separator, is off without an account");
+        canvas.setActive(false, w.now);
+    }
+    Owner o; o.account = ehud::data::SystemAccount{"Ada Lovelace", "1001", std::nullopt};
+    auto store = o.store(sample());
+    m::ProfileCanvas canvas(w.context, o.text, o.dates, o.services()); canvas.setStore(store.get()); w.show(canvas);
+    check(!item(canvas).first.enabled, "Nothing chosen: the account already shows, the item is off");
+    store->update([](m::PersonalProfile& p) { p.autoAvatar = false; });
+    check(!item(canvas).first.enabled, "The default picture counts only when there is an account picture to show");
+    store->update([](m::PersonalProfile& p) { p.playerIDOverride = "42"; });
+    check(item(canvas).first.enabled, "A Player ID override is a chosen value");
+    store->setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::uid));
+    check(!item(canvas).first.enabled, "A Player ID the game sync owns does not count");
+    store->setSyncLocked({});
+    store->setHidesSystemAccount(true);
+    check(!item(canvas).first.enabled, "Off while Recording mode hides the account");
+    store->setHidesSystemAccount(false);
+    canvas.perform("profile:menu", w.now); canvas.perform("profile.more:system", w.now);
+    const auto& v = store->profile();
+    check(!v.playerIDOverride && v.autoName && v.autoAvatar && v.displayedUID() == "1001" && v.displayedName() == "Ada Lovelace", "The account shows again");
+    check(w.toast() && w.toast()->title == "Windows account info" && w.toast()->caption.empty() && w.toast()->icon == d::Icon::reset, "It toasts Windows account info");
+    store->update([](m::PersonalProfile& p) { p.name = "Kal'tsit"; p.autoName = false; });
+    check(item(canvas).first.enabled, "A typed name is a chosen value");
+    store->update([](m::PersonalProfile& p) { p.name = "Endministrator"; p.autoName = true; p.avatarFilename = "00000000-0000-4000-8000-000000000001.image"; });
+    check(item(canvas).first.enabled, "A chosen picture is a chosen value");
+    store->update([](m::PersonalProfile& p) { p.avatarFilename.reset(); p.autoAvatar = false; });
+    o.account->avatarKey = "system-1"; store->refreshSystemAccount(100);
+    check(item(canvas).first.enabled, "The default picture counts once there is an account picture");
+    canvas.setActive(false, w.now);
+    // Five languages: the item and the toast (the toast's caption is the English title).
+    const std::array<std::pair<Language, std::pair<std::string_view, std::string_view>>, 5> rows{{
+        {Language::english, {"Use Windows account info", "Windows account info"}},
+        {Language::simplifiedChinese, {"使用 Windows 账户信息", "已使用 Windows 账户信息"}},
+        {Language::traditionalChinese, {"使用 Windows 帳號資訊", "已使用 Windows 帳號資訊"}},
+        {Language::japanese, {"Windows のアカウント情報を使用", "Windows のアカウント情報を使用しました"}},
+        {Language::korean, {"Windows 계정 정보 사용", "Windows 계정 정보 사용됨"}}}};
+    for (const auto& [language, text] : rows) {
+        w.appearance(language);
+        canvas.setActive(true, w.now);
+        check(item(canvas).first.label == text.first, "The item in every language");
+        canvas.perform("profile:menu", w.now); canvas.perform("profile.more:system", w.now);
+        check(w.toast() && w.toast()->title == text.second && w.toast()->caption == (language == Language::english ? "" : "Windows account info"), "The toast in every language");
+        store->update([](m::PersonalProfile& p) { p.autoAvatar = false; });
+        canvas.setActive(false, w.now);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -418,8 +814,8 @@ int main(int argc, char** argv) {
         std::optional<Json> data;
         if (argc > 1) data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "valid", "limits", "sliders"});
         rules(data ? &*data : nullptr);
-        behaviour(); hiddenScaleChange();
-        partsKept();
+        behaviour(); hiddenScaleChange(); decodeBeforeFirstShow();
+        partsKept(); reopenEditors(); reopenKeepsPage(); systemAccountName(); systemAccountMenu();
         if (data) {
             Oracle oracle(*data);
             oracleScenes(oracle);

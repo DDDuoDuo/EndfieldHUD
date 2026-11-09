@@ -4,7 +4,8 @@ import ApplicationServices
 /// Explicit read-only end-to-end diagnostic. It uses the same production
 /// controller, catalog, bounded cover decoder and lyrics path as the HUD.
 /// No playback command, permission prompt, library/account read or user-store
-/// mutation. Output contains capability counts/timings, never track metadata.
+/// mutation. Output contains capability counts/timings, the player's bundle
+/// identifier and cover pixel sizes, never track metadata.
 enum NowPlayingLiveVerification {
     private static var session: Session?
     static func run() {
@@ -51,8 +52,14 @@ enum NowPlayingLiveVerification {
             result[stage + "LyricsMs"] = lyricsTime.map { Int($0.rounded()) } ?? -1
             result[stage + "HasTrack"] = controller.snapshot.track != nil
             result[stage + "HasCover"] = controller.artworkImage != nil
+            // How the cover arrived and is drawn: the source's own pixels, the
+            // slot's, and whether it is drawn whole over a backdrop.
+            result[stage + "CoverNativePixels"] = controller.artwork.map { "\(Int($0.native.width))x\(Int($0.native.height))" } ?? "none"
+            result[stage + "CoverSlotPixels"] = controller.artworkPixelSize
+            result[stage + "CoverSmall"] = controller.artwork?.backdrop != nil
             result[stage + "LyricCues"] = controller.lyrics?.lines.count ?? 0
             result["source"] = controller.snapshot.application?.source.rawValue ?? "none"
+            result["player"] = controller.snapshot.application?.bundleIdentifier ?? "none"
             if stage == "cold" {
                 coldTrack = controller.snapshot.track
                 controller.deactivate()

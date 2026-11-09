@@ -85,6 +85,14 @@ SourceLayout::SourceLayout(const SceneDefinition&scene):scene_(&scene) {
 std::optional<std::size_t> SourceLayout::nodeIndex(std::string_view id) const noexcept {
     const auto i=indices_.find(id);return i==indices_.end()?std::nullopt:std::optional(i->second);
 }
+std::optional<std::size_t> SourceLayout::parentIndex(std::size_t index) const noexcept {
+    return index<parents_.size()&&parents_[index]!=noParent?std::optional(parents_[index]):std::nullopt;
+}
+std::vector<unsigned char> SourceLayout::subtrees(std::span<const std::size_t> roots) const {
+    std::vector<unsigned char> inside(parents_.size());for(const auto root:roots)if(root<inside.size())inside[root]=1;
+    for(const auto index:traversal_)if(const auto p=parents_[index];p!=noParent&&inside[p])inside[index]=1;
+    return inside;
+}
 ResolvedNode SourceLayout::resolveNode(const Node&node,const TransformOverride*override,
     const std::optional<SourceRect>&parentRect,const Matrix4&parentWorld,bool parentActive) {
     auto position=node.position;std::optional<SourceRect> rect;

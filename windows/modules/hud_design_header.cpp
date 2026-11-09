@@ -36,6 +36,20 @@ ModuleHeader::ModuleHeader(Environment& env, std::string_view idPrefix)
     titleGroup_->add(*title_); titleGroup_->add(*subtitle_);
     titleGroup_->setAnimatable();                        // the title wipe with fade
     rule_->setAnimatable();                              // the rule grows from the left
+    // The extras fade in with the title (playEntrance).
+    for (Layer* extra : {crumbs_, code_, tail_, actions_}) extra->setAnimatable();
+    // E-D2 (Mac parity): the side actions fade as one image (CALayer group
+    // opacity), not surface by surface with their plates showing through
+    // their labels, so they are a part of their own (as is Back, below).
+    // Nothing they draw overlaps the rest of the header (checked in
+    // hud_design_components_tests), and each part's group takes the opacity
+    // of its whole chain, so the header's sub-page leave still composites as
+    // one image. hud_design_owner_tests compares that frame with the
+    // single-part header's natively. No setGroupsParts on the header: its
+    // group would draw these parts surface by surface again while they enter
+    // inside a module fade. false: they fade surface by surface instead.
+    constexpr bool extrasFadeAsOneImage = true;
+    actions_->setPartRoot(extrasFadeAsOneImage);
     rule_->setAnchorPoint({0, .5});
     rule_->setFrame({0, 60, width, 9});
     ruleLine_->setFrame({0, 4, width, 1});
@@ -80,8 +94,10 @@ void ModuleHeader::configure(std::vector<std::string> crumbs, std::string code, 
     });
     if (showsBack && !back_) {
         // The Mac makes a new button here (with its init colour fade); the kept one replays it.
-        if (!backButton_) backButton_ = &builder_.make<IconButton>("back", core::localized("Back", "返回", env.language), Icon::back, IconButton::Style::back);
-        else { backButton_->label = core::localized("Back", "返回", env.language); backButton_->playCreationFade(); }
+        if (!backButton_) {
+            backButton_ = &builder_.make<IconButton>("back", core::localized("Back", "返回", env.language), Icon::back, IconButton::Style::back);
+            backButton_->layer().setPartRoot(actions_->partRoot()); // fades in as one image, like the actions (E-D2)
+        } else { backButton_->label = core::localized("Back", "返回", env.language); backButton_->playCreationFade(); }
         back_ = backButton_;
         layer_->add(back_->layer());
     } else if (!showsBack && back_) {
@@ -145,10 +161,19 @@ std::vector<Control*> ModuleHeader::controls() const {
     out.insert(out.end(), actionControls_.begin(), actionControls_.end());
     return out;
 }
-// playEntrance (:159-162).
-void ModuleHeader::playEntrance(const motion::Clock& clock) {
-    motion::wipe(*titleGroup_, WipeOrigin::left, duration::titleWipe, clock, easing::standard, 0, 0.0);
-    motion::grow(*rule_, duration::ruleWipe, clock, duration::ruleDelay);
+// playEntrance (:160-164): the breadcrumb, code, hatch tail, Back and the
+// actions fade in with the title through the shared stagger (Mac 7d57641).
+void ModuleHeader::playEntrance(const motion::Clock& clock, double delay) {
+    motion::wipe(*titleGroup_, WipeOrigin::left, duration::titleWipe, clock, easing::standard, delay, 0.0);
+    motion::grow(*rule_, duration::ruleWipe, clock, duration::ruleDelay + delay);
+    motion::stagger(extras(), {0, 0}, clock, delay);
+}
+// extras (:167): the header's layers besides the title and the rule, in reading order.
+std::vector<Layer*> ModuleHeader::extras() const {
+    std::vector<Layer*> out{crumbs_, code_, tail_};
+    if (back_) out.push_back(&back_->layer());
+    out.push_back(actions_);
+    return out;
 }
 std::pair<std::string, std::string> ModuleHeader::titleTexts() const { return {textOf(*title_).text(), textOf(*subtitle_).text()}; }
 std::string ModuleHeader::counterText() const { return textOf(*counter_).text(); }

@@ -1,7 +1,7 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.ko.png" alt="ENDFIELD HUD: Mac과 Windows용 데스크톱 HUD, v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/hero.ko.png" alt="ENDFIELD HUD: Mac과 Windows용 데스크톱 HUD, v1.3.1" width="100%"></a>
 
 <p align="center">
-  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="최신 릴리스 v1.3.0" height="36"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/button-release.png" alt="최신 릴리스 v1.3.1" height="36"></a>
   <a href="LICENSE"><img src="docs/media/readme/panels/button-license.png" alt="라이선스: MIT" height="36"></a>
   <a href="#installation"><img src="docs/media/readme/panels/button-platform.png" alt="플랫폼: macOS / Windows" height="36"></a>
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSeDwB4CzTp5kdT5ArjwIcQlvRS9UlVkQnMpGF3OHbYJ1_uBCg/viewform?usp=sharing"><img src="docs/media/readme/panels/button-feedback.ko.png" alt="버그 제보 또는 제안" height="36"></a>
@@ -28,14 +28,14 @@
 
 <img src="docs/media/readme/panels/sub-macos.ko.png" alt="macOS: Apple silicon / Intel" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS: PKG / DMG" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS: PKG / DMG" width="100%"></a>
 
 <sub>※ EndfieldHUD는 메뉴 막대에 나타나요. 단축키 하나로 모든 앱 위에 HUD가 열려요</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.ko.png" alt="다운로드" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-Installer.pkg"><b>PKG 설치 프로그램</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">모든 릴리스</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-Installer.pkg"><b>PKG 설치 프로그램</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">모든 릴리스</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.ko.png" alt="업데이트" width="112"></td>
@@ -58,14 +58,14 @@
 
 <img src="docs/media/readme/panels/sub-windows.ko.png" alt="Windows: Windows 11 x64" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows: 설치 프로그램(EXE) / 포터블(ZIP)" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows: 설치 프로그램(EXE) / 포터블(ZIP)" width="100%"></a>
 
 <sub>※ Windows에서는 EndfieldHUD가 알림 영역(시스템 트레이)에 있어요. HUD도 단축키도 같아요</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.ko.png" alt="다운로드" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-setup.exe"><b>설치 프로그램(EXE)</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-portable.zip"><b>포터블(ZIP)</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">모든 릴리스</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-setup.exe"><b>설치 프로그램(EXE)</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-portable.zip"><b>포터블(ZIP)</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">모든 릴리스</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.ko.png" alt="업데이트" width="112"></td>
@@ -91,6 +91,22 @@
 
 > [!WARNING]
 > Windows SmartScreen에 **Windows의 PC 보호** 창이 뜨면 **추가 정보 → 실행**을 누르세요. 아직 코드 서명을 하지 않은 앱이기 때문이에요
+
+<br>
+
+<img src="docs/media/readme/panels/sub-linux.ko.png" alt="Linux: Hyprland / 커뮤니티 포팅" width="100%">
+
+<a href="https://github.com/OctoberPrayRain/HyprEndfield"><img src="docs/media/readme/panels/banner-linux.png" alt="Linux: Hyprland용 HyprEndfield" width="100%"></a>
+
+<table>
+<tr>
+<td width="120"><img src="docs/media/readme/panels/chip-download.ko.png" alt="다운로드" width="112"></td>
+<td><a href="https://github.com/OctoberPrayRain/HyprEndfield"><b>HyprEndfield</b></a> (제작: <a href="https://github.com/OctoberPrayRain">OctoberPrayRain</a>)</td>
+</tr>
+</table>
+
+> [!WARNING]
+> HyprEndfield는 OctoberPrayRain 님이 만든 커뮤니티 포팅판으로, 제가 만든 것이 아니에요. 사용에 따른 위험은 직접 감수해야 하며, 사용으로 생긴 어떤 손실에도 책임지지 않아요
 
 <br>
 
@@ -177,14 +193,14 @@
 | 도구 | 할 수 있는 일 |
 | --- | --- |
 | [**지도**](docs/map.md) | 오프라인 지형 지도를 둘러보고 핀을 추가하거나 꾸며요 |
-| [**클로저의 미니게임**](docs/orbipom-runtime.md) | '합체! 오르비폼!'을 즐겨보세요 |
+| [**클로저의 미니게임**](docs/orbipom-runtime.md) | '융합! 버블!'을 즐겨보세요 |
 | [**이벤트 로그**](docs/event-log.md) | 진짜 관리자처럼 이벤트 로그를 확인해보세요 |
 | [**개인 프로필**](docs/personal-profile.md) | 나만의 카드를 꾸며요. 프로필 정보를 자유롭게 편집할 수 있어요 |
 | [**계정 연동**](docs/account-linking.md) | HYPERGRYPH 게임 계정을 연동해 프로필 정보와 이성 회복까지 남은 시간을 확인해요 |
 
 <sub>※ 계정 연동은 선택 사항이에요</sub>
 
-![합체! 오르비폼! 플레이](docs/media/readme/minigame.gif)
+![융합! 버블! 플레이](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

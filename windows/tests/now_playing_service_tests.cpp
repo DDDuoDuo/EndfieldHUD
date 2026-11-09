@@ -1,8 +1,11 @@
 #include "native/now_playing_service.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 namespace n=endfield::native;namespace m=endfield::modules;using Executor=endfield::app::UtilityExecutor;
 namespace {
 unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
@@ -43,4 +46,81 @@ void publicationAndCommands(){Executor q([]{});auto p=std::make_shared<Provider>
 void timeout(){Executor q([]{});auto p=std::make_shared<Provider>();double clock=10;n::NativeNowPlayingService service(q,[&]{return p;},[]{},[&]{return clock;});service.setActive(true);flush(q,service);check(service.nextWakeTime()==13,"Async activation exports one bounded host deadline");clock=12.999;service.drain();check(p->stops==0,"Deadline never becomes premature polling");const auto late=p->started;clock=13;service.drain();check(service.snapshot().failure==n::NowPlayingServiceFailure::timedOut&&!service.nextWakeTime()&&p->stops==1,"Host deadline cancels a hung provider without waiting");late({});flush(q,service);check(p->reads==0,"Timed-out manager cannot publish a late snapshot");service.refresh();flush(q,service);check(p->starts==2,"Only explicit refresh retries timed-out activation");}
 void timeline(){n::NowPlayingTimeline t;t.start=10000000;t.end=110000000;t.position=30000000;t.minimumSeek=20000000;t.maximumSeek=100000000;t.rate=2;t.sampledAt=100;t.playing=true;check(t.elapsed(102)==6&&t.elapsed(200)==10,"Windows rate and start timestamp map to bounded relative progress");check(t.seekTicks(0)==20000000&&t.seekTicks(50)==100000000,"Native seek obeys actual advertised seek range");t.playing=false;check(t.elapsed(10000)==2,"Paused native timeline never advances locally");t.rate=NAN;t.playing=true;check(t.elapsed(10000)==2,"Unknown playback rate is not fabricated");t.minimumSeek=120000000;check(!t.seekTicks(5),"Inconsistent native seek range disables seeking");t.start=INT64_MIN;t.end=INT64_MAX;t.minimumSeek=INT64_MIN;t.maximumSeek=INT64_MAX;check(t.seekTicks(1e20)==INT64_MAX&&t.seekTicks(-1e20)==INT64_MIN,"Extreme native ticks clamp before signed conversion");check(!t.seekTicks(NAN),"Nonfinite user seek cannot enter tick arithmetic");}
 }
-int main(){try{lifecycle();failureAndCapacity();teardown();publicationAndCommands();timeout();timeline();std::cout<<"Now Playing service: "<<checks<<" checks passed (injected provider only)\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing service failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// R9: an explicit AppUserModelID's player executable is resolved by its own
+// utility job after the read, then republished (source d09780d's bundle match).
+n::NowPlayingReadResult players(std::vector<m::NowPlayingSession>sessions){
+    n::NowPlayingReadResult result=media();result.value.sessions=std::move(sessions);result.value.session=result.value.sessions.front();return result;
+}
+void launchTargets(){
+    Executor q([]{});auto p=std::make_shared<Provider>();std::vector<std::string>asked;bool fail{};
+    ehud::data::ShelfFileIdentity identity;identity.objectID[0]=7;identity.volumeSerial=0x5eed;
+    const auto resolve=[&](const std::string&id)->std::optional<n::NowPlayingLaunchTarget>{asked.push_back(id);if(fail||id=="Invented.Player")return std::nullopt;return n::NowPlayingLaunchTarget{"C:\\EndfieldHUD-Synthetic\\"+id+".exe",identity};};
+    n::NativeNowPlayingService service(q,[&]{return p;},[]{},[]{return 0.;},3,resolve);
+    // A read, then each resolution job and its republication.
+    const auto settle=[&](n::NativeNowPlayingService&s){for(int k=0;k<4;++k)flush(q,s);};
+    service.setActive(true);flush(q,service);p->started({});flush(q,service);
+    using O=m::NowPlayingSessionOrigin;
+    const std::vector<m::NowPlayingSession>listed{{1,"Chrome","Chrome"},{2,"Spotify.exe","Spotify"},{3,"Contoso.Player_abc!App","Contoso"},{4,"C:\\Apps\\Player.exe","Player",O::playerWindow},{5,"MSEdge","Edge"},{6,"Window.Title","Window",O::playerWindow}};
+    p->reading(players(listed));settle(service);
+    const auto&first=service.snapshot();
+    check(asked==std::vector<std::string>{"Chrome","MSEdge"},"Only explicit media-session identities are resolved, one job at a time, after the read");
+    check(first.media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe"&&first.media.session->executableIdentity==identity&&first.media.sessions[0]==*first.media.session,"The selected session is republished with its launch target");
+    check(first.media.sessions[4].executablePath=="C:\\EndfieldHUD-Synthetic\\MSEdge.exe"&&first.media.sessions[1].executablePath.empty()&&first.media.sessions[2].executablePath.empty()&&first.media.sessions[3].executablePath.empty()&&first.media.sessions[5].executablePath.empty(),"Win32, packaged and window-title identities are never resolved");
+    p->changed();flush(q,service);p->reading(players(listed));settle(service);
+    check(asked.size()==2&&service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","A later read reuses the resolved target without another lookup");
+    p->changed();flush(q,service);p->reading(players({{7,"Invented.Player","Unknown"}}));settle(service);
+    check(asked.size()==3&&service.snapshot().media.session->executablePath.empty()&&!service.snapshot().media.session->executableIdentity,"An identity with no Start shortcut resolves to nothing");
+    p->changed();flush(q,service);p->reading(players({{7,"Invented.Player","Unknown"}}));settle(service);
+    check(asked.size()==3,"A failure is kept until the next activation");
+    service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{8,"Invented.Player","Unknown"},{9,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==5&&asked[3]=="Invented.Player"&&asked[4]=="Chrome"&&service.snapshot().media.sessions[1].executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","A new activation retries a failure and checks a resolved target again");
+    p->changed();flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==5,"A target checked in this activation is not asked again");
+    // A browser that updated in place runs a new file at the same path: the
+    // next activation shows the known target at once, then the new identity.
+    auto updated=identity;updated.objectID[0]=8;const auto previous=identity;identity=updated;
+    service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));
+    q.waitIdle();q.drain();service.drain();
+    check(service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe"&&service.snapshot().media.session->executableIdentity==previous,"The known target fills the read before it is checked again");
+    const auto revision=service.snapshot().revision;settle(service);
+    check(asked.size()==6&&service.snapshot().media.session->executableIdentity==updated&&service.snapshot().media.sessions[0].executableIdentity==updated&&service.snapshot().revision>revision,"A changed file identity is republished");
+    fail=true;service.setActive(false);service.setActive(true);flush(q,service);p->started({});flush(q,service);p->reading(players({{9,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==7&&service.snapshot().media.session->executablePath.empty()&&!service.snapshot().media.session->executableIdentity,"A target whose Start shortcut is gone is withdrawn");
+    for(int k=0;k<20;++k){p->changed();flush(q,service);p->reading(players({{static_cast<std::uint64_t>(10+k),"Player"+std::to_string(k),"Many"}}));settle(service);}
+    check(asked.size()==27,"Each new explicit identity is asked once");
+    fail=false;p->changed();flush(q,service);p->reading(players({{40,"Chrome","Chrome"}}));settle(service);
+    check(asked.size()==28&&service.snapshot().media.session->executablePath=="C:\\EndfieldHUD-Synthetic\\Chrome.exe","The cache holds at most a bounded set of identities");
+    // A provider may carry a target itself (replays); it is validated and kept.
+    p->changed();flush(q,service);auto own=players({{41,"Firefox.Hash","Firefox"}});own.value.sessions[0].executablePath="C:\\Replay\\firefox.exe";own.value.session=own.value.sessions[0];p->reading(own);settle(service);
+    check(asked.size()==28&&service.snapshot().media.session->executablePath=="C:\\Replay\\firefox.exe","A session that already names its executable is not resolved");
+    p->changed();flush(q,service);auto bad=own;bad.value.sessions[0].executablePath.clear();bad.value.sessions[0].executableIdentity=identity;bad.value.session=bad.value.sessions[0];p->reading(bad);settle(service);
+    check(service.snapshot().failure==n::NowPlayingServiceFailure::unavailable,"An identity without its path is rejected");
+    n::NativeNowPlayingService plain(q,[&]{return p;},[]{},[]{return 0.;});plain.setActive(true);flush(q,plain);p->started({});flush(q,plain);p->reading(players(listed));settle(plain);
+    check(asked.size()==28&&plain.snapshot().media.session->executablePath.empty(),"Without a resolver nothing is resolved");
+}
+#ifdef _WIN32
+// Hidden native check (read-only, this session's Start menu): "MSEdge"
+// resolves to an existing msedge.exe; an invented AppUserModelID and the
+// identities that are never resolved give nothing.
+void appsFolder(){
+    const auto edge=n::nowPlayingAppsFolderExecutable("MSEdge");
+    if(edge){const auto&p=edge->path;const std::string tail="\\msedge.exe";
+        check(p.size()>tail.size()&&std::equal(tail.rbegin(),tail.rend(),p.rbegin(),[](char a,char b){return a==(b>='A'&&b<='Z'?static_cast<char>(b-'A'+'a'):b);})&&(edge->identity.objectID!=decltype(edge->identity.objectID){}),"MSEdge resolves to an existing msedge.exe with its file identity");
+        std::cout<<"AppsFolder launch target: verified (MSEdge)\n";}
+    else std::cout<<"AppsFolder launch target: unverified (MSEdge has no Start shortcut in this session)\n";
+    check(!n::nowPlayingAppsFolderExecutable("EndfieldHUD.Invented.Player.7f3a")&&!n::nowPlayingAppsFolderExecutable("msedge.exe")&&!n::nowPlayingAppsFolderExecutable("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")&&!n::nowPlayingAppsFolderExecutable(""),"An invented, Win32 or packaged identity resolves to nothing");
+}
+#endif
+// A player's cover between 8 MiB and the embedded bound is published; a larger
+// one loses only its art, never the track (Mac 1.3.1 f791b54, 440cfd2).
+void oversizeArtwork(){Executor q([]{});auto p=std::make_shared<Provider>();n::NativeNowPlayingService service(q,[&]{return p;},[]{},[]{return 0.;});service.setActive(true);flush(q,service);p->started({});flush(q,service);
+    auto nine=media();nine.value.artwork=std::make_shared<const std::vector<std::uint8_t>>(9u*1024*1024,std::uint8_t(1));nine.value.track->artworkRevision="1";p->reading(std::move(nine));flush(q,service);
+    check(service.snapshot().fresh&&service.snapshot().failure==n::NowPlayingServiceFailure::none&&service.snapshot().media.artwork&&service.snapshot().media.artwork->size()==9u*1024*1024,"A 9 MiB player cover is published with its track");
+    service.refresh();flush(q,service);auto huge=media(1,"Larger");huge.value.artwork=std::make_shared<const std::vector<std::uint8_t>>(m::nowPlayingMaximumEmbeddedArtworkBytes+1,std::uint8_t(1));huge.value.track->artworkRevision="2";p->reading(std::move(huge));flush(q,service);
+    check(service.snapshot().fresh&&service.snapshot().failure==n::NowPlayingServiceFailure::none&&service.snapshot().media.track->title=="Larger"&&!service.snapshot().media.artwork&&!service.snapshot().media.track->artworkRevision,
+          "A cover over the embedded bound drops only its art: the track still updates");}
+int main(){try{lifecycle();failureAndCapacity();teardown();publicationAndCommands();timeout();timeline();launchTargets();oversizeArtwork();
+#ifdef _WIN32
+    appsFolder();
+#endif
+std::cout<<"Now Playing service: "<<checks<<" checks passed (injected provider only)\n";return 0;}catch(const std::exception&e){std::cerr<<"Now Playing service failed after "<<checks<<": "<<e.what()<<'\n';return 1;}}

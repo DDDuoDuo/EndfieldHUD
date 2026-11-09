@@ -6,7 +6,7 @@
 // one wheel detent per Mac notch and the .18 s gesture hold, the pinch,
 // keys with Shift allowed and Ctrl passing, the cursor, UI Automation, the
 // pulse fallback wake, the working set released on another module, the
-// close and the release. Synthetic geography, painter and store only; no
+// close (the pulse stripped, the raster kept while active) and the release. Synthetic geography, painter and store only; no
 // visible window, no input injection, no user data.
 #include "tools/map_owner.hpp"
 #include "tools/hud_design_overlay_owner.hpp"
@@ -204,10 +204,53 @@ void run(const std::filesystem::path& shader) {
     t = settle(core::Module::map, t + .1, .3);
     check(map.canvas().isActive() && map.rasterStats().active, "Back on the Map the painter runs again");
 
-    // --- Close and release --------------------------------------------------------------------
-    for (auto* owner : owners) owner->setOverlayVisible(false, t);
-    frame(core::Module::notes, t + .01);
-    check(!map.canvas().isActive() && !map.state().active(), "Closing deactivates the Map");
+    // --- The close in the production order: overlayClosing, frames, overlayConcealed -----------
+    // Closing on the Map keeps it active and its raster until the hide (the
+    // Mac's releaseRasterWorkingSet releases only an inactive canvas); the
+    // pulse stops on the first closing frame with its rings at the model
+    // opacity 0 (the close strips map.pulse, it does not re-style the pins).
+    appearance.lowPower = false;
+    map.setAppearance(appearance, t);
+    for (unsigned n = 0; n < 40; ++n) { (void)drain(t); t = settle(core::Module::map, t, .1); const auto r = map.rasterStats(); if (!r.painting && !r.waiting) break; }
+    check(map.pulsing() && map.sceneStats().pulsingPins >= 1 && map.sceneStats().strippedRings == 0, "Back in normal power the pins pulse again");
+    const auto ringCount = map.sceneStats().pulsingPins;
+    const auto closingFrame = [&](double at) {
+        clock = at; chrome.module = core::Module::map;
+        auto s = sample(core::Module::map); s.acceptsModuleInput = false;
+        const app::ModuleFrame f{center, chrome, s, 1, at, true};
+        for (auto* owner : owners) { owner->update(f); owner->upload(renderer); }
+        std::vector<gpu::LayerCompositionEntry> entries;
+        for (const auto& e : map.entries(core::Module::map)) entries.push_back(e);
+        entryCount = entries.size();
+        composition.setEntries(renderer, entries); composition.present(renderer); renderer.draw(false);
+        for (auto* owner : owners) owner->collected(renderer);
+    };
+    t += .05;
+    for (auto* owner : owners) owner->overlayClosing(t);
+    closingFrame(t + .01);
+    check(map.canvas().isActive() && map.state().active() && map.rasterStats().active && entryCount >= 2,
+        "Closing on the Map keeps it active, drawn and its raster working set until the hide");
+    check(!map.pulsing() && map.sceneStats().pulsingPins == ringCount && map.sceneStats().strippedRings == ringCount,
+        "The close stops the pulse on its first frame: the pulsing rings stay at their model opacity 0");
+    {
+        const auto updates = map.sceneStats().localUpdates;
+        closingFrame(t + .05); closingFrame(t + .09);
+        check(map.sceneStats().localUpdates == updates, "No closing frame samples the stripped pulse");
+    }
+    // A reopen mid-close gives the pulse back.
+    for (auto* owner : owners) owner->setOverlayVisible(true, t + .1);
+    t = settle(core::Module::map, t + .1, .1);
+    check(map.pulsing() && map.sceneStats().strippedRings == 0, "A reopen mid-close gives the pin pulse back");
+    // Closing on another module releases the inactive Map's working set at once.
+    t = settle(core::Module::notes, t + .1, .2);
+    check(!map.canvas().isActive(), "On another module the Map is inactive");
+    t = settle(core::Module::map, t + .1, .3);
+    for (auto* owner : owners) owner->overlayClosing(t);
+    closingFrame(t + .01);
+    check(map.rasterStats().active, "A second close on the Map keeps its raster");
+    for (auto* owner : owners) (void)owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, t + .35);
+    frame(core::Module::notes, t + .36);
+    check(!map.canvas().isActive() && !map.state().active() && !map.rasterStats().active, "The hidden HUD deactivates the Map and releases its working set");
     composition.detach(renderer); detach.done = true;
     for (auto* owner : owners) owner->release(renderer);
     executor.shutdown();

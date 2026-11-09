@@ -10,6 +10,7 @@
 #include "tests/hud_design_oracle.hpp"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 
@@ -56,17 +57,18 @@ struct World {
 // The controller: the published snapshot and the commands the canvas sends.
 struct Controller {
     m::NowPlayingViewInput input;
-    m::NowPlayingCover cover;
+    m::NowPlayingCoverArt cover;
     std::vector<m::NowPlayingIntent> sent;
     std::vector<bool> presented;
-    std::vector<unsigned> pixels;
+    std::vector<m::NowPlayingCoverSlot> slots;
+    std::vector<unsigned> pixels;   // the decode sizes named
     m::NowPlayingCanvasServices services() {
         m::NowPlayingCanvasServices s;
         s.input = [this]() -> const m::NowPlayingViewInput& { return input; };
         s.artwork = [this] { return cover; };
         s.setPresented = [this](bool v) { presented.push_back(v); };
         s.perform = [this](const m::NowPlayingIntent& i) { sent.push_back(i); return true; };
-        s.setArtworkPixels = [this](unsigned p) { pixels.push_back(p); };
+        s.setArtworkPixels = [this](m::NowPlayingCoverSlot p) { slots.push_back(p); pixels.push_back(p.decode); };
         return s;
     }
     static m::NowPlayingViewInput playing(double now, double position = 42, bool isPlaying = true) {
@@ -92,6 +94,16 @@ void layout() {
         && C::time(1e9) == C::time(604800), "Times: mm:ss, minutes past 59, \xe2\x80\x94:\xe2\x80\x94 when unknown, capped at 604800 s (:395-398)");
 }
 
+// Where a cover is drawn in the 480 px slot (showArt, :325-347).
+void coverFrames() {
+    const auto is = [](d::Rect r, d::Rect e) { return std::abs(r.x - e.x) < 1e-9 && std::abs(r.y - e.y) < 1e-9 && std::abs(r.width - e.width) < 1e-9 && std::abs(r.height - e.height) < 1e-9; };
+    check(is(C::coverFrame(300, 300, true, 1), {90, 90, 300, 300}), "A 300 px small cover at boxScale 1: 300 points, centred");
+    check(is(C::coverFrame(300, 300, true, 2), {165, 165, 150, 150}), "At boxScale 2: 150 points");
+    check(is(C::coverFrame(960, 540, true, 1.5), {0, 105, 480, 270}), "A small cover larger than the slot (640 x 360 points) is fitted inside it");
+    check(is(C::coverFrame(960, 750, false, 1.5), {-67.2, 0, 614.4, 480}), "A cover that is not small is aspect-filled (cropped by the mask)");
+    check(is(C::coverFrame(960, 540, false, 1), {-186.66666666666669, 0, 853.3333333333334, 480}), "Without a backdrop a 16:9 cover is aspect-filled");
+}
+
 void behaviour() {
     FakeMeasurer measurer;
     World w(measurer); w.appearance(Language::english, false, false);
@@ -100,7 +112,23 @@ void behaviour() {
     canvas.setPresented(true, w.now);
     canvas.show(w.now); canvas.setActive(true, w.now);
     check(ctl.presented == std::vector<bool>{true} && !canvas.showsHeader(), "Presentation starts the controller; no module header (:116-121, :98)");
-    check(!ctl.pixels.empty() && ctl.pixels.back() == m::nowPlayingCoverPixelSize(480, w.context.boxScale()), "The page names its 480 px slot at the render scale (:173)");
+    // :173 with headroom: Windows' boxScale is the quantised density (.5 steps,
+    // .35 hysteresis), so the slot is named half a step up and never under the
+    // highest density that boxScale can stand for.
+    const auto coversDrawnSize = [&] {
+        const double s = w.context.boxScale();
+        return !ctl.pixels.empty() && ctl.pixels.back() == m::nowPlayingCoverPixelSize(480, std::min(4., s + .5))
+            && ctl.pixels.back() >= unsigned(std::ceil(480 * (s + .35)))
+            && ctl.slots.back().layout == m::nowPlayingCoverPixelSize(480, s);
+    };
+    check(coversDrawnSize(), "The page names its 480 px slot at the render scale plus half a density step (:173)");
+    w.context.update(d::geometry::baseUnit, 1.5 / d::geometry::baseUnit, w.now);
+    check(std::abs(w.context.boxScale() - 1.5) < 1e-9 && coversDrawnSize() && ctl.pixels.back() == 960 && ctl.slots.back().layout == 720,
+        "Density 1.5 decodes a large cover at 960 px, not 720 (drawn up to 480 x 1.85); a small one is laid out in the 720 px slot (decision AW-D2 (a))");
+    w.context.update(d::geometry::baseUnit, 4 / d::geometry::baseUnit, w.now);
+    check(ctl.pixels.back() == 1920 && ctl.slots.back().layout == 1920, "Density 4 (the largest) asks for 1920 px");
+    w.context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, w.now);
+    check(ctl.pixels.back() == 1200, "Back at density 2: 1200 px");
     check(textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire" && textOf(canvas.root(), "nowPlaying.elapsed") == "00:42" && textOf(canvas.root(), "nowPlaying.duration") == "03:34",
         "Title and times (:240-272)");
     const auto track = item(canvas, "track");
@@ -192,10 +220,177 @@ void nothingPlaying() {
     check(!canvas.transitioning() && textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire", "A track appearing rebuilds in place (:157)");
     // A decoded cover is drawn by the owner: it shows in the top art layer.
     auto cover = std::make_shared<endfield::native::NotesImageFrame>(); cover->width = cover->height = 960;
-    ctl.cover = cover; ctl.input.coverAvailable = true; ctl.input.coverRevision = 1;
+    ctl.cover = {cover, nullptr, 960, 960}; ctl.input.coverAvailable = true; ctl.input.coverRevision = 1;
     canvas.refresh(w.now);
-    check(canvas.coverViews(w.now)[1].image == ctl.cover && !canvas.coverViews(w.now)[0].image && find(canvas.root(), "nowPlaying.cover.ring")->hidden(),
+    const auto shown = canvas.coverViews(w.now)[1];
+    check(shown.frame.x == 0 && shown.frame.y == 0 && shown.frame.width == 480 && shown.frame.height == 480 && !shown.backdrop, "A cover that fills the slot is aspect-filled, without a backdrop");
+    // A small cover (with a backdrop) is drawn whole at its own pixels over it.
+    auto whole = std::make_shared<endfield::native::NotesImageFrame>(); whole->width = whole->height = 300;
+    auto fill = std::make_shared<endfield::native::NotesImageFrame>(); fill->width = fill->height = 96;
+    ctl.cover = {whole, fill, 300, 300}; ctl.input.coverRevision = 2;
+    canvas.refresh(w.now);
+    const auto drawn = canvas.coverViews(w.now)[1];
+    const double scale = w.context.boxScale();
+    check(drawn.image == whole && drawn.backdrop == fill && std::abs(drawn.frame.width - 300 / scale) < 1e-9 && std::abs(drawn.frame.x - (480 - 300 / scale) / 2) < 1e-9
+        && find(canvas.root(), "nowPlaying.cover.ring")->hidden(), "A small cover is drawn at px / boxScale, centred over its backdrop (:325-347); the placeholder stays hidden");
+    ctl.cover = {cover, nullptr, 960, 960}; ctl.input.coverRevision = 3;
+    canvas.refresh(w.now);
+    check(canvas.coverViews(w.now)[1].image == ctl.cover.image && !canvas.coverViews(w.now)[0].image && find(canvas.root(), "nowPlaying.cover.ring")->hidden(),
         "The cover shows (Reduce Motion: at once) and the placeholder ring hides (:318-328)");
+}
+
+// Switching away mid-entrance (8be8a62, finiteKeys :144-148): the stop
+// keeps the entrance slots and the leave, so the rows finish entering under
+// the module's leave; loops, effects, lyric steps and pops are stripped.
+void stopKeepsFiniteMotion() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    canvas.playEntrance({0, 24}, w.now);
+    const auto rows = canvas.page().staggered();
+    check(rows.size() > 2, "Now Playing staggers its rows");
+    w.now += .1; w.context.advance(w.now);
+    canvas.setPresented(false, w.now);
+    const auto entering = [](const d::Layer& l) { for (const auto& t : l.tracks().slots[std::size_t(d::MotionSlot::enter)]) if (t.present()) return true; return false; };
+    check(entering(*rows.back()) && rows.back()->presented(d::Channel::opacity, w.now) < .05, "The last row keeps its enter track and is still transparent");
+    std::function<bool(const d::Layer&)> stripped = [&](const d::Layer& l) {
+        const auto& t = l.tracks();
+        for (const auto& p : t.property) if (p.present()) return false;
+        for (const auto s : {d::MotionSlot::hold, d::MotionSlot::pop, d::MotionSlot::effect})
+            for (const auto& track : t.slots[std::size_t(s)]) if (track.present()) return false;
+        if (t.tintTrack.keys || t.tintEffect.keys) return false;
+        for (const auto* child : l.children()) if (!stripped(*child)) return false;
+        return true;
+    };
+    check(stripped(canvas.page().layer()), "Bar runs, lyric steps, pops, holds and effects are gone");
+    std::function<bool(const d::Layer&, double)> resting = [&](const d::Layer& l, double at) {
+        if (l.animating(at)) return false;
+        for (const auto* child : l.children()) if (!resting(*child, at)) return false;
+        return true;
+    };
+    check(!resting(canvas.page().layer(), w.now) && resting(canvas.page().layer(), w.now + 1.1), "The kept entrance ends on its own");
+}
+
+// The cover cross-fade on motion::crossFade (showArt, :335-347, b8cc1df):
+// .2 s ease-in-out, the old cover drawn underneath until it ends, kept by a
+// stop mid-fade (finiteKeys), cancelled by the instant path.
+void coverCrossFade() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto frame = [](unsigned side) { auto f = std::make_shared<endfield::native::NotesImageFrame>(); f->width = f->height = side; return f; };
+    const auto a = frame(960), b = frame(961);
+    ctl.input.coverAvailable = true;
+    ctl.cover = {a, nullptr, 960, 960}; ctl.input.coverRevision = 1;
+    canvas.refresh(w.now);
+    w.now += 1; w.context.advance(w.now);
+    ctl.cover = {b, nullptr, 961, 961}; ctl.input.coverRevision = 2;
+    canvas.refresh(w.now);
+    const auto* top = find(canvas.root(), "nowPlaying.cover.art.1");
+    const auto* under = find(canvas.root(), "nowPlaying.cover.art.0");
+    const double start = w.now;
+    const auto views = canvas.coverViews(start + .1);
+    check(views[0].image == a && views[1].image == b, "Mid-fade both covers are drawn, the new one on top");
+    check(std::abs(top->presented(d::Channel::opacity, start + .1) - d::easing::easeInOut.value(.5)) < 1e-9 && under->presented(d::Channel::opacity, start + .1) == 1,
+        "The new cover fades in ease-in-out over the old one, which stays opaque underneath");
+    check(top->tracks().slots[std::size_t(d::MotionSlot::fade)][0].present(), "The cross-fade plays in the fade slot (X-D1)");
+    // A switch away mid-fade keeps the cross-fade (finiteKeys).
+    w.now = start + .1; w.context.advance(w.now);
+    canvas.setPresented(false, w.now);
+    check(top->presented(d::Channel::opacity, start + .2) == 1 && !canvas.coverViews(start + .2)[0].image && canvas.coverViews(start + .19)[0].image == a,
+        "A stop mid-fade lets it end at +.2; the old cover is drawn until then");
+    canvas.setPresented(true, w.now);
+    // Going away fades the old cover out.
+    w.now = start + 1; w.context.advance(w.now);
+    ctl.cover = {}; ctl.input.coverAvailable = false; ctl.input.coverRevision = 3;
+    canvas.refresh(w.now);
+    check(std::abs(under->presented(d::Channel::opacity, w.now + .1) - (1 - d::easing::easeInOut.value(.5))) < 1e-9 && canvas.coverViews(w.now + .1)[0].image == b,
+        "With no new cover the old one fades out");
+    // The instant path (Reduce Motion) cancels a running cross-fade.
+    w.now += 1; w.context.advance(w.now);
+    ctl.cover = {a, nullptr, 960, 960}; ctl.input.coverAvailable = true; ctl.input.coverRevision = 4;
+    canvas.refresh(w.now);
+    w.appearance(Language::english, false, true);
+    ctl.cover = {b, nullptr, 961, 961}; ctl.input.coverRevision = 5;
+    canvas.refresh(w.now);
+    check(top->presented(d::Channel::opacity, w.now) == 1 && under->presented(d::Channel::opacity, w.now) == 0 && !top->tracks().slots[std::size_t(d::MotionSlot::fade)][0].present()
+        && !canvas.coverViews(w.now)[0].image, "The instant path removes the running fade and shows the new cover at once");
+}
+
+// The volume pop-up leaves with its page (2e08932, closeVolume(keepingDrawn:)
+// :584): a switch away keeps it drawn, the next showing hides it. A drag the
+// HUD's close cancels (Canvas::suspendInput) applies nothing more (OPEN-8).
+void volumeLeavesWithPage() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    control(canvas, "volume")->activate();
+    auto* popup = control(canvas, "appVolume");
+    const auto origin = popup->rect(canvas.root());
+    canvas.pointerDown({origin.x + 22, origin.y + 30 + 106 * .5}, {}, w.now);
+    canvas.pointerDragged({origin.x + 22, origin.y + 30 + 106 * .4}, w.now);
+    const auto sent = ctl.sent.size();
+    check(sent > 0 && ctl.sent.back().kind == m::NowPlayingIntentKind::volume, "A volume drag applies as it moves");
+    canvas.suspendInput();
+    canvas.pointerDragged({origin.x + 22, origin.y + 30 + 106 * .2}, w.now);
+    canvas.pointerUp({origin.x + 22, origin.y + 30 + 106 * .2}, w.now);
+    check(ctl.sent.size() == sent && canvas.volumeOpen(), "The close's input stop ends the drag: nothing more applies, the pop-up stays open");
+    auto& layer = popup->layer();
+    canvas.setPresented(false, w.now);
+    check(!canvas.volumeOpen() && !layer.hidden() && !control(canvas, "appVolume"), "Switching away closes the pop-up but keeps it drawn with the page");
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(!layer.hidden(), "It leaves with the page");
+    canvas.setPresented(true, w.now); canvas.show(w.now);
+    check(layer.hidden() && !canvas.volumeOpen(), "The next showing hides it");
+}
+
+// OPEN-B5-5 (d6370b0 with B5-2): during a track change's page swap the
+// cover the owner draws stays anchored to the leaving page (its insertion
+// needs an anchor in the tree), leaving with it; the next page's cover is
+// drawn from its landing. A switch away mid-swap keeps the old page and its
+// cover until the module shows again.
+void coverLeavesWithPage() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    auto first = std::make_shared<endfield::native::NotesImageFrame>(); first->width = first->height = 960;
+    auto second = std::make_shared<endfield::native::NotesImageFrame>(); second->width = second->height = 961;
+    ctl.input.coverAvailable = true; ctl.cover = {first, nullptr, 960, 960}; ctl.input.coverRevision = 1;
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto* shown = canvas.coverLayer();
+    check(shown && shown->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == first, "The shown page draws its cover");
+    const auto change = [&](std::string title, std::shared_ptr<endfield::native::NotesImageFrame> image, std::uint64_t revision) {
+        ctl.input.track->title = std::move(title); ctl.cover = {image, nullptr, image->width, image->height}; ctl.input.coverRevision = revision;
+        canvas.refresh(w.now);
+    };
+    w.now += 1; w.context.advance(w.now);
+    change("Ember Road", second, 2);
+    check(canvas.transitioning(), "A track change swaps the page");
+    check(canvas.coverLayer() == shown && shown->isDescendant(canvas.root()) && canvas.coverViews(w.now + .05)[1].image == first, "Mid-swap the leaving page keeps its cover and anchors it");
+    w.now += .14; w.context.advance(w.now);
+    check(!canvas.transitioning() && canvas.coverLayer() != shown && canvas.coverLayer()->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == second,
+        "Landed, the next page's cover is drawn");
+    // Caught by a switch away: the old page finishes leaving with its cover; the next showing lands the new one.
+    const auto* landed = canvas.coverLayer();
+    w.now += 1; w.context.advance(w.now);
+    auto third = std::make_shared<endfield::native::NotesImageFrame>(); third->width = third->height = 962;
+    change("Lanterns", third, 3);
+    w.now += .05; w.context.advance(w.now);
+    canvas.setPresented(false, w.now); canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(canvas.coverLayer() == landed && landed->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == second, "The departing page keeps its cover through its leave");
+    canvas.setPresented(true, w.now); canvas.show(w.now); canvas.setActive(true, w.now);
+    check(canvas.coverLayer() != landed && canvas.coverLayer()->isDescendant(canvas.root()), "The next showing anchors the landed page's cover");
 }
 
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
@@ -272,9 +467,13 @@ void oracleScenes(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        layout();
+        layout(); coverFrames();
         behaviour();
         nothingPlaying();
+        stopKeepsFiniteMotion();
+        coverCrossFade();
+        volumeLeavesWithPage();
+        coverLeavesWithPage();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);

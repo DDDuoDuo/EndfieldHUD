@@ -45,7 +45,7 @@ import QuartzCore
     }
     static func width(_ string: String, _ size: CGFloat, _ weight: HUDFontWeight, _ tabular: Bool) -> Double {
         let layer = HUDStandardTextLayer(size: size, weight: weight, tabular: tabular); layer.string = string
-        return Double(HUDClockStyleArtwork.width(of: layer))
+        return Double(layer.measuredWidth)
     }
 
     // MARK: Clock

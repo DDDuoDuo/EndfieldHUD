@@ -5,13 +5,13 @@ enum ReaderError: LocalizedError {
     case unsupported, invalidArchive, tooLarge, invalidBook, unavailable, encrypted, changedOnDisk
     var errorDescription: String? {
         switch self {
-        case .unsupported: return L10n.text("Choose a PDF, EPUB or TXT book.", "请选择 PDF、EPUB 或 TXT 书籍。")
-        case .invalidArchive: return L10n.text("This EPUB archive is damaged or unsafe.", "此 EPUB 压缩包已损坏或不安全。")
-        case .tooLarge: return L10n.text("This book exceeds the reader's safety limits.", "此书籍超过阅读器的安全限制。")
-        case .invalidBook: return L10n.text("This book could not be read.", "无法读取此书籍。")
-        case .unavailable: return L10n.text("The original book is unavailable. Choose it again.", "原始书籍不可用，请重新选择。")
-        case .encrypted: return L10n.text("Encrypted books are not supported.", "暂不支持加密书籍。")
-        case .changedOnDisk: return L10n.text("The reader library changed on disk. Restart the app before saving.", "阅读器书库已在磁盘上更改，请重新启动应用后保存。")
+        case .unsupported: return L10n.text("Choose a PDF, EPUB or TXT book", "请选择 PDF、EPUB 或 TXT 书籍")
+        case .invalidArchive: return L10n.text("This EPUB archive is damaged or unsafe", "此 EPUB 压缩包已损坏或不安全")
+        case .tooLarge: return L10n.text("This book exceeds the reader's safety limits", "此书籍超过阅读器的安全限制")
+        case .invalidBook: return L10n.text("This book could not be read", "无法读取此书籍")
+        case .unavailable: return L10n.text("The original book is unavailable. Choose it again", "原始书籍不可用，请重新选择")
+        case .encrypted: return L10n.text("Encrypted books are not supported", "暂不支持加密书籍")
+        case .changedOnDisk: return L10n.text("The reader library changed on disk. Restart the app before saving", "阅读器书库已在磁盘上更改，请重新启动应用后保存")
         }
     }
 }

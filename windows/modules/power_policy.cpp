@@ -1,4 +1,6 @@
 #include "modules/power_policy.hpp"
+#include "core/data/data_store.hpp"
+#include "modules/hud_design_overlay.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -41,7 +43,9 @@ ChargeAlertSettings ChargeAlertSettings::normalized() const {
     const bool valid = raw.size() == 6 && std::all_of(raw.begin(), raw.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'); });
     result.displayDuration = clamp(displayDuration, 1, 60, 3);
     result.accentHex = valid ? raw : "FAD41F";
-    result.scale = clamp(scale, 0.65, 1.6, 1);
+    result.scale = clamp(scale, ChargeIndicatorMetrics::minimumScale, ChargeIndicatorMetrics::maximumScale, 1);
+    if (length && !(std::isfinite(*length) && *length > 0)) result.length.reset();
+    else if (length) result.length = std::min(1.0, *length);
     result.customX = clamp(customX, 0, 1, 0.5);
     result.customY = clamp(customY, 0, 1, 0.9);
     if (result.alwaysMode) result.neverMode = false;
@@ -66,6 +70,8 @@ ChargeAlertSettings ChargeAlertSettings::fromSettings(const Json& f) {
     const auto theme = string("theme", "dark");
     s.theme = theme == "light" ? ChargeTheme::light : theme == "system" ? ChargeTheme::system : ChargeTheme::dark;
     s.scale = real("scale", 1);
+    // The settings record's reader: absent (or not a usable number) is none.
+    s.length = ehud::data::Settings{f}.chargeBarLength();
     s.customPlacement = string("placement", "topCenter") == "custom";
     if (f["customScreenID"].isNumber()) {
         const double id = f["customScreenID"].number();
@@ -82,10 +88,39 @@ ChargeAlertSettings ChargeAlertSettings::fromSettings(const Json& f) {
     return s.normalized();
 }
 
-core::Point chargeClampedAnchor(core::Point p, const core::Rect& screen, double scale, bool editing, double ppp) noexcept {
-    const double factor = std::isfinite(scale) ? std::min(1.6, std::max(0.65, scale)) : 1;
-    const double unit = std::isfinite(ppp) && ppp > 0 ? ppp : 1;
-    const double halfWidth = std::min(150 * factor * unit, screen.width / 2);
+namespace {
+double pointUnit(double ppp) noexcept { return std::isfinite(ppp) && ppp > 0 ? ppp : 1; }
+}
+double chargeScaleFactor(double scale) noexcept {
+    return clamp(scale, ChargeIndicatorMetrics::minimumScale, ChargeIndicatorMetrics::maximumScale, 1);
+}
+double chargeBarWidth(std::optional<double> length, const core::Rect& screen, double scale, double ppp) noexcept {
+    using M = ChargeIndicatorMetrics;
+    if (!length || !std::isfinite(*length) || !(*length > 0)) return M::classicBarWidth;
+    const double factor = chargeScaleFactor(scale), width = screen.width / pointUnit(ppp);
+    const double full = std::max(M::minimumBarWidth, width / factor);
+    return std::min(full, std::max(M::minimumBarWidth, std::min(1.0, *length) * width / factor));
+}
+core::Rect chargePanelFrame(const core::Rect& bar, const core::Rect& screen) noexcept {
+    const double minX = std::max(bar.x, screen.x), maxX = std::min(bar.x + bar.width, screen.x + screen.width);
+    if (!(maxX > minX)) return bar;
+    return {minX, bar.y, maxX - minX, bar.height};
+}
+ChargeLengthRange chargeLengthRange(const core::Rect& screen, double scale, double ppp) noexcept {
+    const double width = screen.width / pointUnit(ppp);
+    if (!(width > 0)) return {1, 1};
+    return {std::min(1.0, ChargeIndicatorMetrics::minimumBarWidth * chargeScaleFactor(scale) / width), 1};
+}
+double chargeLength(const ChargeAlertSettings& settings, const core::Rect& screen, double ppp) noexcept {
+    const double width = screen.width / pointUnit(ppp);
+    if (!(width > 0)) return 1;
+    const auto s = settings.normalized();
+    return std::min(1.0, chargeBarWidth(s.length, screen, s.scale, ppp) * chargeScaleFactor(s.scale) / width);
+}
+core::Point chargeClampedAnchor(core::Point p, const core::Rect& screen, double scale, bool editing, double ppp, double canvasWidth) noexcept {
+    const double factor = chargeScaleFactor(scale);
+    const double unit = pointUnit(ppp);
+    const double halfWidth = std::min(canvasWidth * factor * unit / 2, screen.width / 2);
     const double topMargin = std::min(30 * factor * unit, screen.height / 2);
     const double bottomMargin = std::min(editing ? (24 * factor + 34) * unit : 30 * factor * unit, screen.height / 2);
     const double x = std::isfinite(p.x) ? p.x : screen.x + screen.width / 2;
@@ -94,30 +129,64 @@ core::Point chargeClampedAnchor(core::Point p, const core::Rect& screen, double 
     return {std::min(screen.x + screen.width - halfWidth, std::max(screen.x + halfWidth, x)),
             std::max(screen.y + topMargin, std::min(screen.y + screen.height - bottomMargin, y))};
 }
+core::Point chargeClampedAnchor(core::Point p, const ChargeAlertSettings& settings, const core::Rect& screen, bool editing, double ppp) noexcept {
+    const auto s = settings.normalized();
+    const double width = chargeBarWidth(s.length, screen, s.scale, ppp);
+    return chargeClampedAnchor(p, screen, s.scale, editing, ppp, ChargeIndicatorMetrics::canvasWidthFor(width));
+}
 core::Point chargeAnchor(const ChargeAlertSettings& settings, const core::Rect& screen, bool editing, double ppp) noexcept {
     const auto s = settings.normalized();
-    const double unit = std::isfinite(ppp) && ppp > 0 ? ppp : 1;
+    const double unit = pointUnit(ppp);
     const core::Point p = !s.customPlacement
         ? core::Point{screen.x + screen.width / 2, screen.y + 30 * s.scale * unit}
         : core::Point{screen.x + s.customX * screen.width, screen.y + screen.height - s.customY * screen.height};
-    return chargeClampedAnchor(p, screen, s.scale, editing, unit);
+    return chargeClampedAnchor(p, s, screen, editing, unit);
+}
+design::Size chargeEditorStripSize(design::Size strip, double ppp) noexcept {
+    const double unit = pointUnit(ppp);
+    return {strip.width * chargeEditorStripScale * unit, (strip.height + design::PlacementEditor::bubbleClearance) * chargeEditorStripScale * unit};
+}
+ChargeSpan chargeEditorReach(core::Point anchor, const core::Rect& screen, double ppp) noexcept {
+    const double largest = ChargeIndicatorMetrics::maximumScale;
+    const double reach = 19 * chargeScaleFactor(largest) * pointUnit(ppp);
+    const double clamped = chargeClampedAnchor(anchor, screen, largest, false, ppp).y;
+    return {std::min(anchor.y, clamped) - reach, std::max(anchor.y, clamped) + reach};
+}
+core::Point chargeEditorAnchor(core::Point draft, bool moved, const ChargeAlertSettings& settings, const core::Rect& screen, double ppp) noexcept {
+    return moved ? chargeClampedAnchor(draft, settings, screen, false, ppp) : chargeAnchor(settings, screen, false, ppp);
+}
+std::optional<double> chargeDraftLength(double reported, std::optional<double> shown) noexcept {
+    if (shown && reported == *shown) return std::nullopt;
+    return reported / 100;
 }
 ChargePosition chargeNormalizedPosition(core::Point anchor, const ChargeWorkArea& screen) noexcept {
     const auto& r = screen.bounds;
     if (!(r.width > 0 && r.height > 0)) return {};
     return {screen.id, clamp((anchor.x - r.x) / r.width, 0, 1, 0.5), clamp((r.y + r.height - anchor.y) / r.height, 0, 1, 0.9)};
 }
-ChargePanelLayout chargePanelLayout(core::Point anchor, double scale, bool editing, double ppp) noexcept {
-    const double s = std::isfinite(scale) ? std::min(1.6, std::max(0.65, scale)) : 1;
-    const double unit = std::isfinite(ppp) && ppp > 0 ? ppp : 1;
-    const double width = ChargeIndicatorMetrics::canvasWidth * s * unit, canvasHeight = ChargeIndicatorMetrics::canvasHeight * s * unit;
-    const double height = editing ? std::max(canvasHeight, (66 * s + 34) * unit) : canvasHeight;
+ChargePanelLayout chargePanelLayout(core::Point anchor, double scale, double barWidth, const core::Rect& screen, double ppp,
+                                    std::optional<core::Rect> strip) noexcept {
+    const double s = chargeScaleFactor(scale), unit = pointUnit(ppp);
+    const double width = ChargeIndicatorMetrics::canvasWidthFor(barWidth) * s * unit, height = ChargeIndicatorMetrics::canvasHeight * s * unit;
     ChargePanelLayout layout;
-    layout.window = {anchor.x - width / 2, anchor.y - canvasHeight / 2, width, height};
-    layout.indicator = {layout.window.x, layout.window.y, width, canvasHeight};
-    layout.cancel = {layout.window.x + width / 2 - 34 * unit, layout.window.y + 66 * s * unit, 28 * unit, 28 * unit};
-    layout.confirm = {layout.window.x + width / 2 + 6 * unit, layout.window.y + 66 * s * unit, 28 * unit, 28 * unit};
+    layout.barWidth = barWidth;
+    layout.indicator = {anchor.x - width / 2, anchor.y - height / 2, width, height};
+    layout.window = chargePanelFrame(layout.indicator, screen);
+    if (strip) {
+        const auto& w = layout.window;
+        const double minX = std::min(w.x, strip->x), minY = std::min(w.y, strip->y);
+        const double maxX = std::max(w.x + w.width, strip->x + strip->width), maxY = std::max(w.y + w.height, strip->y + strip->height);
+        layout.window = {minX, minY, maxX - minX, maxY - minY};
+        layout.strip = strip;
+    }
     return layout;
+}
+core::Rect chargeEditorStripFrame(core::Point anchor, double scale, double barWidth, design::Size stripSize, const core::Rect& screen,
+                                  double ppp) noexcept {
+    const double s = chargeScaleFactor(scale), unit = pointUnit(ppp);
+    const auto reach = chargeEditorReach(anchor, screen, ppp);
+    const core::Rect body{anchor.x - barWidth * s * unit / 2, reach.minimum, barWidth * s * unit, reach.maximum - reach.minimum};
+    return design::PlacementEditor::frame(stripSize, body, screen, 10 * unit);
 }
 std::optional<std::size_t> chargeSelectedScreen(std::span<const ChargeWorkArea> screens, std::optional<std::uint32_t> requested,
                                                 std::optional<std::size_t> preferred) noexcept {

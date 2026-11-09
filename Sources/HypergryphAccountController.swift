@@ -109,7 +109,36 @@ final class HypergryphAccountController {
     var isPresentingAccountPanel: Bool { isPresentingLogin || pendingCredentialCommits > 0 }
     var region: HypergryphAccountRegion { cache.region }
     var record: RegionRecord { cache.records[region.rawValue] ?? RegionRecord() }
-    var headerMode: HUDAccountPresentation.HeaderMode { .init(rawValue: cache.header) ?? .workMode }
+    /// 1.3.0's "hidden" header now lives in Display > HUD elements (Show
+    /// Sanity, migrated once by the configuration store). The cache keeps the
+    /// value for v1.2.0, which also reads it; here it reads as the default game.
+    var headerMode: HUDAccountPresentation.HeaderMode {
+        cache.header == Self.hiddenHeader ? .endfield : .init(rawValue: cache.header) ?? .workMode
+    }
+    static let hiddenHeader = "hidden"
+    /// Display > HUD elements > Show Sanity. While it is off the gauge shows
+    /// nothing and only the open Account module refreshes the account.
+    /// Turning it on fetches the header role now, as choosing a game did.
+    var showsHeaderGauge = true { didSet { if showsHeaderGauge, !oldValue { nextRefresh = .distantPast; tick() } } }
+    /// The game the header gauge shows sanity for; nil while the gauge shows
+    /// Work Mode time or is hidden, so a hidden gauge fetches nothing extra.
+    private var headerGame: HypergryphGame? {
+        guard showsHeaderGauge else { return nil }
+        return headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
+    }
+    /// Whether the saved cache hides the header gauge (1.3.0 and earlier), read
+    /// without loading the rest of the account.
+    static func storedHeaderIsHidden(at url: URL?) -> Bool {
+        struct Header: Decodable { let version: Int?; let header: String? }
+        guard let saved = readCache(Header.self, at: url), saved.version == 1 else { return false }
+        return saved.header == hiddenHeader
+    }
+    /// The saved cache file decoded as `type`, read only while it is at most 1 MB.
+    private static func readCache<T: Decodable>(_ type: T.Type, at url: URL?) -> T? {
+        guard let url, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
     var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
     var selectedSnapshot: HypergryphProfileSnapshot? { record.selectedRoleID.flatMap { record.snapshots[$0] } }
@@ -129,8 +158,7 @@ final class HypergryphAccountController {
          api: HypergryphAccountServing = HypergryphAccountAPI(),
          vault: HypergryphAccountCredentialVault = HypergryphMemoryCredentialVault(), now: @escaping () -> Date = Date.init) {
         self.profile = profile; self.fileURL = fileURL; self.api = api; self.vault = vault; self.now = now
-        if let fileURL, let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size <= 1_048_576, let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode(Cache.self, from: data), saved.version == 1 {
+        if let saved = Self.readCache(Cache.self, at: fileURL), saved.version == 1 {
             cache = saved; cacheWritesAllowed = true
         } else {
             cache = Cache()
@@ -162,7 +190,7 @@ final class HypergryphAccountController {
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: fileURL, options: [.atomic])
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-            } catch { statusMessage = L10n.text("Profile cache could not be saved.", "无法保存账户缓存。") }
+            } catch { statusMessage = L10n.text("Profile cache could not be saved", "无法保存账户缓存") }
         }
         Array(observers.values).forEach { $0() }
     }
@@ -176,7 +204,7 @@ final class HypergryphAccountController {
     }
     func tick() {
         guard visible, record.linked, !record.requiresReconnect, !busy,
-              moduleVisible || headerMode == .endfield || headerMode == .arknights,
+              moduleVisible || headerGame != nil,
               now() >= nextRefresh else { return }
         refresh()
     }
@@ -184,7 +212,7 @@ final class HypergryphAccountController {
         var result = HUDAccountPresentation()
         result.region = region == .mainland ? .china : .global
         result.isLinked = record.linked
-        result.statusMessage = record.requiresReconnect ? L10n.text("Sign in again to continue syncing.", "请重新登录以继续同步。") : statusMessage
+        result.statusMessage = record.requiresReconnect ? L10n.text("Sign in again to continue syncing", "请重新登录以继续同步") : statusMessage
         result.status = isPresentingLogin ? .connecting : hasActiveRequest ? .refreshing : !result.statusMessage.isEmpty ? .failed : record.linked ? .connected : .disconnected
         result.roles = record.roles.map { .init(id: $0.id,
             title: ($0.game == .endfield ? "Endfield" : "Arknights") + " / " + ($0.name ?? $0.roleID), subtitle: $0.serverName ?? "") }
@@ -200,9 +228,7 @@ final class HypergryphAccountController {
     }
     private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MM/dd HH:mm:ss"; return f }()
     func sanityPresentation(at date: Date? = nil) -> HypergryphSanityPresentation? {
-        guard record.linked else { return nil }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        guard let game else { return nil }
+        guard record.linked, let game = headerGame else { return nil }
         let role = selectedRole?.game == game ? selectedRole : record.roles.first { $0.game == game && $0.isAvailable }
         guard let role, let snapshot = record.snapshots[role.id] else { return nil }
         let date = date ?? now()
@@ -211,9 +237,8 @@ final class HypergryphAccountController {
                 && date.timeIntervalSince(lastAttempt) >= 5)
     }
     func gaugeValue(work: WorkModeSnapshot) -> (String, String, Bool) {
-        if headerMode == .hidden { return ("", "", false) }
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if record.linked, game != nil {
+        if !showsHeaderGauge { return ("", "", false) }
+        if record.linked, headerGame != nil {
             let stamina = sanityPresentation()
             let value = stamina.map { "\($0.current) / \($0.maximum)" } ?? "— / —"
             return (value, headerMode.title + ", " + L10n.text("Sanity", "理智") + " " + value, true)
@@ -259,7 +284,7 @@ final class HypergryphAccountController {
             case .success(let value): self.acceptLogin(cred: value.cred, region: value.region,
                 signingToken: value.signingToken, deviceID: value.deviceID)
             case .failure(let error):
-                if error != .cancelled { self.statusMessage = L10n.text("Sign-in could not finish. Please try again.", "登录未完成，请重试。") }
+                if error != .cancelled { self.statusMessage = L10n.text("Sign-in could not finish. Please try again", "登录未完成，请重试") }
                 self.changed()
             }
         }
@@ -331,7 +356,7 @@ final class HypergryphAccountController {
                 case .failure:
                     if self.region == region, self.generation == token {
                         self.busy = false
-                        self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。")
+                        self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试")
                         self.changed()
                     }
                 }
@@ -362,7 +387,7 @@ final class HypergryphAccountController {
                     self.onEvent?("unlinked"); self.changed(save: true)
                 case .failure:
                     if self.region == region {
-                        self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。")
+                        self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试")
                         self.changed()
                     }
                 }
@@ -416,7 +441,7 @@ final class HypergryphAccountController {
                 self.pendingCredentialCommits = max(0, self.pendingCredentialCommits - 1)
                 guard self.generation == token else { return }
                 guard case .success = result else {
-                    self.busy = false; self.statusMessage = L10n.text("Keychain could not be updated. Try again.", "无法更新钥匙串，请重试。"); self.changed(); return
+                    self.busy = false; self.statusMessage = L10n.text("Keychain could not be updated. Try again", "无法更新钥匙串，请重试"); self.changed(); return
                 }
                 self.credentials[region] = value; self.credentialDates[region] = self.now(); completion()
             }
@@ -446,8 +471,7 @@ final class HypergryphAccountController {
     }
     private var rolesNeededForPresentation: [HypergryphRole] {
         var roles = selectedRole.map { [$0] } ?? []
-        let game: HypergryphGame? = headerMode == .endfield ? .endfield : headerMode == .arknights ? .arknights : nil
-        if let game, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
+        if let game = headerGame, !roles.contains(where: { $0.game == game }), let role = record.roles.first(where: { $0.game == game }) { roles.append(role) }
         return roles
     }
     private func fetchProfiles(_ credentials: HypergryphCredentials, token: Int) {
@@ -456,7 +480,7 @@ final class HypergryphAccountController {
     private func fetchNext(_ roles: [HypergryphRole], credentials: HypergryphCredentials, token: Int) {
         guard let role = roles.first else {
             busy = false; request = nil; failures = 0; nextRefresh = now().addingTimeInterval(Self.automaticRefreshInterval)
-            if record.roles.isEmpty { statusMessage = L10n.text("No linked game account found.", "未找到已绑定的游戏账户。") }
+            if record.roles.isEmpty { statusMessage = L10n.text("No linked game account found", "未找到已绑定的游戏账户") }
             applyProfile(); applyAvatar()
             if manualRefreshPending && selectedSnapshot != nil && statusMessage.isEmpty { onEvent?("synced") }
             manualRefreshPending = false
@@ -479,8 +503,8 @@ final class HypergryphAccountController {
         nextRefresh = now().addingTimeInterval(min(900, 60 * pow(2, Double(failures - 1))))
         if error == .authenticationExpired || error == .invalidCredentials {
             cache.records[region.rawValue, default: RegionRecord()].requiresReconnect = true
-            statusMessage = L10n.text("Sign in again to continue syncing.", "请重新登录以继续同步。")
-        } else { statusMessage = L10n.text("Sync unavailable. Saved data is preserved.", "暂时无法同步，已保留上次数据。") }
+            statusMessage = L10n.text("Sign in again to continue syncing", "请重新登录以继续同步")
+        } else { statusMessage = L10n.text("Sync unavailable. Saved data is preserved", "暂时无法同步，已保留上次数据") }
         changed(save: true)
     }
     private func applyProfile() {
@@ -491,7 +515,7 @@ final class HypergryphAccountController {
                 value.gamePlayerID = snapshot.role.roleID
                 value.playerIDOverride = nil
             }
-            if fields.contains(.name), let name = identity.name { value.name = name }
+            if fields.contains(.name), let name = identity.name { value.name = name; value.autoName = false }
             if fields.contains(.tag), let tag = identity.tag { value.tag = tag }
             if fields.contains(.awakening), let date = snapshot.createdAt {
                 value.awakeningDate = date
@@ -506,7 +530,7 @@ final class HypergryphAccountController {
                 if let count = snapshot.weaponCount { value.weaponsCount = count }
                 if let count = snapshot.documentCount { value.archivesCount = count }
             }
-        } } catch { statusMessage = L10n.text("The personal profile could not be saved.", "无法保存个人名片。") }
+        } } catch { statusMessage = L10n.text("The personal profile could not be saved", "无法保存个人名片") }
     }
     private func applyAvatar() {
         guard visible, cache.syncAvatar, record.linked, let snapshot = selectedSnapshot, snapshot.role.game == .endfield,
@@ -522,7 +546,7 @@ final class HypergryphAccountController {
                 self.applyingGameAvatar = true
                 defer { self.applyingGameAvatar = false }
                 do { try data.write(to: file); try profile.importImage(from: file, kind: .avatar); self.avatarURL = url }
-                catch { self.statusMessage = L10n.text("Game avatar is unavailable.", "游戏头像暂不可用。"); self.changed() }
+                catch { self.statusMessage = L10n.text("Game avatar is unavailable", "游戏头像暂不可用"); self.changed() }
             }
         }
     }

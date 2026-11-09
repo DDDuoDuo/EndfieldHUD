@@ -406,6 +406,78 @@ void buttons() {
     check(near(*must(grip.layer(), "grip.dots").tint(), d::fixed::nearBlack), "Hover darkens the dots");
 }
 
+// HUDDragGrip's shared list rules (Mac d32a5bf, cd52576): the lift distance,
+// the drag-to-reorder cursor and the edge auto-scroll step.
+void gripRules() {
+    World w;
+    check(d::DragGrip::liftDistance == 3, "A press becomes a drag past 3 points");
+    auto& shown = w.b.make<d::DragGrip>("grip.shown", "", d::Size{14, 56}, Point{5, 24});
+    auto& hidden = w.b.make<d::DragGrip>("grip.hidden", "", d::Size{14, 56}, Point{5, 24});
+    w.host(shown.layer()).setOrigin({20, 100});
+    w.host(hidden.layer()).setOrigin({20, 200}); hidden.layer().setHidden(true);
+    std::vector<d::DragGrip*> grips{&shown, &hidden};
+    check(shown.underPointer({27, 130}, w.root) && !shown.underPointer({40, 130}, w.root) && !hidden.underPointer({27, 230}, w.root), "Under the pointer: a shown grip's own area only");
+    check(d::DragGrip::cursor(false, grips, Point{27, 130}, w.root) == d::Cursor::openHand, "The open hand over a shown grip");
+    check(!d::DragGrip::cursor(false, grips, Point{27, 230}, w.root) && !d::DragGrip::cursor(false, grips, Point{300, 130}, w.root)
+        && !d::DragGrip::cursor(false, grips, std::nullopt, w.root), "No cursor over a hidden grip, elsewhere or without a pointer");
+    check(d::DragGrip::cursor(true, grips, std::nullopt, w.root) == d::Cursor::closedHand && d::DragGrip::cursor(true, {}, Point{300, 400}, w.root) == d::Cursor::closedHand,
+        "The closed hand anywhere while a row is lifted");
+    check(d::DragGrip::edgeScrollStep(100, 300) == 0 && d::DragGrip::edgeScrollStep(30, 300) == -6 && d::DragGrip::edgeScrollStep(10, 300) == -12
+        && d::DragGrip::edgeScrollStep(-40, 300) == -12, "Within 36 points of the top: up to 12 points toward it");
+    check(d::DragGrip::edgeScrollStep(270, 300) == 6 && d::DragGrip::edgeScrollStep(299, 300) == 12 && d::DragGrip::edgeScrollStep(400, 300) == 12
+        && d::DragGrip::edgeScrollStep(264, 300) == 0, "Within 36 points of the bottom or past it: up to 12 points toward it");
+}
+
+// HUDListReorder (Mac 3c7088a): the lifted row rises and follows the pointer,
+// the list scrolls under it past its edges, the others glide to their new
+// slots, the drop settles it and a cancel puts every row back at once.
+void listReorder() {
+    World w;
+    d::ScrollArea list(w.b, "reorder", {0, 100, 590, 120});
+    w.host(list.layer());
+    std::vector<std::pair<std::string, d::Layer*>> rows;
+    for (int n = 0; n < 4; ++n) {
+        d::Layer& row = w.arena.make("row." + std::to_string(n));
+        row.setAnimatable(); row.setFrame({0, 4 + 50. * n, 580, 44});
+        list.content().add(row);
+        rows.emplace_back("r" + std::to_string(n), &row);
+    }
+    list.setContentHeight(4 + 4 * 50);
+    const d::ListReorder::Rows find = [&](const std::string& id) -> d::Layer* {
+        for (auto& [key, row] : rows) if (key == id) return row;
+        return nullptr;
+    };
+    const std::vector<std::string> saved{"r0", "r1", "r2", "r3"};
+    const auto clock = w.env.clock();
+    check(!d::ListReorder::lift("missing", saved, *rows[0].second, 10, 4, 50, clock), "Nothing lifts for an id not in the order");
+    auto lifted = d::ListReorder::lift("r0", saved, *rows[0].second, 20, 4, 50, clock);
+    check(lifted && lifted->index() == 0 && rows[0].second->zPosition() == 10 && model(*rows[0].second, Channel::scaleX) == 1.015
+        && near(rows[0].second->tracks().property[std::size_t(Channel::scaleX)].duration, d::duration::hover), "Lift: z 10 and scale 1.015 over the hover duration");
+    // The pointer two pitches lower (root y = list top 100 + content y).
+    lifted->move({10, 100 + 20 + 100}, list, w.root, find, clock);
+    check(lifted->index() == 2 && lifted->order() == std::vector<std::string>{"r1", "r2", "r0", "r3"} && near(model(*rows[0].second, Channel::translateY), 100),
+        "The lifted row follows the pointer and takes its slot");
+    check(near(model(*rows[1].second, Channel::translateY), -50) && near(model(*rows[2].second, Channel::translateY), -50) && model(*rows[3].second, Channel::translateY) == 0
+        && near(rows[1].second->tracks().property[std::size_t(Channel::translateY)].duration, .18), "The others glide to their new slots in .18 s");
+    lifted->move({10, 100 + 120 + 40}, list, w.root, find, clock);
+    check(near(list.offset(), 20) && lifted->index() == 3, "Past the bottom edge the list scrolls half the distance under the row");
+    lifted->move({10, 100 - 10}, list, w.root, find, clock);
+    check(near(list.offset(), 15), "Past the top edge it scrolls back");
+    w.at(w.env.now + 1);
+    lifted->drop(rows[0].second, w.env.clock());
+    check(rows[0].second->zPosition() == 0 && model(*rows[0].second, Channel::scaleX) == 1 && near(rows[0].second->tracks().property[std::size_t(Channel::scaleX)].duration, .18),
+        "The drop settles the row in .18 s");
+    lifted->cancel(saved, find);
+    bool home = true;
+    for (auto& [key, row] : rows) home = home && model(*row, Channel::translateY) == 0 && model(*row, Channel::scaleY) == 1 && row->zPosition() == 0;
+    check(home, "A cancel puts every row back in the saved order at once");
+    check(d::ListReorder::landingDelay(false) == .2 && d::ListReorder::landingDelay(true) == 0, "The re-render waits .2 s for the landing, 0 under Reduce Motion");
+    std::vector<std::pair<d::DragGrip::Phase, Point>> phases;
+    d::ListReorder::simulate({7, 30}, -2, 50, [&](d::DragGrip::Phase phase, Point at) { phases.emplace_back(phase, at); });
+    check(phases.size() == 3 && phases[0] == std::pair{d::DragGrip::Phase::began, Point{7, 30}} && phases[2] == std::pair{d::DragGrip::Phase::ended, Point{7, -70}},
+        "simulate: began at the start, moved and ended slots x pitch away");
+}
+
 // ---------------------------------------------------------------------------
 // HUDSlider, HUDSliderBubble (HUDDesignSlider.swift)
 // ---------------------------------------------------------------------------
@@ -480,6 +552,16 @@ void menus() {
     check(model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1 && model(caret, Channel::translateY) == 2 && near(caret.tracks().property[std::size_t(Channel::translateY)].duration, .16), "Hover: bar, caret 2 px down");
     w.move(std::nullopt); dropdown.setOpen(true);
     check(near(model(caret, Channel::rotation), 3.14159265358979323846) && model(must(dropdown.layer(), "dropdown.bar"), Channel::scaleY) == 1, "Open: caret turned, bar kept");
+    // The shared caret (Mac 345340f): any MenuAnchor shows its menu open; caretLayer / renderCaret draw and move it.
+    check(dynamic_cast<d::MenuAnchor*>(&dropdown) && dynamic_cast<d::MenuAnchor&>(dropdown).isOpen(), "The dropdown is a menu anchor");
+    auto& chip = d::Dropdown::caretLayer(w.b, "chip.caret", {8, 5}, {7.5, 7.5});
+    w.host(chip);
+    check(chip.bounds() == d::Size{8, 5} && chip.position() == Point{7.5, 7.5} && near(*shapeFill(chip), w.env.palette.accentInk()), "caretLayer: the yellow caret at its size and centre");
+    d::Dropdown::renderCaret(chip, true, true, w.env.clock());
+    check(near(model(chip, Channel::rotation), 3.14159265358979323846) && model(chip, Channel::translateY) == 2 && near(chip.tracks().property[std::size_t(Channel::rotation)].duration, .16),
+        "renderCaret: turned while open, nudged 2 px on hover (.16 E)");
+    d::Dropdown::renderCaret(chip, false, false, w.env.clock());
+    check(model(chip, Channel::rotation) == 0 && model(chip, Channel::translateY) == 0, "renderCaret: at rest when closed and not hovered");
     const auto popUp = items(dropdown, w.root);
     check(popUp.size() == 1 && popUp[0].role == d::AccessibilityRole::popUp && popUp[0].value == "简体中文", "popUp with the value");
     auto& small = w.b.make<d::Dropdown>("small", "Sort", "Newest first", std::nullopt, d::Dropdown::Height::compact);
@@ -836,6 +918,13 @@ void cards() {
     check(model(must(tile.layer(), "tile.brackets"), Channel::opacity) == 1 && model(must(tile.layer(), "tile.brackets.selected"), Channel::opacity) == 1
         && model(must(tile.layer(), "tile.brackets.rest"), Channel::opacity) == 0 && near(must(tile.layer(), "tile.brackets.selected").tracks().property[std::size_t(Channel::opacity)].duration, .16),
         "Selection: brackets in (.1) and the -4 inset cross-faded in over .16");
+    {
+        // HUDArchiveTile.applyArrangeMark: the bracket rectangles, 4 px wider while lifted.
+        const auto rest = d::ArchiveTile::arrangeMarkRects({0, 0, 100, 80}, false), lifted = d::ArchiveTile::arrangeMarkRects({0, 0, 100, 80}, true);
+        check(near(rest[0], {0, 0, 9, 2}) && near(rest[1], {0, 78, 9, 2}) && near(rest[2], {0, 0, 2, 80}) && near(rest[3], {91, 0, 9, 2}) && near(rest[4], {91, 78, 9, 2}) && near(rest[5], {98, 0, 2, 80}),
+            "Arrange marks: two 9 x 2 arms and a 2 px upright at each side");
+        check(near(lifted[0], {-4, -4, 9, 2}) && near(lifted[5], {102, -4, 2, 88}), "Lifted: 4 px wider all round");
+    }
     check(near(*fill(must(tile.layer(), "tile.label")), d::fixed::counterBackground) && near(textColor(must(tile.layer(), "tile.label.text")), w.env.palette.yellow()), "Selected strip #151515, yellow label");
     w.move(w.centre(tile));
     check(model(must(tile.layer(), "tile.well"), Channel::translateY) == -2 && near(model(doc, Channel::rotation), -2 * 3.14159265358979323846 / 180) && model(doc, Channel::translateY) == -3,
@@ -849,6 +938,54 @@ void cards() {
         d::ArchiveTile::Style::classified);
     check(find(classified.layer(), "tile.stamp") && d::textOf(must(classified.layer(), "tile.stamp.text")).text() == "CLASSIFIED" && near(textColor(must(classified.layer(), "tile.label.text")), d::fixed::red),
         "Classified: the red stamp and label");
+    {
+        // HUDArchiveTile.setPoster(_:animated:) (Mac 63d257a, 8dbb071 through
+        // b8cc1df's crossFade): a late poster on a tile without one cross-fades
+        // with the doc glyph in one fade of the well; the glyph is hidden at
+        // its end with its model opacity back at 1.
+        const d::ImageSource first{d::ImageSource::Kind::memory, "poster.first", {}, 1}, second{d::ImageSource::Kind::memory, "poster.second", {}, 1};
+        const auto fade = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::fade)][0]; };
+        auto& late = w.b.make<d::ArchiveTile>("late", 1, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(late.layer());
+        const double t0 = w.env.now, hover = d::duration::hover;
+        late.setPoster(first, true);
+        const auto& poster = must(late.layer(), "tile.poster");
+        const auto& glyph = must(late.layer(), "tile.doc");
+        check(fade(poster).present() && near(fade(poster).start, t0) && near(fade(poster).duration, hover) && fade(glyph).present() && near(fade(glyph).duration, hover),
+            "A late poster and the glyph share one fade over duration::hover");
+        check(near(poster.presented(Channel::opacity, t0), 0) && near(glyph.presented(Channel::opacity, t0), 1) && !glyph.hidden() && !poster.hidden()
+            && near(poster.presented(Channel::opacity, t0 + hover / 2), .5) && near(glyph.presented(Channel::opacity, t0 + hover / 2), .5)
+            && model(poster, Channel::opacity) == 1 && model(glyph, Channel::opacity) == 0, "The poster fades 0 -> 1 as the glyph fades 1 -> 0, ease-in-out");
+        w.at(t0 + hover + .001);
+        check(glyph.hidden() && model(glyph, Channel::opacity) == 1 && near(poster.presented(Channel::opacity, w.env.now), 1) && !poster.animating(w.env.now),
+            "After the fade the glyph is hidden at its model opacity 1 and the poster rests");
+        late.setPoster(second, true);
+        check(!poster.animating(w.env.now) && !glyph.animating(w.env.now) && glyph.hidden() && !poster.hidden(), "A poster replacing a shown one swaps at once");
+        // setPoster(nullopt) mid-fade restores the glyph; the pending hide does nothing.
+        auto& cleared = w.b.make<d::ArchiveTile>("cleared", 2, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(cleared.layer());
+        cleared.setPoster(first, true);
+        w.at(w.env.now + hover / 2);
+        cleared.setPoster(std::nullopt);
+        const auto& clearedGlyph = must(cleared.layer(), "tile.doc");
+        const auto& clearedPoster = must(cleared.layer(), "tile.poster");
+        check(!clearedGlyph.hidden() && model(clearedGlyph, Channel::opacity) == 1 && near(clearedGlyph.presented(Channel::opacity, w.env.now), 1) && clearedPoster.hidden()
+            && !clearedPoster.animating(w.env.now), "Clearing the poster mid-fade shows the glyph at once");
+        w.at(w.env.now + hover);
+        check(!clearedGlyph.hidden() && model(clearedGlyph, Channel::opacity) == 1, "The fade's pending glyph hide does nothing after a later setPoster");
+        // Not animated (a page build) and Reduce Motion: at once.
+        auto& built = w.b.make<d::ArchiveTile>("built", 3, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(built.layer());
+        built.setPoster(first);
+        check(must(built.layer(), "tile.doc").hidden() && !must(built.layer(), "tile.poster").animating(w.env.now), "A poster set by a build shows at once");
+        w.env.reduceMotion = true;
+        auto& reduced = w.b.make<d::ArchiveTile>("reduced", 4, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(reduced.layer());
+        reduced.setPoster(first, true);
+        check(must(reduced.layer(), "tile.doc").hidden() && !must(reduced.layer(), "tile.poster").animating(w.env.now)
+            && model(must(reduced.layer(), "tile.poster"), Channel::opacity) == 1, "Reduce Motion shows a late poster at once");
+        w.env.reduceMotion = false;
+    }
     w.env.reduceMotion = true; bool now = false; classified.playRemoval([&] { now = true; });
     check(now, "Reduce Motion removes at once");
 }
@@ -893,6 +1030,46 @@ void header() {
         const auto& group = must(header.layer(), "header.title"), &rule = must(header.layer(), "header.rule");
         check(group.wipeOrigin == d::WipeOrigin::left && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].values[0] == 0
             && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .05) && near(rule.anchorPoint().x, 0), "Title wipe .45 with fade; rule grows after .05");
+        // The HUD's open holds the entrance back until the centre shows: the wipe
+        // and its fade by the delay, the rule by .05 + the delay.
+        header.playEntrance(w.env.clock(), .2);
+        check(near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].start - w.env.now, .2) && near(group.tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - w.env.now, .2)
+            && near(group.tracks().slots[std::size_t(d::MotionSlot::wipe)][0].duration, .45) && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].start - w.env.now, .25)
+            && near(rule.tracks().slots[std::size_t(d::MotionSlot::grow)][0].duration, .42), "A delayed entrance: the title wipe and fade after .2, the rule after .25");
+        // The extras (Mac 7d57641): the breadcrumb, code, tail, Back and the
+        // actions, in reading order, fade in through the stagger with the
+        // title (no slide), each the stagger's delay plus the open's later.
+        {
+            const auto extras = header.extras();
+            const std::vector<const d::Layer*> order{&must(header.layer(), "header.crumbs"), &must(header.layer(), "header.code"), &must(header.layer(), "header.tail"),
+                &header.back()->layer(), &must(header.layer(), "header.actions")};
+            check(extras.size() == order.size() && std::equal(extras.begin(), extras.end(), order.begin()), "Extras: crumbs, code, tail, Back, actions");
+            for (std::size_t i = 0; i < extras.size(); ++i) {
+                const auto& slot = extras[i]->tracks().slots[std::size_t(d::MotionSlot::enter)];
+                const auto& channels = extras[i]->tracks().slotChannels[std::size_t(d::MotionSlot::enter)];
+                check(slot[0].present() && channels[0] == d::Channel::opacity && near(slot[0].start - w.env.now, .2 + d::staggerDelay(int(i))) && near(slot[0].duration, d::duration::entrance)
+                    && !slot[1].present() && !slot[2].present(), "Extra " + std::to_string(i) + " fades in at .2 + its stagger, without a slide");
+            }
+            check(must(header.layer(), "header.actions").partRoot() && header.back()->layer().partRoot(), "The actions and Back fade as one image each (parts of their own)");
+            // E-D2: nothing the actions and Back draw meets anything the rest
+            // of the header draws (text boxes with their padding), so their
+            // groups and the header's composite a leave as one image would.
+            const d::Layer& actionsLayer = must(header.layer(), "header.actions");
+            const d::Layer& backLayer = header.back()->layer();
+            std::vector<d::Rect> own, rest;
+            const std::function<void(const d::Layer&, bool)> walk = [&](const d::Layer& l, bool split) {
+                if (l.hidden()) return;
+                split = split || &l == &actionsLayer || &l == &backLayer;
+                if ((l.content() || l.text()) && l.bounds().width > 0 && l.bounds().height > 0)
+                    (split ? own : rest).push_back(d::convert(d::localBounds(l), l, header.layer()));
+                for (const d::Layer* child : l.children()) walk(*child, split);
+            };
+            walk(header.layer(), false);
+            const auto meets = [](d::Rect a, d::Rect b) { return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height; };
+            bool overlap = false;
+            for (const auto& a : own) for (const auto& b : rest) overlap = overlap || meets(a, b);
+            check(own.size() > 2 && rest.size() > 5 && !overlap, "The actions and Back draw clear of the rest of the header");
+        }
         header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
         check(!header.back() && header.crumbTexts() == std::vector<std::string>{"// HUD"} && clear.layer().parent() == nullptr && near(must(header.layer(), "header.title").frame().x, 0),
             "Reconfigured: no back, one crumb, actions removed");
@@ -988,6 +1165,48 @@ void textFields() {
     field.beginEditing(); field.editorChanged("x");
     check(field.frame().state() == d::FieldFrame::State::focused, "An edit clears the invalid state");
     field.endEditing(false);
+
+    // setAccent / setStyle (an owner opening one field again with this open's
+    // card colour and style, Personal ID): the ring, the 3 px bar and the
+    // caret of the next edit agree; during an edit both are refused, so the
+    // ring and bar never leave the caret's colour.
+    {
+        const Color first = d::rgb(0xFF6A00), second = d::rgb(0x6EDFE8), third = d::rgb(0x9B5CFF);
+        d::TextField::Options accented; accented.accent = first; accented.background = d::rgb(0x212121);
+        auto& tinted = w.b.make<d::TextField>("tinted", "Tinted", "Talos", "", d::Size{220, 30}, accented);
+        tinted.setEditorHost(&host); w.host(tinted.layer());
+        const auto& bar = must(tinted.layer(), "field.bar");
+        check(tinted.frame().focusColor && near(*tinted.frame().focusColor, first), "The option's accent is the frame's focus colour");
+        check(tinted.setAccent(second) && tinted.frame().focusColor && near(*tinted.frame().focusColor, second) && tinted.options().accent && near(*tinted.options().accent, second),
+            "setAccent on an idle field takes the new colour");
+        check(tinted.frame().state() == d::FieldFrame::State::normal && near(*border(tinted.layer()), w.env.palette.token(d::ThemeToken::ringField)) && bar.hidden()
+            && near(*fill(tinted.layer()), d::rgb(0x212121)), "An idle field keeps its rest ring, background and hidden bar");
+        tinted.beginEditing();
+        check(tinted.editing() && host.request && near(host.request->caretColor, second), "The next edit's caret takes the new accent");
+        check(near(*border(tinted.layer()), second) && !bar.hidden() && near(*fill(bar), second), "Its ring and bar take the new accent");
+        check(!tinted.setAccent(third) && near(*tinted.frame().focusColor, second) && near(*tinted.options().accent, second)
+            && near(*border(tinted.layer()), second) && near(*fill(bar), second) && near(host.request->caretColor, second),
+            "During an edit setAccent is refused: ring, bar and caret keep one colour");
+        const d::TextStyle bigger{18, d::FontWeight::bold, d::rgb(0xFFFFFF), 1};
+        check(!tinted.setStyle(bigger) && !tinted.options().style, "During an edit setStyle is refused");
+        tinted.setInvalid(true);
+        check(near(*border(tinted.layer()), d::fixed::red) && near(*fill(bar), d::fixed::red), "Invalid mid-edit: red ring and bar");
+        tinted.setInvalid(false);
+        check(near(*border(tinted.layer()), second) && near(*fill(bar), second), "Valid again: the edit's accent, not a refused one");
+        tinted.endEditing(true);
+        check(tinted.setStyle(bigger) && tinted.options().style && near(d::textOf(must(tinted.layer(), "field.idle")).style().size, 18),
+            "setStyle on an idle field redraws the idle label in the new style");
+        check(tinted.setAccent(third), "Idle again: setAccent applies");
+        tinted.beginEditing();
+        check(host.request && near(host.request->style.size, 18) && near(host.request->caretColor, third) && near(*border(tinted.layer()), third) && near(*fill(bar), third),
+            "The next edit takes the new style and colour");
+        tinted.endEditing(false);
+        check(tinted.setAccent(std::nullopt) && !tinted.frame().focusColor, "No accent: the frame's default");
+        tinted.beginEditing();
+        check(near(host.request->caretColor, w.env.palette.accentInk()) && near(*border(tinted.layer()), w.env.palette.accentInk()) && near(*fill(bar), w.env.palette.accentInk()),
+            "Without an accent the ring, bar and caret are accentInk");
+        tinted.endEditing(false);
+    }
 
     d::TextField::Options limited; limited.maximumLength = 5;
     auto& code = w.b.make<d::TextField>("code", "Code", "line\nbreak", "", d::Size{200, 34}, limited);
@@ -1505,7 +1724,28 @@ void oracle(const Json& data) {
             } else run.skip(label("header", "configured"), theme.light, hex(theme));
             if (language == endfield::core::Language::english && !theme.light && theme.accent == "FAD41F") {
                 header.setCounter("1,284"); header.playEntrance(w.env.clock());
-                if (const Json* r = row("header", "counterAndEntrance")) run.compare(label("header", "counterAndEntrance"), *r, header.layer(), w.root, header.controls());
+                if (const Json* r = row("header", "counterAndEntrance")) {
+                    run.compare(label("header", "counterAndEntrance"), *r, header.layer(), w.root, header.controls());
+                    // The extras' fade-in (Mac 7d57641): child by child (the
+                    // trees share their order), the same children enter
+                    // (hud.enter) at the same delays. A fixture recorded before
+                    // 7d57641 holds no header hud.enter and checks nothing here.
+                    const auto& macChildren = (*r)["layer"]["children"].array();
+                    const auto& ourChildren = header.layer().children();
+                    std::size_t entering = 0, same = 0;
+                    for (std::size_t i = 0; i < macChildren.size() && i < ourChildren.size(); ++i) {
+                        std::optional<double> mac, ours;
+                        if (macChildren[i].contains("animations"))
+                            for (const auto& a : macChildren[i]["animations"].array())
+                                if (a["key"].isString() && a["key"].string() == "hud.enter") mac = a.contains("delay") ? a["delay"].number() : 0.0;
+                        const auto& enter = ourChildren[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0];
+                        if (enter.present()) ours = enter.start - w.env.now;
+                        entering += mac.has_value();
+                        same += mac.has_value() == ours.has_value() && (!mac || near(*mac, *ours));
+                    }
+                    if (entering > 0)
+                        check(entering == 5 && macChildren.size() == ourChildren.size() && same == ourChildren.size(), label("header", "counterAndEntrance") + ": the extras enter as on the Mac");
+                }
                 header.configure({}, "SYS-01", d::ModuleTitle::make("System", "系统", language), "", false);
                 if (const Json* r = row("header", "reconfiguredNoBack")) run.compare(label("header", "reconfiguredNoBack"), *r, header.layer(), w.root, header.controls());
             }
@@ -1537,7 +1777,7 @@ void oracle(const Json& data) {
 
 int main(int argc, char** argv) {
     try {
-        controlBase(); rows(); toggles(); buttons(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
+        controlBase(); rows(); toggles(); buttons(); gripRules(); listReorder(); sliders(); menus(); tabs(); badges(); scrolling(); cards(); header(); redaction(); textFields(); emission();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr)) oracle(*data);
         else std::cout << "hud-design-source.json not present: Swift-derived contracts only\n";
         std::cout << "hud_design_components_tests: " << checks << " checks passed\n";

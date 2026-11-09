@@ -15,7 +15,7 @@ struct Graph {
     gpu::AudioDefaultDeviceAccess access(){gpu::AudioDefaultDeviceAccess a;
         a.capability=[this]{++capabilities;return gpu::AudioDefaultDeviceCapability{supported,10,0,26100,supported?0:-7};};
         a.validateEndpoint=[this](std::wstring_view id,Flow f){++validations;selected=f;if(validationFailAt==validations)return -10;if(id==L"headphones"||id==L"speakers")return f==Flow::output?0:-11;if(id==L"mic"||id==L"usb-mic")return f==Flow::input?0:-11;return -12;};
-        a.current=[this](Flow f,Role r,std::wstring&result){++reads;const auto n=static_cast<std::size_t>(r);result=(f==Flow::output?outputs:inputs)[n];if(badReadback&&!writes.empty()&&reads==3)result=L"external";return 0;};
+        a.current=[this](Flow f,Role r,std::wstring&result){++reads;const auto n=static_cast<std::size_t>(r);result=(f==Flow::output?outputs:inputs)[n];if(badReadback&&!writes.empty()&&reads==4)result=L"external";return 0;};
         a.select=[this](std::wstring_view id,Role role){writes.push_back({std::wstring(id),role});auto&values=selected==Flow::output?outputs:inputs;const auto n=static_cast<std::size_t>(role);
             if(reenter){reenter=false;check(!selector->select(selected,id).succeeded(),"Reentrant mixer mutation is rejected before another write");}
             if(rollbackFailure&&writes.size()>2)return -30;
@@ -28,11 +28,14 @@ struct Graph {
 void success(){Graph g;gpu::AudioDefaultDeviceSelector selector(g.access());g.selector=&selector;
     check(g.capabilities==0&&g.reads==0&&g.writes.empty(),"Constructing selector is inert");
     const auto result=selector.select(Flow::output,L"headphones");
-    check(result.succeeded()&&result.changed&&result.writes==2&&result.restored==0,"Two normal default roles are set and independently read back");
-    check(g.outputs[0]==L"headphones"&&g.outputs[1]==L"headphones"&&g.outputs[2]==L"communications-output","Communications default is preserved");
-    check(g.inputs[0]==L"mic"&&g.inputs[1]==L"mic","Output switch does not touch input defaults");
-    check(!selector.select(Flow::output,L"headphones").changed&&g.writes.size()==2,"Already-selected defaults require no writes");
-    check(selector.select(Flow::input,L"usb-mic").succeeded()&&g.inputs[0]==L"usb-mic"&&g.inputs[1]==L"usb-mic"&&g.inputs[2]==L"communications-input","Input selection validates capture flow and preserves communications role");
+    check(result.succeeded()&&result.changed&&result.writes==3&&result.restored==0,"Console, multimedia and communications defaults are each set and read back");
+    check(g.writes[0].role==Role::console&&g.writes[1].role==Role::multimedia&&g.writes[2].role==Role::communications,"Roles are written in order, as Windows Sound settings sets them");
+    check(g.outputs[0]==L"headphones"&&g.outputs[1]==L"headphones"&&g.outputs[2]==L"headphones","The communications default follows the choice");
+    check(g.inputs[0]==L"mic"&&g.inputs[1]==L"mic"&&g.inputs[2]==L"communications-input","Output switch does not touch input defaults");
+    check(!selector.select(Flow::output,L"headphones").changed&&g.writes.size()==3,"Already-selected defaults require no writes");
+    check(selector.select(Flow::input,L"usb-mic").succeeded()&&g.inputs[0]==L"usb-mic"&&g.inputs[1]==L"usb-mic"&&g.inputs[2]==L"usb-mic","Input selection validates capture flow and sets every role");
+    g.inputs[2]=L"mic";const auto partial=selector.select(Flow::input,L"usb-mic");
+    check(partial.succeeded()&&partial.writes==1&&g.writes.back().role==Role::communications,"Only the roles that differ are written");
     g.reenter=true;check(selector.select(Flow::output,L"speakers").succeeded(),"Outer explicit selection completes after rejected reentrant call");
 }
 void failures(){Graph unsupported;unsupported.supported=false;gpu::AudioDefaultDeviceSelector unavailable(unsupported.access());check(!unavailable.select(Flow::output,L"headphones").succeeded()&&unsupported.writes.empty()&&unsupported.validations==0,"Missing version/interface capability prevents all endpoint accesses and writes");
@@ -53,6 +56,7 @@ void failures(){Graph unsupported;unsupported.supported=false;gpu::AudioDefaultD
     check(!thrown.succeeded()&&thrown.restored==1&&throws.outputs[0]==L"speakers","Exceptional backend failure still follows bounded rollback");
     Graph read;read.badReadback=true;gpu::AudioDefaultDeviceSelector mismatch(read.access());const auto wrong=mismatch.select(Flow::output,L"headphones");
     check(!wrong.succeeded()&&wrong.concurrentChange&&wrong.restored==1,"Success HRESULT with wrong default readback is not reported as successful selection");
+    check(wrong.raced()&&!observed.raced()&&!result.raced()&&!partial.raced()&&!unplugged.raced()&&!thrown.raced(),"Only a readback mismatch with every call succeeding counts as a race, not a failed write seen beside an external change");
 }
 }
 int main(int argc,char**argv){try{success();failures();

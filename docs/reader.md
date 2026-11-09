@@ -1,6 +1,6 @@
 # Reader
 
-Open PDF, EPUB or TXT books from Finder, a drop or the Temporary File Shelf. The library keeps references to the originals. Removing a book from the library does not delete its file.
+Open PDF, EPUB or TXT books from Finder, a drop or the Temporary File Shelf. The library keeps references to the originals. Right-click a book in the library or click its ⋯ button to open, relink or remove it. Removing a book from the library does not delete its file.
 
 Choose Left to right for horizontal gestures or arrow-key page turns. Choose Top to bottom for vertical scrolling. New text books start at font size 10, line spacing 2 and page margins 16. Reading settings and bookmarks open beneath their buttons.
 

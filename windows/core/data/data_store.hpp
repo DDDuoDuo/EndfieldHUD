@@ -3,10 +3,13 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ehud::data {
@@ -20,6 +23,9 @@ private: StoreErrorCode code_;
 
 std::string makeUUID();
 bool validUUID(std::string_view value) noexcept;
+// Foundation UUID(uuidString:)?.uuidString: the canonical uppercase form, or
+// nullopt when the text is not 8-4-4-4-12 hexadecimal digits (either case).
+std::optional<std::string> canonicalUUID(std::string_view value);
 double foundationNow(); // seconds since 2001-01-01 UTC, matching Mac Codable Date
 bool validWindowsFilePath(std::string_view path) noexcept;
 // Native references use an additive v1 locator: referencePlatform="windows"
@@ -31,15 +37,32 @@ std::string makeWindowsMediaReference(std::string path, std::string displayName,
     std::optional<double> duration = {}, int frameCount = 1);
 
 // Mac HUDModuleLayout (Sources/HUDNavigationTarget.swift:84-144): order and
-// visibility of the 17 right-hand modules (System > Modules), by HUDModule
+// visibility of the 17 right-hand modules (Display > Modules), by HUDModule
 // raw value. Every value is normalized like the Mac init: unknown and
 // repeated names are dropped, configurable modules missing from the order are
 // appended in default order (modules a later version adds), hidden is kept in
 // list order, and when all are hidden the first of the order is shown again.
 // Add App is not configurable. No UI state (drag, scroll) lives here.
+template <std::size_t A, std::size_t B>
+constexpr std::array<std::string_view, A + B> joinedModules(const std::array<std::string_view, A>& first, const std::array<std::string_view, B>& second) {
+    std::array<std::string_view, A + B> out{};
+    for (std::size_t i = 0; i < A; ++i) out[i] = first[i];
+    for (std::size_t i = 0; i < B; ++i) out[A + i] = second[i];
+    return out;
+}
 struct ModuleLayout {
     static constexpr std::array<std::string_view, 17> configurable{"notes", "fileShelf", "clipboard", "archive", "mediaAssembly",
         "minigame", "nowPlaying", "volume", "projection", "reader", "workMode", "calendar", "map", "eventLog", "profile", "account", "power"};
+    // HUDDesktopWatchNavigation.fixedModules (Sources/HUDNavigationTarget.swift:59):
+    // the modules outside Display > Modules, always in the navigation.
+    static constexpr std::array<std::string_view, 6> fixed{"system", "display", "hotkeys", "about", "storage", "activityMonitor"};
+    // HUDOverlayLayout.openableModules: every module the navigation can open,
+    // in navigation order (fixed, then configurable). Add App is an action,
+    // never a place to open on.
+    static constexpr auto openable = joinedModules(fixed, configurable);
+    static bool isOpenable(std::string_view module) noexcept;
+    // A HUDModule raw value: an openable module or Add App.
+    static bool isModule(std::string_view module) noexcept;
     std::vector<std::string> order{configurable.begin(), configurable.end()}, hidden;
     static ModuleLayout normalized(std::vector<std::string> order, std::vector<std::string> hidden);
     std::vector<std::string> visible() const;
@@ -51,6 +74,16 @@ struct ModuleLayout {
     bool canSetHidden(std::string_view module, bool value) const; // false when hiding the last visible
     bool setHidden(std::string_view module, bool value);
     bool move(std::string_view module, std::ptrdiff_t index);    // clamped; false when unchanged
+    // HUDModuleLayout.listsTarget: a tile of the right-hand list. `target` is a
+    // module raw value ("addApp" for Add App) or empty for a saved app.
+    static bool listsTarget(std::string_view target) noexcept;
+    // HUDModuleLayout.arranging(_:over:) (Display > Modules > Arrange on HUD):
+    // the layout with the visible `module` dragged over `target`, a tile of
+    // the right-hand list (nullopt: nothing under the pointer; empty: a saved
+    // app). Over another visible module it takes that module's place; over a
+    // saved app or Add App it goes after the last visible module. Nullopt
+    // when nothing moves; hidden modules never move or act as targets.
+    std::optional<ModuleLayout> arranging(std::string_view module, std::optional<std::string_view> target) const;
     bool operator==(const ModuleLayout&) const = default;
 };
 // Mac ProjectionSettings.Values (Sources/ProjectionSettings.swift:17-41),
@@ -66,6 +99,110 @@ struct ProjectionSettings {
     bool operator==(const ProjectionSettings&) const = default;
 };
 
+// Swift String(prefix(n)): the first n extended grapheme clusters. The owner
+// passes the ICU rule the profile owner uses (native::graphemePrefix): the
+// app gives it to its SettingsStore, so every save stores the cut text as the
+// Mac does. The data layer has no ICU, and without a rule text is kept whole.
+using CharacterPrefix = std::function<std::string(std::string_view, std::size_t)>;
+// Mac HUDOverlayLayout (Sources/HUDOverlayLayout.swift): Display > HUD
+// elements (the title, the Sanity gauge and the facility alert tags: their
+// place, size, Show switches and the title's text) and Display > Open on.
+// Stored as one object under "hudOverlayLayout", removed while it holds the
+// defaults. Reading mirrors Swift JSONDecoder on its Stored form: every field
+// is optional and null reads as missing, but a field of the wrong type (or a
+// stored value that is not an object) drops the WHOLE layout to the defaults;
+// an unknown openModule is no error and reads as nil. The rest of the
+// settings record always loads (validateSettings never checks this key).
+struct OverlayLayout {
+    enum class Element : std::uint8_t { title, sanity, alerts };
+    // An offset in core-plane points (the 1000 x 640 plane, y down) from the
+    // element's authored anchor, and its size (1 = as designed). Normalized:
+    // x and y clamp to -1000...1000 (non-finite 0), size to 0.5...2 (non-finite 1).
+    struct Placement {
+        double x{}, y{}, size{1};
+        Placement normalized() const noexcept;
+        bool operator==(const Placement&) const = default;
+    };
+    static constexpr std::string_view key{"hudOverlayLayout"};
+    static constexpr double minimumSize{.5}, maximumSize{2}, offsetLimit{1000};
+    static constexpr std::size_t textLimit{24};
+    static constexpr std::string_view defaultTitle{"ENDFIELDHUD"}, defaultSubtitle{"SYSTEM INTERFACE"};
+    Placement title, sanity, alerts;
+    bool showsTitle{true}, showsSanity{true};
+    std::string titleText, subtitleText; // one string for every language; empty shows the default
+    std::optional<std::string> openModule; // nil opens on the module last opened
+    Placement& operator[](Element) noexcept;
+    const Placement& operator[](Element) const noexcept;
+    std::string_view shownTitle() const noexcept { return titleText.empty() ? defaultTitle : std::string_view(titleText); }
+    std::string_view shownSubtitle() const noexcept { return subtitleText.empty() ? defaultSubtitle : std::string_view(subtitleText); }
+    bool isDefault() const { return *this == OverlayLayout{}; }
+    // cleanText: split on newlines, trim each line's spaces, drop empty lines,
+    // join with one space, keep at most textLimit Characters.
+    static std::string cleanText(std::string_view, const CharacterPrefix& prefix = {});
+    OverlayLayout normalized(const CharacterPrefix& prefix = {}) const; // openModule outside ModuleLayout::openable is nil
+    static std::optional<OverlayLayout> decode(const Json&); // nullopt where JSONDecoder throws
+    Json encode() const; // every field, except a nil openModule
+    bool operator==(const OverlayLayout&) const = default;
+};
+
+// The Restore defaults scopes (Mac HUDSettingsScope, Sources/Models.swift):
+// the System page; the Display page and every page under it (Open on,
+// Modules, HUD elements, App / menu bar icon, Battery alert with the bar);
+// Display > HUD elements alone.
+enum class SettingsScope : std::uint8_t { system, display, hudElements };
+// Every saved key and the Restore that resets it, in one list (Mac
+// HUDSettingsScope.fields and unscopedFields), so a new key joins a Restore by
+// adding one line. hudElements keys are reset by Display's Restore too, and
+// HUD elements keeps hudOverlayLayout's Open on. nullopt: no Restore touches
+// the key (the hotkey has its own Restore; the others are not settings rows).
+// A key not listed here (another build's) is never reset either.
+struct ScopedSetting { std::string_view key; std::optional<SettingsScope> scope; };
+inline constexpr std::array<ScopedSetting, 50> scopedSettings{{
+    // System, plus the Windows display choice beside the Mac one.
+    {"language", SettingsScope::system}, {"launchAtLogin", SettingsScope::system}, {"closeOnFocusLost", SettingsScope::system},
+    {"openOnActiveDisplay", SettingsScope::system}, {"hudDisplayUUID", SettingsScope::system}, {"hudDisplayName", SettingsScope::system},
+    {"windowsDisplayID", SettingsScope::system}, {"windowsDisplayName", SettingsScope::system},
+    // Display
+    {"hudScale", SettingsScope::display}, {"hudOffsetX", SettingsScope::display}, {"hudOffsetY", SettingsScope::display},
+    {"parallaxIntensity", SettingsScope::display}, {"perspectiveIntensity", SettingsScope::display}, {"backgroundDarkness", SettingsScope::display},
+    {"blurAmount", SettingsScope::display}, {"theme", SettingsScope::display}, {"clockFormat", SettingsScope::display},
+    {"clockStyle", SettingsScope::display}, {"centerLogo", SettingsScope::display}, {"centerLogoRevision", SettingsScope::display},
+    {"accentHex", SettingsScope::display}, {"ambientAnimation", SettingsScope::display}, {"reduceMotion", SettingsScope::display},
+    {"lowPowerVisualMode", SettingsScope::display}, {"recordingMode", SettingsScope::display}, {"dailyBootLog", SettingsScope::display},
+    {"showsCloseHint", SettingsScope::display},
+    // App / menu bar icon
+    {"applicationIcon", SettingsScope::display},
+    // Battery alert, with the bar's position, size and length
+    {"alertMetric", SettingsScope::display}, {"displayMode", SettingsScope::display}, {"batteryAlertsEnabled", SettingsScope::display},
+    {"displayDuration", SettingsScope::display}, {"placement", SettingsScope::display}, {"customScreenID", SettingsScope::display},
+    {"customPositionX", SettingsScope::display}, {"customPositionY", SettingsScope::display}, {"scale", SettingsScope::display},
+    {"chargeBarLength", SettingsScope::display},
+    // Modules
+    {"hudModuleOrder", SettingsScope::display}, {"hudHiddenModules", SettingsScope::display},
+    // Open on and HUD elements
+    {"hudOverlayLayout", SettingsScope::hudElements}, {"facilityAlerts", SettingsScope::hudElements},
+    // No Restore: the hotkey (windowsSummonHotkeyDisabled is its derived
+    // mirror, never in the record), the device popup, the Storage disk, the
+    // Projection pen, the minigame best score and the boot log's last day.
+    {"summonShortcut", std::nullopt}, {"summonHotkeyEnabled", std::nullopt}, {"windowsSummonShortcut", std::nullopt},
+    {"devicePopupEnabled", std::nullopt}, {"storageVolume", std::nullopt}, {"projection.settings.v1", std::nullopt},
+    {"orbipom.bestScore.v1", std::nullopt}, {"dailyBootLogLastDay", std::nullopt},
+}};
+
+// The record's open string choices a reader knows, default first: the Mac
+// HUDClockStyle, HUDCenterLogo, HUDChargeMetric and DisplayMode raw values.
+// A saved value outside its list (another build's) loads and round-trips
+// unchanged, and knownOr reads it as the list's first entry, as the Mac
+// rawValue decoders fall back to the default. (theme, language, clockFormat
+// and placement are closed sets validateSettings already checks.)
+struct SettingsChoices {
+    static constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
+    static constexpr std::array<std::string_view, 5> centerLogos{"endfield", "rhodesIsland", "babel", "rhineLab", "custom"};
+    static constexpr std::array<std::string_view, 6> alertMetrics{"battery", "ram", "cpu", "network", "disk", "gpu"};
+    static constexpr std::array<std::string_view, 3> displayModes{"whenChargingStarts", "always", "never"};
+};
+std::string_view knownOr(std::string_view value, std::span<const std::string_view> choices) noexcept;
+
 // One preference record (the Mac AppConfiguration keys plus additive Windows
 // keys). String choices such as displayMode/alertMetric are not closed sets:
 // a value another build wrote loads unchanged and its reader falls back.
@@ -76,8 +213,8 @@ struct ProjectionSettings {
 // present; dailyBootLogLastDay (local yyyy-MM-dd) and projection.settings.v1
 // live outside AppConfiguration, so Restore Defaults keeps them. Windows
 // stores "never"/"gpu" in displayMode/alertMetric directly: its file is never
-// read by a Mac, so the Mac's displayModeExtension/alertMetricExtension pair
-// exists only in the Mac import. Windows 1.2.0 round-trips every new key.
+// read by a Mac, so it never writes the Mac's displayModeExtension/
+// alertMetricExtension pair. Windows 1.2.0 round-trips every new key.
 // D2: summonHotkeyEnabled is the switch; the store migrates a 1.2.0
 // windowsSummonHotkeyDisabled on load (the Mac key wins when both exist) and,
 // for Windows 1.2.0 readers, writes it back as a mirror (true while the hotkey
@@ -85,10 +222,21 @@ struct ProjectionSettings {
 struct Settings {
     Json fields{Json::Object{}};
     static Settings defaults();
-    // Mac restoreDefaults resets AppConfiguration only: keys outside it
-    // (orbipom.bestScore.v1, projection.settings.v1, dailyBootLogLastDay and
-    // the Windows Storage disk choice storageVolume) survive.
-    static Settings restoredDefaults(const Settings& current);
+    using Scope = SettingsScope;
+    // AppConfiguration.restoring(_:): this record with only `scope`'s keys
+    // (scopedSettings) copied from defaults(), a key absent there removed;
+    // HUD elements keeps the layout's Open on. Every other key is kept.
+    Settings restoring(Scope scope) const;
+    // `restoring(scope) == self` on typed values, never JSON tokens, as
+    // AppConfiguration.normalized compares them: numbers by value (1 and 1.0
+    // match), Booleans through their readers (a wrong type is the default),
+    // the layouts through moduleLayout() and overlayLayout(), the length and
+    // the icon through their accessors ("battery" is the watch), accentHex
+    // through normalizedThemeHex, the SettingsChoices keys through knownOr,
+    // the UUIDs canonical (an invalid one is nil, and the display name with
+    // it), and an absent key as its default. An icon name outside the roster
+    // compares as saved: the roster is a resource, not part of this layer.
+    bool isDefault(Scope scope) const;
     std::string string(std::string_view key) const;
     double number(std::string_view key) const;
     bool boolean(std::string_view key) const;
@@ -106,6 +254,25 @@ struct Settings {
     bool consumeDailyBootLog(std::string_view today);
     ModuleLayout moduleLayout() const;
     void setModuleLayout(const ModuleLayout&); // removes the keys when default, as the Mac does
+    // Mac 1.3.1 keys (Sources/Models.swift). chargeBarLength is the compact
+    // battery bar's length as a fraction of its display's usable width; absent
+    // (nil) keeps the classic 264 pt bar and it is not in defaults(). A finite
+    // value above 0 reads as min(1, v); anything else, another type included,
+    // reads as nil, and the next save stores it that way. showsCloseHint
+    // (Display > Close hint) is in defaults(); absent or not a Boolean reads
+    // as on (the file still loads: validateSettings leaves its type to this
+    // reader), and the next save stores the Boolean read.
+    std::optional<double> chargeBarLength() const;
+    void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
+    bool showsCloseHint() const;
+    // HUDApplicationIcon(savedValue:): 1.3.0's retired "battery" icon reads as
+    // "watch" (loading rewrites nothing; the next save of any setting stores
+    // "watch"); absent or not a string reads as "endfield". Any other name is
+    // returned as saved: the icon roster lives with the resources.
+    std::string applicationIcon() const;
+    // The decoded and normalized layout (the defaults when absent or invalid).
+    OverlayLayout overlayLayout(const CharacterPrefix& prefix = {}) const;
+    void setOverlayLayout(const OverlayLayout&, const CharacterPrefix& prefix = {}); // normalized; removed at the defaults
     // The Battery alert method menu (SHELL-99): a saved batteryAlertsEnabled
     // = false shows as "never" (Don't display); choosing any method stores it
     // and turns batteryAlertsEnabled back on.
@@ -116,31 +283,70 @@ struct Settings {
     std::int64_t orbipomBestScore() const;         // "orbipom.bestScore.v1", absent/invalid = 0
     bool operator==(const Settings&) const = default;
 };
-// Mac ProjectionSettings.init's reading of a stored dictionary (also used by
-// the Mac import with the plist coerced to these JSON types).
+// Mac ProjectionSettings.init's reading of a stored dictionary.
 ProjectionSettings decodeProjectionSettings(const Json&);
 Json encodeProjectionSettings(const ProjectionSettings&);
 class SettingsStore final {
 public:
-    explicit SettingsStore(const std::filesystem::path& appRoot);
+    // `characters` cuts the HUD elements text to OverlayLayout::textLimit
+    // Characters on every save (CharacterPrefix); without it text is kept whole.
+    explicit SettingsStore(const std::filesystem::path& appRoot, CharacterPrefix characters = {});
     const Settings& value() const noexcept { return value_; }
     bool update(const Settings& value); // false for an unchanged record; no write
     const std::filesystem::path& path() const noexcept { return path_; }
     // AppDelegate's separate "hasLaunched" defaults key. It is kept in the
     // envelope beside (never inside) the preference record, so Restore
-    // Defaults cannot repeat first-run onboarding and Mac import can map it.
+    // Defaults cannot repeat first-run onboarding.
     bool hasLaunched() const noexcept { return launched_; }
     bool markLaunched(); // false when already marked; no write
+    // Two more Mac defaults keys outside AppConfiguration, kept in the envelope
+    // the same way: no Restore touches them and saving one changes no setting.
+    // "hudLastOpenedModule" (HUDOverlayLayout.lastModuleKey): the module the
+    // HUD last opened on, map when missing or not a module. A save writes only
+    // when the saved string differs (false: no write) and refuses a name that
+    // is not a module; diagnostic and test runs keep it in memory instead.
+    std::string lastOpenedModule() const;
+    bool saveLastOpenedModule(std::string_view module);
+    // "hudOverlaySanityMigrated" (ConfigurationStore.sanityMigrationKey): set
+    // once by the hidden-Sanity migration; any saved value counts as set.
+    bool sanityMigrated() const noexcept;
+    bool markSanityMigrated(); // false when already set; no write
+    // ConfigurationStore.migrateHiddenSanity: runs once. The flag is set
+    // first; then, when `headerHidden` says 1.3.0's Account > Header display
+    // hid the gauge, Show Sanity is saved off through update() (which also
+    // writes what every save writes, such as the watch icon). The account
+    // cache is never touched. True when the record changed. Normal launches
+    // only: diagnostic and test runs never call it.
+    bool migrateHiddenSanity(const std::function<bool()>& headerHidden);
 private:
     std::filesystem::path path_;
+    CharacterPrefix characters_;
     Settings value_;
     Json envelope_{Json::Object{}};
     std::optional<std::string> persisted_;
     bool launched_{};
+    void write(Json envelope, const Settings& value); // version + record + the keys beside it
+    // One key beside the record (a separate defaults key on the Mac, set on
+    // its own): a stored record is written back as it was stored, never
+    // through the save transforms; with no file yet it is written as the
+    // first save writes it.
+    void writeBeside(std::string_view key, Json value);
 };
 
+// The signed-in Windows account the personal cards show until a name or a
+// picture is chosen (issue #17; Mac SystemAccountIdentity): its display name,
+// numeric ID (the SID's RID) and the image key of its login picture. Read at
+// runtime by the profile owner and never saved.
+struct SystemAccount {
+    std::optional<std::string> name, uid, avatarKey;
+    bool empty() const noexcept {return !name&&!uid&&!avatarKey;}
+    bool operator==(const SystemAccount&) const = default;
+};
 struct Profile {
-    std::string name{"Endministrator"}, tag{"0000"}, introduction, uid;
+    // UserProfile.defaultName and nameLimit (the longest name the card keeps, in characters).
+    static constexpr std::string_view defaultName{"Endministrator"};
+    static constexpr std::size_t nameLimit{20};
+    std::string name{defaultName}, tag{"0000"}, introduction, uid;
     double awakeningDate{};
     std::optional<std::string> gamePlayerID, playerIDOverride;
     bool hasManualAwakeningDate{}, showsBirthday{};
@@ -151,7 +357,26 @@ struct Profile {
     double backgroundWidth{600}, backgroundZoom{1}, backgroundOffsetX{}, backgroundOffsetY{};
     double thumbnailZoom{1}, thumbnailOffsetX{}, thumbnailOffsetY{}, accumulatedWorkSeconds{};
     Json originalFields{Json::Object{}}; // unknown additive Mac fields survive edits
+    // Issue #17's saved flags, always written. A record without autoName
+    // follows the account only while it carries the default name; a missing
+    // autoAvatar is true. Restore default picture turns autoAvatar off.
+    bool autoName{true}, autoAvatar{true};
+    // Runtime only: the account the store shows (none: not read, or hidden in
+    // Recording mode). Never encoded, and left out of every comparison, so it
+    // can neither cause nor skip a save.
+    struct ShownAccount {
+        std::optional<SystemAccount> value;
+        bool operator==(const ShownAccount&) const noexcept {return true;}
+    } systemAccount;
     static Profile defaults();
+    // UserProfile.followsSystemName: the card shows the account's name.
+    bool followsSystemName() const noexcept {return autoName&&name==defaultName;}
+    // The account's name while the card follows it, else the stored name.
+    std::string displayedName() const;
+    // A chosen or synced picture, then the account's login picture while
+    // autoAvatar; none is the drawn portrait.
+    std::optional<std::string> avatarKey() const;
+    // The Player ID override, the game UID, the account's UID, then the stored UID.
     std::string displayedUID() const;
     bool operator==(const Profile&) const = default;
 };

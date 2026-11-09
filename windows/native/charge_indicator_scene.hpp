@@ -8,7 +8,8 @@
 #include <span>
 #include <string>
 
-// Native renderer for one ChargeIndicatorView canvas (300 x 84 points), shared
+// Native renderer for one ChargeIndicatorView canvas (300 x 84 points, wider
+// for a long alert bar: ChargeIndicatorMetrics::canvasWidthFor), shared
 // by the HUD charge badge and the floating desktop alert. Content events
 // rasterize the four fitted labels and the fixed vector leaves through the
 // shared LayerRasterizer, and generate the capsule's antialiased nine-slice
@@ -35,6 +36,9 @@ struct ChargeIndicatorSceneContent {
     // Device pixels per canvas point at the current placement; rasters use
     // it clamped to the shared rasterizer's 1...4 range.
     double pixelsPerPoint{2};
+    // The compact bar's width in canvas points (the alert's Length setting;
+    // the badge keeps the classic bar): the capacity reading fits its room.
+    double barWidth{modules::ChargeIndicatorMetrics::classicBarWidth};
     bool operator==(const ChargeIndicatorSceneContent&) const = default;
 };
 struct ChargeIndicatorPlacement {

@@ -58,7 +58,7 @@ enum HUDDesktopWatchNavigation {
     ]
     static let fixedModules: [HUDModule] = [.system, .display, .hotkeys, .about, .storage, .activityMonitor]
 
-    /// The right-hand modules follow the user's layout (System > Modules);
+    /// The right-hand modules follow the user's layout (Display > Modules);
     /// hidden ones get no entry, so pointer, accessibility and recycled rows
     /// all skip them. The layout defaults to the one currently applied.
     static func entries(shortcuts: [HUDAppShortcutPresentation],
@@ -81,7 +81,7 @@ enum HUDDesktopWatchNavigation {
 }
 
 /// The user's order and visibility of the modules in the right-hand list
-/// (System > Modules). Saved apps and Add App keep following the visible
+/// (Display > Modules). Saved apps and Add App keep following the visible
 /// modules; modules outside that list are not configurable. Every value is
 /// normalized: each configurable module appears once, unknown or duplicate
 /// entries are dropped, and at least one module stays visible.
@@ -90,6 +90,14 @@ struct HUDModuleLayout: Equatable {
     static let orderKey = "hudModuleOrder", hiddenKey = "hudHiddenModules"
     /// The configurable modules in their default desktop order.
     static let configurable = HUDDesktopWatchNavigation.rightModules.filter { $0 != .addApp }
+    /// Arrange on HUD's VoiceOver help for a right-hand tile: a module tile
+    /// (`draggable`) is dragged to reorder; saved apps and Add App do nothing
+    /// until arranging ends.
+    static func arrangeHelp(draggable: Bool) -> String {
+        draggable ? L10n.text("Drag to reorder", "拖动以调整顺序") : L10n.text("Unavailable while arranging", "排列时不可用")
+    }
+    /// The help is one `arrangeHelp(draggable:)` gives.
+    static func isArrangeHelp(_ help: String?) -> Bool { help == arrangeHelp(draggable: true) || help == arrangeHelp(draggable: false) }
     private(set) var order: [HUDModule]
     private(set) var hidden: Set<HUDModule>
 
@@ -140,5 +148,23 @@ struct HUDModuleLayout: Equatable {
         guard to != from else { return false }
         order.remove(at: from); order.insert(module, at: to)
         return true
+    }
+
+    /// A tile of the right-hand list: a configurable module, a saved app or Add App.
+    static func listsTarget(_ target: HUDNavigationTarget) -> Bool {
+        guard let module = target.module else { return true }
+        return module == .addApp || configurable.contains(module)
+    }
+
+    /// Display > Modules > Arrange on HUD: the layout with the visible
+    /// `module` dragged over `target`, a tile of the right-hand list. Over
+    /// another module it takes that module's place; over a saved app or Add
+    /// App it goes after the last visible module. Nil when nothing moves.
+    func arranging(_ module: HUDModule, over target: HUDNavigationTarget?) -> HUDModuleLayout? {
+        guard Self.configurable.contains(module), !hidden.contains(module), let target, Self.listsTarget(target) else { return nil }
+        let other = target.module.flatMap { $0 == .addApp ? nil : $0 } ?? visible.last
+        guard let other, other != module, !hidden.contains(other), let index = order.firstIndex(of: other) else { return nil }
+        var next = self
+        return next.move(module, to: index) ? next : nil
     }
 }

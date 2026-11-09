@@ -526,7 +526,7 @@ final class NotesWorkspace: NSObject {
             if !erasing && !gesture.stroke.points.isEmpty {
                 var drawing = gesture.note.drawing ?? NotesDrawing()
                 if drawing.append(gesture.stroke) { gesture.note.drawing = drawing; gesture.erased = true }
-                else { errorMessage = L10n.text("Drawing limit reached. Create another drawing note.", "画画容量已满，请新建画画便笺。") }
+                else { errorMessage = L10n.text("Drawing limit reached. Create another drawing note", "画画容量已满，请新建画画便笺") }
             }
             if gesture.erased {
                 replace(gesture.note)
@@ -749,7 +749,7 @@ final class NotesWorkspace: NSObject {
                         styleStroke(live, stroke: gesture.stroke, size: viewport.size)
                     }
                 }
-            } else { errorMessage = L10n.text("Stroke limit reached. Release to start a new stroke.", "笔画长度已满，松开后可开始下一笔。") }
+            } else { errorMessage = L10n.text("Stroke limit reached. Release to start a new stroke", "笔画长度已满，松开后可开始下一笔") }
         }
         drawingGesture = gesture
         mouseMoved(at: point)
@@ -770,13 +770,21 @@ final class NotesWorkspace: NSObject {
 
     /// Called before switching sections or closing. Finishes an active geometry
     /// gesture immediately; no pending animation, task, or timer survives.
-    func cancelInteraction() {
+    /// `keepingLeaves`: the HUD's close, inside which a card still entering or
+    /// leaving (a section switch, a deletion) finishes its motion. The HUD's
+    /// own cancel has already removed every other animation here, keeping
+    /// `leaveKeys`; the hidden HUD's full deactivation settles the rest.
+    func cancelInteraction(keepingLeaves: Bool = false) {
         mouseUp(); pendingDeletionID = nil
-        presentationGeneration += 1
-        cancelAnimations()
+        if !keepingLeaves { cancelAnimations() }
         mouseMoved(at: nil)
         withoutActions {
-            for item in notes { render(item) }
+            for item in notes {
+                // A re-render would hide a card that is still fading out.
+                if keepingLeaves, let card = nodes[item.id]?.layer,
+                   card.animationKeys()?.contains(where: Self.leaveKeys.contains) == true { continue }
+                render(item)
+            }
             renderDeletionControls()
         }
     }
@@ -1555,6 +1563,9 @@ final class NotesWorkspace: NSObject {
         return count(workspaceLayer)
     }
 
+    /// A card's own entrance or leave: a section switch, a creation, a deletion.
+    static let leaveKeys: Set<String> = ["notes.section", "notes.visibility"]
+
     func cancelAnimations() {
         presentationGeneration += 1
         func remove(_ layer: CALayer) {
@@ -1583,7 +1594,7 @@ final class NotesWorkspace: NSObject {
     }
 
     private func reportUnavailable() {
-        errorMessage = L10n.text("Notes storage is unavailable.", "便笺存储不可用。")
+        errorMessage = L10n.text("Notes storage is unavailable", "便笺存储不可用")
         withoutActions { updateStatus() }
         onChange?()
     }

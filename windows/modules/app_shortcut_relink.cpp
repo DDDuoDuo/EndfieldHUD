@@ -1,5 +1,5 @@
 #include "modules/app_shortcut_relink.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -34,10 +34,10 @@ std::string shortcutRelinkTarget(const ShortcutRecord& r) {
 }
 
 ShortcutRelinkSync syncShortcutRelinks(const std::filesystem::path& appRoot, const ShortcutFile& committed) {
-    // The import's owner API (reconcileMacRelinks): one serialized, atomic
-    // write at most. Rows whose record now names its Windows application
-    // (an .exe/.lnk file, or a packaged application's AppsFolder target)
-    // resolve with it; rows whose record the user removed are dismissed; a
+    // The relink ledger's owner API (core/migration/relink_ledger:
+    // reconcileMacRelinks): one serialized, atomic write at most. Rows
+    // whose record now names its Windows application (an .exe/.lnk file, or
+    // a packaged application's AppsFolder target) resolve with it; rows whose record the user removed are dismissed; a
     // record that still holds its Mac locator stays listed.
     const auto change = mig::reconcileMacRelinks(appRoot, mig::relinkAppShortcut, [&](const mig::MacRelinkItem& item) -> mig::RelinkRecordCheck {
         const auto* current = record(committed, item.recordID);

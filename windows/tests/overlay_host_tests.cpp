@@ -264,15 +264,15 @@ void hiddenStartupChild(){
     check(host.stats().framePending,"Completed native show wakes an already-stable frame demand");
     RECT after{};check(GetWindowRect(window,&after)!=FALSE,"Read own shown rectangle");
     check(EqualRect(&before,&after)!=FALSE,"Show does not reposition or resize the overlay");
-    check(!(extended&WS_EX_TOPMOST),"The created overlay is not in the topmost band");
-    check((GetWindowLongPtrW(window,GWL_STYLE)&~LONG_PTR(WS_VISIBLE))==(style&~LONG_PTR(WS_VISIBLE))&&GetWindowLongPtrW(window,GWL_EXSTYLE)==(extended|WS_EX_TOPMOST),
-        "Show preserves borderless/composition styles and enters the topmost band");
+    check((extended&WS_EX_TOPMOST)!=0,"The created overlay is already in the topmost band");
+    check((GetWindowLongPtrW(window,GWL_STYLE)&~LONG_PTR(WS_VISIBLE))==(style&~LONG_PTR(WS_VISIBLE))&&GetWindowLongPtrW(window,GWL_EXSTYLE)==extended,
+        "Show preserves borderless/composition styles and the topmost band");
     check(GetFocus()==focus&&GetActiveWindow()==active&&focusEvents==0&&!host.stats().focused&&host.stats().foregroundRequests==0,"Show(false) preserves activation and keyboard focus");
     drain(host);check(frames>0&&!host.stats().timerArmed,"Stable first frame renders without adding an idle timer");
     host.hide();check(!IsWindowVisible(window)&&!host.stats().framePending,"Hide cancels pending presentation");
-    check(!(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&!host.stats().topmost,"The hidden overlay leaves the topmost band");
-    host.show(false);check((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&IsWindowVisible(window),"Explicit reopening enters the topmost band again");
-    drain(host);host.hide();check(!(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST),"Every hide leaves the band");host.destroy();
+    check((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&host.stats().topmost,"The hidden overlay keeps the topmost band");
+    host.show(false);check((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)&&IsWindowVisible(window),"Explicit reopening is in the topmost band");
+    drain(host);host.hide();check((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0,"Every hide keeps the band");host.destroy();
 }
 void hiddenStartupProcess(){
     // A child bound to a new desktop cannot initialize reliably from the
@@ -345,18 +345,33 @@ void zbandDiagnostics(){
     STARTUPINFOW startup{};startup.cb=sizeof startup;GetStartupInfoW(&startup);
     std::cout<<"startupFlags=0x"<<std::hex<<startup.dwFlags<<std::dec<<" startupShow="<<startup.wShowWindow<<'\n';
     std::cout<<"foreground: "<<windowFacts(GetForegroundWindow())<<'\n';
+    // Windows lifts the foreground lock once this long has passed since the
+    // last input, so an idle run reads the granted case, not a refused one.
+    LASTINPUTINFO input{sizeof input};const BOOL inputRead=GetLastInputInfo(&input);DWORD lockTimeout{};
+    SystemParametersInfoW(SPI_GETFOREGROUNDLOCKTIMEOUT,0,&lockTimeout,0);
+    std::cout<<"idleMs="<<(inputRead?GetTickCount()-input.dwTime:0u)<<" foregroundLockTimeoutMs="<<lockTimeout<<'\n';
     // A raw window with the host's styles, never shown.
     WNDCLASSEXW type{};type.cbSize=sizeof type;type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"EndfieldZBandDiagnostics";
     RegisterClassExW(&type);
+    const auto isAbove=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
+    const auto pinnedLater=[&]{return CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,type.lpszClassName,L"",WS_POPUP,0,0,8,8,nullptr,nullptr,type.hInstance,nullptr);};
     const auto probe=[&](DWORD extended,const char* label){
         HWND w=CreateWindowExW(extended,type.lpszClassName,L"",WS_POPUP,0,0,32,32,nullptr,nullptr,type.hInstance,nullptr);
+        // The band the window was created in, before any raise.
+        std::cout<<label<<": created topmost="<<((GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<'\n';
+        // A topmost window created after it (an Always On Top window pinned
+        // later): whether the raise puts the probe above it is whether this
+        // session lets this process reorder the band.
+        const HWND later=pinnedLater();const bool aboveBefore=isAbove(w,later);
         // The foreground right, probed without side effects: granting it to
         // this process itself succeeds only while this process holds it.
         const BOOL right=AllowSetForegroundWindow(GetCurrentProcessId());const DWORD rightError=right?0:GetLastError();
         SetLastError(0);const BOOL raised=SetWindowPos(w,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);const DWORD error=GetLastError();
         const HWND previous=GetWindow(w,GW_HWNDPREV);
         std::cout<<label<<": foregroundRight="<<right<<" ("<<rightError<<") SetWindowPos(HWND_TOPMOST)="<<raised<<" error="<<error
-                 <<" justBehindForeground="<<(previous&&previous==GetForegroundWindow()?1:0)<<" after: "<<windowFacts(w)<<'\n';
+                 <<" justBehindForeground="<<(previous&&previous==GetForegroundWindow()?1:0)<<" aboveLaterTopmost="<<aboveBefore<<"->"<<isAbove(w,later)
+                 <<" after: "<<windowFacts(w)<<'\n';
+        DestroyWindow(later);
         SetLastError(0);const BOOL lowered=SetWindowPos(w,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);const DWORD lowerError=GetLastError();
         std::cout<<label<<": SetWindowPos(HWND_NOTOPMOST)="<<lowered<<" error="<<lowerError<<" topmost="<<((GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)?1:0)<<'\n';
         DestroyWindow(w);
@@ -370,9 +385,14 @@ void zbandDiagnostics(){
     options.testVisibility=[](bool shown,bool){return shown;};options.testForeground=[]{return false;};
     OverlayHost host;host.create(options);
     const auto window=static_cast<HWND>(host.hwnd());
+    std::cout<<"host after create: statsTopmost="<<host.stats().topmost<<" "<<windowFacts(window)<<'\n';
+    // As firstOpeningBand: a topmost window pinned after the HUD was created.
+    const HWND later=pinnedLater();const bool aboveBefore=isAbove(window,later);
     host.show(true);
     std::cout<<"host after show(true): statsTopmost="<<host.stats().topmost<<" bandRefusals="<<host.stats().bandRefusals<<" bandPending="<<host.stats().bandPending
-             <<" visible="<<host.stats().visible<<" justBehindForeground="<<(GetWindow(window,GW_HWNDPREV)==GetForegroundWindow()?1:0)<<" "<<windowFacts(window)<<'\n';
+             <<" visible="<<host.stats().visible<<" justBehindForeground="<<(GetWindow(window,GW_HWNDPREV)==GetForegroundWindow()?1:0)
+             <<" aboveLaterTopmost="<<aboveBefore<<"->"<<isAbove(window,later)<<" "<<windowFacts(window)<<'\n';
+    DestroyWindow(later);
     // The windows above the HUD fixture in the z-order (front to back).
     unsigned above{},topmostAbove{},visibleAbove{};std::vector<std::string> listed;
     for(HWND w=GetTopWindow(nullptr);w&&w!=window;w=GetWindow(w,GW_HWNDNEXT)){
@@ -385,13 +405,99 @@ void zbandDiagnostics(){
     std::cout<<"host after hide: statsTopmost="<<host.stats().topmost<<" "<<windowFacts(window)<<'\n';
     host.destroy();UnregisterClassW(type.lpszClassName,type.hInstance);
 }
+// The first opening after launch, as a summon without the right to set the
+// foreground window meets it (the default Ctrl+` arrives through the keyboard
+// hook): Windows refuses that opening the activation and any raise into the
+// topmost band. Another application's window opened after the HUD was
+// created sits above it among normal windows. The HUD must still appear above
+// it, as every later opening does: the window holds the band from creation
+// (Mac: the panel's .statusBar level, set once) and keeps it while hidden
+// (orderOut keeps the level). Within the band every opening raises it to the
+// top (Mac: the panel is ordered front on every opening), so a topmost window
+// another program pinned after launch (an Always On Top window, Task Manager,
+// a picture-in-picture player) is beneath it too. Nothing is shown, activated
+// or injected: the seams stand in for visibility and the foreground (and, in
+// the second part, for a raise Windows declines), so the z-order checked is
+// the one create(), show() and hide() leave natively.
+void firstOpeningBand() {
+    const auto above=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
+    const auto nativeTopmost=[](HWND w){return (GetWindowLongPtrW(w,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
+    {
+        // The raise itself is native. Whether Windows lets this process
+        // reorder one topmost window above another depends on the session
+        // (unmeasured without the foreground right), so the session is asked
+        // first with two hidden topmost windows of its own; where it declines,
+        // the opening must keep the band with no refusal instead.
+        OverlayOptions options{L"Hidden pinned-window z fixture",0,0,32,32,nullptr};
+        options.testVisibility=[](bool shown,bool){return shown;};
+        options.testForeground=[]{return false;};
+        OverlayHost host;host.create(options);
+        const auto hud=static_cast<HWND>(host.hwnd());
+        check(nativeTopmost(hud),"The HUD window is created in the topmost band");
+        // An Always On Top window pinned after launch: never shown, created
+        // topmost after the HUD, so at the top of the band, above it.
+        const HWND pinned=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden pinned window fixture",WS_POPUP,0,0,8,8,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        check(pinned&&!IsWindowVisible(pinned)&&nativeTopmost(pinned)&&above(pinned,hud),"A topmost window pinned after launch, never shown, sits above the hidden HUD");
+        // The session probe: a later topmost window above the pinned one,
+        // then the pinned one raised; it ends on top again where the session
+        // reorders the band.
+        const HWND later=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden later topmost fixture",WS_POPUP,0,0,8,8,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        check(later&&!IsWindowVisible(later)&&nativeTopmost(later)&&above(later,pinned),"A later topmost probe window sits above the pinned one");
+        check(SetWindowPos(pinned,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE,"Raise the pinned fixture within the band");
+        const bool reorders=above(pinned,later);
+        check(DestroyWindow(later)!=FALSE&&nativeTopmost(pinned)&&above(pinned,hud),"The pinned fixture stays in the band above the hidden HUD");
+        host.show(true);
+        check(!IsWindowVisible(hud)&&host.stats().visible&&host.stats().foregroundRefusals==1&&host.stats().activationPending,"The opening is shown without the foreground");
+        if(reorders)check(above(hud,pinned),"An opening refused the foreground is above a topmost window pinned after launch");
+        check(host.stats().topmost&&nativeTopmost(hud)&&!host.stats().bandPending&&host.stats().bandRequests==1&&host.stats().bandRefusals==0,
+            "An opening refused the foreground keeps the band; its raise within the band is no refusal");
+        if(reorders){
+            host.hide();
+            check(nativeTopmost(hud)&&above(hud,pinned),"The hidden HUD keeps its place in the band");
+            // The other program pins its window again, above the hidden HUD.
+            check(SetWindowPos(pinned,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE&&above(pinned,hud),"Raise the hidden pinned fixture to the top of the band");
+            host.show(true);
+            check(nativeTopmost(hud)&&above(hud,pinned)&&host.stats().bandRequests==2&&host.stats().bandRefusals==0&&!host.stats().bandPending,
+                "Every later refused opening is raised above the pinned window again");
+        }else{
+            std::cout<<"First opening band: this session declines reordering the topmost band; the opening kept the band with no refusal\n";
+        }
+        host.hide();check(DestroyWindow(pinned)!=FALSE,"Destroy the pinned fixture");host.destroy();
+    }
+    bool summoned{};unsigned raises{};
+    OverlayOptions options{L"Hidden first-opening z fixture",0,0,32,32,nullptr};
+    options.testVisibility=[](bool shown,bool){return shown;};
+    options.testForeground=[]{return false;};
+    // Windows keeps the created style; every raise once summoned is declined
+    // (the window stays where it is, in the band).
+    options.testBand=[&](bool topmost){if(summoned)++raises;return topmost;};
+    OverlayHost host;host.create(options);
+    const auto hud=static_cast<HWND>(host.hwnd());
+    // An application window opened since launch: never shown, created after
+    // the HUD, so on top of the normal windows.
+    const HWND application=CreateWindowExW(0,L"STATIC",L"Hidden later application fixture",WS_POPUP,0,0,8,8,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(application&&!IsWindowVisible(application)&&!nativeTopmost(application),"A later normal application window fixture, never shown");
+    summoned=true;host.show(true);
+    check(host.stats().visible&&host.stats().foregroundRefusals==1&&host.stats().activationPending,"The first opening is shown without the foreground");
+    check(nativeTopmost(hud)&&above(hud,application),"The first opening, refused the foreground and the raise, is above an application window opened after launch");
+    check(host.stats().topmost&&!host.stats().bandPending&&host.stats().bandRequests==1&&raises==1&&host.stats().bandRefusals==0,
+        "The first opening's raise, declined within the band, is no refusal");
+    host.hide();
+    check(!IsWindowVisible(hud)&&!host.stats().visible&&nativeTopmost(hud)&&host.stats().topmost&&above(hud,application),
+        "The hidden HUD keeps the topmost band (Mac: orderOut keeps the panel's level)");
+    check(SetWindowPos(application,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE,"Raise the hidden application fixture to the top of the normal windows");
+    host.show(true);
+    check(nativeTopmost(hud)&&above(hud,application)&&raises==2&&host.stats().bandRequests==2&&host.stats().bandRefusals==0,"A later refused opening is above the application window too");
+    host.hide();check(DestroyWindow(application)!=FALSE,"Destroy the application fixture");host.destroy();
+}
 // The HUD's z-band and activation through the real show()/hide() path, on a
 // window that is never shown and never takes the foreground: test seams stand
-// in for making it visible, for SetForegroundWindow and for the band's
-// SetWindowPos, so Windows refusing the foreground and the band (a process
-// without the right to set the foreground window) is played the same way in
-// every session. Mac: the HUD panel's .statusBar level, above every normal
-// window, and NSApp.activate on opening.
+// in for making it visible, for SetForegroundWindow and for the band (the
+// created style Windows keeps, and the band's SetWindowPos), so Windows
+// refusing the foreground and the band (a process without the right to set
+// the foreground window) is played the same way in every session. Mac: the
+// HUD panel's .statusBar level, above every normal window, set once and kept
+// through orderOut, and NSApp.activate on opening.
 void zBandAndActivation() {
     std::vector<std::pair<bool,bool>> visibility;std::vector<bool> bandCalls;unsigned foregroundCalls{};bool grant{},bandAllowed{true};
     OverlayCallbacks callbacks;
@@ -404,14 +510,15 @@ void zBandAndActivation() {
     const auto banded=[&]{return host.stats().topmost;};
     const auto nativeTopmost=[&]{return (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
     using Shows=std::vector<std::pair<bool,bool>>;
-    check(!banded()&&!host.stats().visible&&bandCalls.empty(),"A created HUD is hidden and not in the topmost band");
+    check(banded()&&nativeTopmost()&&!host.stats().visible&&!IsWindowVisible(window)&&bandCalls==std::vector<bool>{true}&&host.stats().bandRequests==0,
+        "A created HUD is hidden and already in the topmost band");
 
-    // An opening without the foreground right granted (the hotkey's band is
-    // allowed, the activation refused here): shown in the band, waiting.
+    // An opening without the foreground right: shown in the band, raised to
+    // its top, waiting for its activation.
     host.show(true);
-    check(!IsWindowVisible(window)&&!nativeTopmost(),"The fixture window is never really shown or made topmost");
-    check(host.stats().visible&&banded()&&bandCalls==std::vector<bool>{true}&&host.stats().bandRequests==1&&host.stats().bandRefusals==0&&!host.stats().bandPending,
-        "The shown HUD enters the topmost band");
+    check(!IsWindowVisible(window),"The fixture window is never really shown");
+    check(host.stats().visible&&banded()&&bandCalls==std::vector<bool>{true,true}&&host.stats().bandRequests==1&&host.stats().bandRefusals==0&&!host.stats().bandPending,
+        "The HUD opens in the topmost band it holds, raised to its top; no refusal");
     check(visibility==Shows{{true,true}}&&foregroundCalls==1&&host.stats().foregroundRequests==1,"An activating opening asks for the foreground once");
     check(host.stats().foregroundRefusals==1&&host.stats().activationPending,"A refused activation leaves the HUD shown, waiting for its activation");
     check(SendMessageW(window,WM_MOUSEACTIVATE,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_LBUTTONDOWN))==MA_ACTIVATE,
@@ -421,49 +528,25 @@ void zBandAndActivation() {
     SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
     check(!host.stats().activationPending&&host.stats().deferredActivations==1&&banded()&&host.stats().bandRequests==1,"The click's activation ends the wait; the band stays");
     host.hide();
-    check(!host.stats().visible&&visibility.back()==std::pair{false,false}&&!banded()&&bandCalls.back()==false,"The hidden HUD leaves the topmost band");
-
-    // Windows refuses the band itself to a process without the foreground
-    // right (it keeps the window just behind the foreground window): the
-    // refusal is reported and the next activation enters the band.
-    bandAllowed=false;
-    host.show(true);
-    check(host.stats().visible&&!banded()&&host.stats().bandRefusals==1&&host.stats().bandPending&&host.stats().activationPending,
-        "Without the foreground right the band is refused and reported; the HUD waits for both");
-    bandAllowed=true;
-    SendMessageW(window,WM_ACTIVATEAPP,TRUE,0);
-    check(banded()&&!host.stats().bandPending&&host.stats().deferredBands==1&&host.stats().bandRequests==3,"The application's activation enters the band");
+    check(!host.stats().visible&&visibility.back()==std::pair{false,false}&&banded()&&nativeTopmost()&&bandCalls.size()==2,
+        "The hidden HUD keeps the topmost band (Mac: orderOut keeps the panel's level)");
     SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
-    check(banded()&&host.stats().bandRequests==3&&!host.stats().activationPending&&host.stats().deferredActivations==2,"The window's activation then needs no second attempt");
-    host.hide();check(!banded()&&!host.stats().bandPending,"Hidden: out of the band");
-    bandAllowed=false;host.show(true);check(host.stats().bandPending&&host.stats().bandRefusals==2,"Refused again");
-    bandAllowed=true;SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
-    check(banded()&&!host.stats().bandPending&&host.stats().deferredBands==2,"A click's activation enters the band");
-    host.hide();
-    bandAllowed=false;host.show(false);check(host.stats().bandPending&&host.stats().bandRefusals==3,"A non-activating show can be refused the band too");
-    bandAllowed=true;grant=true;host.show(true);
-    check(banded()&&!host.stats().bandPending&&host.stats().deferredBands==3&&!host.stats().activationPending,"A later opening that holds the right enters the band");
-    host.hide();bandAllowed=false;grant=false;host.show(true);
-    const auto refusedBands=host.stats().bandRefusals;
-    host.hide();check(!host.stats().bandPending&&!host.stats().activationPending&&!banded(),"Hiding drops both waits");
-    SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
-    check(host.stats().bandRefusals==refusedBands&&!banded(),"A hidden HUD never asks for the band");
-    bandAllowed=true;
+    check(host.stats().bandRequests==1&&banded(),"A hidden HUD never asks for the band");
 
-    // show(false) enters the band without asking for the foreground.
+    // show(false) is raised in the band without asking for the foreground.
     const auto foregroundBefore=foregroundCalls;
     host.show(false);
-    check(visibility.back()==std::pair{true,false}&&banded()&&foregroundCalls==foregroundBefore&&!host.stats().activationPending,
-        "A non-activating show is above other windows and leaves activation alone");
-    host.hide();check(!banded(),"Hidden again: out of the band");
+    check(visibility.back()==std::pair{true,false}&&banded()&&foregroundCalls==foregroundBefore&&!host.stats().activationPending&&bandCalls.size()==3&&
+        host.stats().bandRequests==2,"A non-activating show is raised above other windows and leaves activation alone");
+    host.hide();check(banded(),"Hidden again: still in the band");
 
-    // A granted opening (the hotkey's, or a launcher that passed its right on).
+    // A granted opening (a Windows-key chord's WM_HOTKEY, or a launcher that
+    // passed its right on): the activation brings it to the top of the band.
     grant=true;host.show(true);
     check(banded()&&foregroundCalls==foregroundBefore+1&&!host.stats().activationPending,"A granted activation needs no fallback");
-    const auto bandRequests=host.stats().bandRequests;
     host.show(true);
-    check(banded()&&foregroundCalls==foregroundBefore+2&&host.stats().bandRequests==bandRequests+1&&host.stats().visible,
-        "A repeated opening raises the HUD to the top of the band and asks again");
+    check(banded()&&foregroundCalls==foregroundBefore+2&&host.stats().bandRequests==4&&bandCalls.size()==5&&host.stats().bandRefusals==0&&host.stats().visible,
+        "A repeated opening asks for the foreground and raises it again");
     host.hide();
 
     // A refused opening, then a later granted request (a second launch
@@ -472,61 +555,116 @@ void zBandAndActivation() {
     grant=false;host.show(true);check(host.stats().activationPending,"Refused again");
     grant=true;host.show(true);
     check(!host.stats().activationPending&&host.stats().deferredActivations==deferred+1,"A later granted request ends the wait");
-    host.hide();grant=false;
+    host.hide();check(!host.stats().activationPending&&!host.stats().bandPending&&banded(),"Hiding drops the wait and keeps the band");grant=false;
 
     // The default close (no owner callback) hides through the same path.
     host.show(false);check(banded(),"Shown for the default close");
     SendMessageW(window,WM_CLOSE,0,0);
-    check(IsWindow(window)&&!host.stats().visible&&!banded()&&visibility.back()==std::pair{false,false},"The default close hides the HUD out of the band");
+    check(IsWindow(window)&&!host.stats().visible&&banded()&&nativeTopmost()&&visibility.back()==std::pair{false,false},"The default close hides the HUD; it keeps the band");
 
     // The Projection hand-off (Application::moveProjection): the HUD is
     // hidden, placed on Projection's display, then shown by Projection. The
-    // placement is geometry only: the hidden HUD stays out of the band, and a
-    // shown Projection moved to another display keeps its place in it.
+    // placement is geometry only: the HUD keeps its band, hidden or shown.
     const auto placedAt=[&](int x,int y,int w,int h){RECT r{};return GetWindowRect(window,&r)!=FALSE&&r.left==x&&r.top==y&&r.right-r.left==w&&r.bottom-r.top==h;};
-    const auto shows=visibility.size();const auto bands=bandCalls.size();
+    const auto shows=visibility.size();const auto raised=bandCalls.size();
     check(host.place(8,12,48,40)&&placedAt(8,12,48,40)&&host.metrics().pixelWidth==48&&host.metrics().pixelHeight==40,"Placing the hidden HUD moves and sizes it");
-    check(!banded()&&!nativeTopmost()&&!host.stats().visible&&!IsWindowVisible(window)&&visibility.size()==shows&&bandCalls.size()==bands,
-        "Placing the hidden HUD for Projection leaves it hidden and out of the topmost band");
-    host.show(true);check(banded()&&visibility.size()==shows+1&&bandCalls.size()==bands+1,"Projection's show enters the band");
+    check(banded()&&nativeTopmost()&&!host.stats().visible&&!IsWindowVisible(window)&&visibility.size()==shows&&bandCalls.size()==raised,
+        "Placing the hidden HUD for Projection leaves it hidden in the band");
+    host.show(true);check(banded()&&visibility.size()==shows+1&&bandCalls.size()==raised+1,"Projection's show is raised in the band");
     const auto requests=host.stats().foregroundRequests;
-    check(host.place(4,6,40,36)&&placedAt(4,6,40,36)&&banded()&&host.stats().visible&&host.stats().foregroundRequests==requests&&visibility.size()==shows+1&&
-        bandCalls.size()==bands+1,"Moving a shown Projection to another display keeps it in the band and leaves activation alone");
-    host.hide();check(!banded(),"Projection closed: out of the band");
-    check(host.place(0,0,32,32)&&placedAt(0,0,32,32)&&!banded()&&!nativeTopmost()&&!host.stats().visible,"Placing the hidden HUD again keeps it out of the band");
+    check(host.place(4,6,40,36)&&placedAt(4,6,40,36)&&banded()&&nativeTopmost()&&host.stats().visible&&host.stats().foregroundRequests==requests&&visibility.size()==shows+1&&
+        bandCalls.size()==raised+1,"Moving a shown Projection to another display keeps it in the band and leaves activation alone");
+    host.hide();check(banded(),"Projection closed: still in the band");
     host.destroy();
     check(!host.place(0,0,32,32),"No window: nothing to place");
+
+    // Windows kept the created window out of the band (as it may refuse a
+    // raise without the foreground right): an opening asks for the band
+    // as it appears, a refusal is reported, and the next activation or a
+    // later opening with the right enters it; hiding drops the wait.
+    enum class Entry{applicationActivation,clickActivation,laterOpening};
+    for(const auto entry:{Entry::applicationActivation,Entry::clickActivation,Entry::laterOpening}){
+        bandCalls.clear();visibility.clear();bandAllowed=false;grant=false;
+        OverlayHost refused;refused.create(options);
+        const auto refusedWindow=static_cast<HWND>(refused.hwnd());
+        check(!refused.stats().topmost&&!refused.stats().bandPending&&bandCalls==std::vector<bool>{true},"Windows kept the created HUD out of the band");
+        refused.show(true);
+        check(refused.stats().visible&&!refused.stats().topmost&&refused.stats().bandRequests==1&&refused.stats().bandRefusals==1&&refused.stats().bandPending&&
+            refused.stats().activationPending&&bandCalls==std::vector<bool>{true,true},"Out of the band, an opening asks for it; refused, the HUD waits for both");
+        refused.hide();check(!refused.stats().bandPending&&!refused.stats().activationPending,"Hiding drops both waits");
+        SendMessageW(refusedWindow,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
+        check(refused.stats().bandRequests==1,"A hidden HUD never asks for the band");
+        refused.show(false);check(refused.stats().bandPending&&refused.stats().bandRefusals==2,"A non-activating show can be refused the band too");
+        bandAllowed=true;
+        if(entry==Entry::applicationActivation){
+            SendMessageW(refusedWindow,WM_ACTIVATEAPP,TRUE,0);
+            check(refused.stats().topmost&&!refused.stats().bandPending&&refused.stats().deferredBands==1&&refused.stats().bandRequests==3,"The application's activation enters the band");
+            SendMessageW(refusedWindow,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
+            check(refused.stats().bandRequests==3,"The window's activation then needs no second attempt");
+        }else if(entry==Entry::clickActivation){
+            SendMessageW(refusedWindow,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
+            check(refused.stats().topmost&&!refused.stats().bandPending&&refused.stats().deferredBands==1,"A click's activation enters the band");
+        }else{
+            grant=true;refused.show(true);
+            check(refused.stats().topmost&&!refused.stats().bandPending&&refused.stats().deferredBands==1&&!refused.stats().activationPending,"A later opening that holds the right enters the band");
+        }
+        refused.hide();check(refused.stats().topmost,"Entered, the band is kept while hidden");
+        const auto calls=refused.stats().bandRequests;const auto refusals=refused.stats().bandRefusals;refused.show(true);
+        check(refused.stats().bandRequests==calls+1&&refused.stats().bandRefusals==refusals&&!refused.stats().bandPending&&refused.stats().topmost,
+            "An opening in the band is raised to its top; no refusal");
+        refused.hide();refused.destroy();
+    }
+    bandAllowed=true;grant=false;
+
+    // A raise Windows declines while it grants the same opening's activation
+    // (rare: both follow the foreground right). SetForegroundWindow sends
+    // this thread's window WM_ACTIVATE before it returns; that activation
+    // enters the band at once, as the opening's own judgement already asks.
+    {
+        HWND target{};bool allowed{};
+        OverlayOptions grantedOptions=options;
+        grantedOptions.testBand=[&](bool topmost){return topmost&&allowed;};
+        grantedOptions.testForeground=[&]{allowed=true;SendMessageW(target,WM_ACTIVATE,MAKEWPARAM(WA_ACTIVE,0),0);return true;};
+        OverlayHost granted;granted.create(grantedOptions);target=static_cast<HWND>(granted.hwnd());
+        check(!granted.stats().topmost&&!granted.stats().bandPending,"Windows kept this created HUD out of the band");
+        granted.show(true);
+        check(granted.stats().topmost&&!granted.stats().bandPending&&!granted.stats().activationPending&&granted.stats().bandRequests==2&&
+            granted.stats().bandRefusals==1&&granted.stats().deferredBands==1,"A granted activation enters the band its opening's raise was refused");
+        granted.hide();granted.destroy();
+    }
 
     // A hidden benchmark's offscreen window is never shown: no band, no foreground.
     OverlayOptions offscreen{L"Hidden offscreen z-band fixture",0,0,16,16,nullptr};offscreen.offscreenScheduling=true;
     OverlayHost benchmark;benchmark.create(offscreen);
     const auto benchmarkWindow=static_cast<HWND>(benchmark.hwnd());
+    check(!(GetWindowLongPtrW(benchmarkWindow,GWL_EXSTYLE)&WS_EX_TOPMOST)&&!benchmark.stats().topmost,"An offscreen benchmark window is created out of the band");
     benchmark.show(true);
     check(benchmark.stats().visible&&!IsWindowVisible(benchmarkWindow)&&!(GetWindowLongPtrW(benchmarkWindow,GWL_EXSTYLE)&WS_EX_TOPMOST)&&
         benchmark.stats().foregroundRequests==0&&benchmark.stats().bandRequests==0,"An offscreen benchmark never enters the band or asks for the foreground");
     benchmark.hide();benchmark.destroy();
 }
-// The band through Windows itself (SetWindowPos on the real, never shown
-// window). Whether this process may enter it depends on the session:
-// without the right to set the foreground window - a logged-in session with
-// another application in front, as when the tester plays - Windows answers
-// success yet keeps the window out of the band, just behind the foreground
+// The band through Windows itself (the real, never shown window). The window
+// is created with WS_EX_TOPMOST and keeps it while hidden. Whether this
+// process may raise a window into the band depends on the session: without
+// the right to set the foreground window - a logged-in session with another
+// application in front, as when the tester plays - Windows answers success
+// yet keeps a raised window out of the band, just behind the foreground
 // window; with it (a session without a foreground window, such as the SSH
 // service session, or a process that holds the right) the window enters it.
-// Either way the host reports exactly what Windows did, and a hidden HUD is
-// never topmost.
+// Either way the host reports exactly what Windows did.
 void zBandNative() {
     OverlayOptions options{L"Hidden native z-band fixture",0,0,32,32,nullptr};
     options.testVisibility=[](bool shown,bool){return shown;};options.testForeground=[]{return false;};
     OverlayHost host;host.create(options);
     const auto window=static_cast<HWND>(host.hwnd());
     const auto nativeTopmost=[&]{return (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
-    check(!nativeTopmost()&&!host.stats().topmost,"The created HUD window is not topmost");
+    const bool created=nativeTopmost();
+    check(host.stats().topmost==created&&!host.stats().bandPending&&host.stats().bandRequests==0,"The host reports the band the HUD window was created in");
     host.show(false);
     const bool entered=nativeTopmost();
     check(!IsWindowVisible(window)&&host.stats().visible,"The native fixture is never really shown");
     check(host.stats().topmost==entered&&host.stats().bandRequests==1&&host.stats().bandRefusals==(entered?0u:1u)&&host.stats().bandPending==!entered,
-        "The host reports whether Windows let the shown HUD into the topmost band");
+        "The host reports whether the shown HUD, raised in the topmost band, is in it");
     if(entered){
         // Dialogs the HUD presents itself (the file choosers, the colour
         // dialogs, the account login) are owned by the HUD window: an owned
@@ -539,13 +677,12 @@ void zBandNative() {
         const auto above=[](HWND upper,HWND lower){for(HWND w=GetWindow(upper,GW_HWNDNEXT);w;w=GetWindow(w,GW_HWNDNEXT))if(w==lower)return true;return false;};
         check(dialog&&!IsWindowVisible(dialog)&&GetWindow(dialog,GW_OWNER)==window,"A dialog fixture is owned by the HUD window and never shown");
         check((GetWindowLongPtrW(dialog,GWL_EXSTYLE)&WS_EX_TOPMOST)&&above(dialog,window),"A dialog opened over the shown HUD is in the topmost band, above the HUD");
-        // A raise Windows refuses never takes an already topmost window out of the band.
         host.show(false);
         check(nativeTopmost()&&host.stats().topmost&&(GetWindowLongPtrW(dialog,GWL_EXSTYLE)&WS_EX_TOPMOST)&&above(dialog,window),
-            "Raising the HUD to the top of the band keeps it there and its dialog above it");
+            "Showing the HUD again raises it in the band and keeps its dialog above it");
         check(DestroyWindow(dialog)!=FALSE,"Destroy the owned dialog fixture");
         check(host.place(4,6,40,36)&&nativeTopmost(),"Placing the shown HUD keeps it in the band");
-        std::cout<<"Native z-band: this process entered the topmost band\n";
+        std::cout<<"Native z-band: the HUD window is in the topmost band"<<(created?" from its creation":" (entered at its opening)")<<'\n';
     }else{
         // The session's foreground rules kept this process out of the band;
         // the next activation tries again (still refused here: a sent
@@ -557,8 +694,45 @@ void zBandNative() {
         std::cout<<"Native z-band: Windows' foreground rules kept this process out of the topmost band (foreground: "
                  <<(GetForegroundWindow()?"another window":"none")<<"); the refusal was reported\n";
     }
+    const bool shownBand=nativeTopmost();
     host.hide();
-    check(!nativeTopmost()&&!host.stats().topmost&&!host.stats().bandPending,"The hidden HUD is never topmost");
+    check(nativeTopmost()==shownBand&&host.stats().topmost==shownBand&&!host.stats().bandPending,"The hidden HUD keeps the band it had");
+    host.destroy();
+}
+// An activating show of a window that holds the band, refused the
+// foreground: whether Windows can then leave the window out of the band (its
+// raise declined, or the activation refused) is unmeasured, so the host
+// reads the band again after every show and a lost
+// band waits for the next activation, as a refused raise does. Played on the
+// real, never shown window: the visibility seam lowers it out of the band
+// natively, standing for that refusal; nothing is shown or activated.
+void bandLostAtShow() {
+    HWND window{};bool drop{};
+    OverlayOptions options{L"Hidden band-at-show fixture",0,0,32,32,nullptr};
+    options.testVisibility=[&](bool shown,bool){
+        if(shown&&drop)(void)SetWindowPos(window,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        return shown;};
+    options.testForeground=[]{return false;};
+    OverlayHost host;host.create(options);
+    window=static_cast<HWND>(host.hwnd());
+    const auto nativeTopmost=[&]{return (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;};
+    if(!nativeTopmost()){
+        std::cout<<"Band at show: Windows kept the created window out of the band here; covered by zBandNative\n";
+        host.destroy();return;
+    }
+    host.show(true);
+    check(nativeTopmost()&&host.stats().topmost&&!host.stats().bandPending&&host.stats().bandRefusals==0&&host.stats().bandRequests==1,
+        "A show that keeps the band reports no refusal");
+    host.hide();drop=true;host.show(true);drop=false;
+    check(!IsWindowVisible(window)&&host.stats().visible&&host.stats().activationPending,"The fixture opening is refused the foreground and never really shown");
+    check(!nativeTopmost()&&!host.stats().topmost&&host.stats().bandPending&&host.stats().bandRefusals==1&&host.stats().bandRequests==2,
+        "An opening that cost the HUD its band reports it and waits for the next activation");
+    // The activation Windows allows next (sent to the hidden fixture: no
+    // real activation) enters the band again where this session permits it.
+    SendMessageW(window,WM_ACTIVATE,MAKEWPARAM(WA_CLICKACTIVE,0),0);
+    check(host.stats().bandRequests==3&&host.stats().topmost==nativeTopmost()&&host.stats().bandPending==!nativeTopmost()&&
+        host.stats().deferredBands==(nativeTopmost()?1u:0u),"The next activation asks for the band again and the host reports the result");
+    host.hide();check(!host.stats().bandPending&&!host.stats().activationPending,"Hiding drops the waits");
     host.destroy();
 }
 void nativeDeadlines() {
@@ -619,6 +793,228 @@ void offscreenCadence() {
     host.setFrameDemand(ambient); host.hide();
     frames = 0; run(.3);
     check(frames == 0 && !host.stats().timerArmed && !host.stats().framePending && !IsWindowVisible(window), "A hidden window gets no frame and no timer");
+    host.destroy();
+}
+// The never-shown fixture lies under no cursor, so Windows answers the host's
+// leave tracking (at once or later); those notices, and only those, are
+// dropped, as projection_capture_route_tests does, so every frame below comes
+// from the posted moves.
+HWND leaveFixture{};
+LRESULT CALLBACK dropFixtureLeaves(int code, WPARAM remove, LPARAM value) {
+    if (code == HC_ACTION && remove == PM_REMOVE) { auto& m = *reinterpret_cast<MSG*>(value); if (m.hwnd == leaveFixture && m.message == WM_MOUSELEAVE) m.message = WM_NULL; }
+    return CallNextHookEx(nullptr, code, remove, value);
+}
+// A frame held for the swap chain's admission while input keeps arriving.
+// Enlarging a Notes card rebuilds the card on every move, so with a fast mouse
+// a move is always queued: the HUD froze until the button was released (the
+// held frame waited for a whole input batch, and the gate timer's WM_TIMER
+// never comes while input is queued). The held frame runs once admitted, or
+// 50 ms after it was held, after sampling the input that came with its
+// admission. The same holds for held keys whose auto-repeat a module's key
+// filter consumes. Hidden: posted moves and key repeats to a never-shown
+// window, an auto-reset event standing in for the swap chain's frame latency
+// object.
+void gatedFrameUnderContinuousInput() {
+    const HANDLE gate = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    check(gate != nullptr, "Create the stand-in frame latency object");
+    struct Gate { HANDLE h; ~Gate() { CloseHandle(h); } } owned{gate};
+    unsigned moves{}, limit{}, signalAt{};
+    double cost{};
+    bool admissionHeld{};
+    std::vector<unsigned> frameAtMove, admittedAtMove; std::vector<double> frameTimes;
+    HWND window{};
+    OverlayCallbacks callbacks;
+    callbacks.frame = [&](double now) { frameAtMove.push_back(moves); frameTimes.push_back(now); };
+    callbacks.presentationWaitable = [&] { return static_cast<void*>(gate); };
+    // The owner already holds an admission (the top of pumpOnce takes the
+    // frame as admitted before it dispatches the queued input).
+    callbacks.presentationHeld = [&] { return admissionHeld; };
+    callbacks.presentationAdmitted = [&] { admittedAtMove.push_back(moves); };
+    // One input step that costs `cost` seconds; true while the input lasts.
+    const auto step = [&] {
+        ++moves;
+        for (const auto end = OverlayHost::clockNow() + cost; OverlayHost::clockNow() < end;) {}
+        if (moves == signalAt) SetEvent(gate);
+        return moves < limit;
+    };
+    // One resize step: while the drag lasts, a move queues the next move
+    // before it returns (the mouse moved again).
+    callbacks.pointer = [&](const PointerEvent& event) {
+        if (event.kind != PointerKind::move) return false;
+        if (step()) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(moves % 16, 1));
+        return true;
+    };
+    // A held key a module's key filter consumes (a held arrow moving a
+    // selection): each auto-repeat is one step and queues the next.
+    constexpr LPARAM keyRepeat = 1 | (1 << 30);
+    callbacks.beforeKeyTranslation = [&](const NativeMessage& message) {
+        if (message.message != WM_KEYDOWN || message.wParam != VK_RIGHT) return false;
+        if (step()) PostMessageW(window, WM_KEYDOWN, VK_RIGHT, keyRepeat);
+        return true;
+    };
+    OverlayOptions options{L"Hidden gated input fixture", 0, 0, 16, 16, nullptr};
+    options.offscreenScheduling = true; options.refreshRate = 60;
+    OverlayHost host; host.create(options, callbacks);
+    window = static_cast<HWND>(host.hwnd());
+    leaveFixture = window;
+    struct Hook { HHOOK h{}; ~Hook() { if (h) UnhookWindowsHookEx(h); leaveFixture = nullptr; } } hook;
+    hook.h = SetWindowsHookExW(WH_GETMESSAGE, dropFixtureLeaves, nullptr, GetCurrentThreadId());
+    check(hook.h != nullptr, "Thread-local hook for the fixture's leave notices");
+    host.setFrameDemand(visibleDemand()); host.show(false);
+    check(!IsWindowVisible(window) && host.stats().visible, "The gated input fixture is never shown");
+    const auto settle = [&] {
+        for (unsigned i = 0; i < 40 && (host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(20); }
+        ResetEvent(gate);
+        check(!host.stats().presentationGated && !host.stats().framePending && !host.stats().timerArmed, "No gate, timer or frame is left pending");
+    };
+    const auto hold = [&] {
+        settle(); frameAtMove.clear(); admittedAtMove.clear(); frameTimes.clear();
+        moves = limit = signalAt = 0; cost = 0; admissionHeld = false;
+        const auto since = OverlayHost::clockNow();
+        host.invalidate(); host.pumpOnce(0);
+        check(host.stats().presentationGated && frameAtMove.empty(), "The frame waits for the swap chain's admission");
+        return since;
+    };
+    const auto drag = [&](unsigned until, double seconds, unsigned signal, bool keys = false) {
+        limit = until; cost = seconds; signalAt = signal;
+        if (keys) PostMessageW(window, WM_KEYDOWN, VK_RIGHT, keyRepeat);
+        else PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 1));
+        for (unsigned i = 0; i < 256 && moves < limit; ++i) host.pumpOnce(0);
+        limit = signalAt = 0; cost = 0;
+    };
+    // The swap chain accepts a frame at the third 2 ms resize step: the held
+    // frame runs within about half a refresh of input, not after the batch.
+    hold(); drag(300, .002, 3);
+    std::cout << "Gated frame under continuous input: admitted at move 3, first frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() >= 3 && frameAtMove.front() <= 15,
+        "A held frame runs within about half a refresh of input after its admission while input keeps arriving");
+    // The swap chain never accepts one (an occluded target): the 50 ms bound
+    // still runs the frame while the moves keep arriving.
+    auto before = host.stats();
+    auto held = hold(); drag(300, .002, 0);
+    std::cout << "Gated frame under continuous input: never admitted, first frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
+        host.stats().presentationFallbacks > before.presentationFallbacks,
+        "A held frame the swap chain never admits runs 50 ms after it was held while input keeps arriving");
+    // The same two with a held key whose repeats the key filter consumes.
+    hold(); drag(300, .002, 3, true);
+    std::cout << "Gated frame under consumed key repeats: admitted at repeat 3, first frame after repeat " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() >= 3 && frameAtMove.front() <= 15,
+        "A held frame runs within about half a refresh of admission while consumed key repeats keep arriving");
+    before = host.stats();
+    held = hold(); drag(300, .002, 0, true);
+    std::cout << "Gated frame under consumed key repeats: never admitted, first frame after repeat " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(!frameAtMove.empty() && frameAtMove.front() <= 60 && frameTimes.front() - held >= .05 &&
+        host.stats().presentationFallbacks > before.presentationFallbacks,
+        "A held frame the swap chain never admits runs 50 ms after it was held while consumed key repeats keep arriving");
+    // A burst of cheap moves queued while the frame is held, then admitted at
+    // once (the Projection contract): the one frame samples the whole burst,
+    // whichever edge takes the admission.
+    const auto burst = [&](double seconds) {
+        cost = seconds;
+        for (unsigned k = 0; k < 6; ++k) PostMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(k, 2));
+    };
+    hold(); before = host.stats(); burst(0);
+    SetEvent(gate); host.pumpOnce(0);
+    std::cout << "Gated frame with a queued burst: admitted at move " << (admittedAtMove.empty() ? 0 : admittedAtMove.front())
+        << ", frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of " << moves << '\n';
+    check(host.stats().presentationAdmissions == before.presentationAdmissions + 1 && admittedAtMove.size() == 1,
+        "The queued burst's frame takes the swap chain's one admission");
+    check(frameAtMove.size() == 1 && frameAtMove.front() == 6, "A frame admitted with a queued burst runs once, after every move of it");
+    // The same burst with the admission already held when pumpOnce starts: the
+    // frame is due before the first message and still samples the burst.
+    hold(); burst(0); admissionHeld = true; host.pumpOnce(0); admissionHeld = false;
+    check(frameAtMove.size() == 1 && frameAtMove.front() == 6, "A frame due at the top of pumpOnce runs once, after every move of a queued burst");
+    // A burst whose moves outlast the sample window (six 2 ms moves against
+    // half a 60 Hz refresh): the frame runs after at most five of them, and
+    // the next frame draws the rest.
+    hold(); burst(.002); admissionHeld = true; host.pumpOnce(0); admissionHeld = false;
+    std::cout << "Gated frame with a costly burst: frame after move " << (frameAtMove.empty() ? 0 : frameAtMove.front()) << " of 6\n";
+    check(frameAtMove.size() == 1 && frameAtMove.front() < 6, "A due frame samples at most half a refresh of further input");
+    for (unsigned i = 0; i < 40 && (moves < 6 || host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(0); }
+    check(moves == 6 && frameAtMove.size() == 2 && frameAtMove.back() == 6, "The next frame draws the rest of the burst");
+    cost = 0;
+    settle();
+    before = host.stats(); frameAtMove.clear();
+    for (const auto end = OverlayHost::clockNow() + .3; OverlayHost::clockNow() < end;) host.pumpOnce(100);
+    check(frameAtMove.empty() && host.stats().timerWakes == before.timerWakes && host.stats().presentationWaits == before.presentationWaits,
+        "After the drag, the idle HUD runs no frame and wakes nothing");
+    host.destroy();
+}
+// A modal loop the HUD thread runs for someone else: the avatar picker's
+// IFileOpenDialog::Show (and the other pickers, the colour panel, a drag)
+// dispatches the HUD's messages with its own GetMessage loop. Display-paced
+// motion posts its next frame as each frame ends; run straight from that
+// loop, every frame queued the next one at once, and posted messages come
+// before input, WM_PAINT and WM_TIMER, so the dialog never painted (a white
+// frame, not responding) until the HUD closed. A frame the loop dispatches
+// now waits for the swap chain's admission like one pumpOnce dispatches, on
+// the gate timer, which comes after the loop's own input, paint and timers.
+// Hidden: a never-shown fixture, an auto-reset event standing in for the
+// frame latency object and a hidden stand-in dialog whose timer counts the
+// low-priority work its loop gets through.
+unsigned standInTicks{};
+HANDLE standInGate{};
+LRESULT CALLBACK standInDialog(HWND window, UINT message, WPARAM w, LPARAM l) {
+    if (message == WM_TIMER && w == 1) { ++standInTicks; if (standInGate) SetEvent(standInGate); return 0; }
+    return DefWindowProcW(window, message, w, l);
+}
+void nestedModalLoopUnderPacedMotion() {
+    const HANDLE gate = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    check(gate != nullptr, "Create the stand-in frame latency object");
+    struct Gate { HANDLE h; ~Gate() { CloseHandle(h); standInGate = nullptr; } } owned{gate};
+    unsigned frames{};
+    OverlayCallbacks callbacks;
+    callbacks.frame = [&](double) { ++frames; };
+    callbacks.presentationWaitable = [&] { return static_cast<void*>(gate); };
+    OverlayOptions options{L"Hidden nested modal loop fixture", 0, 0, 16, 16, nullptr};
+    options.offscreenScheduling = true; options.refreshRate = 60;
+    OverlayHost host; host.create(options, callbacks);
+    const auto window = static_cast<HWND>(host.hwnd());
+    leaveFixture = window;
+    struct Hook { HHOOK h{}; ~Hook() { if (h) UnhookWindowsHookEx(h); leaveFixture = nullptr; } } hook;
+    hook.h = SetWindowsHookExW(WH_GETMESSAGE, dropFixtureLeaves, nullptr, GetCurrentThreadId());
+    check(hook.h != nullptr, "Thread-local hook for the fixture's leave notices");
+    WNDCLASSW type{}; type.lpfnWndProc = standInDialog; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = L"EndfieldHiddenStandInDialog";
+    check(RegisterClassW(&type) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS, "Register the stand-in dialog class");
+    const auto dialog = CreateWindowExW(WS_EX_TOOLWINDOW, type.lpszClassName, L"Hidden stand-in dialog", WS_POPUP, 0, 0, 16, 16, window, nullptr, type.hInstance, nullptr);
+    check(dialog != nullptr && !IsWindowVisible(dialog), "The stand-in dialog is owned by the fixture and never shown");
+    auto paced = visibleDemand(); paced.finiteAnimation = true;
+    host.setFrameDemand(paced); host.show(false);
+    check(!IsWindowVisible(window) && host.stats().visible, "The nested loop fixture is never shown");
+    // The modal loop: GetMessage-style dispatch (never pumpOnce) for `seconds`.
+    const auto modal = [&](double seconds, bool admit) {
+        standInTicks = 0; frames = 0; standInGate = admit ? gate : nullptr;
+        check(SetTimer(dialog, 1, USER_TIMER_MINIMUM, nullptr) != 0, "Start the stand-in dialog's timer");
+        SetEvent(gate); host.invalidate();
+        MSG message{};
+        for (const auto end = OverlayHost::clockNow() + seconds; OverlayHost::clockNow() < end;) {
+            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); continue; }
+            const auto left = static_cast<DWORD>(std::ceil(std::max(0., end - OverlayHost::clockNow()) * 1000));
+            MsgWaitForMultipleObjectsEx(0, nullptr, left, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        KillTimer(dialog, 1); standInGate = nullptr;
+    };
+    // The swap chain admits a frame whenever the dialog's loop is idle (a
+    // display refresh): the dialog's timer keeps running and the HUD keeps drawing.
+    auto before = host.stats();
+    modal(.4, true);
+    std::cout << "Nested modal loop under paced motion: " << standInTicks << " dialog timer ticks, " << frames << " HUD frames\n";
+    check(standInTicks >= 5, "A modal loop run on the HUD thread gets its own timers while the HUD animates");
+    check(frames >= 3 && frames <= standInTicks + 2, "The HUD keeps drawing in the modal loop, one frame per admission");
+    check(host.stats().presentationWaits > before.presentationWaits, "Frames the modal loop dispatches wait for the swap chain's admission");
+    // An occluded or suspended target never admits one: the 50 ms bound
+    // still draws the HUD and the dialog's loop keeps its timers.
+    before = host.stats();
+    modal(.4, false);
+    std::cout << "Nested modal loop, never admitted: " << standInTicks << " dialog timer ticks, " << frames << " HUD frames\n";
+    check(standInTicks >= 5 && frames >= 3 && frames <= 12 && host.stats().presentationFallbacks > before.presentationFallbacks,
+        "Without admissions the modal loop keeps its timers and the HUD draws every 50 ms");
+    DestroyWindow(dialog);
+    host.setFrameDemand(visibleDemand());
+    for (unsigned i = 0; i < 40 && (host.stats().presentationGated || host.stats().framePending); ++i) { SetEvent(gate); host.pumpOnce(20); }
+    ResetEvent(gate);
+    check(!host.stats().presentationGated && !host.stats().framePending, "No gate or frame is left pending after the modal loop");
     host.destroy();
 }
 void nativeWindow() {
@@ -867,7 +1263,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); zBandAndActivation(); zBandNative(); nativeDeadlines(); offscreenCadence();
+        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput(); nestedModalLoopUnderPacedMotion();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else

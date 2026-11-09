@@ -101,8 +101,10 @@ public:
     NativeNotesImageDecoder(const NativeNotesImageDecoder&)=delete;
     NativeNotesImageDecoder&operator=(const NativeNotesImageDecoder&)=delete;
     // Latest visible generation replaces queued/results jobs. Matching active
-    // decoders retain an eight-sequence LRU cache. Visible metadata is not an
-    // eight-card storage limit: work/refill and result delivery are bounded.
+    // decoders retain an eight-sequence LRU cache. A request hidden (or
+    // replaced) and shown again reopens its file, however soon it returns.
+    // Visible metadata is not an eight-card storage limit: work/refill and
+    // result delivery are bounded.
     // Empty input releases on the worker;
     // caller's already borrowed artwork remains valid through a close fade.
     bool setVisible(std::span<const NotesImageRequest>,bool retry=false);

@@ -494,6 +494,10 @@ bool MediaAssemblyOwner::finishEditing(double t){return impl_->core->finishEditi
 bool MediaAssemblyOwner::flush(double t){return impl_->core->flush(t);}
 bool MediaAssemblyOwner::hostEvent(const app::HostEvent&e,double t){
     auto&i=*impl_;i.clock(t);const bool changed=i.core->hostEvent(e,t);
+    // The hidden HUD (the close finished, or a File Shelf drag's retract hid
+    // it): the canvas left with the core's deactivation (willLeave ends its
+    // presentation, kept through the close as on the Mac).
+    if(e.kind==app::HostEvent::Kind::overlayConcealed||e.kind==app::HostEvent::Kind::overlayRetracted){i.overlay=false;i.afterFrame();}
     // The HUD closed: no preview, texture or processor is kept (the source
     // canvas layers die with the HUD; the session survives).
     if(e.kind==app::HostEvent::Kind::overlayConcealed){i.releaseVideo();i.releasePictures();i.dropProcessors();i.poseDraws();}

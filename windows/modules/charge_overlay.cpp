@@ -10,6 +10,14 @@ bool contains(const core::Rect& r, core::Point p) noexcept {
 }
 } // namespace
 
+ChargeAlertSettings ChargeOverlayState::barSettings() const {
+    if (!editing_) return settings_;
+    auto value = settings_;
+    value.scale = draftScale_;
+    value.length = draftLength_;
+    return value.normalized();
+}
+
 ChargeOverlayState::ChargeOverlayState() { timeline_.setStage(ChargeStage::hidden, false, 0); }
 
 void ChargeOverlayState::setReduceMotion(bool value) noexcept { timeline_.setReduceMotion(value); }
@@ -18,6 +26,7 @@ void ChargeOverlayState::setSettings(const ChargeAlertSettings& settings) {
     if (next == settings_) return;
     settings_ = std::move(next);
     ++contentRevision_;
+    syncDraft();
 }
 void ChargeOverlayState::update(const BatteryReading& reading, bool preview, double) {
     if (reading_ == reading && preview_ == preview) return;
@@ -32,6 +41,9 @@ void ChargeOverlayState::show(bool persistent, double duration, bool replay, dou
     const auto token = ++generation_;
     persistent_ = persistent;
     requestedDuration_ = std::isfinite(duration) ? std::min(60.0, std::max(1.0, duration)) : 5;
+    // reposition() before the entrance: the bar takes its width (Length on the
+    // current display) first, so the entrance plays in full at that width.
+    place(time);
     if (!visible_ || replay || !completed_) {
         visible_ = true;
         completed_ = false;
@@ -117,13 +129,24 @@ void ChargeOverlayState::setScreens(std::span<const ChargeWorkArea> screens, std
     screens_.assign(screens.begin(), screens.end());
     preferred_ = preferred;
     // OverlayController.reposition while editing: keep the draft on a
-    // connected screen and clamped to its current usable area.
-    if (editing_ && draftAnchor_) {
-        if (const auto screen = selectedScreen()) {
-            draftAnchor_ = chargeClampedAnchor(*draftAnchor_, screen->bounds, settings_.scale, true, screen->pixelsPerPoint);
-            draftScreen_ = screen->id;
-        }
-    }
+    // connected screen, where Confirm puts it on that display's usable area.
+    syncDraft();
+}
+void ChargeOverlayState::syncDraft() noexcept {
+    if (!editing_ || !draftAnchor_) return;
+    const auto screen = selectedScreen();
+    if (!screen) return;
+    draftAnchor_ = chargeEditorAnchor(*draftAnchor_, moved_, barSettings(), screen->bounds, screen->pixelsPerPoint);
+    draftScreen_ = screen->id;
+    syncLengthSlider(*screen);
+}
+// syncLengthSlider: the range follows the display and Size (200-point minimum).
+void ChargeOverlayState::syncLengthSlider(const ChargeWorkArea& screen) noexcept {
+    const auto bar = barSettings();
+    const auto range = chargeLengthRange(screen.bounds, bar.scale, screen.pixelsPerPoint);
+    ChargeLengthSlider slider{std::min(100.0, std::ceil(range.minimum * 100)), 100};
+    slider.value = slider.range().clamp(chargeLength(bar, screen.bounds, screen.pixelsPerPoint) * 100);
+    lengthSlider_ = slider;
 }
 std::optional<ChargeWorkArea> ChargeOverlayState::selectedScreen() const {
     const auto requested = editing_ ? draftScreen_ : settings_.customPlacement ? settings_.customScreenID : std::nullopt;
@@ -133,15 +156,29 @@ std::optional<ChargeWorkArea> ChargeOverlayState::selectedScreen() const {
 std::optional<core::Point> ChargeOverlayState::anchor() const {
     const auto screen = selectedScreen();
     if (!screen) return std::nullopt;
-    if (editing_ && draftAnchor_)
-        return chargeClampedAnchor(*draftAnchor_, screen->bounds, settings_.scale, true, screen->pixelsPerPoint);
+    if (editing_ && draftAnchor_) return draftAnchor_;
     return chargeAnchor(settings_, screen->bounds, false, screen->pixelsPerPoint);
 }
 std::optional<ChargePanelLayout> ChargeOverlayState::layout() const {
     const auto screen = selectedScreen();
     const auto point = anchor();
     if (!screen || !point) return std::nullopt;
-    return chargePanelLayout(*point, settings_.scale, editing_, screen->pixelsPerPoint);
+    const auto bar = barSettings();
+    const double ppp = screen->pixelsPerPoint;
+    const double width = chargeBarWidth(bar.length, screen->bounds, bar.scale, ppp);
+    std::optional<core::Rect> strip;
+    if (editing_ && stripPoints_) {
+        // Spaced for the largest Size, so a Size change never moves the strip
+        // vertically or slides the bar under it; held while a slider is held.
+        if (adjusting_ && heldStrip_) strip = heldStrip_;
+        else strip = chargeEditorStripFrame(*point, bar.scale, width, chargeEditorStripSize(*stripPoints_, ppp), screen->bounds, ppp);
+    }
+    return chargePanelLayout(*point, bar.scale, width, screen->bounds, ppp, strip);
+}
+std::optional<ChargePanelLayout> ChargeOverlayState::place(double time) {
+    auto next = layout();
+    if (next) timeline_.setBarWidth(next->barWidth, time);
+    return next;
 }
 
 bool ChargeOverlayState::beginPositionEditing(const BatteryReading& previewValue, double time) {
@@ -157,44 +194,88 @@ bool ChargeOverlayState::beginPositionEditing(const BatteryReading& previewValue
     if (!index) return false;
     const auto& screen = screens_[*index];
     draftScreen_ = screen.id;
-    draftAnchor_ = chargeAnchor(settings_, screen.bounds, true, screen.pixelsPerPoint);
+    // The strip flips above the bar near the bottom edge, so the editor no
+    // longer reserves room below it (editing: false).
+    draftAnchor_ = chargeAnchor(settings_, screen.bounds, false, screen.pixelsPerPoint);
+    draftScale_ = settings_.scale;
+    draftLength_ = settings_.length;
+    moved_ = adjusting_ = false;
+    heldStrip_.reset();
     editing_ = visible_ = persistent_ = completed_ = window_ = true;
     timeline_.setStage(ChargeStage::compact, false, time);
+    syncDraft();
     return true;
 }
-void ChargeOverlayState::beginDrag(core::Point mouse) noexcept {
-    if (!editing_ || !draftAnchor_) return;
-    dragMouse_ = mouse;
-    dragOrigin_ = draftAnchor_;
+void ChargeOverlayState::setEditorStrip(std::optional<design::Size> stripPoints) noexcept {
+    stripPoints_ = stripPoints;
+    heldStrip_.reset();
 }
-bool ChargeOverlayState::drag(core::Point mouse) noexcept {
-    if (!editing_ || !dragOrigin_ || !dragMouse_ || screens_.empty()) return false;
-    if (!std::isfinite(mouse.x) || !std::isfinite(mouse.y)) return false;
-    const core::Point proposed{dragOrigin_->x + mouse.x - dragMouse_->x, dragOrigin_->y + mouse.y - dragMouse_->y};
+void ChargeOverlayState::setStripAdjusting(bool adjusting) noexcept {
+    if (adjusting && !adjusting_) {
+        const auto current = layout();
+        heldStrip_ = current ? current->strip : std::nullopt;
+    }
+    adjusting_ = adjusting;
+    if (!adjusting) heldStrip_.reset();
+}
+// editorChanged: Size is a fraction of 100 %; Length a share of the display.
+void ChargeOverlayState::setDraftScale(double scale) {
+    if (!editing_) return;
+    draftScale_ = scale;
+    ++contentRevision_;
+    syncDraft();
+}
+bool ChargeOverlayState::setDraftLength(double percent) {
+    if (!editing_) return false;
+    const auto next = chargeDraftLength(percent, lengthSlider_ ? std::optional<double>(lengthSlider_->value) : std::nullopt);
+    if (!next) return false;
+    draftLength_ = next;
+    ++contentRevision_;
+    syncDraft();
+    return true;
+}
+// editorPointerDragged: the display under the pointer, else the draft's, else the first.
+bool ChargeOverlayState::moveDraft(core::Point proposed, core::Point mouse) noexcept {
+    if (!editing_ || screens_.empty()) return false;
+    if (!std::isfinite(proposed.x) || !std::isfinite(proposed.y)) return false;
     const ChargeWorkArea* target = nullptr;
     for (const auto& screen : screens_) if (contains(screen.bounds, mouse)) { target = &screen; break; }
     if (!target) for (const auto& screen : screens_) if (draftScreen_ && screen.id == *draftScreen_) { target = &screen; break; }
     if (!target) target = &screens_.front();
+    const bool changedScreen = !draftScreen_ || target->id != *draftScreen_;
     draftScreen_ = target->id;
-    const auto next = chargeClampedAnchor(proposed, target->bounds, settings_.scale, true, target->pixelsPerPoint);
-    const bool moved = !draftAnchor_ || *draftAnchor_ != next;
-    draftAnchor_ = next;
-    return moved;
+    draftAnchor_ = chargeClampedAnchor(proposed, barSettings(), target->bounds, false, target->pixelsPerPoint);
+    moved_ = true;
+    if (changedScreen) {
+        // ChargeIndicatorView.setBarWidth -> updateContent: the bar takes the
+        // new display's width (and density), so its labels are fitted again.
+        ++contentRevision_;
+        syncLengthSlider(*target);
+    }
+    return changedScreen;
 }
 void ChargeOverlayState::finishEditing(double time) {
     editing_ = false;
     draftAnchor_.reset();
     draftScreen_.reset();
-    endDrag();
+    draftLength_.reset();
+    moved_ = adjusting_ = false;
+    lengthSlider_.reset();
+    stripPoints_.reset();
+    heldStrip_.reset();
     hide(false, time);
+    // The drafts' Size and Length are dropped; a confirmed layout arrives as settings.
+    ++contentRevision_;
 }
-std::optional<ChargePosition> ChargeOverlayState::confirmPosition(double time) {
+std::optional<ChargeBarLayout> ChargeOverlayState::confirmPosition(double time) {
     if (!editing_ || !draftAnchor_) return std::nullopt;
     const auto screen = selectedScreen();
     if (!screen) return std::nullopt;
-    const auto position = chargeNormalizedPosition(*draftAnchor_, *screen);
+    const auto bar = barSettings();
+    ChargeBarLayout layout{moved_ ? std::optional<ChargePosition>(chargeNormalizedPosition(*draftAnchor_, *screen)) : std::nullopt,
+                           bar.scale, bar.length};
     finishEditing(time);
-    return position;
+    return layout;
 }
 void ChargeOverlayState::discardPosition(double time) {
     if (editing_) finishEditing(time);

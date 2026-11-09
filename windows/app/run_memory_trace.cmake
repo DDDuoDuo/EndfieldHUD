@@ -2,7 +2,9 @@
 # runs watch_session_preview --memory-trace with the module coverage inputs in
 # a NEW owned work directory (synthetic providers, staged package), then checks
 # the report: every stage was recorded with its process census, owner
-# attribution and thread origins; every presented module was visited; and the
+# attribution, thread origins and frame scheduling state (host frame requests
+# and timer, its gate's demand, presents, Reduce Motion and its inputs, the
+# lifecycle); every presented module was visited; and the
 # closed HUD does not grow across ten more open/close cycles (private bytes,
 # threads, retained raster entries and renderer resources). Prints the stage
 # numbers. Never shows a window or touches user data.
@@ -66,6 +68,16 @@ foreach(index RANGE ${last})
   if(private LESS_EQUAL 0 OR threads LESS_EQUAL 0 OR owners LESS 2)
     message(FATAL_ERROR "Memory trace stage ${stage} lacks its process census or owner attribution")
   endif()
+  # The frame scheduling state every row carries (ENDFIELDHUD_MEMORY_TRACE
+  # is also the frame scheduling and presentation trace).
+  foreach(field "host;frameRequests" "host;framePosts" "host;framePending" "host;timerArmed" "host;presentationFallbacks"
+          "host;presentationGated" "host;canPresent" "host;visible" "host;topmost" "host;demand;phase" "host;demand;reduceMotion"
+          "renderer;presents" "reduceMotion" "systemAnimationsOff" "lifecycle" "session" "closing" "pendingClose")
+    string(JSON scheduled ERROR_VARIABLE no_scheduling GET "${report}" snapshots ${index} scheduling ${field})
+    if(no_scheduling)
+      message(FATAL_ERROR "Memory trace stage ${stage} lacks its frame scheduling state (${field})")
+    endif()
+  endforeach()
   set(threads_by_start 0)
   string(JSON threads_by_start ERROR_VARIABLE no_threads LENGTH "${report}" snapshots ${index} census threadsByStart)
   if(NOT stage STREQUAL "first-opening" AND (no_threads OR threads_by_start LESS 1))

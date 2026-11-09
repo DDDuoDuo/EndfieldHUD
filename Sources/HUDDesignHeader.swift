@@ -155,11 +155,16 @@ final class HUDModuleHeader {
 
     var controls: [HUDControl] { (back.map { [$0] } ?? []) + actionControls }
 
-    /// Title wipe with fade (.45 s E) and the rule wipe (.42 s E after .05 s).
-    func playEntrance() {
-        HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, fadeFrom: 0, env: env)
-        HUDMotion.grow(rule, duration: HUDDuration.ruleWipe, delay: HUDDuration.ruleDelay, env: env)
+    /// Title wipe with fade (.45 s E) and the rule wipe (.42 s E after .05 s);
+    /// the breadcrumb, code, hatch tail, Back and the actions fade in with them.
+    func playEntrance(delay: CFTimeInterval = 0) {
+        HUDMotion.wipe(titleGroup, from: .left, duration: HUDDuration.titleWipe, delay: delay, fadeFrom: 0, env: env)
+        HUDMotion.grow(rule, duration: HUDDuration.ruleWipe, delay: HUDDuration.ruleDelay + delay, env: env)
+        HUDMotion.stagger(extras, from: .zero, delay: delay, env: env)
     }
+
+    /// The header's layers besides the title and the rule, in reading order.
+    var extras: [CALayer] { [crumbs, codeText, tail] + (back.map { [$0.layer] } ?? []) + [actions] }
 
     var titleTextForTesting: (String, String) { (title.text, subtitle.text) }
     var counterTextForTesting: String { counter.text }

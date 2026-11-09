@@ -82,22 +82,29 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         else { active = true; refreshActions() }
     }
 
-    func deactivate() {
+    /// `animated`: the HUD's close, whose formatting menu artwork finishes its
+    /// short fade with the notes, as do cards still entering or leaving; its
+    /// input still stops at once.
+    func deactivate(animated: Bool = false) {
         // Hide immediately when the owner is leaving; the overlay's own close
-        // animation governs the entire workspace and owns its teardown.
+        // animation governs the entire workspace and owns its teardown. The
+        // HUD's close dismisses its menu last, after the cancels below.
+        let closingMenu = animated ? formatting : nil
+        if closingMenu != nil { formatting = nil; formattingNoteID = nil }
         active = false
         finishEditing()
         closeFormatting()
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
         importGeneration += 1
         pendingImport?.cancel(); pendingImport = nil
-        workspace.cancelInteraction()
+        workspace.cancelInteraction(keepingLeaves: animated)
         dragging = false; externalDrag = false; active = false
         dialogGeneration += 1
         let panel = chooser
         chooser = nil
         panel?.cancel(nil)
         buttons.values.forEach { $0.isHidden = true }; mediaSliders.values.forEach { $0.isHidden = true }
+        dismiss(closingMenu, animated: true)
     }
 
     @discardableResult func mouseDownInWorkspace(at point: CGPoint, clickCount: Int) -> Bool {
@@ -212,7 +219,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         }
         text.delegate = self
         text.setAccessibilityLabel(next.multiline ? L10n.text("Edit text note", "编辑文字便笺") : L10n.text("Edit checklist item", "编辑待办事项"))
-        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines.", "按 Esc 或 Command-Return 保存。文字便笺支持多行。"))
+        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines", "按 Esc 或 Command-Return 保存。文字便笺支持多行"))
         text.onFinish = { [weak self] in self?.finishEditing() }
         text.onToggle = { [weak self] in self?.onToggle?() }
         text.onEscape = { [weak self] in
@@ -438,14 +445,15 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         popup.layoutAccessibility()
     }
 
-    /// Input stops at once; the artwork finishes a short fade on the plane.
-    private func dismiss(_ popup: NotesDesktopPopup?) {
+    /// Input stops at once; the artwork finishes a short fade on the plane
+    /// (while active, or `animated`).
+    private func dismiss(_ popup: NotesDesktopPopup?, animated: Bool? = nil) {
         guard let popup else { return }
         popup.cancelInteraction()
         retiringMenuArtwork?.removeAllAnimations(); retiringMenuArtwork?.removeFromSuperlayer(); retiringMenuArtwork = nil
         popup.removeFromSuperview()
         let layer = popup.chrome
-        guard active, !workspace.env.reducesMotion, layer.superlayer != nil else { layer.removeAllAnimations(); layer.removeFromSuperlayer(); return }
+        guard animated ?? active, !workspace.env.reducesMotion, layer.superlayer != nil else { layer.removeAllAnimations(); layer.removeFromSuperlayer(); return }
         retiringMenuArtwork = layer
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self, weak layer] in

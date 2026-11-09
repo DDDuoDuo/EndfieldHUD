@@ -12,6 +12,8 @@ final class HUDSourceWatchFrameBuilder {
         let rect: HUDSourceRect
         let world: simd_double4x4
         let masks: [(rect: HUDSourceRect, world: simd_double4x4)]
+        /// Arrange on HUD: where a tile drawn away from its slot rests (nil: at `world`).
+        var restWorld: simd_double4x4? = nil
     }
     struct Frame {
         private let resolvedBase: [HUDSourceID: HUDSourceResolvedNode]
@@ -30,6 +32,9 @@ final class HUDSourceWatchFrameBuilder {
         let layoutReport: HUDSourceWatchLayout.Report
         let diagnostics: [String]
         var inheritedAlpha: [HUDSourceID: Double] = [:]
+        /// Arrange on HUD: the buttons drawn away from their slots, by this
+        /// scene translation (`desktopTilePlacements`).
+        var tileTranslations: [HUDSourceID: SIMD3<Double>] = [:]
 
         init(resolved: [HUDSourceID: HUDSourceResolvedNode], batches: [HUDSourceMetalRenderer.Batch], hits: [Hit],
              layoutReport: HUDSourceWatchLayout.Report, diagnostics: [String], inheritedAlpha: [HUDSourceID: Double] = [:],
@@ -86,6 +91,27 @@ final class HUDSourceWatchFrameBuilder {
         didSet { if oldValue != desktopGraphicStyles { cacheGeneration &+= 1 } }
     }
     var widgetState: HUDSourceWatchWidgets.State = .desktopReference { didSet { cacheGeneration &+= 1 } }
+    /// Arrange on HUD: right-hand buttons drawn away from their slots. Applied
+    /// after layout and slant on both the complete and the pointer path, so
+    /// a change keeps the layout and the pointer fast path.
+    var desktopTilePlacements: [HUDSourceID: HUDSourceDesktopTiles.Placement] = [:]
+    /// Arrange on HUD: this button's subtree draws above the other tiles.
+    /// Draw order is fixed per complete frame, so a change takes one.
+    var desktopRaisedButton: HUDSourceID? {
+        didSet {
+            guard oldValue != desktopRaisedButton else { return }
+            cacheGeneration &+= 1
+            raisedNodeIDs = desktopRaisedButton.map { Self.subtrees(of: [$0], in: document.scene) } ?? []
+        }
+    }
+    private var raisedNodeIDs: Set<HUDSourceID> = []
+    /// The recycled right-hand rows and everything under them.
+    private let rowPoolNodeIDs: Set<HUDSourceID>
+    /// The placements, and the nodes they moved, of the cached complete frame
+    /// and of the latest pointer frame.
+    private var builtTilePlacements: [HUDSourceID: HUDSourceDesktopTiles.Placement] = [:]
+    private var builtTileNodes: [HUDSourceID: HUDSourceResolvedNode] = [:]
+    private var pointerPresentationPlacements: [HUDSourceID: HUDSourceDesktopTiles.Placement] = [:]
     private let includeSourceText: Bool
     private let desktopProfileNodeIDs: Set<HUDSourceID>
     private let ambientRoots: Set<HUDSourceID>
@@ -365,18 +391,13 @@ final class HUDSourceWatchFrameBuilder {
         desktopProfileNodeIDs = Set(document.desktopProfileCard?.scene.nodes.map(\.id) ?? [])
         ambientRoots = Set(document.animation.ambient.curves.filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
             .union(additionalAmbientRotationIDs)
-        var dynamicNodes = ambientRoots
-        for id in document.scene.traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, dynamicNodes.contains(parent) { dynamicNodes.insert(id) }
-        }
+        let dynamicNodes = Self.subtrees(of: ambientRoots, in: document.scene)
         ambientNodes = dynamicNodes
         pointerRootIDs = ambientRoots.union(sourceLayout.slantRootIDs)
-        var pointerNodes = pointerRootIDs
-        for id in document.scene.traversalIDs {
-            if let parent = document.scene.node(id)?.parentID, pointerNodes.contains(parent) { pointerNodes.insert(id) }
-        }
+        let pointerNodes = Self.subtrees(of: pointerRootIDs, in: document.scene)
         pointerNodeIDs = pointerNodes
         pointerTraversalIDs = document.scene.traversalIDs.filter { pointerNodes.contains($0) }
+        rowPoolNodeIDs = Self.subtrees(of: sourceLayout.slantRootIDs, in: document.scene)
         slantIndependentOfAmbient = !document.scene.nodes.contains { node in
             guard let effect = document.component("UIScrollCellSlantEffect", on: node.id) else { return false }
             return dynamicNodes.contains(node.id) || effect["_cells"].array.compactMap(\.targetID).contains { dynamicNodes.contains($0) }
@@ -512,6 +533,7 @@ final class HUDSourceWatchFrameBuilder {
             && cachedLayoutPose != nil && cachedLayoutReport != nil
         let reuseTransform = reuseLayout && cachedRoot == worldRoot
         let reuse = reuseTransform && !restoringPointer && cachedGeneration == cacheGeneration
+            && builtTilePlacements == desktopTilePlacements
             && cachedProperties == pose.properties && cachedTints == selectableTints
             && cachedUnboundPaths == pose.unboundPaths && cachedUnregisteredBindings == pose.unregisteredBindings
         let report: HUDSourceWatchLayout.Report
@@ -547,7 +569,7 @@ final class HUDSourceWatchFrameBuilder {
         if reuse, ambientFastPathSupported, let cached = cachedPresentation {
             return try ambientFrame(rotations: pose.transforms, layoutPose: pose, cached: cached, worldRoot: worldRoot)
         }
-        let resolved: [HUDSourceID: HUDSourceResolvedNode]
+        var resolved: [HUDSourceID: HUDSourceResolvedNode]
         if reuse {
             resolved = cachedResolved.merging(try ambientResolved(rotations: pose.transforms, layoutPose: pose)) { _, current in current }
         } else {
@@ -556,6 +578,10 @@ final class HUDSourceWatchFrameBuilder {
                 : document.scene.resolve(overrides: pose.transforms)
             cachedResolved = resolved
         }
+        // Tiles away from their slots; the cache keeps the resting resolve.
+        let tileMoves = tileTranslations(planeID: report.scroll?.viewportID) { resolved[$0] }
+        let tileNodes = HUDSourceDesktopTiles.movedNodes(resolved, by: tileMoves, traversal: traversalIDs)
+        resolved.merge(tileNodes) { _, moved in moved }
         ambientGeometry.removeAll(keepingCapacity: true)
         ambientFastPathSupported = canCache && !cutNodeIDs.contains(where: { ambientNodes.contains($0) })
         // CanvasGroup inheritance does not inspect transforms or visibility.
@@ -930,6 +956,20 @@ final class HUDSourceWatchFrameBuilder {
         }
         batches.sort { $0.order == $1.order ? $0.sequence < $1.sequence : $0.order < $1.order }
         hits.sort { $0.order == $1.order ? $0.sequence < $1.sequence : $0.order < $1.order }
+        if !raisedNodeIDs.isEmpty {
+            func node(_ entry: (order: Int, sequence: Int, batch: HUDSourceMetalRenderer.Batch)) -> HUDSourceID? {
+                entry.batch.sourceNodeID.map { HUDSourceID(rawValue: $0) }
+            }
+            batches = HUDSourceDesktopTiles.raising(batches, isRaised: { node($0).map(raisedNodeIDs.contains) ?? false },
+                                                    inGroup: { node($0).map(rowPoolNodeIDs.contains) ?? false })
+        }
+        if !tileMoves.isEmpty {
+            for index in hits.indices {
+                guard let translation = tileMoves[hits[index].hit.buttonID] else { continue }
+                hits[index].hit.restWorld = HUDSourceDesktopTiles.restWorld(hits[index].hit.world,
+                    translation: translation, worldRoot: worldRoot)
+            }
+        }
         if canCache {
             cachedStaticTransforms = staticTransforms; cachedProperties = staticProperties
             cachedLayoutText = widget.text
@@ -937,10 +977,12 @@ final class HUDSourceWatchFrameBuilder {
             cachedTints = selectableTints; cachedRoot = worldRoot; cachedScroll = verticalNormalizedPosition
             cachedEntryCount = desktopNavigation?.entryCount; cachedGeneration = cacheGeneration; cachedAlpha = alpha
             cachedAlphaInputs = alphaInputs
+            builtTilePlacements = desktopTilePlacements; builtTileNodes = tileNodes
         }
-        let frame = Frame(resolved: resolved, batches: batches.map(\.batch), hits: hits.map(\.hit), layoutReport: report,
+        var frame = Frame(resolved: resolved, batches: batches.map(\.batch), hits: hits.map(\.hit), layoutReport: report,
             diagnostics: diagnostics + pose.unboundPaths.sorted().map { "Unbound source curve: " + $0 }
                 + pose.unregisteredBindings.sorted().map { "Ignored unregistered native animation binding: " + $0 }, inheritedAlpha: alpha)
+        frame.tileTranslations = tileMoves
         if frame.hits.contains(where: { ambientNodes.contains($0.graphicID) }) { ambientFastPathSupported = false }
         if canCache {
             cachedPresentation = frame
@@ -998,6 +1040,7 @@ final class HUDSourceWatchFrameBuilder {
         guard presentationRevision == expectedRevision, domain == nil, document.widgets == nil,
               cachedGeneration == cacheGeneration, cachedResourceGeneration == renderer.resourceGeneration,
               ambientFastPathSupported, pointerPresentation == nil, cachedRoot == worldRoot,
+              builtTilePlacements == desktopTilePlacements,
               cachedScroll == verticalNormalizedPosition, cachedEntryCount == desktopNavigation?.entryCount,
               cachedTints == selectableTints, let layoutPose = cachedLayoutPose, let cached = cachedPresentation,
               layoutPose.transforms[document.scene.rootID]?.sizeDelta?.simd == canvasResolution,
@@ -1036,7 +1079,9 @@ final class HUDSourceWatchFrameBuilder {
                       return value == HUDSourceTransformOverride(localRotation: rotation)
                   }) else { return nil }
         }
-        if pointerPresentationRoot == worldRoot, let latest = pointerPresentation {
+        // Moved tiles key the latest pointer frame as the root does.
+        if pointerPresentationRoot == worldRoot, pointerPresentationPlacements == desktopTilePlacements,
+           let latest = pointerPresentation {
             if let ambient, ambientFastPathSupported {
                 let frame = try ambientFrame(rotations: ambient.transforms, layoutPose: pose, cached: latest,
                     worldRoot: worldRoot, stationaryDelta: pointerPresentationNodes)
@@ -1058,7 +1103,8 @@ final class HUDSourceWatchFrameBuilder {
         // Source slant uses world axes. Keep the original inverses/products,
         // including their rounding, rather than cancelling the root matrix.
         try sourceLayout.applySlant(to: &pose, worldRoot: worldRoot, resolvedBeforeSlant: cachedBeforeSlantResolved)
-        guard let changed = try pointerResolved(pose: pose) else { return nil }
+        var tileTranslations: [HUDSourceID: SIMD3<Double>] = [:]
+        guard let changed = try pointerResolved(pose: pose, tileTranslations: &tileTranslations) else { return nil }
         func node(_ id: HUDSourceID) -> HUDSourceResolvedNode? { changed[id] ?? cachedResolved[id] }
         var softMasks: [HUDSourceID: SoftMask] = [:]
         for id in softMaskIDs where node(id)?.activeInHierarchy == true {
@@ -1113,29 +1159,56 @@ final class HUDSourceWatchFrameBuilder {
                 guard let mask = node(id), let rect = mask.rect else { return nil }
                 return (rect, simd_mul(worldRoot, mask.worldMatrix))
             }
-            hits.append(Hit(graphicID: hit.graphicID, buttonID: hit.buttonID, rect: hit.rect,
-                world: simd_mul(worldRoot, graphic.worldMatrix), masks: masks))
+            let world = simd_mul(worldRoot, graphic.worldMatrix)
+            hits.append(Hit(graphicID: hit.graphicID, buttonID: hit.buttonID, rect: hit.rect, world: world, masks: masks,
+                restWorld: tileTranslations[hit.buttonID].map {
+                    HUDSourceDesktopTiles.restWorld(world, translation: $0, worldRoot: worldRoot)
+                }))
         }
         try updateMovingGeometry(pointerGeometry, nodeAt: node)
         cachedResourceGeneration = renderer.resourceGeneration
         // Pointer motion changes hit geometry, unlike the idle ambient packet.
         presentationRevision &+= 1
         directPointerFrameCount += 1; cachedLayoutFrameCount += 1
-        let frame = Frame(resolved: cachedResolved, batches: batches, hits: hits, layoutReport: cached.layoutReport,
+        var frame = Frame(resolved: cachedResolved, batches: batches, hits: hits, layoutReport: cached.layoutReport,
             diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedMotion: changed,
             batchStructureToken: cached.batchStructureToken)
+        frame.tileTranslations = tileTranslations
         pointerPresentation = frame; pointerPresentationRoot = worldRoot
+        pointerPresentationPlacements = desktopTilePlacements
         pointerPresentationNodes = changed; pointerPresentationHasAmbient = ambient != nil
         return frame
     }
 
-    private func pointerResolved(pose: HUDSourceWatchPose) throws -> [HUDSourceID: HUDSourceResolvedNode]? {
+    /// Arrange on HUD: each placed tile's translation from its slot, given its
+    /// resting node, in the list viewport's plane (`planeID`).
+    private func tileTranslations(planeID: HUDSourceID?,
+                                  nodeAt node: (HUDSourceID) -> HUDSourceResolvedNode?) -> [HUDSourceID: SIMD3<Double>] {
+        guard !desktopTilePlacements.isEmpty, let planeID, let plane = node(planeID) else { return [:] }
+        var result: [HUDSourceID: SIMD3<Double>] = [:]
+        for id in desktopTilePlacements.keys {
+            if let button = node(id), let translation = tileTranslation(id, resting: button, plane: plane) { result[id] = translation }
+        }
+        return result
+    }
+    private func tileTranslation(_ id: HUDSourceID, resting button: HUDSourceResolvedNode,
+                                 plane: HUDSourceResolvedNode) -> SIMD3<Double>? {
+        guard let placement = desktopTilePlacements[id], button.activeInHierarchy, let rect = button.rect else { return nil }
+        return HUDSourceDesktopTiles.translation(placement, world: button.worldMatrix, rect: rect, plane: plane.worldMatrix)
+    }
+
+    /// Every node a tile placement moves is under a right-hand row (a slant
+    /// root), so it is re-resolved here; its children follow their parent.
+    private func pointerResolved(pose: HUDSourceWatchPose,
+                                 tileTranslations: inout [HUDSourceID: SIMD3<Double>]) throws -> [HUDSourceID: HUDSourceResolvedNode]? {
         var changed: [HUDSourceID: HUDSourceResolvedNode] = [:]
         changed.reserveCapacity(pointerTraversalIDs.count)
+        let plane = desktopTilePlacements.isEmpty ? nil
+            : cachedLayoutReport?.scroll.flatMap { cachedResolved[$0.viewportID] }
         for id in pointerTraversalIDs {
             guard let previous = cachedResolved[id] else { return nil }
             let parent = previous.node.parentID.flatMap { changed[$0] ?? cachedResolved[$0] }
-            let next: HUDSourceResolvedNode
+            var next: HUDSourceResolvedNode
             if pointerRootIDs.contains(id) {
                 next = try HUDSourceScene.resolveNode(previous.node, override: pose.transforms[id],
                     parentRect: parent?.rect, parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
@@ -1146,6 +1219,10 @@ final class HUDSourceWatchFrameBuilder {
                 guard HUDSourceGeometry.isFinite(world) else { return nil }
                 next = HUDSourceResolvedNode(node: previous.node, localMatrix: previous.localMatrix,
                     worldMatrix: world, rect: previous.rect, activeInHierarchy: previous.activeInHierarchy)
+            }
+            if let plane, let translation = tileTranslation(id, resting: next, plane: plane) {
+                next = HUDSourceDesktopTiles.translated(next, by: translation)
+                tileTranslations[id] = translation
             }
             changed[id] = next
         }
@@ -1178,6 +1255,8 @@ final class HUDSourceWatchFrameBuilder {
     private func ambientFrame(rotations: [HUDSourceID: HUDSourceTransformOverride], layoutPose: HUDSourceWatchPose,
                               cached: Frame, worldRoot: simd_double4x4,
                               stationaryDelta: [HUDSourceID: HUDSourceResolvedNode] = [:]) throws -> Frame {
+        // A complete frame's moved tiles stay where it drew them.
+        let stationaryDelta = stationaryDelta.isEmpty ? builtTileNodes : stationaryDelta
         let changed = try ambientResolved(rotations: rotations, layoutPose: layoutPose, stationaryDelta: stationaryDelta)
         func node(_ id: HUDSourceID) -> HUDSourceResolvedNode? { changed[id] ?? stationaryDelta[id] ?? cachedResolved[id] }
         var batches = cached.batches
@@ -1193,9 +1272,11 @@ final class HUDSourceWatchFrameBuilder {
         }
         cachedResourceGeneration = renderer.resourceGeneration
         fastAmbientFrameCount += 1
-        return Frame(resolved: cachedResolved, batches: batches, hits: cached.hits, layoutReport: cached.layoutReport,
+        var frame = Frame(resolved: cachedResolved, batches: batches, hits: cached.hits, layoutReport: cached.layoutReport,
             diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedDelta: changed,
             resolvedMotion: stationaryDelta, batchStructureToken: cached.batchStructureToken)
+        frame.tileTranslations = cached.tileTranslations
+        return frame
     }
 
     private func updateMovingGeometry(_ geometries: [AmbientGeometry],
@@ -1463,6 +1544,15 @@ final class HUDSourceWatchFrameBuilder {
         let mesh = try text.build(on: id, rect: rect, sdfScale: sdfScale, literal: replacement)
         textMeshes[id] = (key, literal, mesh); return mesh
     }
+    /// `roots` and every node under them (the scene lists parents first).
+    private static func subtrees(of roots: Set<HUDSourceID>, in scene: HUDSourceScene) -> Set<HUDSourceID> {
+        var result = roots
+        for id in scene.traversalIDs {
+            if let parent = scene.node(id)?.parentID, result.contains(parent) { result.insert(id) }
+        }
+        return result
+    }
+
     private func buttonAncestor(_ id: HUDSourceID, forceWalk: Bool = false) -> HUDSourceID? {
         if !forceWalk { return ancestry[id]?.button }
         var current: HUDSourceID? = id

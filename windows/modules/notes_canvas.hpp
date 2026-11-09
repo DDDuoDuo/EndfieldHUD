@@ -20,7 +20,7 @@
 // expanded slot; the reorder glides are translations from each card's built
 // slot. The pixels and the model hit geometry are the Mac's. The storage
 // problem notice is localized when it shows (the Mac localizes the default
-// "Notes storage is unavailable." when the canvas is made).
+// "Notes storage is unavailable" when the canvas is made).
 #include "core/data/notes_centre_store.hpp"
 #include "modules/archive_body_area.hpp"
 #include "modules/archive_rich_text.hpp"
@@ -34,7 +34,7 @@ namespace endfield::modules {
 struct NotesCanvasOptions {
     // NotesStore was unavailable (Mac: store == nil): no tabs, the empty
     // state, no Hide/Show, the add buttons disabled. `storageError` is the
-    // store's own message; nullopt shows "Notes storage is unavailable.".
+    // store's own message; nullopt shows "Notes storage is unavailable".
     bool storageAvailable{true};
     std::optional<std::string> storageError;
     // workspace.perform(actionID: "tool:<kind>") (text, todo, image, drawing):
@@ -117,15 +117,17 @@ public:
     bool handleScroll(design::Point, design::Point delta) override;
     bool editingOtherText() const override;
     void endOtherEditing(bool commit) override;
+    // The open hand over a TODO card's grip, the closed hand while one is
+    // lifted; only while active on the TODO tab (or lifted).
+    std::optional<design::Cursor> cursor(std::optional<design::Point>) const override;
 private:
-    struct Reorder { std::string id; double grab{}; int index{}; std::vector<std::string> order; };
     struct EditingTask { std::string id; design::TextField* field{}; };
     ehud::data::NotesCentreStore* store_;
     NotesCanvasOptions options_;
     design::Tabs* tabs_{};
     NotesFormatBar* formatBar_{};
     std::vector<std::pair<std::string, design::TaskCard*>> cards_;   // document order
-    std::vector<std::pair<std::string, int>> builtSlots_;            // the slot each card was built at
+    std::vector<design::DragGrip*> taskGrips_;                       // the TODO cards' grips (the cursor hint)
     design::ScrollArea* taskList_{};
     design::Layer *body_{}, *bodyContent_{}, *addBar_{};
     design::Control* mediaButton_{};
@@ -137,7 +139,7 @@ private:
     bool noteEdited_{};
     std::optional<EditingTask> editingTask_;
     std::map<std::string, design::TextField*, std::less<>> editFields_; // canvas-owned, one per edited task
-    std::optional<Reorder> reorder_;
+    std::optional<design::ListReorder> reorder_;
     double expandedBodyHeight_{};
     std::optional<std::string> reportedStatus_;
     bool reportedLoadProblem_{};
@@ -159,6 +161,7 @@ private:
     void placeTaskField(design::TextField&, design::TaskCard&);
     void finishTaskEdit(const std::string& id, std::optional<std::string> text);
     void dragTask(const std::string& id, design::DragGrip::Phase, design::Point rootPoint);
+    design::ListReorder::Rows reorderRows() const;
     void cancelReorder();
     void setTask(const std::string& id, bool done);
     void deleteTask(const std::string& id);
@@ -169,6 +172,5 @@ private:
     void loadNote(ArchiveBodyArea&);
     void attachNote();
     std::optional<std::string> taskID(design::Point) const;
-    int builtSlot(const std::string& id) const;
 };
 } // namespace endfield::modules

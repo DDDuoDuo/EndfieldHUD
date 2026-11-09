@@ -38,15 +38,15 @@ struct IdCardCaption {
 // owner supplies its DirectWrite measurement (LayerRasterizer::measureSourceText).
 using IdCardMeasure=std::function<double(std::string_view text,double fontSize)>;
 // Exact HUDSourceWatchView.setDesktopProfile caption/property/image binding.
-// The card shows the synced display UID (override ?? game ?? local) and never
-// the "#" tag. update() is a content event only: tilt, ambient motion and Work
+// The card shows the shown name and UID (Profile::displayedName and
+// displayedUID: override ?? game ?? account ?? local) and never the "#" tag. update() is a content event only: tilt, ambient motion and Work
 // Mode ticks never call it, and an identical key performs no measurement.
 class IdCardBinding final {
 public:
     IdCardBinding(IdCardSource,IdCardMeasure);
     struct Input {
         const ehud::data::Profile*profile{};std::array<double,3>hudAccent{250./255,212./255,31./255};core::Language language{core::Language::english};
-        std::optional<std::string>avatarImage,backgroundImage; // decoded image identities (managed filenames)
+        std::optional<std::string>avatarImage,backgroundImage; // decoded image identities (Profile::avatarKey, managed filenames)
         int avatarOrientation{1};
         // Recording mode (HUDSourceWatchView.desktopUIDRedacted, Mac 1.3.0):
         // the caption reads "UID:" and a hatched bar stands in for the UID.

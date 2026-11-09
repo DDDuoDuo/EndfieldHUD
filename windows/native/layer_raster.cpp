@@ -173,13 +173,15 @@ bool italicText(const Json&descriptor){
     return false;}
 bool containsText(const Json&node){if(node["text"].isObject())return true;if(node["children"].isArray())for(const auto&child:node["children"].array())if(containsText(child))return true;return false;}
 // The density a raster is painted at (LayerRasterOptions::textContentsScale):
-// the largest contentsScale of its shown text leaves, at most 4, never below
-// pixelsPerPoint. Measure, paint and repaint read it from the same layer, so
-// a released image paints again at its own density. Content events only.
+// the largest contentsScale of its shown text leaves, at most 4 x the
+// options' magnification, never below pixelsPerPoint. Measure, paint and
+// repaint read it from the same layer, so a released image paints again at
+// its own density. Content events only.
 double rasterDensity(const Json&layer,const LayerRasterOptions&o){
     if(!o.textContentsScale)return o.pixelsPerPoint;double density=o.pixelsPerPoint;
+    const double cap=core::maximumRenderScale*core::renderMagnification(o.magnification);
     const auto visit=[&](const Json&node,unsigned depth,const auto&self)->void{if(depth>64||flag(node["hidden"]))return;
-        if(node["text"].isObject()&&node["contentsScale"].isNumber()&&std::isfinite(node["contentsScale"].number()))density=std::max(density,std::min(4.,node["contentsScale"].number()));
+        if(node["text"].isObject()&&node["contentsScale"].isNumber()&&std::isfinite(node["contentsScale"].number()))density=std::max(density,std::min(cap,node["contentsScale"].number()));
         if(node["children"].isArray())for(const auto&child:node["children"].array())self(child,depth+1,self);};
     visit(layer,0,visit);return density;}
 std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invalid("Typography descriptor nesting exceeds limit");std::size_t result=sizeof(Json);auto add=[&](std::size_t n){if(n>LayerRasterizer::maximumTypographyDescriptorBytes-result)invalid("Typography descriptor exceeds limit");result+=n;};if(v.isString())add(v.string().capacity()+1);else if(v.isArray()){add(v.array().capacity()*sizeof(Json));for(const auto&a:v.array())add(retainedJsonBytes(a,depth+1));}else if(v.isObject())for(const auto&[k,a]:v.object()){add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1);add(retainedJsonBytes(a,depth+1));}return result;}
@@ -225,7 +227,42 @@ struct LayerRasterizer::Impl {
     // renderer's resident textures and parked copies).
     std::size_t releasedBytes{};
     std::size_t heldBytes()const noexcept{return counts.resourceBytes-releasedBytes;}
+    // The four shared bounds' use (entries, held pixel bytes, text metadata,
+    // typography descriptors), and the bounds past `eighths`/8 of their
+    // maximum as bits in that order (crowded: 6; relieved at 5; the page
+    // left last parks past 7). `heldBound`: the held pixel bytes' index.
+    static constexpr std::size_t heldBound=1;
+    static constexpr std::array<std::size_t,4> maxima{maximumEntries,maximumResourceBytes,maximumTextMetadataBytes,maximumTypographyDescriptorBytes};
+    static_assert(maxima[heldBound]==maximumResourceBytes);
+    std::array<std::size_t,4> load()const noexcept{return {entries.size(),heldBytes(),counts.textMetadataBytes,counts.typographyDescriptorBytes};}
+    unsigned over(std::size_t eighths)const noexcept{
+        const auto used=load();unsigned bits{};for(std::size_t n=0;n<4;++n)if(used[n]>maxima[n]/8*eighths)bits|=1u<<n;return bits;}
+    bool above(std::size_t eighths)const noexcept{return over(eighths)!=0;}
+    // Crowd relief: the enlisted pages and the order in which each was last
+    // left after the user saw it.
+    struct Tenant {LayerRasterTenant*page{};std::uint64_t left{};LayerRasterTenant::State state{};};
+    std::vector<Tenant> tenants;std::uint64_t leavings{};
+    // The bounds past five eighths that a park gave next to nothing back of
+    // (relieve; next to nothing: under a sixty-fourth of the held pixel
+    // bytes, which a design page keeps a few KiB of after upload; none at
+    // all of the entries, text metadata or typography descriptors, which a
+    // park gives back whole): no page parks for them again while each stays
+    // past five eighths, until another bound passes five eighths or one
+    // passes seven eighths. A bound that falls to five eighths leaves it
+    // (passing again, it is tried again once). A page switch keeps it: what
+    // is over is still what the pages hold next to nothing of, and each
+    // switch would otherwise park the oldest page away, the next one opened
+    // when cycling modules (a cold rebuild 1.3.0 never did). The cost: a page
+    // away that does hold a share of such a bound (unreleased pixels without
+    // a recipe, documents, memory images) keeps it until one of those, the
+    // bound's fall to five eighths or the close, where a page switch would
+    // have tried the next oldest page. The pages keep no per-bound accounting
+    // to tell that page from the others without parking it; it only keeps
+    // the cache between three quarters and seven eighths, and past seven
+    // eighths every away page is tried, so the hard bounds stay guarded.
+    unsigned futile{};
     bool memoryImageUsed{}; // the current paint read a borrowed provider's image
+    bool memoryImageMissing{}; // ... or drew the placeholder for a released one (that paint is not cached)
     bool lineBoxPainted{}; // the current paint drew a line-box leaf (no editor geometry)
     // The families of Fonts/manifest.json that ship on Windows and whose files
     // are present, in manifest order (HUDFontRegistry.families): the Latin
@@ -557,8 +594,18 @@ struct LayerRasterizer::Impl {
             const auto revision=contents["revision"].integer();
             if(revision<=0)invalid("Memory image revision must be positive");
             auto snapshot=options.memoryImages->acquire(contents["memoryImage"].string(),static_cast<std::uint64_t>(revision));
-            if(!snapshot)invalid("Memory image key/revision is missing or retired");
             memoryImageUsed=true;
+            if(!snapshot){
+                // An app or file icon its module released (retired, evicted
+                // from the source's cache) while a row still names it draws as
+                // the empty placeholder, never a failure that blanks the module:
+                // the row's next descriptor (its icon loaded again, or another
+                // app) paints again, and so does this one once published: a
+                // paint with the placeholder is never cached.
+                static constexpr std::array<std::uint8_t,4> clear{};
+                ++counts.missingMemoryImages;memoryImageMissing=true;
+                return ImagePixels{1,1,clear,{}};
+            }
             ImagePixels pixels{snapshot->width(),snapshot->height(),snapshot->premultipliedBGRA(),std::move(snapshot)};
             return pixels;
         }
@@ -1178,7 +1225,7 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
 std::shared_ptr<const LayerRasterImage> LayerRasterizer::Impl::raster(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options,bool releasable,std::shared_ptr<const Recipe> reuse){
     auto& r=*this;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id))invalid("Invalid retained layer ID");
-    if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>4
+    if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>core::maximumRenderScale*core::renderMagnification(options.magnification)
        ||!std::isfinite(options.paddingPoints)||options.paddingPoints<0||options.paddingPoints>64)invalid("Invalid local raster scale/padding");
     if(!std::isfinite(options.textDocumentOffset.x)||!std::isfinite(options.textDocumentOffset.y)||options.textDocumentOffset.x<0||options.textDocumentOffset.x>3e9||options.textDocumentOffset.y<0||options.textDocumentOffset.y>3e9)invalid("Invalid plain document offset");
     if(options.textDocumentOffset.x!=0&&!flag(layer["text"]["sourceSingleLineField"]))invalid("Horizontal document offset requires an explicit single-line field");
@@ -1205,11 +1252,15 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::Impl::raster(std::strin
     // What the replaced entry holds now (nothing once its pixels were given back).
     const auto previousReleased=old!=r.entries.end()&&old->second.image->pixelsReleased()?previous:0,previousHeld=previous-previousReleased;
     if(bytes>maximumResourceBytes-(r.heldBytes()-previousHeld))invalid("Retained layer resource budget exceeded");
-    std::vector<ComPtr<IDWriteTextLayout>> layouts;r.memoryImageUsed=false;r.lineBoxPainted=false;
-    const auto bitmap=r.paintRaster(layer,options,*result,layouts);const bool memoryImage=r.memoryImageUsed;r.memoryImageUsed=false;
+    std::vector<ComPtr<IDWriteTextLayout>> layouts;r.memoryImageUsed=false;r.memoryImageMissing=false;r.lineBoxPainted=false;
+    const auto bitmap=r.paintRaster(layer,options,*result,layouts);const bool memoryImage=r.memoryImageUsed,placeholder=r.memoryImageMissing;r.memoryImageUsed=r.memoryImageMissing=false;
     // Image cache growth while drawing also counts against the same bound.
     if(bytes>maximumResourceBytes-(r.heldBytes()-previousHeld))invalid("Retained layer resource budget exceeded after image decode");
     straightPixels(bitmap.Get(),result->width,result->height,result->straightRGBA);
+    // A released memory image drew its placeholder: the caller shows this
+    // paint, the cache keeps what it had (the same id and revision paints
+    // again once the image is there).
+    if(placeholder){++r.counts.rasterizations;return result;}
     std::shared_ptr<const PaintedTextLayout> painted;
     // Editor geometry currently follows the rectangular DWrite viewport only.
     // Keep rendering nonrectangular masks, but do not fabricate matching hits
@@ -1275,6 +1326,70 @@ namespace {thread_local std::string_view rasterAttribution;}
 LayerRasterAttribution::LayerRasterAttribution(std::string_view owner)noexcept:previous_(rasterAttribution){rasterAttribution=owner;}
 LayerRasterAttribution::~LayerRasterAttribution(){rasterAttribution=previous_;}
 std::string_view LayerRasterAttribution::current()noexcept{return rasterAttribution;}
+bool LayerRasterizer::crowded()const{const auto&r=*impl_;r.onThread();return r.above(6);}
+void LayerRasterizer::enlist(LayerRasterTenant&page){auto&r=*impl_;r.onThread();
+    if(std::none_of(r.tenants.begin(),r.tenants.end(),[&](const auto&t){return t.page==&page;}))r.tenants.push_back({&page});}
+void LayerRasterizer::withdraw(LayerRasterTenant&page)noexcept{std::erase_if(impl_->tenants,[&](const auto&t){return t.page==&page;});}
+void LayerRasterizer::left(LayerRasterTenant&page)noexcept{auto&r=*impl_;for(auto&t:r.tenants)if(t.page==&page)t.left=++r.leavings;}
+std::size_t LayerRasterizer::relieve(Renderer&renderer){auto&r=*impl_;r.onThread();
+    // What was learnt holds for the bounds still past five eighths (the
+    // relief's mark): one back at or below it is forgotten, so passing again
+    // it counts as newly over, and a cache that only dips under three
+    // quarters (not crowded) keeps it rather than parking a page again for
+    // each crossing.
+    const auto past=r.over(5);r.futile&=past;
+    if(!r.above(6))return 0;
+    // Parks already found to give back next to nothing of what is over:
+    // none again (each would only cost its page a cold rebuild) while every
+    // bound over is one of them, page switches included, unless the cache is
+    // past seven eighths: near the hard bounds every page is tried. Counter
+    // comparisons only, no walk.
+    if(r.futile&&!(past&~r.futile)&&!r.above(7))return 0;
+    r.futile=0;
+    // The page left most recently stays (a quick return) unless the cache
+    // is still past seven eighths without it.
+    Impl::Tenant*last{};
+    for(auto&t:r.tenants){t.state=t.page->tenancy();if(t.state!=LayerRasterTenant::State::shown&&t.left&&(!last||t.left>last->left))last=&t;}
+    std::size_t parked{};
+    // One park; false (the pass stops) when it gave back next to nothing of
+    // the bounds past `eighths`/8 while the cache is at or below seven
+    // eighths: what is over is likely not the pages' (renderer resources,
+    // intrinsic images, editors), and parking more would rebuild them for
+    // nothing. Of the held pixel bytes, next to nothing is under a
+    // sixty-fourth of the bound (an eighth of what the relief sheds from
+    // three quarters to five eighths): a design page keeps a few pixels held
+    // after upload (small surfaces whose description outweighs them keep no
+    // recipe and stay held, a scroll bar's track and thumb), and parking it
+    // for those frees nothing that matters. The other bounds have no such
+    // leftovers: a page's entries, text metadata and typography descriptors
+    // count only while it holds them and its park gives them all back, so
+    // any decrease of one is the page's own share (a page of a few entries
+    // still parks for an entries crowd, and the newer pages after it). One
+    // page giving nothing back proves nothing of the others (a page whose
+    // pixels went to the GPU holds no held bytes; a newer one may), so past
+    // seven eighths the walk goes on, the page left last included, as it
+    // must before the hard bounds fail the shown owner.
+    // Four counters compared per park.
+    const auto relieves=[&](Impl::Tenant&t,std::size_t eighths){
+        const auto bounds=r.over(eighths);const auto before=r.load();
+        t.state=LayerRasterTenant::State::empty; // tried once: a refused park is not retried in this pass
+        if(!t.page->park(renderer))return true;
+        ++parked;
+        const auto after=r.load();
+        for(std::size_t n=0;n<4;++n)if((bounds>>n&1u)&&after[n]<before[n]&&(n!=Impl::heldBound||before[n]-after[n]>=Impl::maxima[n]/64))return true;
+        if(r.above(7))return true;
+        r.futile=bounds;return false;};
+    while(r.above(5)){
+        Impl::Tenant*oldest{};
+        for(auto&t:r.tenants)if(t.state==LayerRasterTenant::State::held&&&t!=last&&(!oldest||t.left<oldest->left))oldest=&t;
+        if(!oldest)break;
+        if(!relieves(*oldest,5))return parked;
+    }
+    // Nothing older left and still near the hard bounds: the page left last
+    // parks too, so the shown module's next page fits (a cold return to it
+    // beats a full cache that fails the shown owner).
+    if(last&&last->state==LayerRasterTenant::State::held&&r.above(7))(void)relieves(*last,7);
+    return parked;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();
     for(const auto&[id,e]:r.entries){(void)id;if(e.image->pixelsReleased())result.releasedPixelBytes+=e.image->pixelBytes();if(e.image->recipe_&&!e.hasText)result.repaintSourceBytes+=e.image->recipe_->bytes;}
     return result;}

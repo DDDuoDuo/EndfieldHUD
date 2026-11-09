@@ -117,6 +117,16 @@ void contracts() {
     check(events.entranceCompleted && state.phase() == ChargeBadgeState::Phase::presented && state.stage() == ChargeStage::circle,
           "A late wake runs the reveal, entrance and compact hold in source order");
     check(!state.requiresFrames(200) && !state.nextDeadline(), "Resting circle requests no frames or deadlines");
+    // The Length setting stretches only the desktop alert: the HUD's embedded
+    // badge keeps the classic 300 x 84 canvas around (150, 42) and its 264-point bar.
+    {
+        ChargeBadgeState classic;
+        classic.setStable(true, 0);
+        const auto pose = classic.sample(0);
+        check(pose.center.x == 150 && pose.center.y == 42 && ChargeBadgeState::frame().width == 300 * ChargeBadgeState::rendererScale &&
+              ChargeBadgeState::compactHitRect().width == ChargeIndicatorMetrics::classicBarWidth * ChargeBadgeState::rendererScale,
+              "The badge keeps the classic canvas and bar");
+    }
     state.setHovered(true, true, 201);
     check(state.requiresFrames(201.1) && state.contains({ChargeBadgeState::center.x + 100, ChargeBadgeState::center.y}, 201),
           "Hover acquires the whole capsule immediately while the morph animates");

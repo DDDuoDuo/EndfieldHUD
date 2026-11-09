@@ -17,7 +17,16 @@
 # The trace itself checks that a reopening within the grace keeps the
 # device, that a media owner holding the device refuses the release until it
 # lets go, and that a device prepared for an anticipated opening (the tray
-# icon pointed at) is taken by the opening or discarded without one.
+# icon pointed at) is taken by the opening or discarded without one. After
+# its report it checks the ends of the transitions: a normal close ends on
+# its frames before its transition deadline; under Reduce Motion a close
+# (summon, Escape, the summon hotkey, a press outside the circle, an area's
+# close, Storage Settings, a link, Projection's hand-off, Quit) hides the HUD
+# and completes without a frame; an opening and a close that get no frame
+# end on the transition deadline; and a conceal inside an opening's first
+# frame keeps the window hidden. EXTRA=--idle-trace-quit-button ends the run
+# with the Quit button answered on the confirm bar instead of the tray's Quit,
+# EXTRA=--idle-trace-quit-locked with a lock during an accepted Quit's close.
 # NO_SHARED_MEDIA leaves the media stack out (comparison runs only).
 # Prints the numbers of every window. Never shows a window or touches user data.
 cmake_minimum_required(VERSION 3.25)
@@ -164,5 +173,24 @@ foreach(index RANGE ${last})
     endif()
   endif()
 endforeach()
+# Each close: its frames and the group targets its canvas fade took (a
+# measurement, no bound).
+string(JSON close_count ERROR_VARIABLE no_closes LENGTH "${report}" closes)
+if(NOT no_closes AND close_count GREATER 0)
+  math(EXPR last_close "${close_count} - 1")
+  foreach(index RANGE ${last_close})
+    string(JSON close_frames GET "${report}" closes ${index} frames)
+    string(JSON close_renders GET "${report}" closes ${index} groupRenders)
+    string(JSON close_targets GET "${report}" closes ${index} groupTargetAllocations)
+    string(JSON close_peak GET "${report}" closes ${index} groupBytesPeak)
+    string(JSON close_after GET "${report}" closes ${index} groupBytesAfter)
+    math(EXPR close_peak_mib "${close_peak} / 1048576")
+    math(EXPR close_after_mib "${close_after} / 1048576")
+    string(APPEND summary "\n  close ${index}: ${close_frames} frames, ${close_renders} group renders, ${close_targets} group targets allocated, group targets up to ${close_peak_mib} MiB (${close_after_mib} MiB once hidden)")
+  endforeach()
+endif()
 message(STATUS "Hidden idle trace at ${refresh} Hz, grace ${grace_seconds} s (production ${production_grace} s), closed ${closed_seconds} s, shared media ${shared_media}: first opening ${opening} s (device ${resume} s), reopening after ${reopen_closed} s closed ${reopen} s, anticipated opening ${anticipated} s, release ${refusal} s after a media owner let go, reopening within the grace ${quick} s:${summary}")
+# The trace's own wake-spin guard: the most host deadline wakes in one second.
+string(REGEX MATCH "Idle trace peak deadline wakes in a second: [0-9]+" peak "${output}")
+message(STATUS "${peak}")
 file(REMOVE_RECURSE "${WORK}")

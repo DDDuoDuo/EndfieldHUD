@@ -5,6 +5,7 @@
 #include "modules/battery_reading.hpp"
 #include "modules/charge_indicator.hpp"
 #include "modules/event_log.hpp"
+#include "modules/hud_design_tokens.hpp"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -40,7 +41,12 @@ inline constexpr std::string_view chargeDisplayModeNever = "never";
 enum class ChargeTheme : std::uint8_t { dark, light, system };
 // AppConfiguration fields consumed by the alert, normalized exactly like
 // AppConfiguration.normalized (duration 1...60 else 3, scale 0.65...1.6 else 1,
-// custom position 0...1 else 0.5/0.9, six uppercase hex digits else FAD41F).
+// custom position 0...1 else 0.5/0.9, six uppercase hex digits else FAD41F,
+// length finite and above 0 to min(1, length), anything else none).
+// length (saved "chargeBarLength", absent by default): the compact bar's
+// length as a fraction of its display's usable width (1 = edge to edge; the
+// 200-point minimum applies in chargeBarWidth). None keeps the classic
+// 264-point bar, so saved 1.3.0 settings look the same.
 // neverMode (Windows "Don't display"): no automatic presentation at all, on
 // a power change, in always mode, after the HUD or Projection closes or on
 // wake; the explicit tray preview and Edit position still present. It never
@@ -51,6 +57,7 @@ struct ChargeAlertSettings {
     std::string accentHex{"FAD41F"};
     ChargeTheme theme{ChargeTheme::dark};
     double scale{1};
+    std::optional<double> length;
     bool customPlacement{};
     std::optional<std::uint32_t> customScreenID;
     double customX{0.5}, customY{0.9};
@@ -68,7 +75,9 @@ struct ChargeAlertSettings {
 // OverlayGeometry in Windows virtual-desktop pixels with y increasing
 // downwards. Mac point constants scale by the monitor's pixels per point.
 // Saved positions keep the Mac convention: x from the left, y from the BOTTOM
-// of the usable desktop, so imported custom positions land in the same place.
+// of the usable desktop, so custom positions saved on either system land in
+// the same place. Widths of the bar and its canvas are in the bar's own
+// points (before its Size), like ChargeIndicatorMetrics.
 struct ChargeWorkArea {
     std::uint32_t id{};
     core::Rect bounds; // monitor work area in pixels
@@ -80,15 +89,77 @@ struct ChargePosition {
     double x{0.5}, y{0.9};
     bool operator==(const ChargePosition&) const = default;
 };
-core::Point chargeClampedAnchor(core::Point, const core::Rect& workArea, double scale, bool editing, double pixelsPerPoint) noexcept;
+// OverlayGeometry.factor: the Size every geometry helper uses (0.65...1.6,
+// non-finite 1; the bar's Size range is ChargeIndicatorMetrics' scale range).
+double chargeScaleFactor(double scale) noexcept;
+// OverlayGeometry.barWidth: `length` of the usable width at this Size, never
+// under the 200-point minimum nor past the screen edges; none (or not finite,
+// or not above 0) keeps the classic 264-point bar.
+double chargeBarWidth(std::optional<double> length, const core::Rect& workArea, double scale, double pixelsPerPoint) noexcept;
+// OverlayGeometry.panelFrame: the panel cut at the display's sides, so a
+// full-length bar's shadow margins never hang onto (or take clicks from) the
+// next display. Shorter bars are already kept inside by the anchor clamp.
+core::Rect chargePanelFrame(const core::Rect& bar, const core::Rect& workArea) noexcept;
+// OverlayGeometry.lengthRange: the Length slider's fractions on this display
+// at this Size, from the 200-point minimum up to edge to edge.
+struct ChargeLengthRange { double minimum{1}, maximum{1}; bool operator==(const ChargeLengthRange&) const = default; };
+ChargeLengthRange chargeLengthRange(const core::Rect& workArea, double scale, double pixelsPerPoint) noexcept;
+// OverlayGeometry.length(of:): the fraction the Length slider shows for a bar
+// (the classic bar too).
+double chargeLength(const ChargeAlertSettings&, const core::Rect& workArea, double pixelsPerPoint) noexcept;
+// OverlayGeometry.clampedAnchor. canvasWidth is the bar's canvas in its own
+// points (300 for the classic bar). `editing` keeps the 1.3.0 two-button
+// editor's room below the bar; the bar editor's strip flips above the bar
+// instead and passes false.
+core::Point chargeClampedAnchor(core::Point, const core::Rect& workArea, double scale, bool editing, double pixelsPerPoint,
+                                double canvasWidth = ChargeIndicatorMetrics::canvasWidth) noexcept;
+// The clamp for the bar `settings` draws (its Size and Length).
+core::Point chargeClampedAnchor(core::Point, const ChargeAlertSettings&, const core::Rect& workArea, bool editing,
+                                double pixelsPerPoint) noexcept;
 core::Point chargeAnchor(const ChargeAlertSettings&, const core::Rect& workArea, bool editing, double pixelsPerPoint) noexcept;
 ChargePosition chargeNormalizedPosition(core::Point anchor, const ChargeWorkArea&) noexcept;
-// OverlayController.layout: the indicator's center stays at the anchor while
-// edit controls appear below it. Rectangles are virtual-desktop pixels.
+// The bar editor (OverlayGeometry.editorStripScale, editorStripSize,
+// editorReach, editorAnchor, draftLength).
+// The editor strip beside the bar is drawn at 70 % of the shared strip
+// (design::PlacementEditor), text and controls alike.
+inline constexpr double chargeEditorStripScale = 0.7;
+// The room the scaled strip of `size` (strip points) takes, with the value
+// bubble's clearance (design::PlacementEditor::bubbleClearance) above it, in
+// pixels.
+design::Size chargeEditorStripSize(design::Size stripPoints, double pixelsPerPoint) noexcept;
+// The heights (y down, pixels) the visible bar (38 points tall before Size)
+// can cover while the editor's Size slider moves from `anchor`, up to the
+// largest Size, including the shift when that Size's margins clamp the anchor
+// by an edge. The editor strip keeps clear of it.
+struct ChargeSpan { double minimum{}, maximum{}; bool operator==(const ChargeSpan&) const = default; };
+ChargeSpan chargeEditorReach(core::Point anchor, const core::Rect& workArea, double pixelsPerPoint) noexcept;
+// The bar editor's preview at the drafts in `settings`: a dragged bar where
+// it was dropped, otherwise where Confirm keeps it (Top centre or the saved
+// custom point, placed at the drafts' Size and Length).
+core::Point chargeEditorAnchor(core::Point draft, bool moved, const ChargeAlertSettings&, const core::Rect& workArea,
+                               double pixelsPerPoint) noexcept;
+// The Length draft a Length slider report (in percent) sets, or none when it
+// reports the value the slider already showed (a press or release without
+// movement), so a classic (none) bar stays classic.
+std::optional<double> chargeDraftLength(double reported, std::optional<double> shown) noexcept;
+// OverlayController.layout: the panel holds the bar's canvas centred on the
+// anchor (indicator, canvasWidth(barWidth) x 84 at the Size), cut at the
+// display's sides; while editing it also holds the strip (strip), and the
+// window is their union. Rectangles are virtual-desktop pixels.
 struct ChargePanelLayout {
-    core::Rect window, indicator, cancel, confirm;
+    core::Rect window, indicator;
+    std::optional<core::Rect> strip;
+    double barWidth{ChargeIndicatorMetrics::classicBarWidth};   // the bar's own points
+    bool operator==(const ChargePanelLayout&) const = default;
 };
-ChargePanelLayout chargePanelLayout(core::Point anchor, double scale, bool editing, double pixelsPerPoint) noexcept;
+ChargePanelLayout chargePanelLayout(core::Point anchor, double scale, double barWidth, const core::Rect& workArea, double pixelsPerPoint,
+                                    std::optional<core::Rect> strip = {}) noexcept;
+// Where the editor's strip goes beside the bar at `anchor` (pixels): spaced
+// for the largest Size (chargeEditorReach), so a Size change never moves it
+// vertically, 10 points below the bar or above it near the bottom edge
+// (design::PlacementEditor::frame); `stripSize` from chargeEditorStripSize.
+core::Rect chargeEditorStripFrame(core::Point anchor, double scale, double barWidth, design::Size stripSize, const core::Rect& workArea,
+                                  double pixelsPerPoint) noexcept;
 // OverlayController.selectedScreen: requested (edit draft or saved custom
 // screen) when connected, else the preferred internal/primary display, else first.
 std::optional<std::size_t> chargeSelectedScreen(std::span<const ChargeWorkArea>, std::optional<std::uint32_t> requested,

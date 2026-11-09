@@ -68,7 +68,7 @@ final class NowPlayingMediaRemote {
         let application = NowPlayingApplication(source: NowPlayingSource.allCases.first { $0.bundleIdentifier == id } ?? .system,
             pid: pid, bundleURL: url, bundleIdentifier: id, displayName: running.localizedName)
         let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
-        if data != artwork { artworkRevision &+= 1; artwork = data.flatMap { $0.count <= NowPlayingArtworkLoader.maximumBytes ? $0 : nil } }
+        if data != artwork { artworkRevision &+= 1; artwork = data.flatMap { $0.count <= NowPlayingArtworkLoader.maximumEmbeddedBytes ? $0 : nil } }
         let track = NowPlayingTrack(title: parsed.title, artist: parsed.artist, album: parsed.album,
             duration: parsed.duration, position: parsed.position, isPlaying: parsed.isPlaying, sampledAt: parsed.sampledAt,
             identifier: parsed.identifier, timedLyrics: parsed.timedLyrics, artworkRevision: artwork.map { _ in String(artworkRevision) })

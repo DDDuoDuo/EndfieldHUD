@@ -28,8 +28,10 @@
 // policy: a canvas not shown when the HUD closes (or once the close finished,
 // overlayConcealed) keeps no artwork (NativeDesignScene::park); the shown one
 // keeps it so reopening on it only re-uploads; a switch inside the open HUD
-// only parks textures (releaseResources). Once the close finished
-// (overlayConcealed) every canvas starts a new session (Canvas::resetSession:
+// only parks textures (releaseResources), and in a crowded shared raster
+// cache the pages switched away park, the one left longest ago first across
+// every owner (each page is a LayerRasterTenant; LayerRasterizer::relieve).
+// Once the close finished (overlayConcealed) every canvas starts a new session (Canvas::resetSession:
 // the Mac rebuilds SystemHUDView and its canvases at every opening). Prewarm emits and rasterizes the
 // first page off the opening frame. The context's one editor host follows
 // the owner whose canvas runs (Context::setEditorHost before every canvas
@@ -144,6 +146,10 @@ public:
     // The retained scene of one presented canvas (resident pixels, parks,
     // generations; hidden coverage and owner tests). Empty for another module.
     std::optional<native::NativeDesignSceneStats> sceneStats(core::Module) const;
+    // NativeDesignScene::composes of one presented canvas's scene (false for
+    // another module): a part drawing `source` is composed this frame,
+    // directly or through its fade's group.
+    bool composes(core::Module, std::string_view source) const;
     // Owner-drawn media inside a canvas's scene (NativeDesignScene::setInsertion)
     // and this frame's design pose of that canvas (boxWorld with the switch
     // motion, module opacity, owner masks; nullopt while it is not drawn), so

@@ -2,6 +2,9 @@
 #include "core/data/file_shelf_store.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 
 namespace endfield::native {
 // Same fallback labels as FileShelfStore.swift: the owner supplies its current
@@ -58,6 +61,12 @@ struct FileShelfFileOptions {
 // retain the bundle and revalidate paths, not assume CF_HDROP preserves identity.
 // This read-access check does not promise a later transfer/open will succeed.
 // Leases and platform callbacks are independent of this wrapper's lifetime.
+// The regular file (not a folder or link) at an explicit absolute path, as
+// one lease of NativeFileShelfFiles reads it: the lease's path and the file's
+// identity. None when it cannot be opened or is not a regular file. For
+// executables: audio session rows and Now Playing launch targets.
+struct NativeRegularFile {std::string path;ehud::data::ShelfFileIdentity identity;};
+std::optional<NativeRegularFile>nativeRegularFile(std::string_view explicitPath)noexcept;
 class NativeFileShelfFiles final {
 public:
     explicit NativeFileShelfFiles(FileShelfFileLabels = {},FileShelfFileOptions = {});

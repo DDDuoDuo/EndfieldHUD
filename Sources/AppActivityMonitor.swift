@@ -470,7 +470,7 @@ final class PublicAppActivityBackend: AppActivityBackend {
         return Array(Set(pids.prefix(Int(bytes) / MemoryLayout<Int32>.size).filter { $0 > 0 })).sorted()
     }
 
-    private static func path(pid: Int32) -> String? {
+    static func path(pid: Int32) -> String? {
         // PROC_PIDPATHINFO_MAXSIZE is the C macro 4 * MAXPATHLEN; Swift cannot
         // import its parenthesized macro expansion from this SDK.
         var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))

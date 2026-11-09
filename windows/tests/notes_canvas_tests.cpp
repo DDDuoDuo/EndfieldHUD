@@ -9,6 +9,7 @@
 #include "modules/notes_canvas.hpp"
 #include "modules/notes_card_controls.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -28,8 +29,8 @@ struct World {
     d::Context context;
     double now{100};
     explicit World(d::TextMeasurer& m) : context(m, d::asciiUppercase) { context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, now); }
-    void appearance(Language language, bool light = false, bool recording = false) {
-        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = true; a.recordingMode = recording;
+    void appearance(Language language, bool light = false, bool recording = false, bool reduceMotion = true) {
+        d::Context::Appearance a; a.language = language; a.light = light; a.reduceMotion = reduceMotion; a.recordingMode = recording;
         context.apply(a, now);
     }
     void show(d::Canvas& c) { c.show(now); c.setActive(true, now); }
@@ -78,6 +79,24 @@ void rules() {
     // dragTaskForTesting (:818-826): the first task moves to the third slot.
     canvas.dragTask("0000000C-0000-4000-8000-000000000001", 2);
     check(store->document().tasks[2].id == "0000000C-0000-4000-8000-000000000001", "A dragged task lands on its slot");
+    // The drag hand over the TODO grips (Mac d32a5bf): the open hand over a grip, the closed hand while a card is lifted.
+    {
+        // The dropped card has landed (the page is rebuilt) and the list is back at its top.
+        w.now += 1; w.context.advance(w.now);
+        for (const auto& area : canvas.page().scrollAreas()) area->setOffset(0);
+        const std::string first = store->document().tasks[0].id;
+        const auto r = control(canvas, "task:" + first + ":grip")->rect(canvas.root());
+        const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+        check(canvas.cursor(grip) == d::Cursor::openHand && !canvas.cursor(d::Point{grip.x + 300, grip.y}) && !canvas.cursor(std::nullopt),
+            "The open hand shows over a TODO grip only");
+        d::PointerInput press; press.point = grip;
+        check(canvas.pointerDown(grip, press, w.now), "The TODO grip takes the press");
+        canvas.pointerDragged({grip.x, grip.y + 6}, w.now);
+        check(canvas.cursor(d::Point{grip.x + 300, grip.y}) == d::Cursor::closedHand && canvas.inputLocked(), "The closed hand shows anywhere while a card is lifted");
+        canvas.pointerDragged({grip.x, grip.y + canvas.cardHeight + d::metric::rowGap}, w.now);
+        canvas.pointerUp({grip.x, grip.y + canvas.cardHeight + d::metric::rowGap}, w.now);
+        check(store->document().tasks[1].id == first && canvas.cursor(grip) != d::Cursor::closedHand, "The drop saves the slot and lets the hand go");
+    }
     // setFolded (:708-728): Hide keeps the document and folds the body.
     canvas.setFolded(true);
     check(store->document().isFolded, "Hide folds the centre");
@@ -85,12 +104,58 @@ void rules() {
     // selectTab (:699-706): the TEXT tab shows the note and "01".
     canvas.selectTab(data::NotesCentreDocument::Tab::text, -1);
     check(store->document().tab == data::NotesCentreDocument::Tab::text && canvas.header().counterText() == "01" && canvas.formatBar(), "The TEXT tab shows the note and its bar");
+    check(!canvas.cursor(d::Point{26, 160}), "No drag hand on the TEXT tab");
     // MODS-638: a new HUD session builds the Mac's TEXT editor anew (:533-557): the note reloaded, the caret at its end.
     check(canvas.noteArea() != nullptr, "The TEXT note has its editor");
     canvas.noteArea()->document().setSelection({{0, 0}});
     canvas.setActive(false, w.now); canvas.resetSession();
     const auto length = std::uint32_t(canvas.noteArea()->document().text().size());
     check(canvas.noteArea()->document().selection().range == endfield::core::text::Range{length, length}, "A new HUD session puts the caret at the note's end");
+}
+// The TODO reorder through the shared ListReorder keeps the Notes timings
+// (:432-497): lift to z 10 and scale 1.015 over the hover duration, the
+// others glide in .18 s, the drop settles in .18 s, and the page is rebuilt
+// .2 s after the drop (at once under Reduce Motion). The cards sit at
+// slotY(0) = 4 with the card pitch.
+void reorderTimings() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false, false);
+    auto store = storeOf(three());
+    m::NotesCanvas canvas(w.context, *store, {});
+    w.show(canvas);
+    w.now += 2; w.context.advance(w.now);
+    const auto same = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    const auto trackTime = [](const d::Layer& l, d::Channel c) { return l.tracks().property[std::size_t(c)].duration; };
+    const double pitch = canvas.cardHeight + d::metric::rowGap;
+    const auto tasks = store->document().tasks;
+    auto& first = canvas.taskCard(tasks[0].id)->layer();
+    auto& second = canvas.taskCard(tasks[1].id)->layer();
+    check(first.frame().y == 4 && same(second.frame().y, 4 + pitch), "The cards sit at slotY(0) = 4, one card pitch apart");
+    const auto r = control(canvas, "task:" + tasks[0].id + ":grip")->rect(canvas.root());
+    const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+    d::PointerInput press; press.point = grip;
+    check(canvas.pointerDown(grip, press, w.now), "The TODO grip takes the press");
+    canvas.pointerDragged({grip.x, grip.y + 6}, w.now);
+    check(first.zPosition() == 10 && first.value(d::Channel::scaleX) == 1.015 && first.value(d::Channel::scaleY) == 1.015
+          && same(trackTime(first, d::Channel::scaleX), d::duration::hover), "Lift: z 10 and scale 1.015 over the hover duration");
+    canvas.pointerDragged({grip.x, grip.y + pitch + 10}, w.now);
+    check(same(first.value(d::Channel::translateY), pitch + 10) && same(second.value(d::Channel::translateY), -pitch)
+          && same(trackTime(second, d::Channel::translateY), .18), "The lifted card follows; the next one glides up in .18 s");
+    w.now += .5; w.context.advance(w.now);
+    canvas.pointerUp({grip.x, grip.y + pitch + 10}, w.now);
+    check(first.zPosition() == 0 && first.value(d::Channel::scaleX) == 1 && same(trackTime(first, d::Channel::scaleX), .18), "The drop settles the scale in .18 s");
+    check(same(first.value(d::Channel::translateY), pitch) && same(trackTime(first, d::Channel::translateY), .18), "The card settles into its slot in .18 s");
+    check(store->document().tasks[1].id == tasks[0].id, "The drop saves the slot");
+    const auto pages = w.context.pagesBuilt();
+    w.now += .15; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages, "No rebuild before the card has landed");
+    w.now += .1; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == pages + 1, "The page is rebuilt .2 s after the drop");
+    w.appearance(Language::english);
+    const auto reduced = w.context.pagesBuilt();
+    canvas.dragTask(tasks[2].id, 0);
+    w.context.advance(w.now);
+    check(store->document().tasks[0].id == tasks[2].id && w.context.pagesBuilt() == reduced + 1, "Under Reduce Motion the page is rebuilt at once");
 }
 // The TEXT note's editor is drawn by its host right after the note area's
 // part (NativeDesignScene::setInsertion keys on part roots, d::partRoots):
@@ -130,6 +195,12 @@ void noteEditorPart(const char* body) {
     };
     canvas.show(w.now);
     check(host.attaches == 0, "Shown but inactive, the note has no editor yet");
+    // Mac 1da1863 (attach from the showing) has nothing to port: the editor
+    // attaches only on activation, so a switch overtaken before it activated
+    // the module (shown, then only left) never attaches it.
+    canvas.prepareToLeave(w.now);
+    check(host.attaches == 0, "A switch overtaken before activation leaves no editor attached");
+    canvas.show(w.now);
     canvas.setActive(true, w.now);
     // The owner's first pose of the editor follows this attach.
     check(host.attaches == 1, "Activated on the TEXT tab, the note attaches its editor");
@@ -238,14 +309,14 @@ void unavailable() {
     m::NotesCanvas canvas(w.context, *store, options);
     w.show(canvas);
     // didActivate (:172-177): the storage notice toasts once.
-    check(w.toast() == "Notice|Notes storage is unavailable.", "The storage notice toasts: " + w.toast());
+    check(w.toast() == "Notice|Notes storage is unavailable", "The storage notice toasts: " + w.toast());
     for (const auto* kind : {"text", "todo", "image", "drawing"}) check(!control(canvas, std::string("notes.new.") + kind)->enabled(), "Add buttons are disabled without storage");
     canvas.setActive(false, w.now);
     // MODS-638: the Mac builds a new NotesCanvas at every HUD open (:112): the notice once per session.
     w.context.overlay().reset(); canvas.setActive(true, w.now);
     check(w.toast().empty(), "Not again in the same session");
     canvas.setActive(false, w.now); canvas.resetSession(); canvas.setActive(true, w.now);
-    check(w.toast() == "Notice|Notes storage is unavailable.", "A new HUD session tells the storage notice again");
+    check(w.toast() == "Notice|Notes storage is unavailable", "A new HUD session tells the storage notice again");
     canvas.setActive(false, w.now);
 }
 
@@ -385,6 +456,7 @@ void notesOracle(Oracle& o) {
 int main(int argc, char** argv) {
     try {
         rules();
+        reorderTimings();
         noteEditorPart(""); noteEditorPart("Field note"); noteEditorClip();
         recordingWipe(); unavailable(); cardControls();
         if (const auto oracleData = loadOracle(argc > 1 ? argv[1] : nullptr, {"notes"}, {"text", "layerDefaults", "formatBar"})) {

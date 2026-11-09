@@ -199,7 +199,7 @@ HRESULT HudAutomation::State::sibling(const HudAutomationGroup*g,bool next,IRawE
 HRESULT HudAutomation::State::hitTest(double x,double y,const ModuleOwner*only,IRawElementProviderFragment**out){
     ++statistics.hitTests;if(!std::isfinite(x)||!std::isfinite(y))return E_INVALIDARG;
     return guarded([&]{
-        // Modal owners (the import card, the red power button card, an open
+        // Modal owners (the red power button card, an open
         // menu that captures the pointer) answer first; while one is up, the
         // controls beneath it are not reachable by point, as for the pointer.
         bool modal=false;

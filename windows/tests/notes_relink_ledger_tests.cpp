@@ -1,10 +1,11 @@
-// Mac import relink ledger upkeep for Notes media and Archive attachments
-// (modules/notes_relink_ledger.hpp) over the import ledger's owner API.
+// Relink ledger upkeep for Notes media and Archive attachments
+// (modules/notes_relink_ledger.hpp) over the relink ledger's owner API
+// (core/migration/relink_ledger.hpp).
 // Synthetic ledgers below a fresh temporary directory only; no picker, store
 // or user file is touched.
 #include "modules/notes_relink_ledger.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <iostream>

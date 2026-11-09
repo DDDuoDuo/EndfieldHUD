@@ -14,9 +14,8 @@
 #include <vector>
 
 namespace endfield::native {
-struct AudioSnapshot; // native/system_services.hpp
 struct VolumeDevice {
-    std::string id,name;bool headphones{},bluetooth{},canBeDefaultOutput{true},canBeDefaultInput{true};
+    std::string id,name;bool headphones{},canBeDefaultOutput{true},canBeDefaultInput{true};
     bool operator==(const VolumeDevice&)const=default;
 };
 // PerAppAudioSession.State, with `direct` for an app without a session.
@@ -41,11 +40,9 @@ struct VolumeSnapshot {
     // the original source list order. No process/route inference is performed.
     std::vector<VolumeApplication>applications;
     // status: AudioDeviceController.statusMessage; applicationMessage:
-    // applicationActivityMessage; perAppStatus: PerAppAudioController.statusMessage.
+    // applicationActivityMessage; perAppStatus: PerAppAudioController.statusMessage
+    // (the provider's text for AudioEndpointSnapshot::routeError).
     std::optional<std::string>status,applicationMessage,perAppStatus;
-    // Owned routes were restored because the default output changed; shown
-    // as the source per-app status until the next explicit per-app command.
-    bool routingStopped{};
     bool operator==(const VolumeSnapshot&)const=default;
 };
 struct VolumeCallbacks {
@@ -53,7 +50,9 @@ struct VolumeCallbacks {
     std::function<void(bool)>setActive;
     // Bound endpoint IDs accompany writes: callers reject a stale endpoint
     // rather than retargeting an in-flight gesture to a different device.
-    std::function<bool(std::string_view,double)>setVolume,setBalance,setAppGain;
+    std::function<bool(std::string_view,double)>setVolume,setBalance;
+    // (output, application, gain): the output the app's gain was set on.
+    std::function<bool(std::string_view,std::string_view,double)>setAppGain;
     std::function<bool(std::string_view,bool)>setMute;
     std::function<bool(std::string_view)>setDefaultOutput,setDefaultInput,stopApp;
     std::function<void()>stopAllApps;
@@ -62,11 +61,8 @@ struct VolumeCallbacks {
 // metadata beyond the retained budgets (16 MiB of names and paths).
 void validateVolumeSnapshot(const VolumeSnapshot&);
 // Pure mapping of the shared Windows provider's supported master, input,
-// balance, headphone/Bluetooth and explicit relative application-route fields.
+// balance, headphone and explicit relative application-route fields.
 // Icons remain asynchronous shared-cache bindings supplied by the presentation
 // owner. Endpoint-control selection is NOT public default-device switching.
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&);
-// Adapter for the older SystemServices audio snapshot (no Bluetooth or
-// fixed-volume information; the controlled endpoint stands for the output).
-AudioEndpointSnapshot audioEndpointSnapshotFromSystem(const AudioSnapshot&);
 } // namespace endfield::native

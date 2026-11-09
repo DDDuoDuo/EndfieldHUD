@@ -263,7 +263,7 @@ void ProjectionWorkspaceChrome::clearContent() {
 // supported and available; no entries at all shows the message instead.
 void ProjectionWorkspaceChrome::chooseShelf() {
     const auto choices = services_.shelfChoices ? services_.shelfChoices() : std::vector<NotesShelfChoice>{};
-    if (choices.empty()) { showMessage(tr(*env_, "The shelf has no images or videos.", "暂存架中没有图片或视频。")); return; }
+    if (choices.empty()) { showMessage(tr(*env_, "The shelf has no images or videos", "暂存架中没有图片或视频")); return; }
     std::vector<d::Menu::Item> items;
     for (const auto& choice : choices) items.push_back(item(choice.id, choice.title, choice.supported && choice.available));
     showMenu("shelf", std::move(items), "media", [this](const d::Menu::Item& picked) {

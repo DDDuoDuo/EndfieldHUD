@@ -48,8 +48,8 @@ enum HUDAccountHUDVerification {
                 check(gauge.layer.superlayer?.name != "hud.clock.panel", "Stamina gauge does not replace the existing clock panel")
                 check(gauge.layer.position == HUDAccountGauge.headerPosition && 270 + gauge.layer.frame.maxX == 730,
                       "Source stamina gauge mirrors the ENDFIELDHUD heading across the central axis")
-                check(HUDAccountGauge.sourceArtworkAvailable, "The original source sanity icon and wallet textures load")
-                check(HUDAccountGauge.sourceNumberFont == "HarmonyOS Sans SC Medium", "Packaged source wallet font matches the original game")
+                check(HUDAccountGauge.sourceArtworkAvailable, "The original source wallet textures load")
+                check(HUDAccountGauge.sourceNumberFont == "HarmonyOS Sans Medium", "Wallet numbers and labels use the bundled HarmonyOS Sans Medium")
                 let now = Date()
                 let recovery = HypergryphSanityPresentation(game: .endfield, current: 42, maximum: 360,
                     observedAt: now, nextRecoveryAt: now.addingTimeInterval(49),
@@ -65,6 +65,8 @@ enum HUDAccountHUDVerification {
                       "Projected wallet click opens source-style recovery countdowns")
                 check(view.subviews.compactMap { $0 as? NSButton }.contains { !$0.isHidden && $0.accessibilityLabel() == "Refresh" },
                       "Recovery refresh has an enabled native accessibility peer")
+                check(view.accountPopoverDrawsOnTopForVerification,
+                      "The recovery menu draws on the top plane, above the clock and the rest of the HUD")
                 snapshot("account-sanity-recovery")
                 escape()
                 check(!gauge.isPopoverOpen && overlay.systemPhase == .open, "ESC dismisses only the recovery menu")
@@ -78,7 +80,7 @@ enum HUDAccountHUDVerification {
                 check(!gauge.isPopoverOpen && overlay.systemPhase == .open,
                       "Outside recovery click is consumed without closing the HUD")
                 gauge.perform("toggle"); gauge.dismiss(animated: false)
-                check(gauge.layer.sublayers?.first { $0.name == "hud.account.stamina.recovery" }?.animationKeys() == nil,
+                check(gauge.popoverLayer.name == "hud.account.stamina.recovery" && gauge.popoverLayer.animationKeys() == nil,
                       "Tooltip teardown leaves no retained animation tracks")
                 view.accountControllerForVerification.perform(.selectHeaderMode(.workMode), window: nil)
                 snapshot("account-unlinked")
@@ -157,10 +159,10 @@ enum HUDAccountHUDVerification {
                       "ESC cancels the disconnect without an unlink request")
                 wait("confirm bar hiding", until: { !self.view.designContext.overlay.capturesInput }) { [self] in
                     view.performDesignActionForVerification(.account, "header")
-                    view.performDesignActionForVerification(.account, "header:hidden")
-                    check(!canvas.isMenuOpen && view.accountControllerForVerification.presentation.headerMode == .hidden
-                          && view.accountGaugeForVerification.layer.isHidden,
-                          "Header display Hidden saves the preference and removes the complete gauge")
+                    view.performDesignActionForVerification(.account, "header:arknights")
+                    check(!canvas.isMenuOpen && view.accountControllerForVerification.presentation.headerMode == .arknights
+                          && !view.accountGaugeForVerification.layer.isHidden,
+                          "Header display saves the chosen game; hiding the gauge is Display > HUD elements")
                     check(canvas.presentation == view.accountControllerForVerification.presentation && !canvas.presentation.isLinked,
                           "A controller change replaces the fixture with the real, still unlinked presentation")
                     view.accountControllerForVerification.perform(.selectHeaderMode(.workMode), window: nil)

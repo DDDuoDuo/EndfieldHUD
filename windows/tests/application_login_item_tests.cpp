@@ -2,6 +2,7 @@
 // real Run/StartupApproved keys are never read or written by this test.
 #ifdef _WIN32
 #include "app/application_login_item.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <objbase.h>
 #include <iostream>
 #include <stdexcept>
@@ -49,9 +50,11 @@ void contracts() {
     const auto off = login.read();
     check(off.registered && off.disabledByUser && !off.enabled(), "User-disabled entry is detected");
     check(app::LoginItemRegistration::statusDescription(off, core::Language::english).find("Startup") != std::string::npos, "Status names the Windows Startup setting");
-    check(app::LoginItemRegistration::statusDescription(off, core::Language::japanese) == "Windows の設定 → アプリ → スタートアップ でオフになっています。" &&
-          app::LoginItemRegistration::statusDescription(off, core::Language::korean) == "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다." &&
-          *login.setEnabled(true, core::Language::traditionalChinese) == "已在 Windows 設定 → 應用程式 → 啟動 中關閉。", "The Windows Startup notice is in all five languages");
+    check(app::LoginItemRegistration::statusDescription(off, core::Language::japanese) == "Windows の設定 → アプリ → スタートアップ でオフになっています" &&
+          app::LoginItemRegistration::statusDescription(off, core::Language::korean) == "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다" &&
+          *login.setEnabled(true, core::Language::traditionalChinese) == "已在 Windows 設定 → 應用程式 → 啟動 中關閉", "The Windows Startup notice is in all five languages");
+    for (const auto language : {core::Language::english, core::Language::simplifiedChinese, core::Language::traditionalChinese, core::Language::japanese, core::Language::korean})
+        check(endfield::tests::followsInterfaceTextRules(app::LoginItemRegistration::statusDescription(off, language)), "The Windows Startup notice has no final full stop and no dot separator");
     check(!login.ensureEnabled(core::Language::english) && login.read().disabledByUser, "Launch never overrides the user's choice");
     check(login.setEnabled(true, core::Language::english).has_value() && login.read().disabledByUser, "Explicit enable reports the user's choice instead of forcing it");
     approve(at, 0x02);

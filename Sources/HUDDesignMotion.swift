@@ -14,14 +14,17 @@ final class HUDDesignEnvironment {
 
     var reducesMotion: Bool { reduceMotionProvider() }
 
-    /// Backing scale for one layer (text is oversampled for the tilted plane).
-    func scale(for layer: CALayer) -> CGFloat { HUDRenderScale.contentScale(for: layer, baseScale: renderScale) }
+    /// Backing scale for one layer (text is oversampled for the tilted plane);
+    /// `magnification` is a transform that enlarges the layer on screen.
+    func scale(for layer: CALayer, magnification: CGFloat = 1) -> CGFloat {
+        HUDRenderScale.contentScale(for: layer, baseScale: renderScale, magnification: magnification)
+    }
 
     /// Applies the backing scale to a subtree; called when it is built or the scale changes.
-    func applyScale(to layer: CALayer) {
-        if !(layer is CATransformLayer), !layer.isArtwork { layer.contentsScale = scale(for: layer) }
-        layer.sublayers?.forEach(applyScale)
-        layer.mask.map(applyScale)
+    func applyScale(to layer: CALayer, magnification: CGFloat = 1) {
+        if !(layer is CATransformLayer), !layer.isArtwork { layer.contentsScale = scale(for: layer, magnification: magnification) }
+        layer.sublayers?.forEach { applyScale(to: $0, magnification: magnification) }
+        if let mask = layer.mask { applyScale(to: mask, magnification: magnification) }
     }
 }
 
@@ -55,6 +58,8 @@ enum HUDMotion {
     }
 
     /// stIn(dx, dy): fades in (opaque at 60 %) while sliding from `offset` to rest.
+    /// A negative `delay` resumes an entrance that began that long ago (enter,
+    /// wipe and grow): a page rebuilt mid-entrance carries on in phase.
     static func enter(_ layer: CALayer, from offset: CGPoint, duration: CFTimeInterval = HUDDuration.entrance,
                       delay: CFTimeInterval = 0, timing: CAMediaTimingFunction = HUDEasing.standard,
                       env: HUDDesignEnvironment, key: String = "hud.enter") {
@@ -70,18 +75,57 @@ enum HUDMotion {
         }
         let group = CAAnimationGroup()
         group.animations = animations; group.duration = duration; group.timingFunction = timing
-        if delay > 0 { group.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; group.fillMode = .backwards }
+        if delay != 0 { group.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; group.fillMode = .backwards }
         layer.add(group, forKey: key)
     }
+
+    /// Cross-fades a layer's next contents (a cover or poster arriving) with
+    /// what it shows now, in one ease-in-out fade. Nothing under Reduce Motion.
+    /// Finite, so the close and a module leave let it finish (crossFadeKey).
+    static func crossFade(_ layer: CALayer, duration: CFTimeInterval, env: HUDDesignEnvironment) {
+        guard !env.reducesMotion else { return }
+        let fade = CATransition()
+        fade.type = .fade; fade.duration = duration; fade.timingFunction = HUDEasing.easeInOut
+        layer.add(fade, forKey: crossFadeKey)
+    }
+
+    /// The key every contents cross-fade plays under (Core Animation files
+    /// any transition under kCATransition, whatever key it is added with).
+    static let crossFadeKey = kCATransition
 
     /// The list stagger: 36 ms apart after 60 ms, index capped at 14 (spec §1.10).
     static func staggerDelay(_ index: Int) -> CFTimeInterval {
         HUDDuration.staggerBase + Double(min(max(0, index), HUDDuration.staggerCap)) * HUDDuration.staggerStep
     }
 
-    static func stagger(_ layers: [CALayer], from offset: CGPoint, env: HUDDesignEnvironment) {
-        for (index, layer) in layers.enumerated() { enter(layer, from: offset, delay: staggerDelay(index), env: env) }
+    /// `delay` holds the whole stagger back (the HUD's open waits for the centre to show).
+    static func stagger(_ layers: [CALayer], from offset: CGPoint, delay: CFTimeInterval = 0, env: HUDDesignEnvironment) {
+        for (index, layer) in layers.enumerated() { enter(layer, from: offset, delay: delay + staggerDelay(index), env: env) }
     }
+
+    /// The keys a module entrance adds (enter, wipe and its fade, grow), which
+    /// the end of the HUD's open keeps running instead of cutting them off.
+    static let entranceKeys: Set<String> = ["hud.enter", "hud.wipe", "hud.wipe.fade", "hud.grow"]
+
+    /// The finite exits: a module or sub-page leave, the confirm bar's bandOut.
+    static let exitKeys: Set<String> = ["module.leave", "hud.page.leave", "hud.header.leave", "hud.bandOut"]
+
+    /// A module's own one-shot motions, often still playing when the HUD
+    /// closes: the copy flash, the Work Mode ring's arc and marker, a Reader
+    /// page turn, the Archive seal bars, a Profile value change and a lyric
+    /// step. Loops (blink, scan, sheen, pulse) are never listed here.
+    static let moduleMotionKeys: Set<String> = [
+        "hud.flash", "hud.strokeEnd", "hud.workMode.marker", "hud.reader.turn", "hud.seal", "hud.valueChange",
+        "hud.lyric.position.y", "hud.lyric.opacity", "hud.lyric.transform.scale"]
+
+    /// What the HUD's close keeps under the module and the centre overlay:
+    /// entrances and exits already playing, a pop, a cover or poster
+    /// cross-fade, a module's own one-shot motions, and the finite fades and
+    /// rises of the dim, the confirm bar and a toast leaving. They all end
+    /// inside the close instead of jumping to their end state at its start.
+    static let closeKeys: Set<String> = entranceKeys.union(exitKeys).union(moduleMotionKeys).union([
+        "hud.pop", crossFadeKey, "hud.opacity", "hud.transform.translation.y",
+        "hud.filters.confirmBlur.inputRadius", "hud.filters.confirmDim.inputEV"])
 
     /// The leave: .13 s to transparent while moving −0.6 × the new direction.
     /// Holds its end state; the caller removes the layer when the swap happens.
@@ -99,6 +143,14 @@ enum HUDMotion {
         group.animations = animations; group.duration = HUDDuration.leave; group.timingFunction = HUDEasing.ease
         group.fillMode = .forwards; group.isRemovedOnCompletion = false
         layer.add(group, forKey: key)
+    }
+
+    /// The HUD close's fade: as long as the opening's `reveal` (the whole close
+    /// when shorter), timed to end exactly when the close of `length` ends.
+    static func closingFade(ending length: CFTimeInterval, reveal: CFTimeInterval) -> (delay: CFTimeInterval, duration: CFTimeInterval) {
+        let length = length.isFinite ? max(0, length) : 0
+        let duration = min(reveal.isFinite ? max(0, reveal) : 0, length)
+        return (length - duration, duration)
     }
 
     /// Keeps a layer transparent until the caller removes `key` (a page that
@@ -134,8 +186,8 @@ enum HUDMotion {
         layer.mask = mask
         let grow = CABasicAnimation(keyPath: origin == .top ? "transform.scale.y" : "transform.scale.x")
         grow.fromValue = 0; grow.toValue = 1; grow.duration = duration; grow.timingFunction = timing
-        let begin = delay > 0 ? layer.convertTime(CACurrentMediaTime(), from: nil) + delay : 0
-        if delay > 0 { grow.beginTime = begin; grow.fillMode = .backwards }
+        let begin = delay != 0 ? layer.convertTime(CACurrentMediaTime(), from: nil) + delay : 0
+        if delay != 0 { grow.beginTime = begin; grow.fillMode = .backwards }
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak layer, weak mask] in
             guard let layer, let mask, layer.mask === mask else { return }
@@ -146,7 +198,7 @@ enum HUDMotion {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = fadeFrom * layer.opacity; fade.toValue = layer.opacity
             fade.duration = duration; fade.timingFunction = timing
-            if delay > 0 { fade.beginTime = begin; fade.fillMode = .backwards }
+            if delay != 0 { fade.beginTime = begin; fade.fillMode = .backwards }
             layer.add(fade, forKey: key + ".fade")
         }
         CATransaction.commit()
@@ -164,7 +216,7 @@ enum HUDMotion {
         guard !env.reducesMotion else { return }
         let grow = CABasicAnimation(keyPath: "transform.scale.x")
         grow.fromValue = 0; grow.toValue = 1; grow.duration = duration; grow.timingFunction = timing
-        if delay > 0 { grow.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; grow.fillMode = .backwards }
+        if delay != 0 { grow.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay; grow.fillMode = .backwards }
         layer.add(grow, forKey: key)
     }
 

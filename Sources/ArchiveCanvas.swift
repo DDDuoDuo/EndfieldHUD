@@ -122,7 +122,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         controller.lockSelected()
         Self.owners[ObjectIdentifier(controller)] = ObjectIdentifier(self)
         controller.onChange = { [weak self] in self?.controllerChanged() }
-        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image) }
+        thumbnails.onChange = { [weak self] id, image in self?.tiles[id]?.setPoster(image, animated: true) }
     }
 
     deinit {
@@ -146,6 +146,8 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         if renderedLanguage != nil, renderedLanguage == L10n.resolvedLanguage, needsRefresh || structure != renderedStructure { rerender() }
         let content = super.makeContent(for: module, style: style)
         bodyArea?.attach()
+        // The list's posters load from now, not from the end of the entrance.
+        loadVisibleThumbnails()
         return content
     }
 
@@ -175,15 +177,20 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         leaving = true
         finishOpening(announce: false)
         unlocking = nil
-        bodyArea?.suspend()
-        clearMedia()
+        // The text and the picture or frame shown leave drawn with the page;
+        // the picture is released shortly after, with its decoder already gone.
+        bodyArea?.suspend(keepingArtwork: true)
+        // A video or audio item comes back paused, as a new presentation did;
+        // a GIF keeps the playback it had.
+        if presentation?.reference.kind == .video { presentation?.pause() }
+        presentation?.setVisible(false, preserveArtworkOnHide: true)
         thumbnailGeneration += 1; metadataRequests.removeAll(); thumbnails.clear()
         panel?.cancel(nil); panel = nil; importTicket.cancel(); importTicket = ArchiveImportTicket()
         reportEdits()
         controller.flush()
         // Leaving the module relocks a classified document; its text leaves memory with the editor.
         if controller.selectedClassification != .unclassified, !controller.isSelectedLocked {
-            discardDocument()
+            discardDocument(); clearMedia()
             controller.lockSelected()
         }
     }
@@ -414,7 +421,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         var changed = false
         for (id, tile) in tiles where !ids.contains(id) {
             HUDMotion.perform { tile.layer.removeFromSuperlayer() }
-            page.remove(tile); tiles[id] = nil; changed = true
+            page.remove(tile); if let more = tile.more { page.remove(more) }; tiles[id] = nil; changed = true
         }
         let numbers = Dictionary(controller.entries.enumerated().map { ($0.element.id, $0.offset + 1) }, uniquingKeysWith: { a, _ in a })
         for (offset, summary) in wanted.enumerated() where tiles[summary.id] == nil {
@@ -425,14 +432,20 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
             let tile = HUDArchiveTile(id: "doc:" + summary.id.uuidString, number: numbers[summary.id] ?? index + 1, title: title,
                                       ext: .txt, extLabel: "DOC", size: nil, date: date, width: tileWidth, wellHeight: 96,
                                       style: summary.isClassified ? .classified : .standard, env: env)
-            tile.label = (summary.isClassified ? L10n.text("Classified document", "机密文档") : title) + ", " + date
+            tile.label = Self.documentLabel(summary)
             tile.onActivate = { [weak self] in self?.openDocument(summary.id) }
+            let more = tile.attachMore(id: tile.id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: tile.label))
+            more.onActivate = { [weak self, weak more] in
+                guard let self, let more else { return }
+                if self.isMenuOpen { self.closeMenu(); return }
+                self.openDocumentMenu(summary.id, anchorRect: more.rect(in: self.root), anchor: more)
+            }
             if !summary.isClassified { tile.setPoster(thumbnails.image(for: summary.id, reference: summary.thumbnail ?? thumbnailReferences[summary.id])) }
             HUDMotion.perform {
                 tile.layer.frame.origin = CGPoint(x: 4 + CGFloat(index % 3) * (tileWidth + 12), y: 4 + CGFloat(index / 3) * pitch)
                 area.content.addSublayer(tile.layer)
             }
-            page.add(tile); tiles[summary.id] = tile; changed = true
+            page.add([tile, more]); tiles[summary.id] = tile; changed = true
             if stagger { page.stagger(tile.layer) }
         }
         if changed, page === self.page { refreshRouter(); context.onInputStateChange?() }
@@ -456,7 +469,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmRemoveCategory() {
         guard case .category(let id) = filter, let category = controller.categories.first(where: { $0.id == id }) else { return }
         confirm(HUDConfirmRequest(id: "removeCategory", title: L10n.text("Remove \(category.name)?", "删除\(category.name)？"),
-                                  message: L10n.text("Its documents move to Uncategorized.", "其中的文档将移至未分类。"),
+                                  message: L10n.text("Its documents move to Uncategorized", "其中的文档将移至未分类"),
                                   confirmTitle: L10n.text("Remove", "删除"), danger: true, icon: .trash)) { [weak self] in
             guard let self else { return }
             self.filter = .all
@@ -588,7 +601,10 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
             guard let self, let protect else { return }
             if classified { self.confirmDeclassify() } else { self.openClassify(anchor: protect) }
         }
-        delete.onActivate = { [weak self] in self?.confirmDelete() }
+        delete.onActivate = { [weak self] in
+            guard let self, let id = self.controller.selected?.id else { return }
+            self.confirmDelete(id)
+        }
         binders.append { [weak self, weak protect, weak delete] in
             guard let self else { return }
             let busy = self.controller.isClassificationBusy
@@ -707,10 +723,16 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     // MARK: Header category menu
 
+    /// Uncategorized plus the categories, `current` marked (the header
+    /// dropdown and a gallery document's Move to…).
+    private func categoryMenuItems(current: UUID?) -> [HUDMenu.Item] {
+        [HUDMenu.Item(id: "uncategorized", title: L10n.text("Uncategorized", "未分类"), selected: current == nil)]
+            + controller.categories.map { HUDMenu.Item(id: $0.id.uuidString, title: $0.name, selected: $0.id == current) }
+    }
+
     private func openCategoryMenu(_ anchor: HUDDropdown) {
         guard let entry = controller.selected else { return }
-        let items = [HUDMenu.Item(id: "uncategorized", title: L10n.text("Uncategorized", "未分类"), selected: entry.categoryID == nil)]
-            + controller.categories.map { HUDMenu.Item(id: $0.id.uuidString, title: $0.name, selected: $0.id == entry.categoryID) }
+        let items = categoryMenuItems(current: entry.categoryID)
         openMenu(id: "moveTo", items: items, anchor: anchor) { [weak self] item in
             guard let self, let current = self.controller.selected, current.id == entry.id else { return }
             let target = item.id == "uncategorized" ? nil : UUID(uuidString: item.id)
@@ -721,17 +743,66 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         }
     }
 
+    // MARK: Gallery document menu (right-click or the tile's ⋯)
+
+    /// The VoiceOver and ⋯ label of a gallery document; classified titles stay hidden.
+    private static func documentLabel(_ summary: ArchiveSummary) -> String {
+        let title = summary.isClassified ? L10n.text("Classified document", "机密文档")
+            : (summary.title.isEmpty ? L10n.text("Untitled", "未命名") : summary.title)
+        return title + ", " + HUDFormat.dotted(summary.date)
+    }
+
+    /// Open / Move to… / Delete. Move to… opens the category list at the
+    /// same spot; a classified or busy document can only be opened.
+    private func openDocumentMenu(_ id: UUID, anchorRect: CGRect, anchor: HUDControl?) {
+        guard let summary = shownDocuments.first(where: { $0.id == id }) else { return }
+        let modifiable = controller.canModify(id)
+        let items = [HUDMenu.Item(id: "open", title: L10n.text("Open", "打开")),
+                     HUDMenu.Item(id: "move", title: L10n.text("Move to…", "移动到…"),
+                                  enabled: modifiable && (!controller.categories.isEmpty || summary.categoryID != nil)),
+                     HUDMenu.Item(id: "delete", title: L10n.text("Delete", "删除"), danger: true, separatorBefore: true, enabled: modifiable)]
+        openMenu(id: "doc.menu", items: items, anchorRect: anchorRect, anchor: anchor, minimumWidth: 170) { [weak self] item in
+            guard let self else { return }
+            switch item.id {
+            case "open": self.openDocument(id)
+            case "move":
+                let current = self.controller.entries.first(where: { $0.id == id })?.categoryID ?? summary.categoryID
+                self.openMenu(id: "doc.moveTo", items: self.categoryMenuItems(current: current), anchorRect: anchorRect,
+                              minimumWidth: 170) { [weak self] item in
+                    guard let self else { return }
+                    let target = item.id == "uncategorized" ? nil : UUID(uuidString: item.id)
+                    guard target != current else { return }
+                    self.controller.moveEntry(id, to: target) { [weak self] moved in
+                        guard let self, moved else { return }
+                        self.toast(icon: .folder, "Moved", "已移动", detail: self.categoryName(target))
+                    }
+                }
+            default: self.confirmDelete(id)
+            }
+        }
+    }
+
     // MARK: Delete and classify (§3.9.3, §3.9.4)
 
-    private func confirmDelete() {
-        guard let entry = controller.selected else { return }
+    /// The open document's Delete returns to the gallery; a gallery
+    /// document's (its menu) stays on it.
+    private func confirmDelete(_ id: UUID) {
+        guard let title = controller.selected?.id == id ? controller.selected?.title : controller.entries.first(where: { $0.id == id })?.title
+        else { return }
         confirm(HUDConfirmRequest(id: "deleteDocument", title: L10n.text("Delete this document?", "删除此文档？"),
-                                  message: entry.title.isEmpty ? L10n.text("Untitled", "未命名") : entry.title,
+                                  message: title.isEmpty ? L10n.text("Untitled", "未命名") : title,
                                   confirmTitle: L10n.text("Delete", "删除"), danger: true, icon: .trash)) { [weak self] in
-            guard let self, self.controller.selected?.id == entry.id else { return }
-            self.edited = false
-            self.holding { self.controller.deleteSelected() }
-            self.navigate(dx: -1)
+            guard let self else { return }
+            if case .list = self.renderedStructure?.page {
+                guard self.controller.entries.contains(where: { $0.id == id }) else { return }
+                self.controller.delete(id)
+                guard !self.controller.entries.contains(where: { $0.id == id }) else { return }
+            } else {
+                guard self.controller.selected?.id == id else { return }
+                self.edited = false
+                self.holding { self.controller.deleteSelected() }
+                self.navigate(dx: -1)
+            }
             self.toast(icon: .trash, "Document deleted", "文档已删除")
         }
     }
@@ -739,7 +810,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
     private func confirmDeclassify() {
         guard controller.selected != nil else { return }
         confirm(HUDConfirmRequest(id: "declassify", title: L10n.text("Remove classification?", "取消机密？"),
-                                  message: L10n.text("The password is deleted and the text stays readable.", "密码将被删除，文本保持可读。"),
+                                  message: L10n.text("The password is deleted and the text stays readable", "密码将被删除，文本保持可读"),
                                   confirmTitle: L10n.text("Declassify", "取消机密"), icon: .unlock)) { [weak self] in
             self?.controller.declassifySelected { [weak self] result in
                 switch result {
@@ -1009,7 +1080,7 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
 
     private func openMediaMenu(_ anchor: HUDControl) {
         guard let entry = controller.selected, entry.media.count < 16 else {
-            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items.", "每个文档最多 16 项。"))
+            toast(icon: .warn, "Media not added", "未添加媒体", detail: L10n.text("A document holds up to 16 items", "每个文档最多 16 项"))
             return
         }
         let choices = shelfChoices?() ?? []
@@ -1216,24 +1287,46 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
         let items = super.accessibilityItems
         guard !items.isEmpty, case .list = renderedStructure?.page, let area = gridArea, shownDocuments.count > tiles.count else { return items }
         let frame = root.convert(area.layer.bounds, from: area.layer)
-        return items + shownDocuments.filter { tiles[$0.id] == nil }.map { summary in
-            let date = HUDFormat.dotted(summary.date)
-            let title = summary.isClassified ? L10n.text("Classified document", "机密文档")
-                : (summary.title.isEmpty ? L10n.text("Untitled", "未命名") : summary.title)
-            return HUDAccessibilityItem(id: "doc:" + summary.id.uuidString, label: title + ", " + date, role: .button, rect: frame)
+        return items + shownDocuments.filter { tiles[$0.id] == nil }.flatMap { summary -> [HUDAccessibilityItem] in
+            let id = "doc:" + summary.id.uuidString, label = Self.documentLabel(summary)
+            return [HUDAccessibilityItem(id: id, label: label, role: .button, rect: frame),
+                    HUDAccessibilityItem(id: id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: label), role: .button, rect: frame)]
         }
     }
 
     override func performAccessibilityAction(_ id: String) {
-        if id.hasPrefix("doc:"), let uuid = UUID(uuidString: String(id.dropFirst(4))), tiles[uuid] == nil,
-           shownDocuments.contains(where: { $0.id == uuid }) { openDocument(uuid); return }
+        let tileID = HUDTileMoreButton.tileID(id)
+        if tileID.hasPrefix("doc:"), let uuid = UUID(uuidString: String(tileID.dropFirst(4))), tiles[uuid] == nil,
+           shownDocuments.contains(where: { $0.id == uuid }) {
+            if tileID == id { openDocument(uuid) }
+            else if isMenuOpen { closeMenu() }
+            else if let area = gridArea {
+                // At the grid's top-left, like a right-click's point, so the
+                // menu (and Move to…) opens inside the box below the header.
+                let grid = root.convert(area.layer.bounds, from: area.layer)
+                openDocumentMenu(uuid, anchorRect: CGRect(x: grid.minX, y: grid.minY, width: 1, height: 1), anchor: nil)
+            }
+            return
+        }
         super.performAccessibilityAction(id)
+    }
+
+    /// A right-click on a gallery document (or its ⋯) opens its menu at the point.
+    override func handleRightPointerDown(at point: CGPoint) -> Bool {
+        guard case .list = renderedStructure?.page, !isTransitioning, let control = control(atBox: point) else { return false }
+        let id = HUDTileMoreButton.tileID(control.id)
+        guard id.hasPrefix("doc:"), let uuid = UUID(uuidString: String(id.dropFirst(4))),
+              shownDocuments.contains(where: { $0.id == uuid }) else { return false }
+        if rename != nil { endEditing(commit: true) }
+        openDocumentMenu(uuid, anchorRect: CGRect(x: point.x, y: point.y, width: 1, height: 1), anchor: nil)
+        return true
     }
 
     // MARK: Gallery thumbnails
 
+    /// From the module's showing until it leaves.
     private func loadVisibleThumbnails() {
-        guard isActive, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
+        guard !leaving, renderedLanguage != nil, case .list = renderedStructure?.page else { thumbnails.setWanted([]); return }
         let visible = shownDocuments.filter { tiles[$0.id] != nil && !$0.isClassified && $0.mediaCount > 0 }
             .prefix(ArchiveGalleryThumbnails.wantedLimit)
         let ids = Set(visible.map(\.id))
@@ -1545,6 +1638,8 @@ final class ArchiveBodyArea: HUDControl {
     weak var formatBar: NotesFormatBar?
     private let forwarder = NotesPressForwarder()
     private var surface: HUDProjectedTextEditor?
+    /// A suspended editor whose last text stays drawn while its module leaves.
+    private var departed: HUDProjectedTextEditor?
     private let placeholder: HUDTextLayer
     var isFocused: Bool { textView.window != nil && textView.window?.firstResponder === textView }
     var isAttached: Bool { surface != nil }
@@ -1598,6 +1693,7 @@ final class ArchiveBodyArea: HUDControl {
         guard layer.bounds.size != size else { return }
         let attached = surface != nil, focused = isFocused
         surface?.dispose(); surface = nil
+        dropDeparted()
         HUDMotion.perform {
             layer.bounds = CGRect(origin: .zero, size: size)
             placeholder.lineFrame = CGRect(x: textRect.minX, y: textRect.minY, width: textRect.width, height: 14 * 1.3)
@@ -1610,6 +1706,7 @@ final class ArchiveBodyArea: HUDControl {
     /// Projects the editor onto the plane; nil hits while the module is not interactive.
     func attach() {
         guard surface == nil, let canvas, let host = canvas.context.host else { return }
+        dropDeparted()
         let editor = HUDProjectedTextEditor(textView: textView, rect: textRect, host: host, parent: layer)
         editor.project = { [weak self] rect in
             guard let self, let canvas = self.canvas else { return rect }
@@ -1626,7 +1723,22 @@ final class ArchiveBodyArea: HUDControl {
         editor.captureVisibleArtwork()
     }
 
-    func suspend() { blur(); surface?.dispose(); surface = nil }
+    /// `keepingArtwork` (the module leaving): the text stays drawn to leave
+    /// with the page until the next attach, suspend or dispose.
+    func suspend(keepingArtwork: Bool = false) {
+        blur()
+        dropDeparted()
+        surface?.dispose(keepingArtwork: keepingArtwork)
+        if keepingArtwork { departed = surface }
+        surface = nil
+    }
+
+    /// Removes text kept drawn by `suspend(keepingArtwork:)`.
+    func dropDeparted() {
+        guard let editor = departed else { return }
+        departed = nil
+        HUDMotion.perform { editor.artwork.removeFromSuperlayer() }
+    }
 
     func dispose() {
         suspend()

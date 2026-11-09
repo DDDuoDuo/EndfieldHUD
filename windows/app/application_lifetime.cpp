@@ -39,14 +39,15 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     archive=nullptr;drop(archiveModuleOwner);
     calendar=nullptr;drop(calendarModuleOwner);calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
     // Projection's page borrows Notes' TSF manager and the shared Context too.
-    drop(projectionModuleOwner);drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery=nullptr;workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
+    drop(projectionModuleOwner);drop(settingsModuleOwner);settingsUI.reset();dropBatteryOwner();workModeCanvas=nullptr;drop(workModeModuleOwner);workMode.reset();drop(notesCentreModuleOwner);drop(notesModuleOwner);notes.reset();
     activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
-    drop(shelfModuleOwner);shelf.reset();clipboardCanvas=nullptr;drop(clipboardModuleOwner);volumeCanvas=nullptr;drop(volumeModuleOwner);if(utility&&volumeIconRoute)utility->invalidate(volumeIconRoute);volumeIcons.reset();eventLogCanvas=nullptr;drop(eventLogModuleOwner);drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
+    drop(shelfModuleOwner);shelf.reset();dropClipboardOwner();dropVolumeOwner();dropEventLogOwner();dropStorageOwner();storage.reset();dropActivityOwner();activity.reset();
     reader=nullptr;drop(readerModuleOwner);readerOwner.reset();game=nullptr;drop(gameModuleOwner);gameSession.reset();map=nullptr;drop(mapModuleOwner);mapSaves.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // The shared design Context outlives every design owner (they borrow it).
     // A canvas still registered is an owner missing above: the Context then
     // stays to member destruction (every owner is declared after it).
     bool designKept{};
+    if(hudElements){registry.remove(*hudElements);hudElements.reset();}
     if(designOverlay){registry.remove(*designOverlay);
         if(designOverlay->context().canvases().empty())designOverlay.reset();
         else{designKept=true;const char*line="EndfieldHUD teardown: a design canvas outlived its owner's drop; the shared design Context is kept\n";std::fputs(line,stderr);OutputDebugStringA(line);}}
@@ -65,6 +66,16 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     need(production()||!designKept,"Every design owner is dropped before the shared design Context");
 }
 
+// The owner drops cleanup runs in its order and a module repair runs alone
+// (the registry slot, the canvas, its artwork and icon queues go; the data
+// services stay).
+void Application::Impl::dropActivityOwner(){unregisterModule(activityModuleOwner);}
+void Application::Impl::dropStorageOwner(){unregisterModule(storageModuleOwner);}
+void Application::Impl::dropEventLogOwner(){eventLogCanvas=nullptr;unregisterModule(eventLogModuleOwner);}
+void Application::Impl::dropClipboardOwner(){clipboardCanvas=nullptr;unregisterModule(clipboardModuleOwner);}
+void Application::Impl::dropBatteryOwner(){unregisterModule(batteryModuleOwner);battery=nullptr;}
+void Application::Impl::dropVolumeOwner(){volumeCanvas=nullptr;unregisterModule(volumeModuleOwner);if(utility&&volumeIconRoute){utility->invalidate(volumeIconRoute);volumeIconRoute=0;}volumeIcons.reset();}
+
 int Application::Impl::runVisible(){
     // The design density for the first opening, derived before its clock starts.
     holdDesignDensity();
@@ -74,7 +85,7 @@ int Application::Impl::runVisible(){
     if(production()){
         // First run waits for the preference record and its launch marker.
         launchPending=true;
-        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,!args.persistLaunchMarker),openingTime);reopenAfterLaunch(openingTime);}
+        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,diagnosticRun()),openingTime);reopenAfterLaunch(openingTime);}
         else if(!settingsSaves){launchPending=false;perform(lifecycle.launch(args.startup,false,true),openingTime);reopenAfterLaunch(openingTime);}
     }else perform(lifecycle.toggle(),openingTime); // An explicit development launch opens at once.
     scheduleDeadline();
@@ -132,11 +143,6 @@ int Application::run(){
     return impl_->runVisible();
 }
 void Application::activate(std::span<const std::string>arguments){impl_->forwardedActivation(arguments);}
-std::function<void()> Application::Impl::takeRestartWork(){
-    if(!restartAccepted)return {};
-    restartAccepted=false;return std::exchange(restartWork,{});
-}
-std::function<void()> Application::takeRestartWork(){return impl_->takeRestartWork();}
 std::optional<std::optional<core::Module>> Application::takeDeviceRecovery(){
     if(!impl_->deviceLost)return std::nullopt;
     impl_->deviceLost=false;return std::optional<std::optional<core::Module>>(std::in_place,std::exchange(impl_->deviceLostModule,std::nullopt));

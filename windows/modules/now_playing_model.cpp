@@ -116,14 +116,31 @@ NowPlayingControls nowPlayingControls(const NowPlayingViewInput&input)noexcept{
     c.previous=transport&&k.previous;c.playPause=transport&&(k.toggle||(playing?k.pause:k.play));c.next=transport&&k.next;c.volume=c.lyrics=track;
     c.seek=track&&input.track->supportsSeeking&&input.track->duration&&input.track->position&&!input.failed&&k.seek;return c;
 }
+bool nowPlayingWin32Identity(std::string_view id)noexcept{
+    const auto lower=[](char c){return c>='A'&&c<='Z'?static_cast<char>(c-'A'+'a'):c;};
+    const auto slash=id.find_last_of("\\/");const auto name=slash==std::string_view::npos?id:id.substr(slash+1);
+    if(name.size()<=4||id.find('!')!=std::string_view::npos)return false;
+    const auto suffix=id.substr(id.size()-4);return suffix[0]=='.'&&lower(suffix[1])=='e'&&lower(suffix[2])=='x'&&lower(suffix[3])=='e';
+}
+bool nowPlayingExplicitIdentity(std::string_view id)noexcept{
+    return !id.empty()&&id.size()<=4096&&id.find('!')==std::string_view::npos&&!nowPlayingWin32Identity(id);
+}
 unsigned nowPlayingCoverPixelSize(double points,double scale)noexcept{
     const double pixels=points*scale;if(!std::isfinite(pixels)||pixels<=0)return nowPlayingDefaultCoverPixels;
     return static_cast<unsigned>(std::clamp(std::ceil(std::min(double(nowPlayingMaximumCoverPixels),pixels)-1e-6),double(nowPlayingMinimumCoverPixels),double(nowPlayingMaximumCoverPixels)));
 }
+NowPlayingCoverSlot nowPlayingCoverSlot(double points,double boxScale)noexcept{
+    return {nowPlayingCoverPixelSize(points,boxScale),nowPlayingCoverPixelSize(points,std::max(boxScale,std::min(4.,boxScale+.5)))};
+}
+NowPlayingCoverLayout nowPlayingCoverLayout(unsigned width,unsigned height,NowPlayingCoverSlot slot)noexcept{
+    const double longer=std::max(width,height),shorter=std::min(width,height);
+    if(!(shorter>0)||!(slot.layout/shorter>nowPlayingCoverFillLimit))return {false,static_cast<unsigned>(std::lround(std::min(longer,double(slot.decode))))};
+    return {true,static_cast<unsigned>(std::lround(std::min(double(slot.layout),longer*nowPlayingCoverMaximumEnlargement)))};
+}
 bool nowPlayingAcknowledgesSeek(const NowPlayingTrack&track,double requested,double sampledAt)noexcept{
     if(!track.position||!std::isfinite(requested)||!std::isfinite(sampledAt))return false;const auto advance=track.isPlaying?std::min(3.,std::max(0.,track.sampledAt-sampledAt)):0.;return std::abs(*track.position-std::min(track.duration.value_or(nowPlayingMaximumSeconds),requested+advance))<=1.25;
 }
-bool nowPlayingArtworkMetadata(unsigned width,unsigned height,std::size_t bytes)noexcept{return bytes>0&&bytes<=nowPlayingMaximumArtworkBytes&&width>0&&height>0&&width<=8192&&height<=8192&&std::uint64_t(width)*height<=nowPlayingMaximumArtworkPixels;}
+bool nowPlayingArtworkMetadata(unsigned width,unsigned height,std::size_t bytes)noexcept{return bytes>0&&bytes<=nowPlayingMaximumEmbeddedArtworkBytes&&width>0&&height>0&&width<=8192&&height<=8192&&std::uint64_t(width)*height<=nowPlayingMaximumArtworkPixels;}
 std::optional<NowPlayingCommand>nowPlayingCommand(const NowPlayingTrack&track,const NowPlayingCapabilities&controls,NowPlayingCommand command)noexcept{
     switch(command.kind){case NowPlayingCommandKind::playPause:if(!(controls.toggle||(track.isPlaying?controls.pause:controls.play)))return {};break;
     case NowPlayingCommandKind::previous:if(!controls.previous)return {};break;case NowPlayingCommandKind::next:if(!controls.next)return {};break;

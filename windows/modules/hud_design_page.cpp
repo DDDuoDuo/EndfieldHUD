@@ -39,13 +39,6 @@ const double* findOffset(const Offsets& offsets, std::string_view id) noexcept {
     for (const auto& [key, value] : offsets) if (key == id) return &value;
     return nullptr;
 }
-// Dictionary.merge { _, new in new }.
-void mergeOffsets(Offsets& into, const Offsets& from) {
-    for (const auto& [key, value] : from) {
-        auto it = std::find_if(into.begin(), into.end(), [&](const auto& item) { return item.first == key; });
-        if (it == into.end()) into.emplace_back(key, value); else it->second = value;
-    }
-}
 bool inside(Rect r, Point p) noexcept { return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height; }
 bool anyEditing(const std::vector<TextField*>& fields, const Layer& subtree) {
     return std::any_of(fields.begin(), fields.end(), [&](TextField* f) { return f->editing() && f->layer().isDescendant(subtree); });
@@ -109,6 +102,9 @@ void Context::update(double unit, double windowScale, double now) {
 // but the one the press reached.
 void Context::editorFocusMoved(const Canvas* except) {
     for (Canvas* canvas : std::vector<Canvas*>(canvases_)) if (canvas != except) canvas->editorFocusLost();
+}
+void Context::closeMenus() {
+    for (Canvas* canvas : std::vector<Canvas*>(canvases_)) canvas->closeMenu();
 }
 // confirm (:85-89): every canvas closes its popups first.
 void Context::confirm(ConfirmRequest request, std::function<void()> onConfirm, std::function<void()> onCancel) {
@@ -180,6 +176,12 @@ Canvas::~Canvas() {
     router_.set({});
 }
 void Canvas::begin(double now) { env().now = now; }
+void Canvas::catchUpClock() {
+    if (context_->hostClock_) catchUpClock(context_->hostClock_());
+}
+void Canvas::catchUpClock(double hostTime) {
+    if (std::isfinite(hostTime)) env().now = std::max(env().now, hostTime);
+}
 void Canvas::notifyInput() const { if (context_->onInputStateChange) context_->onInputStateChange(); }
 // HUDDesignCanvas.recordingModeChanged (:229) and renderScaleChanged (:231)
 // re-render every built canvas at once; on the Mac that rebuilds CALayers.
@@ -250,36 +252,43 @@ void Canvas::rerenderIfStale() {
 
 // --- Rendering (:289-401) ----------------------------------------------------
 void Canvas::rerender() {
-    if (swapDeadline_) {                                 // the swap lands its own, rebuilt page
+    if (swapDeadline_ || concealedSwap_) {               // the swap lands its own, rebuilt page
         if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
-        pending_ = makePage(pendingOffsets_, true);
+        pending_ = makePage({}, true);
         return;
     }
-    install(makePage(currentOffsets(), false), false);
+    install(makePage(showsFromTop_ ? Offsets{} : currentOffsets(), false), false);
+    // A re-render while the entrance still plays carries it on in phase
+    // (:323-330); past its end or under Reduce Motion it is forgotten.
+    if (!entrance_) return;
+    const double now = env().now;
+    if (env().reduceMotion || now >= entrance_->start + entranceLength()) { entrance_.reset(); return; }
+    playPageEntrance(entrance_->offset, entrance_->start - now);
 }
 std::vector<std::pair<std::string, double>> Canvas::currentOffsets() const {
     Offsets offsets;
     for (const auto& area : page_->scrollAreas()) if (!findOffset(offsets, area->id())) offsets.emplace_back(area->id(), area->offset());
     return offsets;
 }
-// navigate(dx:dy:) (:301-336).
+// navigate(dx:dy:) (:318-350). The next page, a Back included, starts at the top.
 void Canvas::navigate(double dx, double dy) {
     const Point offset = subpageOffset(dx, dy);
-    closePopups(); endEditing(true); cancelGestures();
-    // Going back (dx < 0) returns each scroll area to where it was left.
-    mergeOffsets(retainedOffsets_, currentOffsets());
-    pendingOffsets_ = dx < 0 ? retainedOffsets_ : Offsets{};
+    closePopups(); suspendInput();
     auto& deadlines = env().deadlines;
     const auto clock = env().clock();
     if (clock.reduceMotion || !attached_) {
-        if (swapDeadline_) {
-            deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset();
+        if (swapDeadline_ || concealedSwap_) {
+            if (swapDeadline_) { deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset(); }
+            concealedSwap_ = false;
             finishLeave();
             if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
         }
-        install(makePage(pendingOffsets_, false), false);
+        install(makePage({}, false), false);
         return;
     }
+    // A concealed settle's page lands first (the Mac's finishLeave), held
+    // invisible as the Mac's held page leaves from opacity 0.
+    if (concealedSwap_) { landConcealedSwap(); motion::hold(page_->layer()); }
     // A swap in flight (Q / E pressed again) is retargeted and lands on time.
     if (swapDeadline_) deadlines.cancel(swapToken_);
     else {
@@ -291,7 +300,7 @@ void Canvas::navigate(double dx, double dy) {
     }
     swapOffset_ = offset;
     if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
-    pending_ = makePage(pendingOffsets_, true);
+    pending_ = makePage({}, true);
     swapToken_ = deadlines.token();
     deadlines.after(*swapDeadline_, swapToken_, [this] { completeSwap(); });
 }
@@ -303,29 +312,52 @@ void Canvas::completeSwap() {
     playEntrance(swapOffset_, env().now);                // self.playEntrance(from:) (:330)
     notifyInput();
 }
-// settleSwap(concealed:) (:342-353).
+// settleSwap(concealed:) (:342-353, 5c8a905). Concealed (a module leaving or
+// deactivated, the HUD's close included): the old page and the header finish
+// the leave they are in and their models end transparent, while the next
+// page waits, built but out of the tree, until the module shows again
+// (revealSettledPage) instead of popping in while it leaves. The Mac
+// installs and holds it at once; here both header slots carry the same layer
+// ids, so the staging header cannot join the tree beside the leaving one:
+// the landing is deferred, and the leaving header finishes its leave with its
+// old title (decision H-D1; the Mac's one header shows the new title as it fades).
 void Canvas::settleSwap(bool concealed) {
     if (!swapDeadline_) return;
     env().deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset();
+    if (concealed) {
+        concealedSwap_ = true;
+        if (leaving_) leaving_->setValue(Channel::opacity, 0);
+        if (showsHeader_ && currentHeader()) currentHeader()->layer().setValue(Channel::opacity, 0);
+        return;
+    }
     finishLeave();
     install(std::move(pending_), true);
-    if (concealed) {
-        motion::hold(page_->layer());
-        if (showsHeader_ && currentHeader()) motion::hold(currentHeader()->layer());
-    }
 }
+// The concealed settle lands: the old page and header leave the tree and
+// the next page installs without an entrance.
+void Canvas::landConcealedSwap() {
+    if (!concealedSwap_) return;
+    concealedSwap_ = false;
+    finishLeave();
+    install(std::move(pending_), true);
+}
+// revealSettledPage (:396-401, 2e08932, 2def26e): the popups that left with
+// the module go first; no header hold remains to release.
 void Canvas::revealSettledPage() {
+    removeDepartedPopups();
     if (swapDeadline_) return;
+    landConcealedSwap();
     motion::release(page_->layer(), MotionSlot::hold);
-    if (showsHeader_ && currentHeader()) motion::release(currentHeader()->layer(), MotionSlot::hold);
 }
+// finishLeave (:403-410): the header is opaque again (a concealed settle
+// left its model transparent).
 void Canvas::finishLeave() {
     if (leaving_) {
         leaving_->removeMotion(MotionSlot::leave);
         leaving_->removeFromParent();
         leaving_ = nullptr;
     }
-    if (auto* header = currentHeader()) header->layer().removeMotion(MotionSlot::leave);
+    if (auto* header = currentHeader()) { header->layer().removeMotion(MotionSlot::leave); header->layer().setValue(Channel::opacity, 1); }
 }
 // makePage(restoring:) (:375-382).
 std::unique_ptr<Page> Canvas::makePage(const std::vector<std::pair<std::string, double>>& offsets, bool staged) {
@@ -393,7 +425,9 @@ void Canvas::refreshRouter() {
     std::vector<Control*> controls;
     if (showsHeader_ && currentHeader()) controls = currentHeader()->controls();
     controls.insert(controls.end(), page_->controls().begin(), page_->controls().end());
-    controls.insert(controls.end(), fields_.begin(), fields_.end());
+    // A field placed in its row keeps that place; others follow the page.
+    for (TextField* field : fields_)
+        if (std::find(controls.begin(), controls.end(), field) == controls.end()) controls.push_back(field);
     if (popover_) {
         controls.insert(controls.end(), popoverControls_.begin(), popoverControls_.end());
         if (Control* close = popover_->closeButton()) controls.push_back(close);
@@ -448,7 +482,7 @@ Menu& Canvas::openMenu(std::string id, std::vector<Menu::Item> items, Rect ancho
     menuAnchor_.reset();
     if (anchor) {
         menuAnchor_ = anchor->id();
-        if (auto* dropdown = dynamic_cast<Dropdown*>(findControl(anchor->id()))) dropdown->setOpen(true);
+        if (auto* shown = dynamic_cast<MenuAnchor*>(findControl(anchor->id()))) shown->setOpen(true);
     }
     menu_->playEntrance(env().clock());
     ++structure_;
@@ -459,11 +493,10 @@ Menu& Canvas::openMenu(std::string id, std::vector<Menu::Item> items, Rect ancho
 void Canvas::closeMenu() {
     if (!menu_) return;
     std::shared_ptr<Menu> menu(std::move(menu_));
-    if (menuAnchor_) if (auto* dropdown = dynamic_cast<Dropdown*>(findControl(*menuAnchor_))) dropdown->setOpen(false);
+    if (menuAnchor_) if (auto* shown = dynamic_cast<MenuAnchor*>(findControl(*menuAnchor_))) shown->setOpen(false);
     menuAnchor_.reset();
     for (Control* control : menu->controls()) control->clearInteractionState();
-    menu->layer().removeFromParent();
-    bury(std::move(menu));
+    retirePopup([this, menu] { menu->layer().removeFromParent(); bury(menu); }, keepsClosingPopupsDrawn_);
     ++structure_;
     refreshRouter();
     notifyInput();
@@ -489,14 +522,31 @@ void Canvas::closePopover() {
     if (Control* close = popover->closeButton()) close->clearInteractionState();
     popoverControls_.clear();
     forgetFields(popover->layer());
-    popover->layer().removeFromParent();
-    bury(std::move(popover));
+    retirePopup([this, popover] { popover->layer().removeFromParent(); bury(popover); }, keepsClosingPopupsDrawn_);
     ++structure_;
     refreshRouter();
     notifyInput();
     didClosePopover();
 }
 void Canvas::closePopups() { closeMenu(); closePopover(); }
+// closePopupsForLeave (:525-529): the module leaving keeps them drawn.
+void Canvas::closePopupsForLeave() {
+    keepsClosingPopupsDrawn_ = true;
+    struct Reset { bool& value; ~Reset() { value = false; } } reset{keepsClosingPopupsDrawn_};
+    closePopups();
+}
+void Canvas::retirePopup(std::function<void()> remove, bool keepingDrawn) {
+    if (!remove) return;
+    if (keepingDrawn) { departedPopups_.push_back(std::move(remove)); return; }
+    remove();
+}
+void Canvas::removeDepartedPopups() {
+    if (departedPopups_.empty()) return;
+    auto departed = std::move(departedPopups_);
+    departedPopups_.clear();
+    for (auto& remove : departed) remove();
+    ++structure_;
+}
 
 // --- Text fields (:483-498) ------------------------------------------------------
 void Canvas::registerField(TextField& field) {
@@ -521,6 +571,7 @@ void Canvas::endEditing(bool commit) {
     for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->endEditing(commit);
     endOtherEditing(commit);
 }
+void Canvas::suspendInput() { endEditing(true); cancelGestures(); }
 // The canvas's other editors (the Archive body, the Notes TEXT note) are text
 // views too: they end editing the same way (their textDidEndEditing flushes
 // or saves through the blur, ArchiveCanvas.swift:674-677, NotesCanvas.swift:606-609).
@@ -562,24 +613,32 @@ void Canvas::cancel(Deadlines::Token group) { if (group) env().deadlines.cancel(
 
 // --- Host-facing lifecycle (:241-282) ---------------------------------------------
 // makeContent: reveal a settled page, rebuild a stale one.
+// A module that was left (showsFromTop) builds its page from the top when a
+// list was left scrolled, before its entrance plays.
 void Canvas::show(double now) {
     begin(now);
     attached_ = true;
     revealSettledPage();
-    rerenderIfStale();
+    if (stale()) rerenderIfStale();
+    else if (showsFromTop_ && page_) {
+        const auto areas = page_->scrollAreas();
+        if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() > 0; })) rerender();
+    }
+    showsFromTop_ = false;
 }
 void Canvas::setActive(bool active, double now) {
     begin(now);
     if (active == active_) return;
     active_ = active;
     if (active) {
+        showsFromTop_ = false;                           // shown again without show() (a cancelled module swap)
         revealSettledPage();
         rerenderIfStale();
         didActivate();
     } else {
+        entrance_.reset();
         willEndInteraction();
-        closePopups(); endEditing(true); cancelGestures(); settleSwap(true);
-        retainedOffsets_.clear();
+        closePopupsForLeave(); suspendInput(); settleSwap(true);
         didDeactivate();
     }
     notifyInput();
@@ -587,32 +646,47 @@ void Canvas::setActive(bool active, double now) {
 // A scrolled page is built again at offset 0 (rows a module lays out for
 // the visible part follow the new offset); an unscrolled one stays.
 void Canvas::resetSession() {
+    removeDepartedPopups();
     if (active_) return;
-    retainedOffsets_.clear(); pendingOffsets_.clear();
+    landConcealedSwap();                                  // a new session drops the page that left
     if (!page_ || !renderedLanguage_) return;
     const auto areas = page_->scrollAreas();
     if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
 }
-// HUDDirectionalContent.playEntrance(from:) (:249-253).
-void Canvas::playEntrance(Point offset, double now) {
+// HUDDirectionalContent.playEntrance(from:delay:) (:258-264): recorded
+// (not under Reduce Motion) so an in-place re-render carries it.
+void Canvas::playEntrance(Point offset, double now, double delay) {
     begin(now);
     const auto clock = env().clock();
     if (clock.reduceMotion) return;
-    if (showsHeader_) header().playEntrance(clock);
-    motion::stagger(page_->staggered(), offset, clock);
+    entrance_ = Entrance{offset, clock.now + delay};
+    if (showsHeader_) header().playEntrance(clock, delay);
+    playPageEntrance(offset, delay);
 }
-// prepareToLeave (:255-261).
+// playPageEntrance(from:delay:) (:268-270).
+void Canvas::playPageEntrance(Point offset, double delay) { motion::stagger(page_->staggered(), offset, clock(), delay); }
+// HUDDesignCanvas.entranceLength (:276): the last row starts at the stagger
+// cap; the title wipe is the longest track.
+double Canvas::entranceLength() noexcept {
+    static const double length = staggerDelay(duration::staggerCap) + std::max(duration::entrance, duration::titleWipe);
+    return length;
+}
+// prepareToLeave (:278-285).
 void Canvas::prepareToLeave(double now) {
     begin(now);
+    entrance_.reset();
     willEndInteraction();
-    closePopups();
-    endEditing(true);
-    cancelGestures();
+    closePopupsForLeave();
+    suspendInput();
     settleSwap(true);
     willLeave();
     attached_ = false;
+    // Last, so a re-render made while the module leaves keeps its page.
+    showsFromTop_ = true;
 }
 void Canvas::cancelGestures() {
+    cancellingGestures_ = true;
+    struct Reset { bool& value; ~Reset() { value = false; } } reset{cancellingGestures_};
     for (Control* control : router_.controls()) {
         if (auto* slider = dynamic_cast<Slider*>(control)) slider->cancelDrag();
         control->clearInteractionState();
@@ -623,7 +697,7 @@ void Canvas::cancelGestures() {
 // --- Pointer input, content-box px (:502-577) -----------------------------------------
 bool Canvas::pointerDown(Point point, const PointerInput& input, double now) {
     begin(now);
-    if (!active_ || swapDeadline_) return false;
+    if (!active_ || swapDeadline_ || concealedSwap_) return false;
     if (interceptPointerDown(point, input)) { notifyInput(); return true; }
     // The first press outside an open menu or pop-over only closes it; a press
     // on its anchor closes it too (the anchor toggles).
@@ -660,7 +734,7 @@ void Canvas::pointerUp(Point point, double now) {
 }
 bool Canvas::rightPointerDown(Point point, double now) {
     begin(now);
-    if (!active_ || swapDeadline_) return false;
+    if (!active_ || swapDeadline_ || concealedSwap_) return false;
     if (capturesPointer()) { closePopups(); return true; }
     return handleRightPointerDown(point);
 }
@@ -670,9 +744,8 @@ void Canvas::pointerMoved(std::optional<Point> point, bool buttonDown, double no
     if (active_) handlePointerMoved(point);
 }
 // An enabled control is drawn under this point: the host gives the press to the module before the shell.
-bool Canvas::containsControl(Point point) const {
-    return active_ && !swapDeadline_ && router_.control(point, *root_) != nullptr;
-}
+bool Canvas::containsControl(Point point) const { return control(point) != nullptr; }
+Control* Canvas::control(Point point) const { return active_ && !swapDeadline_ && !concealedSwap_ ? router_.control(point, *root_) : nullptr; }
 // Wheel: an open menu (always consumes), a pop-over, the module's zoom surfaces, then scroll areas.
 bool Canvas::scroll(Point point, Point delta, double now) {
     begin(now);
@@ -736,7 +809,7 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
 
 // --- Accessibility (:606-622) ----------------------------------------------------------
 void Canvas::accessibilityItems(std::vector<AccessibilityItem>& out) const {
-    if (!active_ || swapDeadline_) return;
+    if (!active_ || swapDeadline_ || concealedSwap_) return;
     router_.accessibilityItems(*root_, out);
 }
 bool Canvas::performAccessibilityAction(std::string_view id, double now) {

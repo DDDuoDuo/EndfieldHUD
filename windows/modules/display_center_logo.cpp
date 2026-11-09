@@ -1,4 +1,6 @@
 #include "modules/display_center_logo.hpp"
+#include "core/data/data_store.hpp"
+#include "modules/artwork_scaling.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -6,27 +8,8 @@
 
 namespace endfield::modules {
 namespace {
-constexpr std::array<std::string_view, 5> identifiers{"endfield", "rhodesIsland", "babel", "rhineLab", "custom"};
+constexpr auto& identifiers = ehud::data::SettingsChoices::centerLogos; // CenterLogoChoice order
 void need(bool value, const char* message) { if (!value) throw std::invalid_argument(message); }
-int hexValue(char c) noexcept {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-// A normalized 1-D Gaussian (standard deviation sigma, radius ceil(3 sigma)).
-std::vector<double> gaussian(double sigma) {
-    if (!(sigma > 1e-6)) return {1.0};
-    const auto radius = static_cast<int>(std::ceil(3 * sigma));
-    std::vector<double> weights(static_cast<std::size_t>(radius) * 2 + 1);
-    double total = 0;
-    for (int k = -radius; k <= radius; ++k) {
-        const double w = std::exp(-double(k) * k / (2 * sigma * sigma));
-        weights[static_cast<std::size_t>(k + radius)] = w; total += w;
-    }
-    for (auto& w : weights) w /= total;
-    return weights;
-}
 } // namespace
 
 std::optional<CenterLogoChoice> centerLogoChoice(std::string_view value) noexcept {
@@ -53,16 +36,7 @@ std::string_view centerLogoPresetFile(CenterLogoChoice choice) noexcept {
     }
 }
 std::optional<std::string> centerLogoRevision(std::string_view value) noexcept {
-    // Foundation UUID(uuidString:): 8-4-4-4-12 hexadecimal digits in either case.
-    if (value.size() != 36) return std::nullopt;
-    std::string out(value);
-    for (std::size_t n = 0; n < out.size(); ++n) {
-        if (n == 8 || n == 13 || n == 18 || n == 23) { if (out[n] != '-') return std::nullopt; continue; }
-        const int digit = hexValue(out[n]);
-        if (digit < 0) return std::nullopt;
-        out[n] = "0123456789ABCDEF"[digit];
-    }
-    return out;
+    return ehud::data::canonicalUUID(value);
 }
 
 std::optional<CenterLogoBounds> centerLogoVisibleBounds(const CenterLogoBitmap& image) {
@@ -103,7 +77,7 @@ std::optional<CenterLogoArtwork> centerLogoArtwork(const CenterLogoBitmap& image
     // variance (b / 2)^2 + 1/2 (tests/display_center_logo_tests.cpp compares
     // the Mac oracle within a few premultiplied levels).
     const double blur = centerLogoShadowBlur(h);
-    const auto kernel = gaussian(std::sqrt(blur * blur / 4 + .5));
+    const auto kernel = artworkGaussian(std::sqrt(blur * blur / 4 + .5));
     const int radius = static_cast<int>(kernel.size() / 2);
     std::vector<double> horizontal(count), shadow(count);
     for (unsigned y = 0; y < h; ++y)
@@ -192,10 +166,10 @@ CenterLogoBitmap centerLogoWordmark(const CenterLogoBitmap& source) {
 }
 std::string centerLogoErrorText(CenterLogoError error, core::Language language, std::string_view detail) {
     switch (error) {
-    case CenterLogoError::invalidImage: return core::localized("Choose a readable image file.", "请选择可读取的图片文件。", language);
-    case CenterLogoError::imageTooLarge: return core::localized("Choose an image no larger than 32 MB.", "请选择不超过 32 MB 的图片。", language);
+    case CenterLogoError::invalidImage: return core::localized("Choose a readable image file", "请选择可读取的图片文件", language);
+    case CenterLogoError::imageTooLarge: return core::localized("Choose an image no larger than 32 MB", "请选择不超过 32 MB 的图片", language);
     case CenterLogoError::imageDimensionsTooLarge:
-        return core::localized("Choose an image no larger than 64 megapixels or 16,384 pixels on either side.", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片。", language);
+        return core::localized("Choose an image no larger than 64 megapixels or 16,384 pixels on either side", "请选择不超过 6400 万像素、且单边不超过 16,384 像素的图片", language);
     case CenterLogoError::persistence: return core::localized("The center logo could not be saved: ", "无法保存中心标志：", language) + std::string(detail);
     }
     return {};

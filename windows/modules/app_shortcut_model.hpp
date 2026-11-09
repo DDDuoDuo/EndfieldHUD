@@ -62,6 +62,10 @@ std::string saveShortcutDraft(ShortcutFile&, const ShortcutCandidate& selected,
     std::optional<std::string> editingID, std::string newID, double now,
     const ShortcutTextRules&, const ShortcutSameTarget&);
 bool removeShortcut(ShortcutFile&, std::string_view);
+// AppShortcutStore.move(id:to:): the shortcut to `index` (clamped) in the
+// list, which is also the right-hand order. False (nothing changed) for an
+// unknown id or the same slot; the caller then writes nothing.
+bool moveShortcut(ShortcutFile&, std::string_view id, std::ptrdiff_t index);
 
 // One borrowed FIFO executor owns reads and atomic writes. Construction is IO
 // free; a failed read/write leaves the prior state and original file untouched.

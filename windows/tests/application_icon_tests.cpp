@@ -1,6 +1,8 @@
 #include "native/application_icon.hpp"
+#include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include "core/data/json.hpp"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #ifdef _WIN32
@@ -10,13 +12,30 @@ void check(bool value,const char*message){++checks;if(!value)throw std::runtime_
 struct IconPixels{unsigned width{},height{};std::vector<std::uint8_t>pixels;};
 IconPixels inspect(void*handle){ICONINFO info{};check(GetIconInfo(static_cast<HICON>(handle),&info)!=FALSE,"Native icon is a valid HICON");struct Release{ICONINFO&i;~Release(){if(i.hbmColor)DeleteObject(i.hbmColor);if(i.hbmMask)DeleteObject(i.hbmMask);}}release{info};check(info.fIcon==TRUE,"App artwork is an icon, not a system cursor");BITMAP bitmap{};check(GetObjectW(info.hbmColor,sizeof(bitmap),&bitmap)==sizeof(bitmap),"Read owned color bitmap");IconPixels out{static_cast<unsigned>(bitmap.bmWidth),static_cast<unsigned>(bitmap.bmHeight),{}};out.pixels.resize(static_cast<std::size_t>(out.width)*out.height*4);BITMAPINFO data{};data.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);data.bmiHeader.biWidth=out.width;data.bmiHeader.biHeight=-static_cast<LONG>(out.height);data.bmiHeader.biPlanes=1;data.bmiHeader.biBitCount=32;data.bmiHeader.biCompression=BI_RGB;
     auto dc=CreateCompatibleDC(nullptr);check(dc!=nullptr,"Owned bitmap conversion DC");const int lines=GetDIBits(dc,info.hbmColor,0,out.height,out.pixels.data(),&data,DIB_RGB_COLORS);DeleteDC(dc);check(lines==static_cast<int>(out.height),"Read own premultiplied icon pixels");return out;}
-void run(const std::filesystem::path&root){const auto data=ehud::data::detail::readFile(root/"manifest.json",512*1024);check(data.has_value(),"Rendered original icon manifest exists");const auto manifest=Json::parse(*data);check(manifest["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Icon roster comes from authoritative Mac build18");
+void run(const std::filesystem::path&root){const auto data=ehud::data::detail::readFile(root/"manifest.json",512*1024);check(data.has_value(),"Rendered original icon manifest exists");const auto manifest=Json::parse(*data);check(manifest["sourceCommit"].string()=="c6b59b9b208ff1d810df209f1f54ff6a770c980b","Icon roster comes from the authoritative Mac 1.3.1 watch redraw");
     const auto&icons=manifest["icons"].array();check(icons.size()==66,"Saved preset raw-value roster remains complete");
     const auto&defaultTray=icons.front()["tray"];auto black=ApplicationIcon::fromPNG(root/defaultTray["file"].string(),defaultTray["sha256"].string(),32,IconInk::blackTemplate);auto white=ApplicationIcon::fromPNG(root/defaultTray["file"].string(),defaultTray["sha256"].string(),32,IconInk::whiteTemplate);const auto b=inspect(black.handle()),w=inspect(white.handle());check(b.width==32&&b.height==32&&w.width==32&&w.height==32,"System DPI output retains original square canvas");std::size_t visible{};
     for(std::size_t n=0;n<b.pixels.size();n+=4){check(b.pixels[n+3]==w.pixels[n+3],"Theme treatment preserves exact source silhouette alpha");check(b.pixels[n]==0&&b.pixels[n+1]==0&&b.pixels[n+2]==0&&w.pixels[n]==w.pixels[n+3]&&w.pixels[n+1]==w.pixels[n+3]&&w.pixels[n+2]==w.pixels[n+3],"Template ink has correct native premultiplied RGB");visible+=w.pixels[n+3]!=0;}
     check(visible>0&&visible<32*32,"Endfield original glyph has visible art and transparent surround");
     const auto handles=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);unsigned offered{};for(const auto&icon:icons){if(icon["offered"].boolean())++offered;for(const auto key:{"tray","app"}){const auto&a=icon[key];auto value=ApplicationIcon::fromPNG(root/a["file"].string(),a["sha256"].string(),32);check(value.handle()!=nullptr,"Every preserved preset decodes to an app-local icon");auto moved=std::move(value);check(!value.handle()&&moved.handle(),"Moving transfers icon ownership");}}
     check(offered==64,"Retired hand-drawn currencies remain compatible but absent from picker");check(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)==handles,"All transient GDI bitmaps retire after creating each icon");
+    // Mac 1.3.1: Watch is the second tile, right after Endfield; the battery icon is removed.
+    check(icons[1]["id"].string()=="watch"&&icons[1]["offered"].boolean(),"Watch is offered second, right after Endfield");
+    check(std::none_of(icons.begin(),icons.end(),[](const Json&i){return i["id"].string()=="battery";}),"The battery icon is removed from the roster");
+    // The tray's own roster and choice (Application::constructTray and
+    // loadTrayIcon call trayIconRoster / trayIconFor): the offered rows in
+    // manifest order, Perlica drawn in colour.
+    const auto roster=trayIconRoster(manifest);
+    check(roster.size()==64&&roster[0].id=="endfield"&&roster[1].id=="watch","The tray offers the picker's icons, Watch second");
+    check(std::none_of(roster.begin(),roster.end(),[](const TrayIconArt&i){return i.id=="perlica"&&i.templateArt;}),"Perlica's tray art keeps its colours");
+    // HUDApplicationIcon(savedValue:): a saved "battery" reads as the watch, so
+    // the tray draws the watch; an unknown icon draws Endfield.
+    auto saved=ehud::data::Settings::defaults();saved.set("applicationIcon","battery");
+    const auto&watchTray=trayIconFor(roster,saved.applicationIcon());
+    check(watchTray.id=="watch","A saved battery icon selects the watch tray icon");
+    check(trayIconFor(roster,"retired-icon").id=="endfield","An unknown saved icon falls back to the Endfield tray icon");
+    auto watch=ApplicationIcon::fromPNG(root/watchTray.file,watchTray.sha256,32,IconInk::whiteTemplate);
+    check(watch.handle()!=nullptr&&watchTray.templateArt,"The watch tray icon is a template that follows the taskbar theme");
     rejects([&]{ApplicationIcon::fromPNG(root/defaultTray["file"].string(),std::string(64,'0'),32);},"Changed/unpinned original artwork is rejected before native decode");rejects([&]{ApplicationIcon::fromPixels(257,1,{});},"Pixel source cannot exceed bounded icon dimensions");
 }
 }

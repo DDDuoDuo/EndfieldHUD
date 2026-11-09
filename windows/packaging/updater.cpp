@@ -189,48 +189,48 @@ std::string detailText(const Detail& d, core::Language l) {
     case K::checkError:
         // HUDUpdateController.releaseErrorDescription
         switch (d.error.kind) {
-        case CheckErrorKind::rateLimited: return core::localized("GitHub is limiting requests. Try again later.", "GitHub 暂时限制请求，请稍后重试。", l);
-        case CheckErrorKind::noPublishedReleases: return core::localized("No published release found on GitHub.", "GitHub 上暂无已发布版本。", l);
-        case CheckErrorKind::noMatchingReleases: return core::localized("No release is available for this update channel.", "此更新通道暂无已发布版本。", l);
-        case CheckErrorKind::invalidCurrentVersion: return core::localized("This build has no valid release version.", "此构建没有有效的版本号。", l);
-        default: return core::localized("Could not check GitHub. Check your connection and retry.", "无法检查 GitHub。请检查网络后重试。", l);
+        case CheckErrorKind::rateLimited: return core::localized("GitHub is limiting requests. Try again later", "GitHub 暂时限制请求，请稍后重试", l);
+        case CheckErrorKind::noPublishedReleases: return core::localized("No published release found on GitHub", "GitHub 上暂无已发布版本", l);
+        case CheckErrorKind::noMatchingReleases: return core::localized("No release is available for this update channel", "此更新通道暂无已发布版本", l);
+        case CheckErrorKind::invalidCurrentVersion: return core::localized("This build has no valid release version", "此构建没有有效的版本号", l);
+        default: return core::localized("Could not check GitHub. Check your connection and retry", "无法检查 GitHub。请检查网络后重试", l);
         }
     case K::downloadPrompt:
-        return text5(l, "Click to download and verify {0} ({1}).", "点击下载并校验 {0}（{1}）。", "點擊下載並驗證 {0}（{1}）。",
-                     "クリックして {0}（{1}）をダウンロードし、検証します。", "클릭하여 {0}({1})을(를) 다운로드하고 확인합니다.", {d.value, megabytes(d.bytes)});
+        return text5(l, "Click to download and verify {0} ({1})", "点击下载并校验 {0}（{1}）", "點擊下載並驗證 {0}（{1}）",
+                     "クリックして {0}（{1}）をダウンロードし、検証します", "클릭하여 {0}({1})을(를) 다운로드하고 확인합니다", {d.value, megabytes(d.bytes)});
     case K::discoverOnly:
-        return text5(l, "This copy was not installed by EndfieldHUD Setup. Get {0} from its GitHub release page.",
-                     "此副本不是由 EndfieldHUD 安装程序安装的。请从 GitHub 发布页获取 {0}。", "此副本並非由 EndfieldHUD 安裝程式安裝。請從 GitHub 發佈頁取得 {0}。",
-                     "このコピーは EndfieldHUD セットアップでインストールされていません。{0} は GitHub のリリースページから入手してください。",
-                     "이 사본은 EndfieldHUD 설치 프로그램으로 설치되지 않았습니다. GitHub 릴리스 페이지에서 {0}을(를) 받으세요.", {d.value});
+        return text5(l, "This copy was not installed by EndfieldHUD Setup. Get {0} from its GitHub release page",
+                     "此副本不是由 EndfieldHUD 安装程序安装的。请从 GitHub 发布页获取 {0}", "此副本並非由 EndfieldHUD 安裝程式安裝。請從 GitHub 發佈頁取得 {0}",
+                     "このコピーは EndfieldHUD セットアップでインストールされていません。{0} は GitHub のリリースページから入手してください",
+                     "이 사본은 EndfieldHUD 설치 프로그램으로 설치되지 않았습니다. GitHub 릴리스 페이지에서 {0}을(를) 받으세요", {d.value});
     case K::installPrompt:
-        return text5(l, "Click to install. EndfieldHUD closes, updates and reopens.", "点击安装。EndfieldHUD 将关闭、更新并重新打开。",
-                     "點擊安裝。EndfieldHUD 將關閉、更新並重新開啟。", "クリックしてインストールします。EndfieldHUD は終了し、更新後に再び開きます。",
-                     "클릭하여 설치합니다. EndfieldHUD가 종료되고 업데이트된 후 다시 열립니다.");
+        return text5(l, "Click to install. EndfieldHUD closes, updates and reopens", "点击安装。EndfieldHUD 将关闭、更新并重新打开",
+                     "點擊安裝。EndfieldHUD 將關閉、更新並重新開啟", "クリックしてインストールします。EndfieldHUD は終了し、更新後に再び開きます",
+                     "클릭하여 설치합니다. EndfieldHUD가 종료되고 업데이트된 후 다시 열립니다");
     case K::downloadFailed:
-        return text5(l, "The update could not be downloaded. Check your connection and retry.", "无法下载更新。请检查网络后重试。",
-                     "無法下載更新。請檢查網路後重試。", "アップデートをダウンロードできませんでした。接続を確認してもう一度お試しください。",
-                     "업데이트를 다운로드하지 못했습니다. 연결을 확인하고 다시 시도하세요.");
+        return text5(l, "The update could not be downloaded. Check your connection and retry", "无法下载更新。请检查网络后重试",
+                     "無法下載更新。請檢查網路後重試", "アップデートをダウンロードできませんでした。接続を確認してもう一度お試しください",
+                     "업데이트를 다운로드하지 못했습니다. 연결을 확인하고 다시 시도하세요");
     case K::verificationFailed:
-        return text5(l, "The downloaded update did not match its published checksum and was deleted.", "下载的更新与发布的校验和不符，已删除。",
-                     "下載的更新與發佈的校驗和不符，已刪除。", "ダウンロードしたアップデートが公開されたチェックサムと一致しなかったため、削除しました。",
-                     "다운로드한 업데이트가 게시된 체크섬과 일치하지 않아 삭제했습니다.");
+        return text5(l, "The downloaded update did not match its published checksum and was deleted", "下载的更新与发布的校验和不符，已删除",
+                     "下載的更新與發佈的校驗和不符，已刪除", "ダウンロードしたアップデートが公開されたチェックサムと一致しなかったため、削除しました",
+                     "다운로드한 업데이트가 게시된 체크섬과 일치하지 않아 삭제했습니다");
     case K::launchFailed:
-        return text5(l, "Setup could not be started.", "无法启动安装程序。", "無法啟動安裝程式。", "セットアップを開始できませんでした。", "설치 프로그램을 시작하지 못했습니다.");
+        return text5(l, "Setup could not be started", "无法启动安装程序", "無法啟動安裝程式", "セットアップを開始できませんでした", "설치 프로그램을 시작하지 못했습니다");
     case K::setupFailed:
-        return text5(l, "Setup could not update EndfieldHUD ({0}). EndfieldHUD was left unchanged.", "安装程序无法更新 EndfieldHUD（{0}）。EndfieldHUD 未作更改。",
-                     "安裝程式無法更新 EndfieldHUD（{0}）。EndfieldHUD 未作變更。", "セットアップで EndfieldHUD を更新できませんでした（{0}）。EndfieldHUD は変更されていません。",
-                     "설치 프로그램이 EndfieldHUD를 업데이트하지 못했습니다({0}). EndfieldHUD는 변경되지 않았습니다.", {d.value});
+        return text5(l, "Setup could not update EndfieldHUD ({0}). EndfieldHUD was left unchanged", "安装程序无法更新 EndfieldHUD（{0}）。EndfieldHUD 未作更改",
+                     "安裝程式無法更新 EndfieldHUD（{0}）。EndfieldHUD 未作變更", "セットアップで EndfieldHUD を更新できませんでした（{0}）。EndfieldHUD は変更されていません",
+                     "설치 프로그램이 EndfieldHUD를 업데이트하지 못했습니다({0}). EndfieldHUD는 변경되지 않았습니다", {d.value});
     case K::closeRefused:
-        return text5(l, "EndfieldHUD could not close for the update. Finish your edits and retry.", "EndfieldHUD 无法关闭以进行更新。请完成编辑后重试。",
-                     "EndfieldHUD 無法關閉以進行更新。請完成編輯後重試。", "更新のために EndfieldHUD を終了できませんでした。編集を終えてからもう一度お試しください。",
-                     "업데이트를 위해 EndfieldHUD를 종료하지 못했습니다. 편집을 마친 후 다시 시도하세요.");
+        return text5(l, "EndfieldHUD could not close for the update. Finish your edits and retry", "EndfieldHUD 无法关闭以进行更新。请完成编辑后重试",
+                     "EndfieldHUD 無法關閉以進行更新。請完成編輯後重試", "更新のために EndfieldHUD を終了できませんでした。編集を終えてからもう一度お試しください",
+                     "업데이트를 위해 EndfieldHUD를 종료하지 못했습니다. 편집을 마친 후 다시 시도하세요");
     case K::updated:
-        return text5(l, "Updated to {0}.", "已更新到 {0}。", "已更新至 {0}。", "{0} に更新しました。", "{0}(으)로 업데이트했습니다.", {d.value});
+        return text5(l, "Updated to {0}", "已更新到 {0}", "已更新至 {0}", "{0} に更新しました", "{0}(으)로 업데이트했습니다", {d.value});
     case K::interrupted:
-        return text5(l, "The last update did not finish. EndfieldHUD was left unchanged.", "上次更新未完成。EndfieldHUD 未作更改。",
-                     "上次更新未完成。EndfieldHUD 未作變更。", "前回のアップデートは完了しませんでした。EndfieldHUD は変更されていません。",
-                     "지난 업데이트가 완료되지 않았습니다. EndfieldHUD는 변경되지 않았습니다.");
+        return text5(l, "The last update did not finish. EndfieldHUD was left unchanged", "上次更新未完成。EndfieldHUD 未作更改",
+                     "上次更新未完成。EndfieldHUD 未作變更", "前回のアップデートは完了しませんでした。EndfieldHUD は変更されていません",
+                     "지난 업데이트가 완료되지 않았습니다. EndfieldHUD는 변경되지 않았습니다");
     }
     return {};
 }

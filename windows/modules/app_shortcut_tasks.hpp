@@ -4,7 +4,7 @@
 #include "native/app_shortcut_service.hpp"
 
 namespace endfield::modules {
-enum class ShortcutTaskKind {load,inspect,edit,save,remove,launch};
+enum class ShortcutTaskKind {load,inspect,edit,save,remove,launch,move};
 struct ShortcutTask {
     std::uint64_t token{};ShortcutTaskKind kind{};
     std::optional<native::AppShortcutSelection> selection;
@@ -12,6 +12,7 @@ struct ShortcutTask {
     std::optional<ShortcutRecord> record;
     std::optional<std::string> editingID;
     std::string name,icon,newID;double createdAt{};
+    std::ptrdiff_t index{}; // move: the record's new (clamped) slot
     std::uintptr_t launchOwner{};
 };
 struct ShortcutTaskResult {
@@ -21,7 +22,7 @@ struct ShortcutTaskResult {
     std::optional<native::AppShortcutLaunchReceipt> launched;
     std::optional<std::string> error;
     std::optional<ShortcutErrorCode> code; // set when the failure is a ShortcutError (localized by the owner)
-    // The Mac import ledger after this load/save/remove (record first, then
+    // The relink ledger after this load/save/remove (record first, then
     // ledger): none when no ledger work ran. A ledger failure never fails the
     // committed file; the next load reconciles again.
     std::optional<ShortcutRelinkSync> relink;
@@ -33,8 +34,8 @@ struct ShortcutTaskResult {
 // The caller dispatches launch only after the HUD closes. Destruction suppresses
 // callbacks but lets already accepted work finish. Flush via the shared owner.
 // With a relink root (the app root holding Migration/relink.json) the same
-// worker reconciles the import ledger after the load and after each committed
-// save/remove, until no app shortcut row is listed (an import restarts the app).
+// worker reconciles the relink ledger (core/migration/relink_ledger) after the
+// load and after each committed save/remove, until no app shortcut row is listed.
 class AppShortcutTasks final {
 public:
     using Completion=std::function<void(ShortcutTaskResult)>;

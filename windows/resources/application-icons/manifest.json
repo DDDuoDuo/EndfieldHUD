@@ -21,19 +21,19 @@
     },
     {
       "app": {
-        "file": "battery-app.png",
-        "height": 128,
-        "sha256": "7edcf0c5878ed1d764b4f7c2c746856855fbde80566100865008de23696070de",
+        "file": "watch-app.png",
+        "height": 64,
+        "sha256": "b6eed536b67ceafcf0393ef47ba52bb7deeadb8ab4ae90cb4c67e32433341e25",
         "template": false,
-        "width": 128
+        "width": 64
       },
-      "id": "battery",
+      "id": "watch",
       "offered": true,
-      "title": "Battery",
+      "title": "Watch",
       "tray": {
-        "file": "battery-tray.png",
+        "file": "watch-tray.png",
         "height": 40,
-        "sha256": "13c0d8b875736316f49088dbeb74717d241c57e24dd673ae7f161dd536ba6df8",
+        "sha256": "3eed5084163a5b447f32db529bd01eaa52d4ef85b9696e8630dc2facb42b37c4",
         "template": true,
         "width": 40
       }
@@ -1321,9 +1321,9 @@
     "Resources/AppIconSources/RhodesIsland.png": "8b341bc7286bf404123c8a10e183a83fefc9fd72c8fc30a124416800385574d4",
     "Resources/EndfieldIndustriesSource.png": "dd5468819ce5cff39cc5d8063ca3248b4f57a2addc0d8d97b5384c8871cd3db3"
   },
-  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceCommit": "c6b59b9b208ff1d810df209f1f54ff6a770c980b",
   "sourceCode": {
-    "Sources/HUDApplicationIcon.swift": "ebbc2e9751f24058e5882b6a2a603e5448bfb1b0b0f204c175ec8aee827e5312",
+    "Sources/HUDApplicationIcon.swift": "a662bcf5f1fa7452a576766234ac4e15d2461f45da049661dda1c573ddde9966",
     "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95"
   }
 }

@@ -12,11 +12,12 @@
 // chooser sub-page and its paging, the Headphones / Bluetooth list, the
 // header subtitle, the page-reveal depth motion, the 2 px indicator, the
 // projected NSButton/NSSlider stand-ins with their help strings.
-// Windows: the default device cannot be switched (no public API,
-// WINDOWS-MIGRATION.md section 6): the runtime reports canSetDefaultOutput /
-// canSetDefaultInput false, so both dropdowns show the current device and
-// are disabled. Where switching is available the menus list every device,
-// the ones that cannot become the default disabled, as on the Mac.
+// Windows: the runtime switches the default device through IPolicyConfig
+// (native/audio_default_device.hpp). The menus list every device, the ones
+// that cannot become the default disabled, as on the Mac. Where the
+// interface is missing, or after one of its calls failed, the runtime reports
+// canSetDefaultOutput / canSetDefaultInput false: both dropdowns then show
+// the current device and are disabled.
 #include "modules/hud_design_page.hpp"
 #include "native/volume_snapshot.hpp"
 
@@ -25,13 +26,21 @@ namespace endfield::modules {
 // bundle icon synchronously; Windows extracts executables' icons on the
 // shared utility queue (native/volume_icon_provider.hpp). The canvas names
 // the apps whose rows are in or next to the view (<= 8, content events
-// only), reads an exact successful binding when it builds a row, and
-// iconsChanged() places icons that arrived later. Without hooks a row shows
-// the Mac's grey square (no icon).
+// only; on Devices the rows App volume opens on, so the swap rarely waits),
+// reads an exact successful binding when it builds a row, and places the
+// icons the request bound from the cache at once, as the Mac's build does.
+// An icon still being extracted keeps its square clear (no grey
+// placeholder) and fades in when iconsChanged() places it. Without hooks a
+// row shows the Mac's grey square (no icon).
 struct VolumeIconHooks {
     std::function<void(std::span<const std::string> applicationIDs)> show;
     std::function<void()> hide;
     std::function<std::optional<design::ImageSource>(std::string_view applicationID)> icon;
+    // True while the app's icon is not known: not asked for (or no longer,
+    // after its row left the request window or the page went inactive), or
+    // asked for and not answered yet. Such a square keeps what it shows.
+    // Absent: every icon is known (no icon is the grey square).
+    std::function<bool(std::string_view applicationID)> pending;
 };
 
 class VolumeCanvas final : public design::Canvas {
@@ -40,8 +49,16 @@ public:
     ~VolumeCanvas() override;
     // A new snapshot from the runtime (the controllers' observers, :48).
     void receive(native::VolumeSnapshot);
-    // Icons that arrived since the rows were built; true when one changed.
-    bool iconsChanged();
+    // Icons that arrived since the rows were built (the queue's completion
+    // at `now`): a square that was still clear fades in; true when one changed.
+    bool iconsChanged(double now);
+    // An app row's icon square: clear while its icon is not known yet, then
+    // the icon or the grey no-icon square.
+    struct IconSquare {
+        enum class Shows { clear, icon, none };
+        std::string applicationID; design::Layer* layer{}; Shows shows{Shows::clear};
+    };
+    const IconSquare* iconSquareForTesting(std::string_view applicationID) const;
     const native::VolumeSnapshot& snapshot() const noexcept { return snapshot_; }
     int tab() const noexcept { return tab_; }   // 0 Devices, 1 App volume; kept across visits (spec 2.9) inside one HUD session
     // Rows the app list shows: three, or two while the status line takes the third.
@@ -71,6 +88,8 @@ public:
 private:
     struct Structure {
         core::Language language{}; int tab{}; std::vector<std::string> apps; bool supported{}, status{};
+        // Why App volume lists no app (VolumeCanvas.emptyReason, 14d27e3).
+        std::optional<std::string> emptyReason;
         bool operator==(const Structure&) const = default;
     };
     struct SliderRow { design::RowPlate* row; design::Slider* slider; };
@@ -91,7 +110,7 @@ private:
     struct Gesture { std::string output; };
     std::optional<Gesture> gesture_;
     std::optional<std::string> lastStatus_;
-    std::vector<std::pair<std::string, design::Layer*>> iconLayers_;   // app id -> its icon square
+    std::vector<IconSquare> iconSquares_;
     std::vector<std::string> iconRequest_;
     const native::VolumeDevice* currentOutput() const;
     const native::VolumeApplication* application(std::string_view id) const;
@@ -115,7 +134,8 @@ private:
         design::ValueFormat, design::IconButton* trailing, double width, std::optional<double> height,
         std::function<std::optional<double>()> read, std::function<bool()> writable, std::function<void(double, bool)> change);
     design::RowPlate& applicationRow(design::Page&, const native::VolumeApplication&, double width);
-    void placeIcon(design::Layer&, std::string_view applicationID);
+    bool placeIcon(IconSquare&, bool animated);
+    bool placeIcons(bool animated);
     void requestIcons();
 };
 } // namespace endfield::modules

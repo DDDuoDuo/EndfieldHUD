@@ -2,7 +2,7 @@
 #ifdef _WIN32
 #include "app/utility_executor.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include "native/file_shelf_files.hpp"
 #include "native/layer_image_source.hpp"
 #include "native/shelf_icon_provider.hpp"
@@ -99,8 +99,8 @@ std::string shelfErrorText(const std::exception& error, Failure failure, core::L
     using C = data::StoreErrorCode; const std::string_view message = error.what();
     const auto persistence = [&] { return core::localized("The file shelf could not be saved or opened: ", "无法保存或打开暂存架：", language) + std::string(message); };
     const auto unavailable = [&] { return core::localized("This item is unavailable: ", "此项目不可用：", language) + mod::shelfText(mod::ShelfText::unavailableReason, language); };
-    if (contains(message, "no longer on the shelf")) return core::localized("This item is no longer on the shelf.", "此项目已不在暂存架中。", language);
-    if (contains(message, "different item occupies")) return core::localized("The original item is unavailable. A different item now occupies its old location.", "原始项目不可用，其他项目已占用了原来的位置。", language);
+    if (contains(message, "no longer on the shelf")) return core::localized("This item is no longer on the shelf", "此项目已不在暂存架中", language);
+    if (contains(message, "different item occupies")) return core::localized("The original item is unavailable. A different item now occupies its old location", "原始项目不可用，其他项目已占用了原来的位置", language);
     const auto* store = dynamic_cast<const data::StoreError*>(&error);
     if (!store) return persistence();
     switch (store->code()) {
@@ -260,7 +260,7 @@ struct ShelfService::Impl {
     }
     bool picking() const { const auto stats = picker->stats(); return stats.queued || stats.presenting; }
 
-    // ---- Utility work (properties reads, import-ledger writes) ----
+    // ---- Utility work (properties reads, relink-ledger writes) ----
     // Work receives value-owned inputs only. Each completion runs on the HUD
     // thread (the shared executor's drain or this service's workMessage) and
     // then asks the host for a frame.
@@ -365,24 +365,26 @@ struct ShelfService::Impl {
         for (const auto& item : pendingRelinks) if (!onShelf(item.recordID)) out.push_back(relinkItem(item));
         return out;
     }
-    // Reads the ledger (activation and refresh) through the import ledger API
-    // on the utility worker: a row whose record already exists here (the app
-    // stopped between the record and the ledger write) is resolved with that
-    // record's path first (reconcileMacRelinks); no file is ever looked up by
-    // path or name. Only the latest read is applied.
-    void readRelinks() {
+    // Reads the ledger (owner start, activation and refresh) through the ledger API
+    // on the utility worker: on activation and refresh a row whose record
+    // already exists here (the app stopped between the record and the ledger
+    // write) is resolved with that record's path first (reconcileMacRelinks);
+    // the owner-start read (reconcile false) only reads, so launching writes
+    // nothing, and lists the same rows (rows on the shelf are never listed).
+    // No file is ever looked up by path or name. Only the latest read is applied.
+    void readRelinks(bool reconcile = true) {
         if (!store) return;
         std::vector<std::pair<std::string, std::string>> rows; rows.reserve(store->items().size());
         for (const auto& row : store->items()) rows.emplace_back(row.id, row.windowsPath);
         auto result = std::make_shared<std::vector<mig::MacRelinkItem>>(); const auto read = ++relinkReads;
-        (void)submit([root = options.newDataRoot, rows = std::move(rows), result] {
-                (void)mig::reconcileMacRelinks(root, mig::relinkShelfItem, [&](const mig::MacRelinkItem& item) {
+        (void)submit([root = options.newDataRoot, rows = std::move(rows), result, reconcile] {
+                if (reconcile) (void)mig::reconcileMacRelinks(root, mig::relinkShelfItem, [&](const mig::MacRelinkItem& item) {
                     const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto& value) { return sameID(value.first, item.recordID); });
                     return row == rows.end() ? mig::RelinkRecordCheck{} : mig::RelinkRecordCheck{mig::RelinkRecordState::relinked, row->second}; });
                 *result = mig::MacRelinkLedger(root).unresolved(mig::relinkShelfItem); },
             [this, read, result](std::exception_ptr error) {
                 if (read != relinkReads) return; // a newer read follows
-                std::vector<mig::MacRelinkItem> open; if (!error) open = std::move(*result); // an unreadable ledger lists nothing; the import card keeps it
+                std::vector<mig::MacRelinkItem> open; if (!error) open = std::move(*result); // an unreadable ledger lists nothing and is kept as it is
                 std::erase_if(open, [&](const auto& item) { return onShelf(item.recordID) || dismissing.contains(item.recordID) || !item.macReference["createdAt"].isNumber(); });
                 if (open == pendingRelinks) return;
                 pendingRelinks = std::move(open);
@@ -610,6 +612,10 @@ std::unique_ptr<DesignModuleOwner> ShelfService::makeOwner(native::LayerRasteriz
     i.canvasPointer = canvas.get(); i.life = token;
     ownerCore->add(std::move(canvas));
     i.ownerCore = ownerCore.get();
+    // The relink rows are read as the owner starts, so the first showing
+    // already lists them instead of rebuilding its grid when the read lands
+    // (the Mac has them at once). Without the shared executor yet, setUtility reads.
+    if (i.utility) i.readRelinks(false);
     // The Shelf's own drops: a point inside the canvas's hit bounds (Mac
     // centreContains), unprojected like the canvas's own input.
     i.dropState->inside = [this](core::Point logical) {
@@ -628,6 +634,7 @@ void ShelfService::setUtility(app::UtilityExecutor* value) {
     if (i.savesQueued) if (auto* old = i.utility ? i.utility : i.ownUtility.get()) { old->waitIdle(); old->drain(); }
     if (i.utility && i.sharedRoute) i.utility->invalidate(i.sharedRoute, false);
     i.utility = value; i.sharedRoute = 0;
+    if (value && i.canvas()) i.readRelinks(false); // the owner started first (makeOwner)
 }
 bool ShelfService::message(const app::NativeMessage& m, double t) {
     auto& i = *impl_;
@@ -692,7 +699,7 @@ bool ShelfService::paste(double t) {
 // HUDFileShelfInteraction.open(id:): the identity is revalidated, the Shell
 // opens the item with its default verb (S_FALSE: the user cancelled the
 // Shell's "open with" choice: no toast, no notice); failure: "This item
-// could not be opened."
+// could not be opened"
 void ShelfService::open(std::string_view id, double t) {
     auto& i = *impl_;
     auto* c = i.at(t);
@@ -717,7 +724,7 @@ void ShelfService::opened(std::string_view id, HRESULT result, std::uint64_t clo
     auto* c = i.canvas();
     if (!c) return;
     if (result == S_OK) { if (closings == i.closings) c->opened(id); }
-    else if (FAILED(result)) c->deferError(core::localized("This item could not be opened.", "无法打开此项目。", i.language()));
+    else if (FAILED(result)) c->deferError(core::localized("This item could not be opened", "无法打开此项目", i.language()));
 }
 ehud::data::ShelfFileAccess ShelfService::access(std::string_view id) {
     auto& i = *impl_;

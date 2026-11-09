@@ -7,9 +7,10 @@
 // for the other modules), Ctrl+V paste, the copy-only drag-out with Shell drag
 // images (the Shell icon worker runs only while the Shelf is shown), opening and
 // revealing references, the properties reads on the shared utility executor,
-// Mac-imported items awaiting relink (Migration/relink.json through the import
-// ledger API) and the Event Log records SystemHUDView wires (shelfAdded per new
-// item, shelfRemoved, shelfCleared with the count). The module itself is a
+// Mac-imported items awaiting relink (Migration/relink.json through the relink
+// ledger API, core/migration/relink_ledger.hpp) and the Event Log records
+// SystemHUDView wires (shelfAdded per new item, shelfRemoved, shelfCleared
+// with the count). The module itself is a
 // tools::DesignModuleOwner over one FileShelfCanvas (makeOwner); this replaces
 // tools/shelf_preview, its presentation, scene, automation and adapter.
 // Cloud placeholders are referenced, never hydrated (no content is read; the
@@ -114,7 +115,7 @@ public:
     modules::FileShelfCanvas* canvas() const noexcept;     // while its owner lives
     DesignOwnerCore* core() const noexcept;
 
-    // The shared UtilityExecutor for the properties reads and the import-
+    // The shared UtilityExecutor for the properties reads and the relink-
     // ledger writes; until one is given a private one-worker executor is used,
     // notified through workMessage.
     void setUtility(app::UtilityExecutor*);
@@ -138,7 +139,7 @@ public:
     void showError(const std::exception&, double time);
     // Re-resolves every reference now (moved / renamed originals are found by
     // identity and saved; missing ones are marked unavailable) and reads the
-    // import ledger on the utility worker. Explicit only: no watcher.
+    // relink ledger on the utility worker. Explicit only: no watcher.
     void refresh(double time);
     bool perform(std::string_view action, double time);   // FileShelfCanvas::perform
     // The picker's completion for an imported item (also for tests): the

@@ -1,6 +1,8 @@
 #pragma once
 #include "modules/charge_overlay.hpp"
+#include "modules/hud_design_overlay.hpp"
 #include "native/charge_indicator_scene.hpp"
+#include "native/hud_design_automation.hpp"
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -16,17 +18,24 @@ struct IRawElementProviderFragmentRoot;
 // selected display's work area at the alert scale and that monitor's DPI.
 // It is driven entirely by ChargeOverlayState on the host's frame clock: the
 // window is shown only while the alert is visible and renders only while it
-// animates; position editing makes it input-capable (drag, cancel/confirm
-// buttons, Escape/Return) until the edit finishes.
+// animates; position editing makes it input-capable until the edit finishes.
+//
+// The bar editor (OverlayController's PositionCanvas): the window also holds
+// the design library's place-and-confirm strip (design::PlacementEditor with
+// the Size and Length sliders and the Cancel and Confirm pills) beside the
+// bar, drawn at 0.7 (modules::chargeEditorStripScale) through its own design
+// scene, whose text and layers raster for that size (the magnification).
+// Presses on the strip go to its controls, any other press drags the bar;
+// hover lights the strip's controls; Esc cancels and Return confirms. Size
+// and Length are drafts until Confirm. The strip's layers exist only while
+// editing; the pills have no tool tips.
 //
 // Accessibility (Mac: ChargeIndicatorView is a static text with its label;
-// the PositionActionButtons carry labels and tool tips): the window answers
-// WM_GETOBJECT with its own UI Automation root (native/charge_alert_
-// automation.hpp) listing the indicator text and, while editing, the Discard
-// and Confirm buttons (Invoke runs the same discard/confirm as a click, posted
-// to this window), and the editor's buttons show the system tool tips
-// "Discard (Esc)" / "Confirm (Return)" (comctl32 tooltip control, created on
-// the first edit and active only while editing).
+// the strip lists its items through HUDAccessibilityStandIns): the window
+// answers WM_GETOBJECT with its own UI Automation root (native/charge_alert_
+// automation.hpp) listing the indicator text and, while editing, the strip's
+// sliders and pills (Invoke and RangeValue run like a click or a slider step,
+// posted to this window and run from its procedure).
 //
 // Platform note: a top-most window cannot cover an exclusive-fullscreen
 // Direct3D swap chain (borderless fullscreen is covered), and the renderer
@@ -67,7 +76,7 @@ struct ChargePanelResidency {
     bool window{}, device{}, embeddedShaders{};
     std::size_t gpuBytes{};    // textures and meshes installed in the panel's renderer
     std::size_t targetBytes{}; // swap chain (or offscreen) output plus the linear composition target, from its size
-    std::size_t cpuBytes{};    // CPU pixels still held: the scene's uninstalled textures and the button rasters
+    std::size_t cpuBytes{};    // CPU pixels still held: the scene's uninstalled textures
     std::uint64_t creations{}, parks{}, recoveries{}, postponements{};
     double lastCreationMilliseconds{};   // window + device + programs of the last creation
     double lastFirstFrameMilliseconds{}; // the last presentation's first frame (raster, creation, render)
@@ -88,7 +97,8 @@ std::uint32_t chargeAlertWindowStyle(bool clickThroughLayered) noexcept;
 
 class ChargeIndicatorPanel final {
 public:
-    using PositionFinished = std::function<void(std::optional<modules::ChargePosition>)>;
+    // The editor finished: the bar layout to save (Confirm), or none.
+    using PositionFinished = std::function<void(std::optional<modules::ChargeBarLayout>)>;
     ChargeIndicatorPanel(LayerRasterizer&, ChargePanelOptions, PositionFinished = {});
     ~ChargeIndicatorPanel();
     ChargeIndicatorPanel(const ChargeIndicatorPanel&) = delete;
@@ -117,7 +127,7 @@ public:
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime() const;
     // Position editing (the host closed the HUD first). The editor takes
-    // keyboard focus; finishing reports the normalized position (or none).
+    // keyboard focus; finishing reports the bar layout (or none).
     bool beginPositionEditing(const modules::BatteryReading& previewValue, double time);
     // Input in virtual-desktop pixels; the window procedure forwards real
     // messages here. Tests inject the same calls on the hidden window.
@@ -128,19 +138,25 @@ public:
     bool windowVisible() const noexcept;      // ShowWindow state (false in hidden tests)
     core::Rect windowRect() const noexcept;   // last positioned rectangle, pixels
     std::string accessibilityLabel() const;
+    // The editor's strip while editing (none otherwise): its controls, values
+    // and layers, for hidden tests and the coverage harness.
+    const modules::design::PlacementEditor* editor() const noexcept;
+    // The strip's frame in virtual-desktop pixels (the 0.7 strip with its
+    // bubble room above it); none without an editor.
+    std::optional<core::Rect> stripRect() const noexcept;
+    // A point in the strip's own points -> virtual-desktop pixels.
+    std::optional<core::Point> stripToScreen(core::Point) const noexcept;
     // The window's UI Automation root exactly as WM_GETOBJECT returns it
     // (AddRef'd; created on the first request). No window: E_FAIL.
     long automationRoot(IRawElementProviderFragmentRoot** out);
     std::size_t automationChildren() const noexcept; // 0 before any request
-    // The private message a UI Automation press posts to window() (wParam:
-    // 0 discard, 1 confirm; lParam: the edit's generation).
+    // The nodes the root lists (indicator, then the strip's items), with
+    // their rects in virtual-desktop pixels.
+    std::vector<AutomationNode> automationNodes() const;
+    // The private message a UI Automation press or slider value posts to
+    // window() (lParam: the edit's generation); the panel runs the queued
+    // actions of that edit from its procedure.
     static unsigned automationInvokeMessage() noexcept;
-    // The editor buttons' system tool tips as the tooltip control holds them
-    // (TTM_ENUMTOOLS: client rectangle in pixels and text); empty before the
-    // first edit or when the control could not be created.
-    struct ToolTip { core::Rect client; std::string text; };
-    std::vector<ToolTip> toolTips() const;
-    bool toolTipsActive() const noexcept;
     // Residency (see above). resident: a window or device exists. park: true
     // when it released them; refused while the alert or the editor shows and
     // inside the panel's own window procedure.

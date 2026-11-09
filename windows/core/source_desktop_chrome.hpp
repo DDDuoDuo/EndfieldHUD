@@ -167,8 +167,14 @@ private:
 struct DesktopChromeTiming {
     static constexpr CubicTiming fadeCurve{.20,.72,.22,1};
     static constexpr CubicTiming styleCurve{.42,0,.58,1};
-    static constexpr double openingDelay=.20,openingDuration=.24,closingDelay=.35,closingDuration=.06,styleDuration=.26;
-    static double opacity(bool opening,double elapsed,double capturedOpacity=1,bool reduceMotion=false)noexcept;
+    // The opening fades every native layer in over openingDuration (the twin
+    // of SystemHUDView.sourceRevealDuration) after openingDelay. The close
+    // (5b2a9d3) plays that fade reversed with an ease-in from the captured
+    // opacity, timed by DesignMotion::closingFade to end exactly when the
+    // close's exit of `exitLength` (the Watch exit clip) ends; with no exit
+    // left (or under Reduce Motion) everything is gone at once.
+    static constexpr double openingDelay=.20,openingDuration=.24,styleDuration=.26;
+    static double opacity(bool opening,double elapsed,double capturedOpacity=1,bool reduceMotion=false,double exitLength=0)noexcept;
     static bool styleMovesForward(unsigned oldIndex,unsigned newIndex)noexcept;
     // CATransition push/.fromRight or .fromLeft applies only to the inner
     // clipped page. Pixel displacement is not asserted without a CA oracle.

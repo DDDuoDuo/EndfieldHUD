@@ -150,7 +150,7 @@ std::vector<BootLogLine> bootLogLines(const BootLogDate& date, double uptime, co
     }
     const auto name = trimmed(operatorName, true);
     const auto greeting = uppercase ? uppercase(name.empty() ? "ENDMINISTRATOR" : name) : d::asciiUppercase(name.empty() ? "ENDMINISTRATOR" : name);
-    lines.push_back(BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, " + greeting + "."));
+    lines.push_back(BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, " + greeting));
     return lines;
 }
 int bootLogWorkStreak(std::span<const std::int64_t> days, std::int64_t today) {
@@ -312,6 +312,15 @@ void BootLog::startBlink() {
     cursor_->setValue(Channel::opacity, 1);
     blink_ = env_->deadlines.token();
     env_->deadlines.after(blinkStart_ + .25, blink_, [this] { blinkStep(); });
+}
+void BootLog::cancelForClose() {
+    cancel(blink_);
+    cursor_->setValue(Channel::opacity, 1);
+    // bootOut ("hud.bootOut") is not a close key: the clip and the fade go
+    // back to the model (whole, opaque); the completion deadline stays.
+    if (finishing_) { term_->setValue(Channel::wipe, 1); term_->setValue(Channel::opacity, 1); }
+    // "hud.transform.translation.x" is not a close key, "hud.opacity" is.
+    for (auto* row : rows_) row->setValue(Channel::translateX, row->value(Channel::translateX));
 }
 // The step due now (a late deadline catches up to the clock's phase, as the
 // render server samples the discrete keyframes by time).

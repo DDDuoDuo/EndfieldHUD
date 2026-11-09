@@ -40,7 +40,7 @@ struct ArchiveExecutor {
     std::function<bool(std::function<void()>,std::function<void(std::exception_ptr)>)>submit;
 };
 struct ArchiveStateEvent {std::string name,id;};
-// Mac import relink ledger upkeep (modules/notes_relink_ledger.hpp), set by
+// Relink ledger upkeep (modules/notes_relink_ledger.hpp), set by
 // the repository's owner. Each function runs on the FIFO file executor right
 // after the record write it follows (record first, ledger second) and must
 // not throw; an unset function is skipped.
@@ -154,6 +154,17 @@ public:
     // declassifies it. Cancelled/denied/left -> ArchiveClassificationError(cancelled).
     void recoverSelectedClassification(std::optional<std::string>newPassword,std::string reason,Completion);
     bool moveSelected(std::optional<std::string>categoryID,double modifiedDate,double ownerTime);
+    // --- Gallery moves and deletes (Mac 1.3.1 ArchiveStore.swift:797-826, 915-920, 1175-1207)
+    // A gallery move or delete may touch this document now: it is not
+    // locked, being deleted, (de)classified or held by a category removal.
+    bool canModify(std::string_view id)const noexcept;
+    // Moves any document to `categoryID` (nullopt: Uncategorized). The open
+    // document goes through moveSelected; another one is loaded on the
+    // executor (or its unsaved draft is used), checked again on delivery
+    // and saved through the same dirty/flush path, with modifiedDate, so it
+    // moves to the front of All. `completion(moved)` runs once on the owner
+    // thread (at once when refused), never after the facade is destroyed.
+    void moveEntry(std::string id,std::optional<std::string>categoryID,double modifiedDate,double ownerTime,std::function<void(bool)>completion={});
     // Explicit timestamp + owner animation clock are distinct. The source's
     // .35-second debounce is one deadline returned to the existing scheduler.
     // Latest text/runs remain owned across failure; no plain-text flattening.
@@ -164,8 +175,12 @@ public:
     void queueCapacityAvailable();
     std::optional<double>saveDeadline()const noexcept;
     bool flushIfDue(double ownerTime);
-    // The caller asks first (the canvas's confirm bar).
-    bool deleteSelected();bool deleteCategory(std::string_view);
+    // The caller asks first (the canvas's confirm bar). deleteSelected is
+    // deleteEntry of the open document; deleteEntry also deletes a closed
+    // one from the gallery (refused unless canModify): the open document,
+    // its edits and a select in flight are left alone, and a failed delete
+    // puts the card back at its old index with its unsaved draft.
+    bool deleteSelected();bool deleteEntry(std::string_view id);bool deleteCategory(std::string_view);
     void loadThumbnail(std::string id,std::function<void(std::optional<ArchiveJson>)>);
     // The Unicode rules the state validates with (the password and category
     // name rules of the canvas use the same).

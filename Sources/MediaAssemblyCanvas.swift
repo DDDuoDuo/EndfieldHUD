@@ -511,7 +511,7 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
 
     private func confirmReset() {
         confirm(HUDConfirmRequest(id: "mediaReset", title: L10n.text("Reset all edits?", "重置所有编辑？"),
-                                  message: L10n.text("Filters, adjustments, crop and stickers.", "滤镜、调整、裁剪与贴纸。"),
+                                  message: L10n.text("Filters, adjustments, crop and stickers", "滤镜、调整、裁剪与贴纸"),
                                   confirmTitle: L10n.text("Reset", "重置"), icon: .reset)) { [weak self] in
             guard let self, self.isEditable else { return }
             self.selectedStickerID = nil
@@ -570,7 +570,7 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
         guard let document = controller.document, !isExporting, !closing else { return }
         let edited = controller.adjustments != MediaAssemblyAdjustments()
         confirm(HUDConfirmRequest(id: "mediaClose", title: L10n.text("Close this file?", "关闭此文件？"),
-                                  message: edited ? L10n.text("Unexported edits are discarded.", "未导出的编辑将被丢弃。") : document.name,
+                                  message: edited ? L10n.text("Unexported edits are discarded", "未导出的编辑将被丢弃") : document.name,
                                   confirmTitle: L10n.text("Close", "关闭"), danger: edited, icon: .x)) { [weak self] in
             guard let self, self.controller.document?.id == document.id else { return }
             self.closeSource()

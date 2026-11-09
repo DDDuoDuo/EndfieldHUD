@@ -303,7 +303,7 @@ enum HUDBootLogContent {
         }
         let name = operatorName.trimmingCharacters(in: .whitespacesAndNewlines)
         let greeting = (name.isEmpty ? "ENDMINISTRATOR" : name).uppercased(with: Locale(identifier: "en_US_POSIX"))
-        lines.append(.footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, \(greeting)."))
+        lines.append(.footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, \(greeting)"))
         return lines
     }
 }

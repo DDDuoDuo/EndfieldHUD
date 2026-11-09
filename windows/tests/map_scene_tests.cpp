@@ -70,6 +70,9 @@ void native(const std::filesystem::path&shader){Window window;n::Renderer render
     // The pulse: ambient motion, sampled by whatever frame presents it.
     appearance.ambient=true;scene.setAppearance(appearance);frame(7,place);check(scene.pulsing()&&scene.stats().pulsingPins>=1&&scene.stats().pulsingPins==scene.stats().visiblePins&&!scene.requiresFrames(7),"The visible pins (up to 12) pulse without display-rate demand");
     {const auto updates=scene.stats().localUpdates;frame(8,place);frame(8+1./30,place);check(scene.stats().localUpdates==updates+2,"Each ambient frame samples the pulse at its own time");}
+    // The HUD's close strips the pulse (L-D1): the pulsing set stays, its rings at their model opacity 0, nothing sampled.
+    appearance.pulseStripped=true;scene.setAppearance(appearance);frame(8.1,place);{const auto updates=scene.stats().localUpdates;frame(8.2,place);check(!scene.pulsing()&&scene.stats().pulsingPins>=1&&scene.stats().strippedRings==scene.stats().pulsingPins&&scene.stats().localUpdates==updates,"The close's strip keeps the pulsing rings at opacity 0 and samples nothing");}
+    appearance.pulseStripped=false;scene.setAppearance(appearance);frame(8.3,place);check(scene.pulsing()&&scene.stats().strippedRings==0,"A reopen mid-close gives the pulse back");
     model.setReducedMotion(true);appearance.reducedMotion=true;scene.setAppearance(appearance);frame(9,place);check(!scene.pulsing(),"Reduce Motion stops the pulse");appearance.reducedMotion=false;scene.setAppearance(appearance);
     (void)model.setActive(false);frame(10,place);check(!scene.pulsing(),"An inactive Map does not pulse");
     // The host cut: created with the first plates, repainted in place, released when no draw samples it.

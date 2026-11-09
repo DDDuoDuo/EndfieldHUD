@@ -37,6 +37,29 @@ if(WIN32 AND BUILD_TESTING)
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/idle-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
       -DSECONDS=4 -DGRACE=3 -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
-    set_tests_properties(application_idle_trace PROPERTIES TIMEOUT 600)
+    # The traces measure real-clock idle windows: one runs at a time.
+    set_tests_properties(application_idle_trace PROPERTIES TIMEOUT 600 RESOURCE_LOCK idle_trace)
+    # The same trace ending another way (app/application.hpp idleTraceQuit):
+    # the Quit button answered on the confirm bar under Reduce Motion, or a
+    # lock during an accepted Quit's close.
+    foreach(ending button locked)
+      add_test(NAME application_idle_trace_quit_${ending} COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/idle-trace-quit-${ending}-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        -DSECONDS=4 -DGRACE=3 -DEXTRA=--idle-trace-quit-${ending} -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_idle_trace.cmake")
+      set_tests_properties(application_idle_trace_quit_${ending} PROPERTIES TIMEOUT 600 RESOURCE_LOCK idle_trace)
+    endforeach()
+    # The hidden animation trace (watch_session_preview --animation-trace):
+    # the cost of every opening's and closing's frames, the group targets the
+    # HUD close's canvas fade takes included (app/run_animation_trace.cmake).
+    # A measurement: it prints its numbers and fails only on the trace's own
+    # contracts.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/run_animation_trace.cmake")
+      add_test(NAME application_animation_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/animation-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        -DGRACE=3 -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_animation_trace.cmake")
+      set_tests_properties(application_animation_trace PROPERTIES TIMEOUT 600 RESOURCE_LOCK idle_trace)
+    endif()
   endif()
 endif()

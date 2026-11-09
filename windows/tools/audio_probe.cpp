@@ -4,8 +4,8 @@
 //
 //   audio_probe                           usage only; touches nothing
 //   audio_probe --live [--seconds N]      READ-ONLY: active output/input
-//                                         endpoints with their Bluetooth and
-//                                         headphone traits, the default devices,
+//                                         endpoints with their headphone
+//                                         trait, the default devices,
 //                                         the default output's volume/mute/
 //                                         balance readback and capabilities,
 //                                         per-app sessions (name, PID, packaged
@@ -58,7 +58,7 @@ double monotonic(){return std::chrono::duration<double>(std::chrono::steady_cloc
 void emit(Json value){value["t"]=std::round(monotonic()*1000)/1000;std::cout<<value.encode()<<std::endl;}
 std::string text(std::wstring_view value){return n::audioUtf8(value).value_or("<invalid UTF-16>");}
 Json endpoints(const std::vector<n::AudioEndpoint>&list,const std::wstring&defaultID){
-    Json::Array out;for(const auto&d:list)out.emplace_back(Json::Object{{"id",text(d.id)},{"name",text(d.name)},{"bluetooth",d.bluetooth},{"headphones",d.headphones},{"default",d.id==defaultID}});return out;
+    Json::Array out;for(const auto&d:list)out.emplace_back(Json::Object{{"id",text(d.id)},{"name",text(d.name)},{"headphones",d.headphones},{"default",d.id==defaultID}});return out;
 }
 Json optional(const std::optional<float>&v){return v?Json(static_cast<double>(*v)):Json{};}
 void report(const n::AudioEndpointSnapshot&s,n::AudioTopologyRecorder&recorder,std::uint64_t&generation){
@@ -67,7 +67,7 @@ void report(const n::AudioEndpointSnapshot&s,n::AudioTopologyRecorder&recorder,s
         {"canSetVolume",s.canSetVolume},{"canSetMute",s.canSetMute},{"canSetBalance",s.canSetBalance},{"commandError",s.commandError}});
     Json::Array apps;for(const auto&a:s.applications)apps.emplace_back(Json::Object{{"id",a.id},{"name",text(a.name)},{"pid",static_cast<std::int64_t>(a.pid)},{"available",a.available},
         {"state",a.state==n::AudioApplicationRouteState::active?"active":a.state==n::AudioApplicationRouteState::failed?"failed":"direct"},{"gain",optional(a.gain)},{"appUserModelID",a.appUserModelID},{"error",a.error}});
-    emit(Json::Object{{"event","applications"},{"supported",s.applicationsSupported},{"routesStoppedByDeviceChange",s.routesStoppedByDeviceChange},{"error",s.applicationError},{"applications",std::move(apps)}});
+    emit(Json::Object{{"event","applications"},{"supported",s.applicationsSupported},{"error",s.applicationError},{"routeError",s.routeError},{"applications",std::move(apps)}});
     if(s.topologyGeneration!=generation){
         generation=s.topologyGeneration;
         for(const auto&e:recorder.receive(s.topology))emit(Json::Object{{"event",e.connected?"audioDeviceConnected":"audioDeviceDisconnected"},{"device",e.device}});
@@ -124,7 +124,7 @@ int wmain(int argc,wchar_t**argv){
         report(service.snapshot(),recorder,generation);
         if(gain&&!applied){
             const auto&apps=service.snapshot().applications;
-            if(std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==gain->first;})){applied=service.setApplicationGain(gain->first,gain->second);emit(Json::Object{{"event","appGainRequested"},{"id",gain->first},{"gain",static_cast<double>(gain->second)},{"accepted",applied}});}
+            if(std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==gain->first;})){applied=service.setApplicationGain(service.snapshot().defaultOutputID,gain->first,gain->second);emit(Json::Object{{"event","appGainRequested"},{"id",gain->first},{"gain",static_cast<double>(gain->second)},{"accepted",applied}});}
         }
     }
     const auto stats=service.stats();

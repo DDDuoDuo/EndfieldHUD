@@ -8,7 +8,6 @@ struct AudioDeviceInfo: Identifiable, Equatable {
     var outputChannels: Int = 0
     var inputChannels: Int = 0
     var isHeadphones = false
-    var isBluetooth = false
     var canBeDefaultOutput = true
     var canBeDefaultInput = true
     var transportType: UInt32? = nil
@@ -24,6 +23,9 @@ struct AudioApplicationInfo: Identifiable, Equatable {
     /// Current, or last confirmed while this exact process object/PID remains
     /// live, output device IDs. An empty list never invents a default route.
     var outputDeviceIDs: [UInt32] = []
+    /// True when outputDeviceIDs are the remembered ones of a process that is
+    /// playing to no device right now, so they need not match the output.
+    var outputDevicesRemembered = false
     /// Presentation only. A helper keeps its own HAL object/PID and bundle ID.
     var applicationURL: URL? = nil
     var icon: NSImage? = nil
@@ -41,9 +43,39 @@ struct AudioApplicationAppearance {
 final class AudioApplicationAppearanceResolver {
     private var cache: [URL: AudioApplicationAppearance] = [:]
     private let loadIcon: (URL) -> NSImage?
-    init(loadIcon: @escaping (URL) -> NSImage? = { NSWorkspace.shared.icon(forFile: $0.path) }) {
-        self.loadIcon = loadIcon
+    private let executablePath: (Int32) -> String?
+    private let responsiblePID: (Int32) -> Int32?
+    convenience init(loadIcon: @escaping (URL) -> NSImage? = { NSWorkspace.shared.icon(forFile: $0.path) }) {
+        self.init(loadIcon: loadIcon, executablePath: PublicAppActivityBackend.path(pid:), responsiblePID: Self.responsiblePID)
     }
+    init(loadIcon: @escaping (URL) -> NSImage?, executablePath: @escaping (Int32) -> String?,
+         responsiblePID: @escaping (Int32) -> Int32? = { _ in nil }) {
+        self.loadIcon = loadIcon; self.executablePath = executablePath; self.responsiblePID = responsiblePID
+    }
+    /// The app a process belongs to. A helper macOS lists as no app (such as
+    /// a browser's audio service) is found from its executable's location.
+    /// A system XPC service that no app encloses (WebKit's GPU process, which
+    /// plays Safari's media) belongs to the app macOS holds responsible for it.
+    func resolve(pid: Int32) -> AudioApplicationAppearance {
+        var running = NSRunningApplication(processIdentifier: pid)
+        let executable = running.map { $0.executableURL } ?? executablePath(pid).map { URL(fileURLWithPath: $0) }
+        var appearance = resolve(bundleURL: running?.bundleURL, executableURL: executable)
+        if appearance.applicationURL == nil, executable?.path.contains(".xpc/") == true,
+           let owner = responsiblePID(pid), owner > 0, owner != pid, let host = NSRunningApplication(processIdentifier: owner) {
+            let hosted = resolve(bundleURL: host.bundleURL, executableURL: host.executableURL)
+            if hosted.applicationURL != nil { appearance = hosted; running = host }
+        }
+        let name = running?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        appearance.name = appearance.name ?? name.flatMap { $0.isEmpty ? nil : $0 }
+        return appearance
+    }
+    /// libsystem's unpublished responsibility lookup, found at run time; nil
+    /// where this macOS does not export it.
+    private static let responsibility: (@convention(c) (Int32) -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Int32).self)
+    }()
+    static func responsiblePID(_ pid: Int32) -> Int32? { responsibility.map { $0(pid) }.flatMap { $0 > 0 ? $0 : nil } }
     func resolve(bundleURL: URL?, executableURL: URL?) -> AudioApplicationAppearance {
         precondition(Thread.isMainThread)
         for candidate in [bundleURL, executableURL].compactMap({ $0 }) where candidate.isFileURL {
@@ -136,13 +168,13 @@ enum AudioDeviceError: LocalizedError {
     func message(language: AppLanguage) -> String {
         func localized(_ english: L10n.Text, _ chineseText: L10n.Text) -> String { L10n.text(english, chineseText, language: language) }
         switch self {
-        case .unavailable: return localized("Audio device information is unavailable.", "音频设备信息不可用。")
-        case .unsupported: return localized("This device does not support this control.", "此设备不支持该控制。")
-        case .deviceChanged: return localized("The audio device changed. Try the control again.", "音频设备已更改，请重试。")
-        case .invalidValue: return localized("The audio control value is invalid.", "音频控制值无效。")
-        case .readback: return localized("The device could not confirm the audio change.", "无法确认设备的音频更改。")
-        case .hal(let code): return localized("macOS could not complete the audio operation", "macOS 无法完成音频操作") + " (\(code))."
-        case .rollback: return localized("The audio change failed and could not be fully restored. Check the current device levels.", "音频更改失败且未能完全恢复，请检查当前设备音量。")
+        case .unavailable: return localized("Audio device information is unavailable", "音频设备信息不可用")
+        case .unsupported: return localized("This device does not support this control", "此设备不支持该控制")
+        case .deviceChanged: return localized("The audio device changed. Try the control again", "音频设备已更改，请重试")
+        case .invalidValue: return localized("The audio control value is invalid", "音频控制值无效")
+        case .readback: return localized("The device could not confirm the audio change", "无法确认设备的音频更改")
+        case .hal(let code): return localized("macOS could not complete the audio operation", "macOS 无法完成音频操作") + " (\(code))"
+        case .rollback: return localized("The audio change failed and could not be fully restored. Check the current device levels", "音频更改失败且未能完全恢复，请检查当前设备音量")
         }
     }
 }
@@ -320,10 +352,8 @@ final class AudioDeviceController {
         if worker != nil {
             var presentation: [Int32: AudioApplicationAppearance] = [:]
             for app in next.activeApplications + next.availableApplications where presentation[app.pid] == nil {
-                let running = NSRunningApplication(processIdentifier: app.pid)
-                var appearance = appearances.resolve(bundleURL: running?.bundleURL, executableURL: running?.executableURL)
-                let name = running?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-                appearance.name = appearance.name ?? name.flatMap { $0.isEmpty ? nil : $0 } ?? app.name
+                var appearance = appearances.resolve(pid: app.pid)
+                appearance.name = appearance.name ?? app.name
                 presentation[app.pid] = appearance
             }
             func decorated(_ applications: [AudioApplicationInfo]) -> [AudioApplicationInfo] {
@@ -544,7 +574,6 @@ private final class AudioDeviceStateEngine {
                     uid: uid,
                     outputChannels: outputChannels, inputChannels: inputChannels,
                     isHeadphones: headphones(id, desired: &desired),
-                    isBluetooth: transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE,
                     canBeDefaultOutput: uint(property(id, kAudioDevicePropertyDeviceCanBeDefaultDevice, scope: Self.output)) == 1,
                     canBeDefaultInput: uint(property(id, kAudioDevicePropertyDeviceCanBeDefaultDevice, scope: Self.input)) == 1,
                     transportType: transport)
@@ -762,12 +791,12 @@ private final class AudioDeviceStateEngine {
     private func readApplications(into next: inout AudioDeviceSnapshot, desired: inout Set<AudioHALProperty>) {
         guard let backend, backend.supportsProcessActivity,
               backend.has(systemProperty(kAudioHardwarePropertyProcessObjectList)) else {
-            next.applicationActivityMessage = localized("Active audio apps require macOS 14.2 or later and compatible Core Audio support.", "活跃音频应用需要 macOS 14.2 或更新版本及兼容的 Core Audio 支持。")
+            next.applicationActivityMessage = localized("Active audio apps require macOS 14.2 or later and compatible Core Audio support", "活跃音频应用需要 macOS 14.2 或更新版本及兼容的 Core Audio 支持")
             return
         }
         desired.insert(systemProperty(kAudioHardwarePropertyProcessObjectList))
         guard let processes: [UInt32] = try? array(systemProperty(kAudioHardwarePropertyProcessObjectList)) else {
-            next.applicationActivityMessage = localized("Active audio app information is unavailable.", "活跃音频应用信息不可用。")
+            next.applicationActivityMessage = localized("Active audio app information is unavailable", "活跃音频应用信息不可用")
             return
         }
         next.applicationActivitySupported = true
@@ -803,7 +832,8 @@ private final class AudioDeviceStateEngine {
             let rememberedDevices = nextKnownProcesses[id]?.devices ?? []
             let app = AudioApplicationInfo(id: id, pid: pid, bundleIdentifier: bundle, name: name,
                 isRunningOutput: output, isRunningInput: input,
-                outputDeviceIDs: outputDevices.isEmpty ? rememberedDevices : outputDevices)
+                outputDeviceIDs: outputDevices.isEmpty ? rememberedDevices : outputDevices,
+                outputDevicesRemembered: outputDevices.isEmpty && !rememberedDevices.isEmpty)
             if output || input { next.activeApplications.append(app) }
             if !app.outputDeviceIDs.isEmpty, pid != ProcessInfo.processInfo.processIdentifier {
                 next.availableApplications.append(app)
@@ -823,7 +853,7 @@ private final class AudioDeviceStateEngine {
         }
         for address in desired where listeners[address] == nil {
             do { listeners[address] = try backend.listen(address) { [weak self] in self?.scheduleRefresh() } }
-            catch { setStatus(localized("Some audio changes could not be observed. Reopen Volume to refresh.", "无法监听部分音频更改，请重新打开音量模块刷新。")) }
+            catch { setStatus(localized("Some audio changes could not be observed. Reopen Volume to refresh", "无法监听部分音频更改，请重新打开音量模块刷新")) }
         }
     }
     private func scheduleRefresh() {

@@ -4,7 +4,7 @@
 // Removed with the v1.2.0 page (MODS-739, MODS-743): the .44 s expanded
 // layout, the clock "index" travel, the .985 button press, the Ready /
 // RUNNING / PAUSED / Stopped / Completed phase words, the invalid-duration hint
-// and the ". Space starts, pauses or resumes." help (MODS-729, MODS-741), and
+// and the ". Space starts, pauses or resumes" help (MODS-729, MODS-741), and
 // the auto-cancel of the custom editor when a session starts (MODS-734: a new
 // duration now ends a running session, and leaving commits the field).
 //
@@ -288,10 +288,12 @@ void WorkModeCanvas::resetSession() {
     Canvas::resetSession();
     if (changed && renderedLanguage()) refresh(false);
 }
-// The flick of the inner title; the column staggers in (the ring has no entrance).
-void WorkModeCanvas::playEntrance(Point offset, double now) {
-    Canvas::playEntrance(offset, now);
-    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, env().clock(), d::easing::standard, 0, 0.0);
+// The flick of the inner title; the ring and the column stagger in.
+// Part of the page's entrance (:240-243), so a page rebuilt mid-entrance
+// (Start pressed while Work Mode opens) carries the wipe on in phase.
+void WorkModeCanvas::playPageEntrance(Point offset, double delay) {
+    Canvas::playPageEntrance(offset, delay);
+    if (titleGroup_) d::motion::wipe(*titleGroup_, d::WipeOrigin::left, d::duration::titleWipe, clock(), d::easing::standard, delay, 0.0);
 }
 
 // --- State (:249-304) -----------------------------------------------------------------
@@ -352,6 +354,12 @@ void WorkModeCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
     ring_ = std::make_unique<Ring>(page.builder(), workModeDial::fraction(value));
     page.layer().add(ring_->layer());
+    // The ring is the first row of the page's stagger (:314, Mac c4c2029), so
+    // it enters on open, on a module switch and on a tab change. Mac parity
+    // (E-D1): above a density of about 3.08 the renderer refuses the ring's
+    // group (maximumNativeGroupPixels), so its fade draws tick by tick, as a
+    // module-switch fade of the ring already does.
+    page.stagger(ring_->layer());
     buildTitle(page);
     buildTabs(page, value);
     buildState(page, value);

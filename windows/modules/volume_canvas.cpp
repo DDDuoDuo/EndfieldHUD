@@ -11,6 +11,10 @@ namespace {
 constexpr double listTop = d::metric::headerHeight + 34 + 10;
 // A compact slider row with its PID line grows to 54 px (demo layout).
 constexpr double appRowHeight = 54;
+// An app icon that lands after its row was built fades in over the late
+// artwork reveal of Media Assembly's stage (setContentOpacity); the Mac sets
+// every icon at build, so a cached one shows at once.
+constexpr double iconFade = .16;
 std::string pid(const native::VolumeApplication& app) { return "PID " + std::to_string(app.pid); }
 // The Mac canvas keeps no reference to its HUDRowPlates (only the sliders,
 // dropdowns and mute button join the page), so each plate is released once
@@ -85,11 +89,10 @@ const native::VolumeApplication* VolumeCanvas::application(std::string_view id) 
     const auto it = std::find_if(snapshot_.applications.begin(), snapshot_.applications.end(), [&](const auto& a) { return a.id == id; });
     return it == snapshot_.applications.end() ? nullptr : &*it;
 }
-// PerAppAudioController.statusMessage: the runtime's per-app status, or the
-// route stop after an output change (stopAll(reason:)).
+// PerAppAudioController.statusMessage: the runtime's per-app status. A route
+// stop after an output change adds none of its own (730f4bb).
 std::optional<std::string> VolumeCanvas::perAppStatus() const {
-    if (snapshot_.perAppStatus) return snapshot_.perAppStatus->empty() ? std::nullopt : snapshot_.perAppStatus;
-    if (snapshot_.routingStopped) return text("App routing stopped because the output device changed.", "输出设备已更改，应用混音已停止。");
+    if (snapshot_.perAppStatus && !snapshot_.perAppStatus->empty()) return snapshot_.perAppStatus;
     return std::nullopt;
 }
 int VolumeCanvas::visibleApplicationRows() const { return perAppStatus() ? 2 : 3; }
@@ -108,14 +111,19 @@ std::vector<const native::VolumeApplication*> VolumeCanvas::listedApplications()
         if (app.state != VolumeAppState::direct || (app.available && currentOutput())) out.push_back(&app);
     return out;
 }
-// The Mac keys `supported` on both tabs, but only the App volume page reads it
-// (the Devices page never does; the tabs' dot is a binder). Keyed on tab 1
-// only, the worker's first read after launch (which adds the per-app support)
-// fills the Devices page in place instead of rebuilding it under the entrance
-// of the first switch to Volume (an owner-requested fix; the Mac rebuilds).
+// Only the App volume page reads `supported` (the Devices page never does;
+// the tabs' dot is a binder), so it counts on tab 1 only, as on the Mac since
+// 62c9b07 (VolumeCanvas.swift `supported: tab == 1 && ...`): the worker's
+// first read after launch (which adds the per-app support) fills the Devices
+// page in place instead of rebuilding it under the entrance of the first
+// switch to Volume. The empty list's reason is keyed on tab 1 too.
 VolumeCanvas::Structure VolumeCanvas::structure() const {
-    Structure s{env().language, tab_, {}, tab_ == 1 && snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value()};
+    Structure s{env().language, tab_, {}, tab_ == 1 && snapshot_.applicationActivitySupported, tab_ == 1 && perAppStatus().has_value(), std::nullopt};
     if (tab_ == 1) for (const auto* app : listedApplications()) s.apps.push_back(app->id);
+    // The empty list's reason (14d27e3): process detection's message, the
+    // empty state's subtitle. Windows has no output a route cannot use, so
+    // the Mac's outputAvailability fallback has no counterpart here.
+    if (tab_ == 1 && s.apps.empty()) s.emptyReason = snapshot_.applicationMessage;
     return s;
 }
 
@@ -131,6 +139,8 @@ void VolumeCanvas::changed() {
     const auto status = snapshot_.status;
     if (status && status != lastStatus_) toast(d::Icon::warn, "Notice", "提示", *status);
     lastStatus_ = status;
+    // On Devices the listed apps change without a rebuild: the prefetch follows.
+    requestIcons();
 }
 bool VolumeCanvas::sliding() const {
     return std::any_of(page().controls().begin(), page().controls().end(), [](d::Control* c) {
@@ -145,7 +155,7 @@ void VolumeCanvas::cancelSliderGestures() {
 
 // --- Page (:125-206) ---------------------------------------------------------------------
 void VolumeCanvas::buildPage(d::Page& page) {
-    binders_.clear(); appList_ = nullptr; masterSlider_ = nullptr; selectedSlider_ = nullptr; iconLayers_.clear();
+    binders_.clear(); appList_ = nullptr; masterSlider_ = nullptr; selectedSlider_ = nullptr; iconSquares_.clear();
     renderedStructure_ = structure();
     auto& tabs = page.makeTabs("volumeTab", {{text("Devices", "设备"), d::Icon::devices}, {text("App volume", "应用音量"), d::Icon::apps}},
         tab_, d::metric::boxWidth);
@@ -171,7 +181,7 @@ void VolumeCanvas::buildPage(d::Page& page) {
     // binds icons already cached at once, so the rows take them now rather
     // than as a later change.
     requestIcons();
-    (void)iconsChanged();
+    (void)placeIcons(false);
 }
 bool VolumeCanvas::hasAdjustableApplication() const {
     const auto apps = listedApplications();
@@ -261,7 +271,7 @@ void VolumeCanvas::openDeviceMenu(bool input, const d::Dropdown& anchor) {
             .enabled = input ? device.canBeDefaultInput : device.canBeDefaultOutput});
     openMenu(input ? "input" : "output", std::move(items), anchor, std::nullopt, [this, input](const d::Menu::Item& item) {
         if (input) { if (actions_.setDefaultInput) (void)actions_.setDefaultInput(item.id); return; }
-        // "App routing stopped because the output device changed." (the runtime reports it as routingStopped).
+        // The routes stop quietly before the switch (730f4bb: stopAll() has no reason).
         if (item.id != snapshot_.outputID && actions_.stopAllApps) actions_.stopAllApps();
         if (actions_.setDefaultOutput) (void)actions_.setDefaultOutput(item.id);
     });
@@ -313,7 +323,7 @@ void VolumeCanvas::buildApplications(d::Page& page) {
         // Windows' own unsupported message stands for the Mac's macOS 14.2 requirement.
         const std::optional<std::string> detail = snapshot_.applicationActivitySupported ? snapshot_.applicationMessage
             : snapshot_.applicationMessage ? snapshot_.applicationMessage
-            : std::optional(text("Active audio app information is unavailable.", "活跃音频应用信息不可用。"));
+            : std::optional(text("Active audio app information is unavailable", "活跃音频应用信息不可用"));
         auto& empty = d::emptyState::make(page.builder(), "volume.apps.empty", heading, detail, std::nullopt, {d::metric::boxWidth, viewport.height});
         empty.setOrigin({0, listTop});
         page.layer().add(empty);
@@ -377,36 +387,63 @@ d::RowPlate& VolumeCanvas::applicationRow(d::Page& page, const native::VolumeApp
     auto& icon = page.makeLayer("volume.app.icon:" + appID);
     // The 18 px square and the name share the label line (centre y 20.5).
     icon.setFrame({18, 11.5, 18, 18});
-    placeIcon(icon, appID);
-    iconLayers_.emplace_back(appID, &icon);
+    (void)placeIcon(iconSquares_.emplace_back(IconSquare{appID, &icon}), false);
     auto& name = d::makeText(page.builder(), "volume.app.name:" + appID, app.name, d::type::rowLabel(),
         {18 + 18 + 8, 20.5 - 15.5 * .6, d::metric::sliderLabelColumn - 26, 15.5 * 1.2});
     plate.layer().add(icon); plate.layer().add(name);
     page.add(*row.slider);
     return plate;
 }
-void VolumeCanvas::placeIcon(d::Layer& layer, std::string_view applicationID) {
-    if (const auto image = icons_.icon ? icons_.icon(applicationID) : std::nullopt)
-        layer.setContent(d::image("image", d::localBounds(layer), *image, "resizeAspect"));
-    else d::setBackground(layer, d::rgb(0x4A4A4A));
-}
-bool VolumeCanvas::iconsChanged() {
-    bool changed = false;
-    for (const auto& [id, layer] : iconLayers_) {
-        const auto before = layer->content();
-        placeIcon(*layer, id);
-        changed = changed || layer->content() != before;
+// The icon, or the Mac's grey square for an app without one (:357-358).
+// While the icon is not known the square keeps what it shows: one whose row
+// left the request window (or whose page went inactive) keeps its icon. A
+// square built before its icon is known stays clear (an animatable surface,
+// decided at build) and fades in when it lands (`animated`; at once under
+// Reduce Motion and when the request bound it from the cache).
+bool VolumeCanvas::placeIcon(IconSquare& square, bool animated) {
+    using Shows = IconSquare::Shows;
+    d::Layer& layer = *square.layer;
+    const auto image = icons_.icon ? icons_.icon(square.applicationID) : std::nullopt;
+    if (!image && icons_.pending && icons_.pending(square.applicationID)) {
+        if (square.shows == Shows::clear && !layer.animatable()) { layer.setAnimatable(); layer.setValue(d::Channel::opacity, 0); }
+        return false;
     }
+    const auto before = layer.content();
+    if (image) layer.setContent(d::image("image", d::localBounds(layer), *image, "resizeAspect"));
+    else d::setBackground(layer, d::rgb(0x4A4A4A));
+    const Shows shows = image ? Shows::icon : Shows::none;
+    const bool changed = layer.content() != before || shows != square.shows;
+    if (square.shows == Shows::clear && layer.animatable())
+        d::motion::animate(layer, d::Channel::opacity, 1, animated ? iconFade : 0, clock(), d::easing::ease);
+    square.shows = shows;
     return changed;
 }
+bool VolumeCanvas::placeIcons(bool animated) {
+    bool changed = false;
+    for (auto& square : iconSquares_) changed = placeIcon(square, animated) || changed;
+    return changed;
+}
+bool VolumeCanvas::iconsChanged(double now) {
+    env().now = now;
+    return placeIcons(true);
+}
+const VolumeCanvas::IconSquare* VolumeCanvas::iconSquareForTesting(std::string_view applicationID) const {
+    const auto it = std::find_if(iconSquares_.begin(), iconSquares_.end(), [&](const auto& s) { return s.applicationID == applicationID; });
+    return it == iconSquares_.end() ? nullptr : &*it;
+}
 // The apps whose rows are in view or next to it (at most the icon plan's
-// eight), named on content and scroll events only.
+// eight), named on content and scroll events only. On Devices: the rows App
+// volume opens on (its list starts at the top), so the tab swap finds their
+// icons cached. The icons the request bound from the cache show at once,
+// as the Mac's build sets them; the others fade in when they land.
 void VolumeCanvas::requestIcons() {
     if (!icons_.show || !isActive()) return;
     std::vector<std::string> wanted;
-    if (tab_ == 1 && appList_) {
+    if (tab_ == 0 || appList_) {
         const auto apps = listedApplications();
-        const double pitch = appRowHeight + d::metric::rowGap, offset = appList_->offset(), height = appList_->layer().bounds().height;
+        const double pitch = appRowHeight + d::metric::rowGap;
+        const double offset = appList_ ? appList_->offset() : 0;
+        const double height = appList_ ? appList_->layer().bounds().height : appViewport().height;
         const long long first = std::max(0LL, (long long)std::floor(offset / pitch) - 1);
         const long long last = std::min((long long)apps.size() - 1, (long long)std::ceil((offset + height) / pitch));
         for (long long n = first; n <= last && wanted.size() < 8; ++n) wanted.push_back(apps[std::size_t(n)]->id);
@@ -415,6 +452,7 @@ void VolumeCanvas::requestIcons() {
     iconRequest_ = wanted;
     if (wanted.empty()) { if (icons_.hide) icons_.hide(); return; }
     icons_.show(wanted);
+    (void)placeIcons(false);
 }
 
 bool VolumeCanvas::routeAdjustable(const native::VolumeApplication& app) const {
@@ -436,12 +474,13 @@ bool VolumeCanvas::setGain(double value, const native::VolumeApplication& app) {
     const double bounded = std::min(1.0, std::max(0.0, value));
     if (app.state != VolumeAppState::direct) {
         if (app.state == VolumeAppState::failed && bounded == 1) { if (actions_.stopApp) (void)actions_.stopApp(app.id); return true; }
-        return actions_.setAppGain && actions_.setAppGain(app.id, bounded);
+        return actions_.setAppGain && actions_.setAppGain(snapshot_.outputID, app.id, bounded);
     }
     if (bounded == 1) return true;
     if (!currentOutput()) return false;
-    // PerAppAudioController.start(application:output:initialGain:): the runtime starts the route at this gain.
-    return actions_.setAppGain && actions_.setAppGain(app.id, bounded);
+    // PerAppAudioController.start(application:output:initialGain:): the runtime starts the route at this gain,
+    // on this output only.
+    return actions_.setAppGain && actions_.setAppGain(snapshot_.outputID, app.id, bounded);
 }
 
 // --- Input (:415-440) ------------------------------------------------------------------

@@ -11,6 +11,7 @@
 #include "modules/work_mode_profile_hours.hpp"
 #include "native/layer_image_source.hpp"
 #include "native/profile_image.hpp"
+#include "native/windows_account.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -54,6 +55,18 @@ struct ProfileOwnerOptions {
     std::function<void(const std::optional<std::string>&)>avatarChanged;
     // IdCardBinding revision or a card texture moved.
     std::function<void()>cardChanged;
+    // Issue #17: the Windows account the cards show until a name or picture
+    // is chosen. Production passes currentWindowsAccountCalls(); tests pass
+    // fakes; none (previews, hidden coverage, diagnostics) never reads it.
+    // Read on accountExecutor after the load and on each HUD opening at
+    // most once a minute; the login picture is decoded there and kept in
+    // memory only.
+    std::optional<native::WindowsAccountCalls>account;
+    // Where the account read runs: the host's long-work executor
+    // (app::longWorkExecutorKey), because the name lookup can wait on a
+    // domain controller and Personal ID saves and decodes must not queue
+    // behind it. Null: the owner's executor.
+    app::UtilityExecutor*accountExecutor{};
 };
 struct ProfileOwnerStats {
     std::uint64_t portraitJobs{},portraitPublications{},artUploads{},artDraws{};
@@ -84,9 +97,11 @@ public:
     DesignOwnerCore&core()noexcept;
     void start(double time); // schedules the profile load on the worker
     // The HUD shows (the area forwards ModuleOwner::setOverlayVisible to the
-    // core and here): a hidden HUD closes the pickers and keeps no art texture.
+    // core and here): a hidden HUD closes the pickers and keeps no art texture;
+    // an opening reads the Windows account again after a minute.
     void setOverlayVisible(bool,double time);
-    // Recording mode for the shell card (the Context carries the canvas's).
+    // Recording mode for the shell card (the Context carries the canvas's); it
+    // also shows the stored defaults in place of the Windows account.
     void setRecordingMode(bool,double time);
     void upload(native::Renderer&);
     void collected(native::Renderer&);

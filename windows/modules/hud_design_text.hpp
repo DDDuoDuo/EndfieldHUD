@@ -123,6 +123,11 @@ struct TextServices {
     TextCasing uppercase;
     TextRegion uiRegion{TextRegion::simplifiedChinese};
     double boxScale{2};
+    // HUDDesignEnvironment.applyScale(to:magnification:): a layer transform
+    // above the whole tree that enlarges (or shrinks) it on screen, such as
+    // the battery bar editor's strip drawn at 0.7. Text leaves then request
+    // textContentsScale(boxScale, magnification); 1 changes nothing.
+    double magnification{1};
     TextRegion region(const TextBlock&) const noexcept;
     std::string displayed(const TextRun&) const; // uppercase applied when the style asks (asciiUppercase without `uppercase`)
     // The measurer receives the DISPLAYED runs (uppercased, empty runs

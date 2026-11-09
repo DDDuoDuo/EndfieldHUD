@@ -5,7 +5,7 @@ import ImageIO
 /// source rectangles, prepared into small images at build time so opening the
 /// picker never decodes the 59-megapixel sheet. Final variants use a bounded cache.
 enum HUDApplicationIcon: String, CaseIterable {
-    case endfield, battery, originium, orundum, perlica, rhodesIsland, babel, rhineLab, blacksteel, penguinLogistics, ddd
+    case endfield, watch, originium, orundum, perlica, rhodesIsland, babel, rhineLab, blacksteel, penguinLogistics, ddd
     case eliteOps, alphaFour, alphaSix, humanResources, sweep, projectRed, rimBilliton
     case kjerag, ursusStudents, obsidianFestival, dossoles, contingencyContract, ambienceSynesthesia, coralCoast, vitafield
     case ccBarrenland, ccPyrite, ccCinder, ccLeadSeal, ccSpectrum, ccPineSoot
@@ -19,6 +19,13 @@ enum HUDApplicationIcon: String, CaseIterable {
     case gameWeapon, gameWorldMap, gameDijiang, gameValleyIV, gameWuling, gameMedal
     case gamePower, gameSanity, gameOrigeometry, gameOroberyl, gameCredits
     case gameBaker, gameExclamationMark, gameStrength
+
+    /// A saved raw value, with a retired preset read as its replacement:
+    /// 1.3.0's battery icon became the watch. Nothing is rewritten on load;
+    /// the next ordinary save stores the replacement's own raw value.
+    init?(savedValue: String) {
+        self.init(rawValue: savedValue == "battery" ? HUDApplicationIcon.watch.rawValue : savedValue)
+    }
 
     static var pickerCases: [HUDApplicationIcon] {
         // Keep the retired hand-drawn currency artwork available for saved
@@ -95,7 +102,6 @@ enum HUDApplicationIcon: String, CaseIterable {
         case .gameExclamationMark: return "Exclamation Mark"
         case .gameStrength: return "Strength"
         case .endfield: return "Endfield"
-        case .battery: return L10n.text("Battery", "电池")
         case .originium: return L10n.text("Originium", "源石")
         case .orundum: return L10n.text("Orundum", "合成玉")
         case .perlica: return L10n.text("Perlica", "佩丽卡")
@@ -130,6 +136,7 @@ enum HUDApplicationIcon: String, CaseIterable {
         case .cambrian: return L10n.text("Cambrian", "寒武纪")
         case .marthe: return L10n.text("Marthe", "玛尔特")
         case .icefieldMessenger: return L10n.text("Icefield Messenger", "冰原信使")
+        case .watch: return L10n.text("Watch", "腕表")
         }
     }
 
@@ -187,14 +194,19 @@ enum HUDApplicationIcon: String, CaseIterable {
         let cacheKey = "\(rawValue):\(dimension):\(menuBar)"
         if let cached = Self.renderCache.object(forKey: cacheKey as NSString) { return cached }
         let image: NSImage
-        if self == .battery {
-            image = Self.batteryImage(size: CGFloat(dimension), menuBar: menuBar)
-        } else if self == .originium || self == .orundum {
+        if self == .originium || self == .orundum {
             image = Self.resourceImage(size: CGFloat(dimension), menuBar: menuBar, crystal: self == .originium)
         } else if let source = sourceImage() {
-            image = rendered(source: source, size: dimension, menuBar: menuBar)
+            image = rendered(size: dimension, menuBar: menuBar) { context, target in
+                let ratio = min(target.width / CGFloat(source.width), target.height / CGFloat(source.height))
+                let destination = CGRect(x: target.midX - CGFloat(source.width) * ratio / 2,
+                    y: target.midY - CGFloat(source.height) * ratio / 2,
+                    width: CGFloat(source.width) * ratio, height: CGFloat(source.height) * ratio)
+                context.draw(source, in: destination)
+            }
         } else {
-            image = Self.batteryImage(size: CGFloat(dimension), menuBar: menuBar)
+            // The watch, and the vector stand-in for a preset whose bundled source is missing.
+            image = rendered(size: dimension, menuBar: menuBar) { Self.drawWatch(in: $0, rect: $1) }
         }
         image.isTemplate = menuBar && self != .perlica
         let pixels = dimension * (menuBar ? 2 : 1)
@@ -269,27 +281,20 @@ enum HUDApplicationIcon: String, CaseIterable {
         return context.makeImage()
     }
 
-    private func rendered(source: CGImage, size: Int, menuBar: Bool) -> NSImage {
+    /// Draws one icon into a square bitmap: the dark rounded plate for the
+    /// application icon, or a template silhouette for the menu bar. `draw`
+    /// fills the artwork into the margin-inset target rectangle.
+    private func rendered(size: Int, menuBar: Bool, draw: (CGContext, CGRect) -> Void) -> NSImage {
         let pixels = size * (menuBar ? 2 : 1)
+        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : (menuBar ? 0.025 : 0.07)
         let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8,
             bytesPerRow: pixels * 4, space: space,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return Self.batteryImage(size: CGFloat(size), menuBar: menuBar) }
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return Self.watchFallback(size: size, menuBar: menuBar, margin: margin) }
         context.interpolationQuality = .high
         let bounds = CGRect(x: 0, y: 0, width: pixels, height: pixels)
-        if !menuBar {
-            context.addPath(CGPath(roundedRect: bounds.insetBy(dx: CGFloat(pixels) * 0.035, dy: CGFloat(pixels) * 0.035),
-                cornerWidth: CGFloat(pixels) * 0.19, cornerHeight: CGFloat(pixels) * 0.19, transform: nil))
-            context.clip()
-            context.setFillColor(NSColor(white: 0.055, alpha: 1).cgColor); context.fill(bounds)
-        }
-        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : (menuBar ? 0.025 : 0.07)
-        let target = bounds.insetBy(dx: CGFloat(pixels) * margin, dy: CGFloat(pixels) * margin)
-        let ratio = min(target.width / CGFloat(source.width), target.height / CGFloat(source.height))
-        let destination = CGRect(x: target.midX - CGFloat(source.width) * ratio / 2,
-            y: target.midY - CGFloat(source.height) * ratio / 2,
-            width: CGFloat(source.width) * ratio, height: CGFloat(source.height) * ratio)
-        context.draw(source, in: destination)
+        if !menuBar { Self.fillPlate(context, bounds: bounds) }
+        draw(context, bounds.insetBy(dx: CGFloat(pixels) * margin, dy: CGFloat(pixels) * margin))
         if menuBar && self != .perlica, let bytes = context.data?.assumingMemoryBound(to: UInt8.self) {
             // Template images use alpha alone. Convert white artwork on the
             // supplied black sheets into an adaptive macOS menu-bar silhouette.
@@ -298,8 +303,31 @@ enum HUDApplicationIcon: String, CaseIterable {
                 bytes[i] = 0; bytes[i + 1] = 0; bytes[i + 2] = 0
             }
         }
-        guard let cg = context.makeImage() else { return Self.batteryImage(size: CGFloat(size), menuBar: menuBar) }
+        guard let cg = context.makeImage() else { return Self.watchFallback(size: size, menuBar: menuBar, margin: margin) }
         return NSImage(cgImage: cg, size: NSSize(width: size, height: size))
+    }
+
+    /// The dark rounded plate behind application-icon artwork. The clip stays
+    /// active, so the artwork drawn next keeps the plate's rounded corners.
+    private static func fillPlate(_ context: CGContext, bounds: CGRect) {
+        let side = min(bounds.width, bounds.height)
+        context.addPath(CGPath(roundedRect: bounds.insetBy(dx: side * 0.035, dy: side * 0.035),
+            cornerWidth: side * 0.19, cornerHeight: side * 0.19, transform: nil))
+        context.clip()
+        context.setFillColor(NSColor(white: 0.055, alpha: 1).cgColor); context.fill(bounds)
+    }
+
+    /// The drawing that never fails: when no bitmap context can be made, the
+    /// watch is drawn lazily into whatever context AppKit supplies. Its opaque
+    /// white ink already reads as a template silhouette in the menu bar.
+    private static func watchFallback(size: Int, menuBar: Bool, margin: CGFloat) -> NSImage {
+        NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.saveGState(); defer { context.restoreGState() }
+            if !menuBar { fillPlate(context, bounds: rect) }
+            drawWatch(in: context, rect: rect.insetBy(dx: rect.width * margin, dy: rect.height * margin))
+            return true
+        }
     }
 
     /// Original vector interpretations of the two resource items; the supplied
@@ -353,32 +381,73 @@ enum HUDApplicationIcon: String, CaseIterable {
         }
     }
 
-    private static func batteryImage(size: CGFloat, menuBar: Bool) -> NSImage {
-        NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
-            NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
-            let transform = NSAffineTransform(); transform.scale(by: size / 18); transform.concat()
-            if !menuBar {
-                let original = NSAffineTransform(); original.scale(by: 18 / 512); original.concat()
-                NSColor(srgbRed: 0.075, green: 0.09, blue: 0.085, alpha: 1).setFill()
-                NSBezierPath(roundedRect: CGRect(x: 24, y: 24, width: 464, height: 464), xRadius: 106, yRadius: 106).fill()
-                let accent = NSColor(srgbRed: 217/255, green: 243/255, blue: 107/255, alpha: 1)
-                let ring = NSBezierPath(ovalIn: CGRect(x: 104, y: 104, width: 304, height: 304)); ring.lineWidth = 20
-                accent.withAlphaComponent(0.16).setStroke(); ring.stroke()
-                let progress = NSBezierPath(); progress.appendArc(withCenter: CGPoint(x: 256, y: 256), radius: 152,
-                    startAngle: 90, endAngle: -185, clockwise: true)
-                progress.lineWidth = 20; progress.lineCapStyle = .round; accent.setStroke(); progress.stroke()
-                let bolt = NSBezierPath(); bolt.move(to: CGPoint(x: 280, y: 368))
-                for p in [CGPoint(x: 187, y: 240), CGPoint(x: 245, y: 240), CGPoint(x: 226, y: 148), CGPoint(x: 327, y: 283), CGPoint(x: 267, y: 283)] { bolt.line(to: p) }
-                bolt.close(); accent.setFill(); bolt.fill(); return true
+    /// Original vector interpretation of the Sanity item for the HUD's Sanity
+    /// gauge: a lightning bolt in a faceted head outline with a pointed tail.
+    /// It keeps the 80-unit frame of the 84 px game sprite it replaces, so the
+    /// gauge's layout is unchanged, and it is drawn at `scale` pixels per point.
+    static func sanityImage(size: CGFloat, scale: CGFloat) -> CGImage? {
+        let pixels = Int(ceil(max(1, size) * max(1, scale)))
+        guard pixels <= 1024, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // Points are traced top-down in the sprite's 80-unit frame.
+        let unit = CGFloat(pixels) / 80
+        context.translateBy(x: 0, y: CGFloat(pixels)); context.scaleBy(x: unit, y: -unit)
+        func polygon(_ points: [(CGFloat, CGFloat)], white: CGFloat) {
+            guard let first = points.first else { return }
+            context.move(to: CGPoint(x: first.0, y: first.1))
+            points.dropFirst().forEach { context.addLine(to: CGPoint(x: $0.0, y: $0.1)) }
+            context.closePath()
+            context.setFillColor(CGColor(srgbRed: white, green: white, blue: white, alpha: 1)); context.fillPath()
+        }
+        // The white outline, its tail running down to the lower left.
+        polygon([(27, 12.8), (33, 12.9), (46, 14.9), (57, 18.9), (64, 21.9), (66, 23.4), (71, 35), (71, 37.6),
+                 (67, 43.2), (63, 45), (47.4, 45), (39.4, 57.4), (28.9, 71.8), (27.8, 71.8), (27.8, 56.6),
+                 (23, 55.8), (17, 54.6), (14.6, 53.4), (14, 47), (9, 38.6), (9, 35), (15, 21.9), (20, 18)], white: 1)
+        // The grey head inside it, open along the tail's right edge.
+        polygon([(29, 18), (38, 19), (47, 21), (53, 23), (57, 25), (61, 27), (63, 30), (65, 34), (65, 37),
+                 (63, 39.6), (54, 40), (54, 41.8), (52, 43), (52, 45), (47.4, 45), (39.4, 57.4), (28.9, 71.6),
+                 (33, 57.4), (33, 53), (31, 52), (28, 51), (23, 50.2), (19.6, 49.6), (19, 46), (17, 41),
+                 (15, 37.5), (15, 35), (19, 27.5), (19, 26), (23, 23), (27, 20)], white: 101.0 / 255)
+        // The bolt: an upright bar, a short arm, then a spike into the tail.
+        polygon([(33, 23.5), (46, 23.5), (40, 42), (49.2, 42), (47.4, 44), (36.4, 58.4), (39.6, 44), (31, 44)], white: 1)
+        return context.makeImage()
+    }
+
+    /// Original vector interpretation of the in-game watch button: a round
+    /// face with one hand, a lug pair and a strap block at each end, turned
+    /// so the strap runs from the upper left to the lower right. The ring is
+    /// split along the strap axis at both ends and notched where the hand
+    /// points, with a notch as wide as the hand. It is drawn in white at the
+    /// target's own pixel size, so it stays sharp at any size and becomes an
+    /// adaptive silhouette through the menu-bar template path.
+    private static func drawWatch(in context: CGContext, rect: CGRect) {
+        // A 100-unit square around the face's centre, strap upright before
+        // the turn; the turned strap corners reach about 49.2 units out.
+        let unit = min(rect.width, rect.height) / 100
+        context.saveGState(); defer { context.restoreGState() }
+        context.translateBy(x: rect.midX, y: rect.midY); context.scaleBy(x: unit, y: unit)
+        context.rotate(by: .pi / 4)
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        // The face: a thick ring around an open dial, with the strap-axis
+        // slit and the hand's notch cut out of the ring only.
+        context.saveGState()
+        context.addRect(CGRect(x: -60, y: -60, width: 120, height: 120))
+        context.addRect(CGRect(x: -2.5, y: -40, width: 5, height: 80))
+        context.addRect(CGRect(x: 21, y: -2.95, width: 17, height: 5.9))
+        context.clip(using: .evenOdd)
+        context.addEllipse(in: CGRect(x: -36, y: -36, width: 72, height: 72))
+        context.addEllipse(in: CGRect(x: -22, y: -22, width: 44, height: 44))
+        context.fillPath(using: .evenOdd)
+        context.restoreGState()
+        // The hand, from near the centre into the notch at a right angle to the strap.
+        context.fill(CGRect(x: 3.3, y: -2.95, width: 20.3, height: 5.9))
+        for end: CGFloat in [1, -1] {
+            // Lugs grow out of the ring; a clear gap separates the strap block.
+            for lug: CGFloat in [-23.9, 17.1] {
+                context.fill(CGRect(x: lug, y: end > 0 ? 28 : -41, width: 6.8, height: 13))
             }
-            let color = NSColor.black
-            color.setStroke(); color.setFill()
-            let outline = NSBezierPath(roundedRect: CGRect(x: 1.5, y: 4, width: 14, height: 10), xRadius: 2, yRadius: 2)
-            outline.lineWidth = 1.3; outline.stroke()
-            NSBezierPath(roundedRect: CGRect(x: 16, y: 7, width: 1.5, height: 4), xRadius: 0.5, yRadius: 0.5).fill()
-            let bolt = NSBezierPath(); bolt.move(to: CGPoint(x: 9.8, y: 13))
-            for p in [CGPoint(x: 5.8, y: 8.5), CGPoint(x: 8.3, y: 8.5), CGPoint(x: 7.4, y: 5), CGPoint(x: 11.4, y: 9.5), CGPoint(x: 8.9, y: 9.5)] { bolt.line(to: p) }
-            bolt.close(); bolt.fill(); return true
+            context.fill(CGRect(x: -14.9, y: end > 0 ? 40.3 : -54.7, width: 29.8, height: 14.4))
         }
     }
 }

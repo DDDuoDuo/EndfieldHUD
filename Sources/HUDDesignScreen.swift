@@ -122,7 +122,8 @@ final class HUDDesignPage {
     /// Adds `layer` to the stagger in document order (spec §1.10 `.st`).
     func stagger(_ layer: CALayer) { staggered.append(layer) }
 
-    /// A scroll area whose offset survives in-place re-renders of the page.
+    /// A scroll area whose offset is kept by in-place re-renders of the page;
+    /// a sub-navigation, a Back or a return to the module starts at the top.
     func scrollArea(id: String, frame: CGRect, in parent: CALayer? = nil) -> HUDScrollArea {
         let area = HUDScrollArea(frame: frame)
         HUDMotion.perform { (parent ?? layer).addSublayer(area.layer) }
@@ -130,7 +131,8 @@ final class HUDDesignPage {
         return area
     }
 
-    /// Call after filling a scroll area so a re-render keeps its position.
+    /// Call after filling a scroll area so an in-place re-render keeps its
+    /// position (a sub-navigation, a Back or a return to the module has none).
     func restoreOffset(of area: HUDScrollArea) {
         guard let id = scrollAreas.first(where: { $0.area === area })?.id, let offset = restoredOffsets[id] else { return }
         area.setOffset(offset)
@@ -159,6 +161,9 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private(set) var page = HUDDesignPage()
     private let router = HUDInteractionRouter()
     private(set) var isActive = false
+    /// True while leaving or deactivating ends the controls' gestures: an
+    /// `.ended` a control reports then is an interruption, not a drop.
+    private(set) var isCancellingGestures = false
     private(set) var renderedLanguage: AppLanguage?
     /// `HUDColor.paletteGeneration` of the installed page.
     private var renderedPalette = HUDColor.paletteGeneration
@@ -240,42 +245,67 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
         revealSettledPage()
-        if isStale { rerender() }
+        if isStale || (showsFromTop && page.scrollAreas.contains { $0.area.offset > 0 }) { rerender() }
+        showsFromTop = false
         return root
     }
 
     var contentUnit: CGFloat { context.unit }
 
-    func playEntrance(from offset: CGPoint) {
+    func playEntrance(from offset: CGPoint) { playEntrance(from: offset, delay: 0) }
+
+    /// The module entrance; `delay` holds it back until the centre shows.
+    func playEntrance(from offset: CGPoint, delay: CFTimeInterval) {
         guard !env.reducesMotion else { return }
-        if showsHeader { header.playEntrance() }
-        HUDMotion.stagger(page.staggered, from: offset, env: env)
+        entrance = (offset, CACurrentMediaTime() + delay)
+        if showsHeader { header.playEntrance(delay: delay) }
+        playPageEntrance(from: offset, delay: delay)
     }
+
+    /// The page's part of the entrance (the header keeps its own): the row
+    /// stagger, plus a subclass's extras built with the page. A page rebuilt
+    /// mid-entrance replays it with a negative `delay`, resuming in phase.
+    func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        HUDMotion.stagger(page.staggered, from: offset, delay: delay, env: env)
+    }
+
+    /// The entrance playing on the page (its offset and start), until the
+    /// module leaves; an in-place re-render carries it to the new page.
+    private var entrance: (offset: CGPoint, start: CFTimeInterval)?
+    /// The last row starts at the stagger cap; the title wipe is the longest track.
+    private static let entranceLength = HUDMotion.staggerDelay(HUDDuration.staggerCap) + max(HUDDuration.entrance, HUDDuration.titleWipe)
 
     func prepareToLeave() {
-        closePopups()
-        endEditing(commit: true)
-        cancelGestures()
+        entrance = nil
+        closePopupsForLeave()
+        suspendInput()
         settleSwap(concealed: true)
         willLeave()
+        // Last, so a re-render made while the module leaves keeps its page.
+        showsFromTop = true
     }
 
-    // MARK: Activation
+    /// The module was left: its next showing builds every list from the top.
+    private(set) var showsFromTop = false
 
-    /// Scroll offsets of pages left by sub-navigation, and those the page
-    /// being navigated to restores.
-    private var retainedOffsets: [String: CGFloat] = [:], pendingOffsets: [String: CGFloat] = [:]
+    /// Keeps the scroll a module set for its next showing (a reveal made
+    /// while it was hidden) instead of starting at the top.
+    func keepsScrollOnNextShow() { showsFromTop = false }
+
+    // MARK: Activation
 
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
         if active {
+            // Shown again without makeContent (a cancelled module swap).
+            showsFromTop = false
             revealSettledPage()
             if isStale { rerender() }
             didActivate()
         } else {
-            closePopups(); endEditing(commit: true); cancelGestures(); settleSwap(concealed: true)
-            retainedOffsets = [:]
+            entrance = nil
+            closePopupsForLeave(); suspendInput(); settleSwap(concealed: true)
             didDeactivate()
         }
         context.onInputStateChange?()
@@ -283,12 +313,20 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     // MARK: Rendering
 
-    /// In-place re-render (spec §1.10): no entrance, scroll offsets kept.
+    /// In-place re-render (spec §1.10): no entrance, scroll offsets kept,
+    /// except for a module that was left, which comes back at the top.
     /// During a sub-page swap the page has already left: the re-rendered one
     /// stays hidden until the swap lands its own page with the entrance.
+    /// A re-render while the entrance still plays (data arriving as the
+    /// module opens or switches in) carries it on in phase: rows already
+    /// shown stay shown, the rest still enter.
     func rerender() {
-        install(makePage(restoring: currentOffsets))
-        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey) }
+        install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
+        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey); return }
+        guard let entrance else { return }
+        let now = CACurrentMediaTime()
+        if env.reducesMotion || now >= entrance.start + Self.entranceLength { self.entrance = nil; return }
+        playPageEntrance(from: entrance.offset, delay: entrance.start - now)
     }
 
     private var currentOffsets: [String: CGFloat] {
@@ -298,20 +336,19 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     /// Sub-navigation (spec §1.10 `subnav`): the box content leaves .13 s
     /// against the vector, the next page renders after 130 ms and enters with
     /// the header and stagger. dx/dy: +1 forward / below, −1 back / above.
+    /// The next page, a Back included, starts at the top.
     func navigate(dx: CGFloat, dy: CGFloat = 0) {
         let offset = HUDShellPosition.subpageOffset(dx: dx, dy: dy)
-        closePopups(); endEditing(commit: true); cancelGestures()
-        // Going back (dx < 0) returns each scroll area to where it was left.
-        retainedOffsets.merge(currentOffsets) { _, new in new }
-        pendingOffsets = dx < 0 ? retainedOffsets : [:]
+        closePopups(); suspendInput()
         guard !env.reducesMotion, root.superlayer != nil else {
             if let work = swapWork { work.cancel(); swapWork = nil; finishLeave() }
-            install(makePage(restoring: pendingOffsets)); return
+            install(makePage(restoring: [:])); return
         }
         // A swap in flight (Q / E pressed again) is retargeted and lands on
         // time: settling it would show the next page at full opacity only to
         // send it out again.
         if let work = swapWork { work.cancel() } else {
+            finishLeave()
             let old = page.layer
             leavingPage = old
             HUDMotion.leave(old, toward: offset, env: env, key: "hud.page.leave")
@@ -326,7 +363,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             CATransaction.begin()
             self.swapWork = nil
             self.finishLeave()
-            self.install(self.makePage(restoring: self.pendingOffsets))
+            self.install(self.makePage(restoring: [:]))
             self.playEntrance(from: offset)
             self.context.onInputStateChange?()
             CATransaction.commit()
@@ -336,19 +373,20 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     /// Completes a pending sub-navigation at once. `concealed` is for a module
-    /// that leaves or stops being active: the new page and the header had
-    /// already left, so they stay hidden until the module shows again
+    /// that leaves or stops being active (the HUD's close included): the old
+    /// page and the header finish the leave they are in and stay transparent,
+    /// and the new page waits hidden, until the module shows again
     /// (makeContent, setActive) instead of popping in while it leaves.
     func settleSwap(concealed: Bool = false) {
         guard let work = swapWork else { return }
         work.cancel(); swapWork = nil
         CATransaction.begin()
-        finishLeave()
-        install(makePage(restoring: pendingOffsets))
+        // The model ends transparent, so a cancel that strips the leave keeps them out.
         if concealed {
-            HUDMotion.hold(page.layer, key: Self.holdKey)
-            if showsHeader { HUDMotion.hold(header.layer, key: Self.holdKey) }
-        }
+            HUDMotion.perform { leavingPage?.opacity = 0; if showsHeader { header.layer.opacity = 0 } }
+        } else { finishLeave() }
+        install(makePage(restoring: [:]))
+        if concealed { HUDMotion.hold(page.layer, key: Self.holdKey) }
         CATransaction.commit()
     }
 
@@ -356,18 +394,17 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     private var swapDeadline = DispatchTime.now()
 
     private func revealSettledPage() {
+        removeDepartedPopups()
         guard swapWork == nil else { return }
-        HUDMotion.perform {
-            page.layer.removeAnimation(forKey: Self.holdKey)
-            if showsHeader { header.layer.removeAnimation(forKey: Self.holdKey) }
-        }
+        finishLeave()
+        HUDMotion.perform { page.layer.removeAnimation(forKey: Self.holdKey) }
     }
 
     private func finishLeave() {
         HUDMotion.perform {
             leavingPage?.removeAnimation(forKey: "hud.page.leave")
             leavingPage?.removeFromSuperlayer()
-            header.layer.removeAnimation(forKey: "hud.header.leave")
+            if showsHeader { header.layer.removeAnimation(forKey: "hud.header.leave"); header.layer.opacity = 1 }
         }
         leavingPage = nil
     }
@@ -403,7 +440,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func refreshRouter() {
         var controls = page.controls
         if showsHeader { controls.insert(contentsOf: header.controls, at: 0) }
-        controls += textFields
+        // A field placed in its row keeps that place; others follow the page.
+        controls += textFields.filter { field in !controls.contains { $0 === field } }
         if let state = popoverState { controls += state.controls + (state.popover.close.map { [$0] } ?? []) }
         if let state = menuState { controls += state.menu.controls }
         router.set(controls)
@@ -433,7 +471,7 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         }
         menu.onClose = { [weak self] in self?.closeMenu() }
         HUDMotion.perform { top.addSublayer(menu.layer) }
-        (anchor as? HUDDropdown)?.isOpen = true
+        (anchor as? HUDMenuAnchor)?.isOpen = true
         menuState = (menu, anchor)
         menu.playEntrance()
         refreshRouter()
@@ -444,9 +482,9 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func closeMenu() {
         guard let state = menuState else { return }
         menuState = nil
-        (state.anchor as? HUDDropdown)?.isOpen = false
+        (state.anchor as? HUDMenuAnchor)?.isOpen = false
         state.menu.controls.forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.menu.layer.removeFromSuperlayer() }
+        retirePopup([state.menu.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
@@ -471,12 +509,38 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
         guard let state = popoverState else { return }
         popoverState = nil
         (state.controls + (state.popover.close.map { [$0] } ?? [])).forEach { $0.clearInteractionState() }
-        HUDMotion.perform { state.popover.layer.removeFromSuperlayer() }
+        retirePopup([state.popover.layer], keepingDrawn: keepsClosingPopupsDrawn)
         refreshRouter()
         context.onInputStateChange?()
     }
 
     func closePopups() { closeMenu(); closePopover() }
+
+    /// True while the module leaving closes its menus and pop-overs: they
+    /// stop taking input but stay drawn to leave with the page, and the next
+    /// showing removes them. Every other close removes them at once.
+    private(set) var keepsClosingPopupsDrawn = false
+    private var departedPopups: [CALayer] = []
+
+    private func closePopupsForLeave() {
+        keepsClosingPopupsDrawn = true
+        closePopups()
+        keepsClosingPopupsDrawn = false
+    }
+
+    /// Removes a closed popup's layers, or (`keepingDrawn`, the module
+    /// leaving) keeps them drawn until the next showing.
+    func retirePopup(_ layers: [CALayer], keepingDrawn: Bool) {
+        if keepingDrawn { departedPopups += layers; return }
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
+
+    private func removeDepartedPopups() {
+        guard !departedPopups.isEmpty else { return }
+        let layers = departedPopups
+        departedPopups = []
+        HUDMotion.perform { layers.forEach { $0.removeFromSuperlayer() } }
+    }
 
     // MARK: Text fields
 
@@ -486,6 +550,10 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     func endEditing(commit: Bool) { textFields.forEach { $0.endEditing(commit: commit) } }
+
+    /// Inline editors commit and gestures end while the page stays drawn,
+    /// menus included (the HUD's close: they leave with the module).
+    func suspendInput() { endEditing(commit: true); cancelGestures() }
 
     /// The native editor under a host view point, for the host's hitTest.
     func textView(atHost point: CGPoint) -> NSView? {
@@ -546,8 +614,12 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// An enabled control is drawn under this point; the host gives such a
     /// press to the module before the shell's cards and navigation beneath it.
-    func containsControl(atBox point: CGPoint) -> Bool {
-        isActive && swapWork == nil && router.control(at: point, in: root) != nil
+    func containsControl(atBox point: CGPoint) -> Bool { control(atBox: point) != nil }
+
+    /// The enabled control a left press at this point would pick, so a
+    /// right-click resolves its target exactly as a left-click does.
+    func control(atBox point: CGPoint) -> HUDControl? {
+        isActive && swapWork == nil ? router.control(at: point, in: root) : nil
     }
 
     /// Wheel: an open menu, then the module's zoom surfaces, then scroll areas.
@@ -572,6 +644,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     private func cancelGestures() {
+        isCancellingGestures = true
+        defer { isCancellingGestures = false }
         for control in router.controls { (control as? HUDSlider)?.cancelDrag(); control.clearInteractionState() }
         router.cancel()
     }

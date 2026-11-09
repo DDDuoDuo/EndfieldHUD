@@ -97,7 +97,12 @@ final class ActivityMonitorCanvas: HUDDesignCanvas {
         sortKey = key
         apps.setSort(key, descending: sortDescending)
         updateApps()
-        HUDMotion.stagger(table.visibleRows.map(\.plate.layer), from: CGPoint(x: 0, y: 12), env: env)
+        staggerApps(table.visibleRows.map(\.plate.layer))
+    }
+
+    /// The Apps table's rows (or its empty state) stagger in from below.
+    private func staggerApps(_ layers: [CALayer]) {
+        HUDMotion.stagger(layers, from: CGPoint(x: 0, y: 12), env: env)
     }
 
     override func handleScroll(at point: CGPoint, delta: CGPoint, event: NSEvent?) -> Bool {
@@ -168,12 +173,13 @@ final class ActivityMonitorCanvas: HUDDesignCanvas {
         self.table = table
         icons.onLoad = { [weak table] ids in table?.showIcons(ids) }
         page.stagger(head)
-        table.update(items: apps.snapshot.items, waiting: apps.snapshot.timestamp == .distantPast,
-                     sortKey: sortKey, descending: sortDescending)
+        let empty = table.update(items: apps.snapshot.items, waiting: apps.snapshot.timestamp == .distantPast,
+                                 sortKey: sortKey, descending: sortDescending)
         page.restoreOffset(of: area)
         table.bind(sortKey: sortKey)
         table.rows.forEach { page.add($0.plate); page.add($0.readout) }
         table.visibleRows.forEach { page.stagger($0.plate.layer) }
+        if let empty { page.stagger(empty) }
         table.onRowsAdded = { [weak self] added in
             guard let self, self.table === table else { return }
             added.forEach { self.page.add($0.plate); self.page.add($0.readout) }
@@ -181,12 +187,18 @@ final class ActivityMonitorCanvas: HUDDesignCanvas {
         }
     }
 
+    /// The first sample of a run fills a table built while it waited: the
+    /// rows that appear in an empty table, or the empty state, enter as the
+    /// page's rows do.
     private func updateApps() {
         guard let table else { return }
         let snapshot = apps.snapshot
+        let hadRows = !table.visibleRows.isEmpty
         header.setCounter(HUDFormat.pad2(snapshot.items.count))
-        table.update(items: snapshot.items, waiting: snapshot.timestamp == .distantPast, sortKey: sortKey, descending: sortDescending)
+        let empty = table.update(items: snapshot.items, waiting: snapshot.timestamp == .distantPast, sortKey: sortKey, descending: sortDescending)
         table.bind(sortKey: sortKey)
+        let arrived = (hadRows ? [] : table.visibleRows.map(\.plate.layer)) + (empty.map { [$0] } ?? [])
+        if !arrived.isEmpty { staggerApps(arrived) }
     }
 }
 
@@ -510,7 +522,9 @@ final class AppTable {
 
     var visibleRows: [Row] { rows.filter { !$0.plate.layer.isHidden } }
 
-    func update(items next: [AppActivityItem], waiting: Bool, sortKey: AppActivitySortKey, descending: Bool) {
+    /// Returns the empty state when this update shows it.
+    @discardableResult
+    func update(items next: [AppActivityItem], waiting: Bool, sortKey: AppActivitySortKey, descending: Bool) -> CALayer? {
         items = next
         columns.forEach { $0.render(active: $0.key == sortKey, descending: descending) }
         area.setContentHeight(max(0, CGFloat(items.count) * Self.pitch - HUDMetric.rowGap))
@@ -526,9 +540,11 @@ final class AppTable {
             let state = HUDEmptyState.bilingual("NO APP READINGS", "暂无应用读数", size: CGSize(width: HUDMetric.box.width, height: 250), env: env)
             HUDMotion.perform { state.frame.origin = .zero; area.content.addSublayer(state) }
             empty = state
+            return state
         } else if !showsEmpty, let state = empty {
             HUDMotion.perform { state.removeFromSuperlayer() }; empty = nil
         }
+        return nil
     }
 
     /// Places the pool over the visible slice of `items`.

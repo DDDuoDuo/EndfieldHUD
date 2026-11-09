@@ -27,6 +27,8 @@ final class HUDNavigation {
     var canScrollUp: Bool { rightScrollOffset > 0.01 }
     var canScrollDown: Bool { rightScrollOffset < maxRightScrollOffset - 0.01 }
     var visibleEntries: [HUDNavigationEntry] { entries.filter(\.isVisible) }
+    /// The right-hand list's scroll arrows, drawn beside the cards.
+    var chromeLayers: [CALayer] { [scrollUp, scrollDown] }
     private var hoveredTarget: HUDNavigationTarget?
     private var rawScrollOffset: CGFloat = 0
     private var ownsMomentum = false
@@ -174,6 +176,7 @@ final class HUDNavigation {
         self.dark = dark
         self.accent = accent; self.contentsScale = contentsScale
         for entry in entries { entry.update(dark: dark, accent: accent, contentsScale: contentsScale) }
+        if !arrangeTargets.isEmpty { applyArrangeMarks() }
         let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
         for arrow in [scrollUp, scrollDown] {
             arrow.contentsScale = scale
@@ -193,9 +196,72 @@ final class HUDNavigation {
         if let target { entries.first { $0.target == target }?.setHovered(true) }
     }
 
-    /// Right-hand modules hidden in System > Modules keep their entry here,
+    /// Right-hand modules hidden in Display > Modules keep their entry here,
     /// off screen, so showing them again reuses the same layers.
     private var parkedEntries: [HUDModule: HUDNavigationEntry] = [:]
+
+    /// Display > Modules > Arrange on HUD: the right-hand tiles that can be
+    /// dragged carry corner marks, a little wider on the one being dragged.
+    private var arrangeTargets: Set<HUDNavigationTarget> = []
+    private var arrangeLifted: HUDNavigationTarget?
+    func setArrangeMarks(_ targets: Set<HUDNavigationTarget>, lifted: HUDNavigationTarget? = nil) {
+        guard targets != arrangeTargets || lifted != arrangeLifted else { return }
+        arrangeTargets = targets; arrangeLifted = lifted
+        applyArrangeMarks()
+    }
+    private func applyArrangeMarks() {
+        for entry in entries + Array(parkedEntries.values) {
+            let marked = entry.group == .right && arrangeTargets.contains(entry.target)
+            entry.setArrangeMark(lifted: marked ? entry.target == arrangeLifted : nil)
+        }
+    }
+    func arrangeMarkPathForTesting(_ target: HUDNavigationTarget) -> CGPath? {
+        entries.first { $0.target == target }?.arrangeMarkPath
+    }
+
+    /// The tile dragged on the HUD and where in it the pointer holds it
+    /// (the press point less the centre the tile is drawn at).
+    private var arrangeDrag: (target: HUDNavigationTarget, grab: CGPoint)?
+    /// Arrange on HUD: the dragged tile lifts and follows `pointer`, held where
+    /// it was first grabbed and kept inside the list; the others keep sliding
+    /// to their slots as the order previews. nil drops it: it slides from where
+    /// it is shown into its slot (at once under Reduce Motion, or `animated` false).
+    func setArrangeDrag(_ target: HUDNavigationTarget?, pointer: CGPoint?, animated: Bool = true) {
+        let entry = pointer == nil ? nil : target.flatMap { target in rightEntries.first { $0.target == target } }
+        if let previous = arrangeDrag.flatMap({ drag in entries.first { $0.target == drag.target } }), previous !== entry {
+            arrangeDrag = nil
+            // Its settle is no scroll slide.
+            if scrollSlideSample == previous.target { scrollSlideSample = nil }
+            previous.setDragPosition(nil); previous.setLifted(false, animated: animated)
+            layoutRight(animated: animated)
+        }
+        guard let entry, let pointer else { arrangeDrag = nil; return }
+        if arrangeDrag?.target != entry.target {
+            // It lifts from where it is drawn, even part way through a slide.
+            let shown = (entry.layer.presentation() ?? entry.layer).position
+            arrangeDrag = (entry.target, CGPoint(x: pointer.x - shown.x, y: pointer.y - shown.y))
+            entry.setLifted(true)
+        }
+        let grab = arrangeDrag!.grab, half = CGSize(width: entry.rect.width / 2, height: entry.rect.height / 2)
+        let room = rightViewport.insetBy(dx: min(half.width, rightViewport.width / 2), dy: min(half.height, rightViewport.height / 2))
+        entry.setDragPosition(CGPoint(x: min(room.maxX, max(room.minX, pointer.x - grab.x)),
+                                      y: min(room.maxY, max(room.minY, pointer.y - grab.y))))
+    }
+    func arrangeDragPositionForTesting(_ target: HUDNavigationTarget) -> (center: CGPoint, slot: CGRect, z: CGFloat)? {
+        entries.first { $0.target == target }.map { ($0.layer.position, $0.rect, $0.layer.zPosition) }
+    }
+    func positionAnimationForTesting(_ target: HUDNavigationTarget) -> CAAnimation? {
+        entries.first { $0.target == target }?.layer.animation(forKey: "navigation.position")
+    }
+
+    /// The right-hand slot under `point` while a tile is dragged: each tile's
+    /// own slot, never where it is shown on its way there, so a neighbour
+    /// sliding under the pointer cannot flip the order back. Over the dragged
+    /// tile's own slot it is that tile (nothing moves).
+    func arrangeSlotTarget(at point: CGPoint) -> HUDNavigationTarget? {
+        guard point.x.isFinite, point.y.isFinite, rightViewport.contains(point) else { return nil }
+        return rightEntries.first { $0.rect.contains(point) }?.target
+    }
 
     /// Only app entries are inserted/removed. Existing module and app layers
     /// survive edits, reordering and reflow so pointer depth is uninterrupted.
@@ -254,7 +320,9 @@ final class HUDNavigation {
 
     /// Closing commits a legal scroll position and cancels finite motion. A
     /// pending animation completion cannot revive the hidden navigation.
-    func cancelAnimations() {
+    /// It also drops a tile dragged on the HUD, unless `keepingArrangeDrag`
+    /// (a cancelled scroll gesture leaves the held tile where it is grabbed).
+    func cancelAnimations(keepingArrangeDrag: Bool = false) {
         scrollAnimationGeneration += 1
         isScrollGestureActive = false
         ownsMomentum = false
@@ -262,7 +330,11 @@ final class HUDNavigation {
         rightScrollOffset = bounded(rightScrollOffset)
         rawScrollOffset = rightScrollOffset
         hoveredTarget = nil
-        for entry in entries { entry.setHovered(false, animated: false) }
+        if !keepingArrangeDrag { arrangeDrag = nil }
+        for entry in entries {
+            entry.setHovered(false, animated: false)
+            if !keepingArrangeDrag { entry.setDragPosition(nil); entry.setLifted(false, animated: false) }
+        }
         layoutRight(animated: false)
         for entry in entries { entry.cancelAnimations() }
     }
@@ -356,7 +428,7 @@ final class HUDNavigation {
         let isMomentum = !momentumPhase.isEmpty
         let ended = isMomentum ? momentumPhase.contains(.ended) : phase.contains(.ended)
         let hasPhase = !phase.isEmpty || isMomentum
-        if cancelled { cancelAnimations(); notifyLayoutChange(); return true }
+        if cancelled { cancelAnimations(keepingArrangeDrag: true); notifyLayoutChange(); return true }
         if !hasPhase {
             guard abs(delta) > 0.001 else { return false }
             scrollPixels(delta, animated: false)
@@ -441,8 +513,17 @@ final class HUDNavigation {
         return CGRect(x: x + CGFloat(index % 2) * 84, y: y, width: 78, height: 74)
     }
 
+    /// The offset the right-hand list was last laid out at, and a tile that
+    /// only the last animated scroll moves (it kept its slot): its shown
+    /// position gives the offset shown mid-scroll. Drop settles and reflows
+    /// move tiles between slots, so they never stand in for the scroll.
+    private var laidOutScrollOffset: CGFloat = 0
+    private var scrollSlideSample: HUDNavigationTarget?
+
     private func layoutRight(animated: Bool, spring: Bool = false) {
         let animate = animated && !HUDRuntimeAppearance.reduceMotion
+        let scrolls = rightScrollOffset != laidOutScrollOffset
+        var sample: HUDNavigationTarget?
         if animate {
             scrollAnimationGeneration += 1
             let token = scrollAnimationGeneration
@@ -456,8 +537,11 @@ final class HUDNavigation {
         }
         for (index, entry) in rightEntries.enumerated() {
             let rect = Self.rightRect(index: index, offset: rightScrollOffset)
+            if animate, sample == nil, scrolls || entry.target == scrollSlideSample, entry.target != arrangeDrag?.target,
+               entry.rect == Self.rightRect(index: index, offset: laidOutScrollOffset) { sample = entry.target }
             entry.setGeometry(rect: rect, rotation: 0, animated: animate, spring: spring)
         }
+        scrollSlideSample = sample; laidOutScrollOffset = rightScrollOffset
         if animate { CATransaction.commit() }
         updateScrollIndicators()
     }
@@ -475,9 +559,10 @@ final class HUDNavigation {
     private func interruptScrollAnimation() {
         scrollAnimationGeneration += 1
         let previousOffset = rightScrollOffset
-        if let first = rightEntries.first,
-           first.layer.animation(forKey: "navigation.position") != nil, let shown = first.layer.presentation() {
-            rightScrollOffset = Self.rightRect(index: 0, offset: 0).midY - shown.position.y
+        if let sample = scrollSlideSample, let index = rightEntries.firstIndex(where: { $0.target == sample }),
+           rightEntries[index].layer.animation(forKey: "navigation.position") != nil,
+           let shown = rightEntries[index].layer.presentation() {
+            rightScrollOffset = Self.rightRect(index: index, offset: 0).midY - shown.position.y
         }
         for entry in entries where entry.group == .right { entry.cancelAnimations() }
         if previousOffset != rightScrollOffset { layoutRight(animated: false) }
@@ -541,7 +626,16 @@ final class HUDNavigationEntry {
     let layer = CALayer()
     let faceLayer = CALayer()
     private(set) var isSelected = false
-    private var isHovered = false
+    /// The pointer rests on the tile.
+    private var pointerHovered = false
+    /// Arrange on HUD: the tile is being dragged. It keeps the hover lift
+    /// whatever the pointer hovers, and draws above the other tiles.
+    private(set) var isLifted = false
+    /// The dragged tile follows the pointer here, away from its slot (`rect`).
+    private var dragCenter: CGPoint?
+    private var isHovered: Bool { pointerHovered || isLifted }
+    private var arrangeMark: CAShapeLayer?
+    fileprivate var arrangeMarkPath: CGPath? { arrangeMark?.path }
 
     /// Bounding boxes are in navigation-local coordinates. The host can union
     /// these before projecting through its parent plane for a native hit view.
@@ -859,7 +953,8 @@ final class HUDNavigationEntry {
             self.faceLayer.transform = nextFace
             self.contentLayer.transform = self.contentTransform()
             self.layer.opacity = 1
-            self.layer.zPosition = self.group == .bottom ? 0 : (self.isSelected ? 1 : (self.isHovered ? 0.5 : 0))
+            self.layer.zPosition = self.group == .bottom ? 0
+                : (self.isLifted ? 2 : (self.isSelected ? 1 : (self.isHovered ? 0.5 : 0)))
             self.applyColors()
         }
         faceLayer.removeAnimation(forKey: "navigation.transform")
@@ -997,7 +1092,7 @@ final class HUDNavigationEntry {
         self.rect = rect
         self.rotation = rotation
         withoutActions {
-            layer.position = CGPoint(x: rect.midX, y: rect.midY)
+            layer.position = dragCenter ?? CGPoint(x: rect.midX, y: rect.midY)
             faceLayer.transform = faceTransform()
             contentLayer.transform = contentTransform()
             side.transform = backingTransform()
@@ -1006,7 +1101,7 @@ final class HUDNavigationEntry {
             layer.isHidden = false
         }
         movementEnvelope = animated ? previousRect.union(projectedRect) : projectedRect
-        guard animated else { return }
+        guard animated, dragCenter == nil else { return }
         if previousPosition != layer.position {
             let move: CABasicAnimation
             if spring {
@@ -1016,12 +1111,51 @@ final class HUDNavigationEntry {
                 move = bounce
             } else {
                 move = CABasicAnimation(keyPath: "position")
-                move.duration = 0.18
-                move.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.75, 0.30, 1)
+                move.duration = HUDDuration.listSlide
+                move.timingFunction = HUDEasing.listSlide
             }
             move.fromValue = NSValue(point: previousPosition); move.toValue = NSValue(point: layer.position)
             layer.add(move, forKey: "navigation.position")
         }
+    }
+
+    /// Arrange on HUD: a dragged tile takes the hover lift and draws above
+    /// the others until it is dropped; the pose changes like a hover does.
+    fileprivate func setLifted(_ lifted: Bool, animated: Bool = true) {
+        guard lifted != isLifted else { return }
+        let shown = isHovered
+        isLifted = lifted
+        updatePose(animated: animated && isHovered != shown,
+                   duration: lifted ? HUDNavigation.hoverTransitionDuration : HUDNavigation.hoverExitDuration,
+                   activatingHover: lifted && !shown)
+    }
+
+    /// Moves only the dragged tile's position, to `center` (no animation;
+    /// its other layers keep theirs). nil returns it to its slot on the next
+    /// layout, which slides it there from where it is shown.
+    fileprivate func setDragPosition(_ center: CGPoint?) {
+        dragCenter = center
+        guard let center else { return }
+        withoutActions {
+            layer.removeAnimation(forKey: "navigation.position")
+            layer.position = center
+        }
+    }
+
+    /// Corner marks in the plate ink while the tile can be dragged, set
+    /// 4 px wider while it is (`lifted`); nil removes them.
+    fileprivate func setArrangeMark(lifted: Bool?) {
+        guard let lifted else { arrangeMark?.removeFromSuperlayer(); arrangeMark = nil; return }
+        let mark = arrangeMark ?? CAShapeLayer()
+        withoutActions {
+            mark.name = "navigation.arrangeMarks"
+            mark.frame = faceLayer.bounds
+            mark.zPosition = 20
+            HUDArchiveTile.applyArrangeMark(mark, in: faceLayer.bounds, lifted: lifted)
+            mark.contentsScale = layer.contentsScale
+            if mark.superlayer !== faceLayer { faceLayer.addSublayer(mark) }
+        }
+        arrangeMark = mark
     }
 
     fileprivate func update(dark: Bool, accent: NSColor, contentsScale: CGFloat) {
@@ -1059,8 +1193,9 @@ final class HUDNavigationEntry {
     fileprivate func finishMovement() { movementEnvelope = projectedRect }
 
     fileprivate func setHovered(_ hovered: Bool, animated: Bool = true) {
-        guard hovered != isHovered else { return }
-        isHovered = hovered
+        let shown = isHovered
+        pointerHovered = hovered
+        guard isHovered != shown else { return }
         updatePose(animated: animated,
                    duration: hovered ? HUDNavigation.hoverTransitionDuration : HUDNavigation.hoverExitDuration,
                    activatingHover: hovered)
@@ -1182,7 +1317,7 @@ final class HUDNavigationEntry {
     }
 
     /// The right-hand list's glyph for `module` as one `side`-px layer, the
-    /// game artwork where the list uses it, else the vector (System > Modules).
+    /// game artwork where the list uses it, else the vector (Display > Modules).
     static func glyphLayer(for module: HUDModule, side: CGFloat, ink: NSColor, scale: CGFloat) -> CALayer {
         let frame = CGRect(x: 0, y: 0, width: side, height: side)
         if let image = gameIcon(for: module)?.cgImage(size: 96, tint: ink) {

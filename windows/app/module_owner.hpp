@@ -13,7 +13,12 @@
 //   setAppearance(appearance, time)     language, theme, accent, reduce-motion,
 //                                       ambient and low-power (one event, no poll)
 //   setOverlayVisible(true, time)       HUD opening
-//   overlayClosing(time)                HUD closing: cancel gestures, then hide
+//   overlayClosing(time)                HUD closing: input stops at once (no
+//                                       synthetic release); content that leaves
+//                                       with the close stays drawn and finishes
+//                                       its motion, and its full deactivation
+//                                       waits for hostEvent overlayConcealed or
+//                                       overlayRetracted (the hidden HUD)
 //   update(frame)                       once per presented frame, after Notes,
 //                                       with the source center plane, chrome
 //                                       settings, module presentation and opacity
@@ -21,7 +26,7 @@
 //                                       idle after launch (launch prewarm)
 //   requiresFrames(time)                finite animation demand on the shared clock
 //   nextWakeTime(now) / deadline(time)  one shared waitable timer; no module timer
-//   upload / entries(module) / floatingEntries / modalEntries / collected
+//   upload / entries(module) / floatingEntries / topEntries / modalEntries / collected
 //                                       one LayerComposition, ordered by the owner
 //   release(renderer)                   GPU release, reverse registration order
 //   covers / pointerLocked / capturesPointer|Wheel|Keys / pointer / wheel /
@@ -239,6 +244,9 @@ struct HostEvent {
         utilityCompleted,      // the shared UtilityExecutor drained: completions ran, queue capacity is free
         audioChanged,          // the shared AudioRuntime adopted a publication (flags: Audio bits)
         overlayConcealed,      // the HUD finished closing (or was force-concealed) and is hidden
+        overlayRetracted,      // a File Shelf drag's retract hid the HUD, which stays presented
+                               // (no overlayConcealed): the hidden HUD ends what its close left
+                               // playing, as for overlayConcealed (Mac stopMotionForConcealment)
         suspended, resumed,    // sleep, display off or session lock began / every such reason ended (flags: Suspension reason)
         timeChanged,           // WM_TIMECHANGE: wall clock or time zone
         systemSettingsChanged, // WM_SETTINGCHANGE: theme, locale, work area, ...
@@ -277,6 +285,10 @@ struct ModuleCoverage {
     // step): one row of the report's actionTiming, with the host's keys
     // (module, action, ran, the *Ms timings, pagesBuilt, rasterizations, ...).
     std::function<void(ehud::data::Json)> timing;
+    // The entries were composed in the last presented frame on the HUD's top
+    // layer: after every floating entry (pinned notes last), before every
+    // area's modal card (the Sanity recovery menu, Mac b58f2e0).
+    std::function<bool(std::span<const native::LayerCompositionEntry>)> drawsOnTop;
 };
 
 class ModuleOwner {
@@ -291,6 +303,9 @@ public:
     virtual void resize(const ClientMetrics&) {}
     virtual void setAppearance(const ModuleAppearance&, double) {}
     virtual void setOverlayVisible(bool, double) {}
+    // Default for owners with nothing to leave with the close: cancel and hide
+    // at once. Design owners keep drawing until the hidden HUD instead
+    // (tools::DesignOwnerCore::overlayClosing).
     virtual void overlayClosing(double time) { cancelInteraction(time); setOverlayVisible(false, time); }
     virtual void update(const ModuleFrame&) {}
     // Launch prewarm (Mac AppDelegate prewarmDesktop): called at most once,
@@ -319,6 +334,12 @@ public:
     // charge plane sits inside the canvas, below notesWorkspace).
     virtual std::span<const native::LayerCompositionEntry> planeEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> floatingEntries() { return {}; }
+    // The HUD's top layer (Mac SystemHUDView topPlane, b58f2e0): composed after
+    // the pinned Notes and before the areas' modal cards, so the clock, the
+    // footer, the alert banner and pinned notes never cover it. The owner
+    // poses it with the core plane (the HUD elements placement strip and its
+    // marks, the Sanity recovery menu).
+    virtual std::span<const native::LayerCompositionEntry> topEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> modalEntries() { return {}; }
     virtual void collected(native::Renderer&) {}
     virtual void release(native::Renderer&) {}
@@ -470,6 +491,8 @@ public:
     void setFailureObserver(std::function<void(const ModuleFailure&)> observer) { observer_ = std::move(observer); }
     void setIsolation(bool value) noexcept { isolate_ = value; }
     bool isolating() const noexcept { return isolate_; }
+    // Inside an owner call: add / remove must wait (a module repair defers to the next frame).
+    bool routing() const noexcept { return iterating_ > 0; }
 
     void add(ModuleOwner&);
     void remove(ModuleOwner&) noexcept;

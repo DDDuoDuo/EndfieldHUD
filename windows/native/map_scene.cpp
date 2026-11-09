@@ -30,7 +30,7 @@ std::array<float,4>linear(C c){std::array<float,4>out{};for(unsigned n=0;n<3;++n
 bool imageValid(const std::shared_ptr<const MapPaintImage>&p){return p&&p->width&&p->height&&p->width<=256&&p->height<=256&&p->straightRGBA.size()==std::size_t(p->width)*p->height*4;}
 J circle(std::string id,double radius,double width,bool fill){const double k=.5522847498307936,r=radius;const auto cmd=[](const char*op,std::initializer_list<P>ps){J::Array pts;for(auto p:ps)pts.push_back(J::Array{p.x,p.y});return J(J::Object{{"op",op},{"points",std::move(pts)}});};auto j=base(std::move(id),{0,0,0,0},"shape");j["shape"]=J::Object{{"path",J::Array{cmd("move",{{r,0}}),cmd("cubic",{{r,r*k},{r*k,r},{0,r}}),cmd("cubic",{{-r*k,r},{-r,r*k},{-r,0}}),cmd("cubic",{{-r,-r*k},{-r*k,-r},{0,-r}}),cmd("cubic",{{r*k,-r},{r,-r*k},{r,0}}),cmd("close",{})}},{"fillColor",fill?color({1,1,1,1}):J{}},{"strokeColor",fill?J{}:color({1,1,1,1})},{"lineWidth",width},{"lineCap","butt"},{"lineJoin","miter"}};return j;}
 struct Motion {P from{},to{};double fromScale{1},toScale{1};modules::MapImagePlacement sample(double p)const{return {{from.x+(to.x-from.x)*p,from.y+(to.y-from.y)*p},fromScale+(toScale-fromScale)*p};}};
-bool sameMasks(std::span<const PlaneMask>a,std::span<const PlaneMask>b){if(a.size()!=b.size())return false;for(std::size_t n=0;n<a.size();++n)if(a[n].worldToLocal!=b[n].worldToLocal||a[n].bounds!=b[n].bounds||a[n].cornerRadius!=b[n].cornerRadius)return false;return true;}
+bool sameMasks(std::span<const PlaneMask>a,std::span<const PlaneMask>b){if(a.size()!=b.size())return false;for(std::size_t n=0;n<a.size();++n)if(a[n].worldToLocal!=b[n].worldToLocal||a[n].bounds!=b[n].bounds||a[n].cornerRadius!=b[n].cornerRadius||a[n].exclude!=b[n].exclude)return false;return true;}
 // The group's px per box px: the design density (860 px x density per side),
 // quantized to .5 like it, within the renderer's group limit.
 // Capped at 1.5 (lead decision): the terrain detail tops out near 1.3 px per
@@ -51,7 +51,7 @@ struct NativeMapScene::Impl {
     std::vector<modules::MapPin>pins;std::array<Motion,128>pinMotion;std::array<bool,128>visible{},pulsing{};std::array<double,128>pulseStart{};std::array<std::size_t,128>paintOrder{};
     std::array<Motion,4>imageMotion;std::optional<double>cameraStart;modules::MapViewport camera;std::optional<modules::MapRasterFrame>frame;
     std::shared_ptr<const MapPaintImage>detail,backdrop;const MapPaintImage*uploadedDetail{},*uploadedBackdrop{};
-    std::optional<std::string>selection;bool appearanceDirty{true},contentDirty{},resourcesDirty{true},localDirty{true},ready{},uploaded{},active{},meshResident{};
+    std::optional<std::string>selection;bool restartPulses{},appearanceDirty{true},contentDirty{},resourcesDirty{true},localDirty{true},ready{},uploaded{},active{},meshResident{};
     std::uint64_t shapeRevision{1},imageRevision{},cameraRevision{},pinRevision{},styleRevision{};double time{},lastLocalTime{-1},boxDensity{1};
     Renderer*owner{};std::vector<std::string>residentTextures;DrawObject output,staged;std::array<LayerCompositionEntry,1>entries;MapSceneStats counts;
     // The host cut: wanted plates (box px from the cut's origin), those
@@ -106,7 +106,7 @@ struct NativeMapScene::Impl {
         cameraStart=animated&&ready&&oldCamera!=camera?std::optional(t):std::nullopt;localDirty=true;
     }
     void pinVisibility(double t){const auto selected=state.selection()?std::optional<std::string_view>(*state.selection()):std::nullopt;const auto visuals=modules::mapPinVisuals(pins,camera,selected,state.active(),appearance.reducedMotion,appearance.ambient);counts.visiblePins=visuals.count;counts.pulsingPins=0;
-        for(std::size_t n=0;n<pins.size();++n){const modules::MapPinVisual*value=nullptr;for(std::size_t k=0;k<visuals.count;++k)if(visuals.items[k].id==pins[n].id){value=&visuals.items[k];break;}const bool next=value&&value->pulses;if(next&&!pulsing[n])pulseStart[n]=t;pulsing[n]=next;visible[n]=value!=nullptr;counts.pulsingPins+=next?1:0;paintOrder[n]=n;}
+        for(std::size_t n=0;n<pins.size();++n){const modules::MapPinVisual*value=nullptr;for(std::size_t k=0;k<visuals.count;++k)if(visuals.items[k].id==pins[n].id){value=&visuals.items[k];break;}const bool next=value&&value->pulses;if(next&&(!pulsing[n]||restartPulses))pulseStart[n]=t;pulsing[n]=next;visible[n]=value!=nullptr;counts.pulsingPins+=next?1:0;paintOrder[n]=n;}restartPulses=false;counts.strippedRings=appearance.pulseStripped?counts.pulsingPins:0;
         // The selected marker's zPosition 1: drawn above the others.
         if(state.selection()){const auto found=std::find_if(paintOrder.begin(),paintOrder.begin()+pins.size(),[&](auto n){return pins[n].id==*state.selection();});if(found!=paintOrder.begin()+pins.size())std::rotate(found,found+1,paintOrder.begin()+pins.size());}
     }
@@ -131,7 +131,7 @@ struct NativeMapScene::Impl {
         for(std::size_t order=0;order<pins.size();++order){const auto n=paintOrder[order];const auto found=markers.find(pins[n].id);if(found!=markers.end()&&found->second.wanted&&found->second.configured){draws.push_back(found->second.output);draws.back().alphaMask=rampMask;}else{add(prefix+"/pin/"+pins[n].id);draws.back().opacity=0;}}
         contentDirty=false;localDirty=true;++counts.pinBuilds;
     }
-    void local(double t){if(!ready||draws.empty()||(!localDirty&&lastLocalTime==t))return;const bool animate=cameraStart.has_value();bool styleActive=false;for(const auto&[id,m]:markers){(void)id;styleActive|=m.wanted&&m.styleStart.has_value();}if(!localDirty&&!animate&&!counts.pulsingPins&&!styleActive)return;
+    void local(double t){if(!ready||draws.empty()||(!localDirty&&lastLocalTime==t))return;const bool animate=cameraStart.has_value();bool styleActive=false;for(const auto&[id,m]:markers){(void)id;styleActive|=m.wanted&&m.styleStart.has_value();}if(!localDirty&&!animate&&(!counts.pulsingPins||appearance.pulseStripped)&&!styleActive)return;
         const auto p=progress(t);auto&bg=draws[0];bg.world=M::translation(mapSceneBounds.x,mapSceneBounds.y,0)*M::scale(mapSceneBounds.width,mapSceneBounds.height);bg.linearTint=linear({31/255.,31/255.,31/255.,.89});
         for(unsigned n=0;n<4;++n){const auto pos=imageMotion[n].sample(p);auto&d=draws[n+1];const bool show=n<3?bool(backdrop):bool(detail&&frame);const double w=n<3?1024:frame?frame->screenRect.width:1,h=n<3?512:frame?frame->screenRect.height:1;d.world=M::translation(pos.position.x,pos.position.y)*M::scale(w*pos.scale,h*pos.scale);d.opacity=show?1:0;}
         draws[5].world=M::translation(mapSceneBounds.x,mapSceneBounds.y,0)*M::scale(mapSceneBounds.width,scrim.height/G::unitScale);
@@ -139,7 +139,7 @@ struct NativeMapScene::Impl {
             for(unsigned part=0;part<5;++part){auto&d=m.draws[part];d.opacity=1;d.linearTint=col;R bounds=shapeBounds[part==0?0:part==1?1:part==2?2:3];double scale=1;
                 if(part==4)d.opacity=0;else if(playerPin&&part!=1){const unsigned image=part==0?0:part-1;bounds=assets[image].rect;d.opacity*=float(assets[image].opacity);d.linearTint={1,1,1,1};if(part==3){const auto ratio=double(player.glyph->width)/player.glyph->height;const double w=std::min(bounds.width,bounds.height*ratio),h=w/ratio;bounds={bounds.x+(bounds.width-w)*.5,bounds.y+(bounds.height-h)*.5,w,h};}}
                 else if(part==0){d.linearTint=linear({.06,.06,.06,1});d.opacity*=.82f;}
-                if(part==1){if(pulsing[n]){const auto pulse=modules::mapPulse(std::max(0.,t-pulseStart[n]));scale=pulse.scale;d.opacity*=float(pulse.opacity);}else d.opacity*=selected?.65f:.25f;}
+                if(part==1){if(pulsing[n]&&appearance.pulseStripped)d.opacity=0;else if(pulsing[n]){const auto pulse=modules::mapPulse(std::max(0.,t-pulseStart[n]));scale=pulse.scale;d.opacity*=float(pulse.opacity);}else d.opacity*=selected?.65f:.25f;}
                 d.world=M::scale(scale,scale)*M::translation(bounds.x,bounds.y)*M::scale(bounds.width,bounds.height);
             }
             const auto style=m.styleStart?modules::mapStyleTransition(t-*m.styleStart):modules::MapStyleTransition{};parent.world=M::translation(position.x,position.y)*M::rotation(0,0,style.rotation);parent.opacity=m.configured?float(style.opacity):0;
@@ -151,7 +151,9 @@ struct NativeMapScene::Impl {
 };
 NativeMapScene::NativeMapScene(modules::MapState&s,NativeMapRaster&r,LayerRasterizer&p,LayerRasterOptions o,MapPlayerImages images,MapAppearance a):impl_(std::make_unique<Impl>(s,r,p,std::move(o),std::move(images),a)){}
 NativeMapScene::~NativeMapScene(){auto&i=*impl_;if(i.owner)try{releaseResources(*i.owner);}catch(...){}for(const auto&id:i.shapeIDs)i.paint.remove(id);i.paint.remove(i.rampID);}
-bool NativeMapScene::setAppearance(MapAppearance a){auto&i=*impl_;if(i.appearance.reducedMotion==a.reducedMotion&&i.appearance.ambient==a.ambient)return false;i.appearance=a;i.appearanceDirty=true;return true;}
+bool NativeMapScene::setAppearance(MapAppearance a){auto&i=*impl_;if(i.appearance.reducedMotion==a.reducedMotion&&i.appearance.ambient==a.ambient&&i.appearance.pulseStripped==a.pulseStripped)return false;
+    // A pulse given back (a reopen mid-close) starts its cycle again, as a re-added map.pulse does.
+    i.restartPulses=i.appearance.pulseStripped&&!a.pulseStripped;i.appearance=a;i.appearanceDirty=true;return true;}
 bool NativeMapScene::setDensity(double value){auto&i=*impl_;need(std::isfinite(value)&&value>0,"Invalid Map density");if(groupDensity(value)==groupDensity(i.boxDensity)){i.boxDensity=value;return false;}
     // The pin paths are rasterized again at the new density; the next upload
     // reconfigures the group and every marker group at it.
@@ -187,7 +189,7 @@ bool NativeMapScene::uploadResources(Renderer&r){auto&i=*impl_;need(i.ready&&(!i
     i.output.sourceID=out.sourceID;i.output.meshID=out.meshID;i.output.textureID=out.textureID;i.staged.sourceID=out.sourceID;i.staged.meshID=out.meshID;i.staged.textureID=out.textureID;i.uploaded=true;i.resourcesDirty=false;i.applyHostCut(r);for(auto it=i.markers.begin();it!=i.markers.end();)if(!it->second.wanted&&(!it->second.configured||r.removeNativeGroup(it->second.groupID)))it=i.markers.erase(it);else ++it;return changed;
 }
 bool NativeMapScene::requiresFrames(double t)const{const auto&i=*impl_;i.clock(t);if(i.cameraStart&&t<*i.cameraStart+.18)return true;for(const auto&[id,m]:i.markers){(void)id;if(m.wanted&&m.styleStart&&t<*m.styleStart+.16)return true;}return false;}
-bool NativeMapScene::pulsing()const noexcept{const auto&i=*impl_;return i.state.active()&&!i.appearance.reducedMotion&&i.appearance.ambient&&i.counts.pulsingPins>0;}
+bool NativeMapScene::pulsing()const noexcept{const auto&i=*impl_;return i.state.active()&&!i.appearance.reducedMotion&&i.appearance.ambient&&!i.appearance.pulseStripped&&i.counts.pulsingPins>0;}
 bool NativeMapScene::setHostCut(const modules::MapCutouts&c,bool wanted){auto&i=*impl_;need(c.count<=modules::MapCutouts::capacity,"Invalid Map host cut");const auto origin=mapHostCutBounds();
     modules::MapCutouts local;for(std::size_t k=0;k<c.count;++k){need(c.polygons[k].count<=modules::MapCutoutPolygon::capacity,"Invalid Map host cut");auto&polygon=local.polygons[local.count++];polygon.count=0;
         for(const auto p:c.polygons[k].view()){need(std::isfinite(p.x)&&std::isfinite(p.y),"Invalid Map host cut point");polygon.points[polygon.count++]={p.x-origin.x,p.y-origin.y};}}

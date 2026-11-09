@@ -20,6 +20,8 @@ struct MotionPoint { double x{}, y{}; bool operator==(const MotionPoint &) const
 struct MotionRect { double x{}, y{}, width{}, height{}; };
 ModuleGroup moduleGroup(Module module);
 std::string_view moduleIdentifier(Module module);
+// HUDModule(rawValue:): the module a saved name stands for, nullopt for none.
+std::optional<Module> moduleNamed(std::string_view identifier) noexcept;
 MotionRect moduleContentFrame(Module module);
 MotionRect moduleLocalContentFrame(Module module);
 MotionPoint moduleDirection(Module from, Module to);
@@ -107,6 +109,18 @@ struct DesignBox {
     }
 };
 
+// HUDDragGrip's drag rules, shared by the design library's DragGrip (which
+// forwards here) and the source list's Arrange on HUD drag.
+struct DragGripMotion {
+    // How far the pointer travels before a press becomes a drag.
+    static constexpr double liftDistance = 3;
+    // HUDDragGrip.edgeScrollStep: while a dragged row is `offset` points below
+    // the top of a list `length` points tall (negative above it), the signed
+    // number of points the list scrolls toward the pointer: up to 12 within
+    // 36 points of an edge or past it, negative toward the top, 0 elsewhere.
+    static double edgeScrollStep(double offset, double length) noexcept;
+};
+
 // Sources/HUDDesignTokens.swift HUDEasing (spec §0, §1.9), shared by the module
 // switch and the design library (which must not redefine them).
 struct DesignEasing {
@@ -116,6 +130,9 @@ struct DesignEasing {
     static constexpr CubicTiming easeIn{.42, 0, 1, 1};
     static constexpr CubicTiming easeOut{0, 0, .58, 1};
     static constexpr CubicTiming easeInOut{.42, 0, .58, 1};
+    // The HUD's right-hand list: a tile sliding to its slot (with
+    // DesignMotion::listSlide).
+    static constexpr CubicTiming listSlide{.20, .75, .30, 1};
 };
 struct DesignMotionSample {
     double opacity{1};
@@ -136,6 +153,8 @@ struct DesignMotionSample {
 struct DesignMotion {
     static constexpr double entrance = .38, leave = .13, staggerBase = .06, staggerStep = .036;
     static constexpr int staggerCap = 14;
+    // With DesignEasing::listSlide: the right-hand list's tile slide.
+    static constexpr double listSlide = .18;
     // .06 + min(max(0, i), 14) x .036 (spec §1.10).
     static double staggerDelay(int index) noexcept;
     static DesignMotionSample enterAt(double elapsed, MotionPoint offset, double opacity = 1, double delay = 0,
@@ -144,6 +163,15 @@ struct DesignMotion {
     // Moves toward -0.6 x offset while fading to 0.
     static DesignMotionSample leaveAt(double elapsed, MotionPoint offset, double fromOpacity = 1,
                                       bool reduceMotion = false) noexcept;
+    // HUDMotion.closingFade(ending:reveal:): the HUD close's fade, as long as
+    // the opening's `reveal` (the whole close when shorter) and timed to end
+    // exactly when the close of `length` ends. A non-finite or negative input
+    // counts as 0.
+    struct ClosingFade {
+        double delay{}, duration{};
+        bool operator==(const ClosingFade &) const = default;
+    };
+    static ClosingFade closingFade(double length, double reveal) noexcept;
 };
 
 // Sources/HUDDesignOverlay.swift HUDCenterOverlay.setContentDimmed (LIB-64):

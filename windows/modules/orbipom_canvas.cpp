@@ -415,7 +415,7 @@ void OrbiPomCanvas::requestRestart() {
     d::ConfirmRequest request;
     request.id = "minigameRestart";
     request.title = text("Restart the game?", "重新开始游戏？");
-    request.message = text("The current score is lost.", "当前得分将会丢失。");
+    request.message = text("The current score is lost", "当前得分将会丢失");
     request.confirmTitle = text("Restart", "重新开始");
     request.icon = d::Icon::reset;
     confirm(std::move(request), [this] { restartConfirmation_ = false; startGame(true); },
@@ -433,8 +433,8 @@ void OrbiPomCanvas::openRules() {
     const auto lay = [&](d::Builder* b, d::Layer* content) {
         GuideColumn left(env(), b, "orbipom.guide.left", columnWidth), right(env(), b, "orbipom.guide.right", columnWidth);
         left.heading(text("Goal", "目标"));
-        left.paragraph(text("Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish.",
-            "将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失。"));
+        left.paragraph(text("Drop pieces into the box. Two identical pieces that touch merge into the next, larger piece. Two of the largest (level 11) merge and vanish",
+            "将山团团投入容器。两个相同的山团团接触后，会合成更大一级的山团团。两个最大的山团团（第 11 级）合成后会消失"));
         left.heading(text("Controls", "操作"));
         left.key(text("Aim", "瞄准"), text("Move the pointer over the box, or the arrow keys", "在容器上移动指针，或使用方向键"));
         left.key(text("Drop", "投放"), text("Click, or Return", "点击，或按 Return 键"));
@@ -442,19 +442,19 @@ void OrbiPomCanvas::openRules() {
         left.key(text("Cancel skill", "取消技能"), text("Esc, or click the skill again", "按 Esc，或再次点击该技能"));
         left.key(text("Pause", "暂停"), text("Space or P", "空格键或 P"));
         left.heading(text("Game over", "游戏结束"));
-        left.paragraph(text("Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends.",
-            "山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束。"));
+        left.paragraph(text("Pieces resting above the red dashed line start a 5-second countdown. Get them back below the line in time, or the game ends",
+            "山团团停在红色虚线上方时，会开始 5 秒倒计时。倒计时结束前让它们回到线下，否则游戏结束"));
         right.heading(text("Score", "计分"));
-        right.paragraph(text("Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score.",
-            "合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分。"));
+        right.paragraph(text("Bigger merges score more: 1, 3, 6, 10 … up to 66 points. New pieces come from the five smallest sizes; NEXT shows the one after the current piece. BEST keeps your highest score",
+            "合成的山团团越大，得分越高：1、3、6、10……最高 66 分。新的山团团来自最小的五种；NEXT 显示当前之后的一个。BEST 记录最高分"));
         right.heading(text("SP and skills", "能量与技能"));
-        right.paragraph(text("Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it.",
-            "每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动。"));
+        right.paragraph(text("Each merge fills one SP cell; 12 cells give 1 SP, up to 3. Choose a skill, then click a piece or the box to use it",
+            "每次合成填充一格能量，12 格积满获得 1 点 SP，最多 3 点。选择技能后，点击山团团或容器即可发动"));
         const std::array<std::string, 4> costs{text("1 SP", "1 SP"), text("2 SP", "2 SP"), text("3 SP", "3 SP"), text("6 SP spent", "消耗 6 SP")};
-        const std::array<std::string, 4> details{text("Removes the piece you pick.", "移除选中的山团团。"),
-            text("A rising wind fills the box for a few seconds and lifts the pieces.", "上升气流充满容器数秒，托起山团团。"),
-            text("Shakes the box from side to side.", "左右摇晃容器。"),
-            text("Pick two pieces to trade places. It charges with the SP you spend on the other skills.", "选择两个山团团交换位置。在其他技能上消耗 SP 即可充能。")};
+        const std::array<std::string, 4> details{text("Removes the piece you pick", "移除选中的山团团"),
+            text("A rising wind fills the box for a few seconds and lifts the pieces", "上升气流充满容器数秒，托起山团团"),
+            text("Shakes the box from side to side", "左右摇晃容器"),
+            text("Pick two pieces to trade places. It charges with the SP you spend on the other skills", "选择两个山团团交换位置。在其他技能上消耗 SP 即可充能")};
         for (std::size_t i = 0; i < allSkills.size(); ++i) {
             const auto name = skillName(allSkills[i]);
             right.skill(allSkills[i], text(name.first, name.second), costs[i], details[i]);

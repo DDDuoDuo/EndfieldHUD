@@ -1,7 +1,7 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.png" alt="ENDFIELD HUD: a desktop HUD for Mac &amp; Windows, v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/hero.png" alt="ENDFIELD HUD: a desktop HUD for Mac &amp; Windows, v1.3.1" width="100%"></a>
 
 <p align="center">
-  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="Latest release v1.3.0" height="36"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/button-release.png" alt="Latest release v1.3.1" height="36"></a>
   <a href="LICENSE"><img src="docs/media/readme/panels/button-license.png" alt="License: MIT" height="36"></a>
   <a href="#installation"><img src="docs/media/readme/panels/button-platform.png" alt="Platform: macOS / Windows" height="36"></a>
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSeDwB4CzTp5kdT5ArjwIcQlvRS9UlVkQnMpGF3OHbYJ1_uBCg/viewform?usp=sharing"><img src="docs/media/readme/panels/button-feedback.png" alt="Report bugs or give suggestions" height="36"></a>
@@ -28,14 +28,14 @@
 
 <img src="docs/media/readme/panels/sub-macos.png" alt="macOS: Apple silicon / Intel" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS: PKG / DMG" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS: PKG / DMG" width="100%"></a>
 
 <sub>※ EndfieldHUD lives in the menu bar. One hotkey brings the HUD up over whatever you're doing.</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.png" alt="Download" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-Installer.pkg"><b>PKG installer</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">All releases</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-Installer.pkg"><b>PKG installer</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">All releases</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.png" alt="Update" width="112"></td>
@@ -58,14 +58,14 @@
 
 <img src="docs/media/readme/panels/sub-windows.png" alt="Windows: Windows 11 x64" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows: Setup EXE / Portable ZIP" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows: Setup EXE / Portable ZIP" width="100%"></a>
 
 <sub>※ On Windows, EndfieldHUD lives in the notification area (system tray). Same HUD, same hotkey.</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.png" alt="Download" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-setup.exe"><b>Setup EXE</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-portable.zip"><b>Portable ZIP</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">All releases</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-setup.exe"><b>Setup EXE</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-portable.zip"><b>Portable ZIP</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">All releases</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.png" alt="Update" width="112"></td>
@@ -91,6 +91,22 @@
 
 > [!WARNING]
 > If Windows SmartScreen shows **Windows protected your PC**, choose **More info → Run anyway**. The app isn't code-signed yet.
+
+<br>
+
+<img src="docs/media/readme/panels/sub-linux.png" alt="Linux: Hyprland / Community port" width="100%">
+
+<a href="https://github.com/OctoberPrayRain/HyprEndfield"><img src="docs/media/readme/panels/banner-linux.png" alt="Linux: HyprEndfield for Hyprland" width="100%"></a>
+
+<table>
+<tr>
+<td width="120"><img src="docs/media/readme/panels/chip-download.png" alt="Download" width="112"></td>
+<td><a href="https://github.com/OctoberPrayRain/HyprEndfield"><b>HyprEndfield</b></a> by <a href="https://github.com/OctoberPrayRain">OctoberPrayRain</a></td>
+</tr>
+</table>
+
+> [!WARNING]
+> HyprEndfield is a community port made by OctoberPrayRain, not by me. Use it at your own risk. I'm not responsible for any loss it causes.
 
 <br>
 
@@ -177,14 +193,14 @@ Allow permissions when you use the features that need them:
 | Tool | What you can do |
 | --- | --- |
 | [**Map**](docs/map.md) | Explore the offline terrain map and place and customize pins. |
-| [**Closure's Minigame**](docs/orbipom-runtime.md) | Play Merge! OrbiPom! |
+| [**Closure's Minigame**](docs/orbipom-runtime.md) | Play OrbiPom! MERGE! |
 | [**Event Log**](docs/event-log.md) | Check the event log like a real Endministrator. |
 | [**Personal ID**](docs/personal-profile.md) | Customize your card. You can edit profile data freely. |
 | [**Account Binding**](docs/account-linking.md) | Link a HYPERGRYPH game account for profile data and sanity countdowns. |
 
 <sub>※ Linking is optional.</sub>
 
-![Merge! OrbiPom! gameplay](docs/media/readme/minigame.gif)
+![OrbiPom! MERGE! gameplay](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

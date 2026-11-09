@@ -33,6 +33,9 @@ enum HUDColor {
     /// dark, a deep variant that stays legible on light surfaces in light.
     /// Fills behind dark text (buttons, chips, active tabs) keep `yellow`.
     static var accentInk: CGColor { palette.ink }
+    /// The accent as a thin line on the light module plates of the HUD's
+    /// right-hand list, in either theme (the light-theme `accentInk`).
+    static var plateInk: CGColor { palette.plateInk }
     static var isLight: Bool { theme.isLight }
 
     /// Applies the theme colour (`AppConfiguration.accentHex`). Returns true
@@ -207,12 +210,15 @@ struct HUDAccentPalette {
     let primaryButton: [CGColor]
     /// The accent as text or a thin line on a theme surface (`HUDColor.accentInk`).
     let ink: CGColor
+    /// The accent as a thin line on a light plate in either theme (`HUDColor.plateInk`).
+    let plateInk: CGColor
 
     static let standardAccent: UInt32 = 0xFAD41F
     static let standard = HUDAccentPalette(accentHex: "FAD41F")
 
-    /// In light, `ink` is the low stop 42 % toward black (the default reads as
-    /// a deep gold on pale surfaces); in dark it is the accent itself.
+    /// `plateInk` is the low stop 42 % toward black (the default reads as a
+    /// deep gold on pale surfaces); `ink` is that in light and the accent
+    /// itself in dark.
     init(accentHex: String, light: Bool = false) {
         let raw = accentHex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
         let value = raw.count == 6 ? UInt32(raw, radix: 16) ?? Self.standardAccent : Self.standardAccent
@@ -229,7 +235,8 @@ struct HUDAccentPalette {
             yellowDeep = Self.shifted(base, hue: -4.16, saturation: 0.934, brightness: 0.945)
         }
         primaryButton = [yellowHigh, yellow, yellowLow]
-        ink = light ? HUDTheme.darkened(yellowLow, by: 0.42) : yellow
+        plateInk = HUDTheme.darkened(yellowLow, by: 0.42)
+        ink = light ? plateInk : yellow
     }
 
     /// `color` (sRGB) with its hue turned by `hue` degrees and its HSB
@@ -345,6 +352,9 @@ enum HUDEasing {
     static let easeOut = CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1)
     static let easeInOut = CAMediaTimingFunction(controlPoints: 0.42, 0, 0.58, 1)
     static let linear = CAMediaTimingFunction(name: .linear)
+    /// The HUD's right-hand list: a tile sliding to its slot (scroll, reflow,
+    /// a tile dragged on the HUD and the ones making room for it).
+    static let listSlide = CAMediaTimingFunction(controlPoints: 0.20, 0.75, 0.30, 1)
 }
 
 /// Every duration is finite and short; Reduce Motion collapses all of them.
@@ -357,6 +367,8 @@ enum HUDDuration {
     static let staggerBase: CFTimeInterval = 0.06
     static let staggerCap = 14
     static let leave: CFTimeInterval = 0.13
+    /// With `HUDEasing.listSlide`: the right-hand list's tile slide.
+    static let listSlide: CFTimeInterval = 0.18
     static let titleWipe: CFTimeInterval = 0.45
     static let ruleWipe: CFTimeInterval = 0.42
     static let ruleDelay: CFTimeInterval = 0.05

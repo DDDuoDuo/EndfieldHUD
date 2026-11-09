@@ -49,7 +49,7 @@ bool StorageController::completeCapacity(std::uint64_t token,StorageCapacityResu
     volumes_=limitedStorageVolumes(std::move(result.volumes),selected_);
     if(const auto*current=currentVolume()){snapshot_.capacity=current->capacity;snapshot_.error.reset();}
     else if(result.startup){snapshot_.capacity=std::move(result.startup);snapshot_.error.reset();}
-    else snapshot_.error="Storage capacity is unavailable.";
+    else snapshot_.error="Storage capacity is unavailable";
     publish();if(pendingVolumeRead_&&active_)refreshCapacity(now,true);return true;}
 bool StorageController::completeDetails(std::uint64_t token,StorageDetailsSnapshot value,double now){clock(now);if(!token||token!=detailToken_||!cancellation_)return false;const bool cancelled=cancellation_->cancelled();if(!cancelled)validate(value);detailToken_=0;cancellation_.reset();detailRequest_.reset();if(!cancelled){details_=std::move(value);details_.isLoading=false;publish();}if(pendingDetails_&&active_){pendingDetails_=false;requestDetails(now,true);}return true;}
 StorageScanBudget::StorageScanBudget(double start,StorageScanLimits limits):limits_(limits),start_(start),scopeStart_(start){clock(start);clock(limits.maximumSeconds);clock(limits.secondsPerFolder);}

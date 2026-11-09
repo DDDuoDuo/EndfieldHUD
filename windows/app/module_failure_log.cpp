@@ -34,6 +34,7 @@ std::string budgetLines(const FailureBudgets& b) {
     const auto of = [](std::size_t value, std::size_t maximum) { return std::to_string(value) + " of " + std::to_string(maximum); };
     return "raster: entries " + of(b.rasterEntries, b.maximumRasterEntries) + ", held bytes " + of(b.heldBytes, b.maximumHeldBytes) +
         ", released bytes " + std::to_string(b.releasedBytes) + "\n" +
+        "raster text: metadata bytes " + of(b.textMetadataBytes, b.maximumTextMetadataBytes) + ", typography bytes " + of(b.typographyBytes, b.maximumTypographyBytes) + "\n" +
         "renderer: bytes " + of(b.rendererBytes, b.maximumRendererBytes) + ", parked bytes " + of(b.parkedBytes, b.maximumParkedBytes) + "\n";
 }
 
@@ -54,7 +55,7 @@ bool appendBoundedRecord(const std::filesystem::path& path, std::string_view rec
 
 bool ModuleFailureLog::record(const ModuleFailure& f, std::string_view context) noexcept {
     try {
-        if (std::find(owners_.begin(), owners_.end(), f.owner) != owners_.end() || owners_.size() >= 64) return false;
+        if (std::count(owners_.begin(), owners_.end(), f.owner) >= std::ptrdiff_t(recordsPerOwner) || owners_.size() >= 64 * recordsPerOwner) return false;
         owners_.push_back(f.owner);
         std::string text(header);
         char stamp[32]{};

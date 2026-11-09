@@ -75,13 +75,14 @@ bool IdCardBinding::update(const Input&input){
     const auto authority=core::localized("Authority","权限等级",input.language),maximum=core::localized("MAX","满级",input.language);
     // The profile key drops the UID while redacted (Mac 1.3.0), so the card
     // re-renders on the toggle; the bar's label takes the HUD's yellow.
-    Key key{{p.name,input.uidRedacted?std::string{}:p.displayedUID(),authority,maximum},{static_cast<double>(p.permissionLevel),p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,
+    // The shown name (the Windows account's while the card follows it, issue #17).
+    Key key{{p.displayedName(),input.uidRedacted?std::string{}:p.displayedUID(),authority,maximum},{static_cast<double>(p.permissionLevel),p.avatarZoom,p.avatarOffsetX,p.avatarOffsetY,
         p.thumbnailOffsetX,p.thumbnailOffsetY,p.thumbnailZoom,static_cast<double>(input.avatarOrientation),accent[0],accent[1],accent[2]},input.avatarImage,input.backgroundImage,
         input.uidRedacted,input.uidRedacted?input.hudAccent:std::array<double,3>{}};
     if(key_==key)return false;
     key_=std::move(key);
     level_=std::clamp(p.permissionLevel,1,60);accent_=accent;
-    const std::array<std::string,5>texts{p.name,input.uidRedacted?std::string("UID:"):"UID: "+p.displayedUID(),std::to_string(level_),authority,level_==60?maximum:std::string{}};
+    const std::array<std::string,5>texts{p.displayedName(),input.uidRedacted?std::string("UID:"):"UID: "+p.displayedUID(),std::to_string(level_),authority,level_==60?maximum:std::string{}};
     for(std::size_t i=0;i<texts.size();++i){
         auto&caption=captions_[i];const auto&metrics=source_.captions[i];
         double size=metrics.sourceFontSize;

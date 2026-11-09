@@ -45,5 +45,20 @@ ApplicationIcon ApplicationIcon::fromPNG(const std::filesystem::path&path,std::s
     if(ink!=IconInk::original)for(std::size_t n=0;n<pixels.size();n+=4){const auto value=ink==IconInk::whiteTemplate?pixels[n+3]:std::uint8_t{};pixels[n]=pixels[n+1]=pixels[n+2]=value;}
     return fromPixels(size,size,pixels);
 }
+std::vector<TrayIconArt> trayIconRoster(const ehud::data::Json&manifest){
+    std::vector<TrayIconArt> roster;
+    for(const auto&icon:manifest["icons"].array()){
+        if(!icon["offered"].boolean())continue;const auto&art=icon["tray"];
+        roster.push_back({icon["id"].string(),art["file"].string(),art["sha256"].string(),art["template"].boolean()&&icon["id"].string()!="perlica"});
+    }
+    need(std::any_of(roster.begin(),roster.end(),[](const auto&i){return i.id=="endfield";}),"Missing original Endfield icon");
+    return roster;
+}
+const TrayIconArt&trayIconFor(std::span<const TrayIconArt>roster,std::string_view chosen){
+    auto icon=std::find_if(roster.begin(),roster.end(),[&](const auto&i){return i.id==chosen;});
+    if(icon==roster.end())icon=std::find_if(roster.begin(),roster.end(),[](const auto&i){return i.id=="endfield";});
+    need(icon!=roster.end(),"Missing original Endfield icon");
+    return *icon;
+}
 }
 #endif

@@ -1,7 +1,7 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.ja.png" alt="ENDFIELD HUD：Mac と Windows のためのデスクトップ HUD、v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/hero.ja.png" alt="ENDFIELD HUD：Mac と Windows のためのデスクトップ HUD、v1.3.1" width="100%"></a>
 
 <p align="center">
-  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="最新リリース v1.3.0" height="36"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/button-release.png" alt="最新リリース v1.3.1" height="36"></a>
   <a href="LICENSE"><img src="docs/media/readme/panels/button-license.png" alt="ライセンス：MIT" height="36"></a>
   <a href="#installation"><img src="docs/media/readme/panels/button-platform.png" alt="プラットフォーム：macOS / Windows" height="36"></a>
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSeDwB4CzTp5kdT5ArjwIcQlvRS9UlVkQnMpGF3OHbYJ1_uBCg/viewform?usp=sharing"><img src="docs/media/readme/panels/button-feedback.ja.png" alt="不具合の報告・ご意見" height="36"></a>
@@ -28,14 +28,14 @@
 
 <img src="docs/media/readme/panels/sub-macos.ja.png" alt="macOS：Apple シリコン / Intel" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS：PKG / DMG" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS：PKG / DMG" width="100%"></a>
 
 <sub>※ EndfieldHUD はメニューバーに表示されます。ショートカットひとつで、すべてのアプリの上に HUD が開きます</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.ja.png" alt="ダウンロード" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-Installer.pkg"><b>PKG インストーラ</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">すべてのリリース</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-Installer.pkg"><b>PKG インストーラ</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">すべてのリリース</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.ja.png" alt="アップデート" width="112"></td>
@@ -58,14 +58,14 @@
 
 <img src="docs/media/readme/panels/sub-windows.ja.png" alt="Windows：Windows 11 x64" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows：セットアップ（EXE）/ ポータブル版（ZIP）" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows：セットアップ（EXE）/ ポータブル版（ZIP）" width="100%"></a>
 
 <sub>※ Windows では、EndfieldHUD は通知領域（システムトレイ）に常駐します。HUD もショートカットも Mac と同じです</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.ja.png" alt="ダウンロード" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-setup.exe"><b>セットアップ（EXE）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-portable.zip"><b>ポータブル版（ZIP）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">すべてのリリース</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-setup.exe"><b>セットアップ（EXE）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-portable.zip"><b>ポータブル版（ZIP）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">すべてのリリース</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.ja.png" alt="アップデート" width="112"></td>
@@ -91,6 +91,22 @@
 
 > [!WARNING]
 > Windows SmartScreen に **Windows によって PC が保護されました** と表示された場合は、**詳細情報 → 実行**を選んでください。アプリがまだコード署名されていないためです
+
+<br>
+
+<img src="docs/media/readme/panels/sub-linux.ja.png" alt="Linux：Hyprland / コミュニティ移植版" width="100%">
+
+<a href="https://github.com/OctoberPrayRain/HyprEndfield"><img src="docs/media/readme/panels/banner-linux.png" alt="Linux：Hyprland 向けの HyprEndfield" width="100%"></a>
+
+<table>
+<tr>
+<td width="120"><img src="docs/media/readme/panels/chip-download.ja.png" alt="ダウンロード" width="112"></td>
+<td><a href="https://github.com/OctoberPrayRain/HyprEndfield"><b>HyprEndfield</b></a>（作者：<a href="https://github.com/OctoberPrayRain">OctoberPrayRain</a>）</td>
+</tr>
+</table>
+
+> [!WARNING]
+> HyprEndfield は OctoberPrayRain さんが作ったコミュニティ移植版で、私が作ったものではありません。ご利用は自己責任でお願いします。使用によって生じたいかなる損失についても責任を負いません
 
 <br>
 
@@ -177,14 +193,14 @@
 | ツール | できること |
 | --- | --- |
 | [**マップ**](docs/map.md) | オフラインの地形図を見て、ピンを置いたりカスタマイズしたりできます |
-| [**クロージャのミニゲーム**](docs/orbipom-runtime.md) | Merge! OrbiPom! で遊べます |
+| [**クロージャのミニゲーム**](docs/orbipom-runtime.md) | 「バブル、合体！」で遊べます |
 | [**イベントログ**](docs/event-log.md) | 管理人になった気分で、イベントログをチェックできます |
 | [**個人 ID**](docs/personal-profile.md) | 自分のカードをカスタマイズできます。プロフィール情報は自由に編集できます |
 | [**アカウント連携**](docs/account-linking.md) | HYPERGRYPH のゲームアカウントを連携すると、プロフィール情報や理性の回復カウントダウンを表示できます |
 
 <sub>※ アカウント連携は任意です</sub>
 
-![Merge! OrbiPom! のプレイ映像](docs/media/readme/minigame.gif)
+![「バブル、合体！」のプレイ映像](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

@@ -1,4 +1,6 @@
 #include "app/module_owner.hpp"
+#include "app/application_host.hpp"
+#include "core/data/data_store.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <stdexcept>
@@ -108,6 +110,7 @@ std::string_view hostEventName(HostEvent::Kind kind) noexcept {
     case K::utilityCompleted: return "utility completion";
     case K::audioChanged: return "audio change";
     case K::overlayConcealed: return "overlay concealed";
+    case K::overlayRetracted: return "overlay retracted";
     case K::suspended: return "suspend";
     case K::resumed: return "resume";
     case K::timeChanged: return "time change";
@@ -127,5 +130,11 @@ void ModuleRegistry::releaseAll(native::Renderer& renderer) noexcept {
         try { it->owner->release(renderer); } catch (...) {}
     }
     --iterating_;
+}
+// The layout the HUD shows: the host's (the placement draft while placing),
+// else the applied record's.
+ehud::data::OverlayLayout ApplicationHost::shownOverlayLayout() const {
+    if (const auto* layout = overlayLayout()) return *layout;
+    return settings().overlayLayout();
 }
 } // namespace endfield::app

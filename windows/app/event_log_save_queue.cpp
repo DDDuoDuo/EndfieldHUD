@@ -19,7 +19,7 @@ EventLogSaveQueue::~EventLogSaveQueue(){auto i=impl_;i->alive=false;i->executor.
 // Event Log persistence is a host service called outside ModuleRegistry
 // isolation (onDeadline, shutdown flush): a snapshot that cannot be prepared
 // shows the source save status ("The log could not be saved. New events are
-// kept in this session.") and keeps its deadline for the next wake instead of
+// kept in this session") and keeps its deadline for the next wake instead of
 // ending the HUD. The owner's events stay in memory.
 void EventLogSaveQueue::capture(double time,bool force){auto i=impl_;
     try{if(auto next=i->owner.takeSave(time,force))i->pending=std::move(next);}

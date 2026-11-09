@@ -1,11 +1,12 @@
 #include "modules/settings.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 namespace {
-using namespace endfield;using namespace modules;using ehud::data::Json;using ehud::data::Settings;
+using namespace endfield;using namespace modules;using ehud::data::Json;using ehud::data::Settings;using ehud::data::SettingsScope;
 unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
 template<class F>void rejects(F f,const char*why){bool failed{};try{f();}catch(const std::exception&){failed=true;}check(failed,why);}
 // Numbers compare by value (the oracle's JSON spells a double in its shortest form).
@@ -25,11 +26,35 @@ void run(const Json&oracle){
     rejectShortcut=true;const auto prior=controller.committed();check(controller.setShortcut({0x78,2})==std::optional<std::string>("Synthetic conflict")&&controller.committed()==prior,"Registration failure preserves prior binding/preferences");const auto registrations=registered;check(controller.setShortcut({'C',2}).has_value()&&registered==registrations,"Reserved common Windows editor chord rejects before platform mutation");
     check(validateSettingsShortcut({'A',0},core::Language::english).has_value()&&validateSettingsShortcut({'A',7},core::Language::english).has_value()&&validateSettingsShortcut({0x10,2},core::Language::english).has_value(),"Capture requires one ordinary key plus one/two supported modifiers");
     // Windows' reserved Control editing chords: the Windows-only sentence in the five languages.
-    check(validateSettingsShortcut({'C',2},core::Language::english)=="That combination is reserved for common editing commands."&&
-          validateSettingsShortcut({'V',6},core::Language::japanese)=="この組み合わせは編集操作で使われます。別のショートカットを選択してください。"&&
-          validateSettingsShortcut({'Z',2},core::Language::korean)=="일반적인 편집 명령에 예약된 조합입니다."&&
-          validateSettingsShortcut({'X',2},core::Language::traditionalChinese)=="該組合用於常見編輯命令，請選擇其他快速鍵。","Reserved editing chords are refused in every language");
-    rejectShortcut=false;controller.previewScale(.2,100);controller.beginShortcutCapture();controller.restoreDefaults();check(!controller.capturingShortcut()&&!controller.confirmationRemaining(100)&&settingsShortcut(controller.committed())==SettingsShortcut{},"Restore clears preview/capture and reapplies native default binding");check(registered==registrations+1,"Explicit restore retries registration even if binding would be unchanged");
+    check(validateSettingsShortcut({'C',2},core::Language::english)=="That combination is reserved for common editing commands"&&
+          validateSettingsShortcut({'V',6},core::Language::japanese)=="この組み合わせは編集操作で使われます。別のショートカットを選択してください"&&
+          validateSettingsShortcut({'Z',2},core::Language::korean)=="일반적인 편집 명령에 예약된 조합입니다"&&
+          validateSettingsShortcut({'X',2},core::Language::traditionalChinese)=="該組合用於常見編輯命令，請選擇其他快速鍵","Reserved editing chords are refused in every language");
+    for(unsigned n=0;n<6;++n)check(validateSettingsShortcut({'C',2},static_cast<core::Language>(n)).has_value()&&
+        endfield::tests::followsInterfaceTextRules(*validateSettingsShortcut({'C',2},static_cast<core::Language>(n))),"The reserved chord refusal has no final full stop and no dot separator");
+    // Scoped Restore (restoreDefaults(_:), Mac 6591116): no Restore touches the hotkey or its capture; System leaves the
+    // pending scale preview to Keep or Revert; Display writes the default scale at once and drops the countdown.
+    rejectShortcut=false;controller.previewScale(.2,100);controller.beginShortcutCapture();const auto shortcut=settingsShortcut(controller.committed());const auto captures=capture.size();
+    check(!controller.isDefault(SettingsScope::system)&&!controller.isDefault(SettingsScope::display)&&controller.isDefault(SettingsScope::hudElements),"isDefault reports the scopes with changes");
+    auto saves=saved.size();controller.restoreDefaults(SettingsScope::system);
+    check(controller.committed().string("language")=="system"&&!controller.committed().boolean("launchAtLogin")&&controller.status()=="Synthetic login failure"&&saved.size()==saves+1,"System Restore saves its defaults through the login transaction");
+    check(controller.confirmationRemaining(100)&&controller.configuration().number("hudScale")==.2&&controller.committed().number("hudScale")==1.35,"System Restore leaves the scale preview pending");
+    check(controller.capturingShortcut()&&capture.size()==captures&&registered==registrations&&settingsShortcut(controller.committed())==shortcut,"Restore leaves the hotkey and its capture alone");
+    saves=saved.size();controller.restoreDefaults(SettingsScope::display);
+    check(!controller.confirmationRemaining(100)&&!controller.nextWakeTime(100)&&controller.configuration().number("hudScale")==1&&controller.committed().number("hudOffsetX")==0,"Display Restore drops the preview with no countdown");
+    check(saved.size()==saves+1&&saved.back().number("hudScale")==1&&saved.back().string("theme")=="dark"&&!saved.back().boolean("reduceMotion"),"Display Restore writes the default scale and the Display defaults at once");
+    check(controller.isDefault(SettingsScope::display)&&controller.capturingShortcut()&&registered==registrations&&settingsShortcut(controller.committed())==shortcut,"Display is at its defaults and the hotkey is untouched");
+    // The same for a position preview: System leaves it to Keep or Revert; Display drops it, both when the committed
+    // position differs from the default and when only the preview does.
+    controller.previewPosition(.3,-.2,200);check(controller.confirmLayout(201),"Position preview kept");controller.previewPosition(-.1,.1,202);
+    controller.restoreDefaults(SettingsScope::system);
+    check(controller.positionPending()&&controller.confirmationRemaining(202)&&controller.configuration().number("hudOffsetX")==-.1&&controller.committed().number("hudOffsetX")==.3,"System Restore leaves the position preview pending");
+    saves=saved.size();controller.restoreDefaults(SettingsScope::display);
+    check(!controller.positionPending()&&!controller.confirmationRemaining(202)&&!controller.nextWakeTime(202)&&controller.committed().number("hudOffsetX")==0&&controller.committed().number("hudOffsetY")==0
+        &&controller.configuration().number("hudOffsetX")==0&&saved.size()==saves+1&&saved.back().number("hudOffsetX")==0&&saved.back().number("hudOffsetY")==0,"Display Restore drops the position preview and writes the default position at once");
+    controller.previewPosition(.2,.2,210);saves=saved.size();controller.restoreDefaults(SettingsScope::display);
+    check(!controller.positionPending()&&!controller.confirmationRemaining(210)&&controller.configuration().number("hudOffsetY")==0&&saved.size()==saves,"Display Restore at its defaults drops a pending position preview and writes nothing");
+    controller.endShortcutCapture();
     SettingsCallbacks absent;SettingsController unsupported(initial,absent);check(unsupported.setShortcut({0x77,2}).has_value()&&settingsShortcut(unsupported.configuration())==SettingsShortcut{},"Absent platform registration reports unavailable rather than pretending success");
     const auto unchanged=unsupported.configuration();rejects([&]{unsupported.previewScale(1.2,std::numeric_limits<double>::infinity());},"Nonfinite caller time rejects");check(unsupported.configuration()==unchanged&&!unsupported.confirmationRemaining(0),"Malformed time leaves preview untouched");
     std::cout<<"Settings controller: "<<checks<<" source and transaction checks passed\n";

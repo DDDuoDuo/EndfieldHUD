@@ -2,7 +2,7 @@
 #include "native/reader_owner.hpp"
 #include "native/layer_raster.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <filesystem>
@@ -37,7 +37,7 @@ void run(const gpu::LayerFontResources&sc,const gpu::LayerFontResources&kr){Temp
 }
 // An imported Mac library (<appRoot>/Reader) with its Migration/relink.json
 // rows: the real owner keeps the stored font name, relinks a book in place
-// through the import ledger API after the library write, dismisses the row of
+// through the relink ledger API after the library write, dismisses the row of
 // a removed imported book and reconciles rows on load (record first, ledger
 // second). Without a ledger nothing is created.
 void relinkLedger(const gpu::LayerFontResources&sc){

@@ -12,9 +12,9 @@ struct Graph {
     unsigned reads{},activation{},volume{},mute{},balance{},gain{},stop{},stopAll{},output{},input{};
     bool otherOwner{},vote{},asynchronousGain{},deferVote{};std::int32_t error{},openError{};
     std::wstring lastEndpoint;
-    Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false,false},{L"out-b",L"Headphones",true,false}};audio.inputs={{L"in-a",L"Microphone",false,false}};
+    Graph(){audio.available=true;audio.paused=false;audio.outputs={{L"out-一",L"Speakers",false},{L"out-b",L"Headphones",true}};audio.inputs={{L"in-a",L"Microphone",false}};
         audio.defaultOutputID=L"out-一";audio.defaultInputID=L"in-a";
-        audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
+        audio.volume=.75f;audio.muted=false;audio.balance=0.f;audio.canSetVolume=audio.canSetMute=audio.canSetBalance=true;audio.canSetDefaultOutput=audio.canSetDefaultInput=true;audio.applicationsSupported=true;audio.applicationsPaused=false;
         audio.applications.push_back({"pid:42:creation:1",L"Owned Test App",42,true,gpu::AudioApplicationRouteState::direct,{},{},{},{}});
     }
     void changed(){if(binding)binding->receive(gpu::ServiceChange::audio);}
@@ -31,7 +31,7 @@ struct Graph {
         a.setVolume=[this](std::wstring_view endpoint,float v){++volume;lastEndpoint=endpoint;check(endpoint==audio.defaultOutputID,"Volume write carries the endpoint its gesture began on");if(error<0)return error;audio.volume=v;changed();return 0;};
         a.setMute=[this](std::wstring_view endpoint,bool v){++mute;lastEndpoint=endpoint;if(error<0)return error;audio.muted=v;changed();return 0;};
         a.setBalance=[this](std::wstring_view endpoint,float v){++balance;lastEndpoint=endpoint;if(error<0)return error;audio.balance=v;changed();return 0;};
-        a.setAppGain=[this](std::string_view id,float v){++gain;check(id==audio.applications[0].id,"Application command preserves exact process-generation identity");if(error<0)return error;if(!asynchronousGain){audio.applications[0].gain=v;audio.applications[0].state=gpu::AudioApplicationRouteState::active;changed();}return 0;};
+        a.setAppGain=[this](std::wstring_view endpoint,std::string_view id,float v){++gain;lastEndpoint=endpoint;check(endpoint==audio.defaultOutputID,"A gain carries the output it was set on");check(id==audio.applications[0].id,"Application command preserves exact process-generation identity");if(error<0)return error;if(!asynchronousGain){audio.applications[0].gain=v;audio.applications[0].state=gpu::AudioApplicationRouteState::active;changed();}return 0;};
         a.stopApp=[this](std::string_view){++stop;if(error<0)return error;audio.applications[0].gain.reset();audio.applications[0].state=gpu::AudioApplicationRouteState::direct;changed();return 0;};
         a.stopAllApps=[this]{++stopAll;return error;};
         if(selectors){a.setDefaultOutput=[this](std::wstring_view id){++output;audio.defaultOutputID=id;changed();return error;};a.setDefaultInput=[this](std::wstring_view id){++input;audio.defaultInputID=id;changed();return error;};}return a;
@@ -44,7 +44,7 @@ void lifecycle(){Graph graph;gpu::VolumeProviderBinding binding(graph.access());
     callbacks.setActive(true);check(graph.activation==0&&!binding.active(),"Selecting Volume while concealed cannot register audio listeners");
     binding.setVisible(true);check(graph.activation==1&&binding.active()&&graph.vote,"Visible selected Volume acquires one shared activation vote");
     check(binding.snapshot().canSetVolume&&binding.snapshot().canSetMute&&binding.snapshot().canSetBalance,"Known native master capabilities are enabled");
-    check(!binding.snapshot().canSetDefaultOutput&&!binding.snapshot().canSetDefaultInput,"No native default-device interop means no invented routing capability");
+    check(!binding.snapshot().canSetDefaultOutput&&!binding.snapshot().canSetDefaultInput,"Without setter operations the device menus stay disabled, whatever the service reports");
     check(binding.snapshot().outputs[1].headphones&&binding.snapshot().inputID=="in-a","Explicit headphone and input identity are preserved");
     const auto baselineReads=graph.reads,baselineDeliveries=deliveries;
     for(unsigned i=0;i<1000;++i){binding.receive(gpu::ServiceChange::battery);binding.receive(gpu::ServiceChange::clipboard);callbacks.setActive(true);binding.setVisible(true);}
@@ -68,14 +68,15 @@ void commands(){Graph graph;gpu::VolumeProviderBinding binding(graph.access());g
     check(callbacks.setBalance("out-一",-.5)&&graph.balance==1&&delivered.balance==-.5,"Stereo balance preserves its signed domain");
     check(callbacks.setMute("out-一",true)&&graph.mute==1&&delivered.muted==true,"Mute reaches the provider without an extra owner");
     check(graph.lastEndpoint==L"out-一","Mute and balance writes carry the bound endpoint for asynchronous validation");
-    check(callbacks.setAppGain("pid:42:creation:1",.4)&&graph.gain==1&&controller.snapshot().applications[0].state==gpu::VolumeAppState::active,"Per-app attenuation remains connected to existing route model");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.4)&&graph.gain==1&&controller.snapshot().applications[0].state==gpu::VolumeAppState::active,"Per-app attenuation remains connected to existing route model");
     check(std::abs(*controller.snapshot().applications[0].gain-.4)<1e-6,"Native float readback is used rather than optimistic double UI value");
     graph.audio.applications[0].available=false;graph.changed();
-    check(callbacks.setAppGain("pid:42:creation:1",.6),"Silent retained enabled route is still adjustable");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.6),"Silent retained enabled route is still adjustable");
     check(callbacks.stopApp("pid:42:creation:1")&&graph.stop==1,"Restoring an application uses the shared session lease cleanup");
-    check(!callbacks.setAppGain("pid:42:creation:1",.5),"Unavailable direct application cannot acquire a new route");
+    check(!callbacks.setAppGain("out-一","pid:42:creation:1",.5),"Unavailable direct application cannot acquire a new route");
     graph.audio.applications[0].available=true;graph.asynchronousGain=true;graph.changed();
-    check(callbacks.setAppGain("pid:42:creation:1",.2)&&!controller.snapshot().applications[0].gain,"Accepted asynchronous command does not fabricate a readback");
+    check(callbacks.setAppGain("out-一","pid:42:creation:1",.2)&&!controller.snapshot().applications[0].gain,"Accepted asynchronous command does not fabricate a readback");
+    {const auto gains=graph.gain;check(!callbacks.setAppGain("out-b","pid:42:creation:1",.3)&&graph.gain==gains&&binding.lastFailure()->kind==gpu::VolumeProviderFailureKind::deviceChanged,"A gain set on another output never reaches the runtime (source: the output device changed)");}
     graph.audio.applications[0].state=gpu::AudioApplicationRouteState::failed;graph.audio.applications[0].error=-123;graph.changed();
     check(controller.snapshot().applications[0].error&&controller.snapshot().applications[0].error->find("-123")!=std::string::npos,"Asynchronous per-app native failure is surfaced from delivered state");
     graph.audio.defaultOutputID=L"out-b"; // Deliberately delay the notification.
@@ -96,6 +97,12 @@ void selection(){Graph graph;gpu::VolumeProviderBinding binding(graph.access(tru
     check(binding.callbacks().setDefaultInput("in-a")&&graph.input==1,"Input selection has its own supported routing operation");
     const auto callbacks=binding.callbacks();check(!callbacks.setDefaultOutput("removed")&&graph.output==1,"A removed device is rejected against latest topology");
     graph.error=-77;check(!callbacks.setDefaultInput("in-a")&&binding.lastFailure()->status==-77,"Native selector failure is preserved instead of claiming success");
+    // The service turned switching off (no IPolicyConfig, or a failed switch).
+    graph.error=0;graph.audio.canSetDefaultOutput=graph.audio.canSetDefaultInput=false;graph.changed();
+    check(!controller.snapshot().canSetDefaultOutput&&!controller.snapshot().canSetDefaultInput,"The service's capability disables both menus even with setters");
+    check(!callbacks.setDefaultOutput("out-一")&&!callbacks.setDefaultInput("in-a")&&graph.output==1&&graph.input==2,"A choice reaching a disabled menu is refused before the setter");
+    graph.audio.canSetDefaultInput=true;graph.changed();
+    check(!controller.snapshot().canSetDefaultOutput&&controller.snapshot().canSetDefaultInput,"Each direction follows its own capability");
 }
 void lifetime(){Graph graph;gpu::VolumeCallbacks retained;{
     auto binding=std::make_unique<gpu::VolumeProviderBinding>(graph.access());graph.binding=binding.get();retained=binding->callbacks();binding->setVisible(true);retained.setActive(true);
@@ -149,8 +156,8 @@ void revisit(){Graph graph;graph.deferVote=true;graph.apply();gpu::VolumeProvide
     graph.openError=-77;graph.settle();
     check(graph.audio.paused&&!deliveries.empty()&&!binding.snapshot().canSetVolume&&binding.snapshot().status&&binding.snapshot().status->find("-77")!=std::string::npos,"A worker that could not open the endpoints shows the real paused state and its error");
 }
-void endpointTraits(){Graph graph;graph.audio.outputs.push_back({L"bt-1",L"Synthetic BT",true,true});gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
-    const auto&out=binding.snapshot().outputs;check(out.size()==3&&out[2].bluetooth&&out[2].headphones&&!out[0].bluetooth&&out[1].headphones&&!out[1].bluetooth,"Explicit Bluetooth and headphone traits reach the snapshot");
+void endpointTraits(){Graph graph;graph.audio.outputs.push_back({L"bt-1",L"Synthetic BT",true});gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
+    const auto&out=binding.snapshot().outputs;check(out.size()==3&&out[2].headphones&&!out[0].headphones&&out[1].headphones,"Explicit headphone traits reach the snapshot");
     // Fixed/pass-through output: value stays visible, writes are refused before the provider.
     graph.audio.canSetVolume=false;graph.changed();check(binding.snapshot().volume==.75&&!binding.snapshot().canSetVolume,"Fixed-volume output keeps its readback but disables the slider");
     const auto writes=graph.volume;check(!binding.callbacks().setVolume("out-一",.3)&&graph.volume==writes&&binding.lastFailure()->kind==gpu::VolumeProviderFailureKind::unsupported,"Fixed-volume output never receives a software volume write");
@@ -162,8 +169,9 @@ void workerStatus(){
     check(gpu::volumeProviderFailure(static_cast<std::int32_t>(0x80070057u)).kind==K::invalidValue&&gpu::volumeProviderFailure(static_cast<std::int32_t>(0x8000000Au)).kind==K::unavailable,"Invalid value and pending map to their source categories");
     check(gpu::volumeProviderFailure(-5).kind==K::native&&gpu::volumeProviderFailure(-5).status==-5,"Other native statuses keep their code");
     Graph graph;gpu::VolumeProviderBinding binding(graph.access());graph.binding=&binding;binding.setVisible(true);binding.callbacks().setActive(true);
-    graph.audio.commandError=static_cast<std::int32_t>(0x8007048Fu);graph.changed();check(binding.snapshot().status=="The audio device changed. Try the control again.","An asynchronous worker command failure is surfaced with the source text");
+    graph.audio.commandError=static_cast<std::int32_t>(0x8007048Fu);graph.changed();check(binding.snapshot().status=="The audio device changed. Try the control again","An asynchronous worker command failure is surfaced with the source text");
     graph.audio.commandError=0;graph.changed();check(!binding.snapshot().status,"A later successful command clears the asynchronous status");
-    graph.audio.routesStoppedByDeviceChange=true;graph.changed();check(binding.snapshot().routingStopped,"Output change notice reaches the presentation snapshot");
+    graph.audio.routeError=-5;graph.changed();check(binding.snapshot().perAppStatus&&binding.snapshot().perAppStatus->find("(-5)")!=std::string::npos&&!binding.snapshot().status&&!binding.snapshot().applicationMessage,"A per-app command failure is the per-app status line, not a toast or the empty-list reason");
+    graph.audio.routeError=0;graph.changed();check(!binding.snapshot().perAppStatus,"A per-app command that succeeds clears the status line");
 }
 int main(){try{lifecycle();commands();selection();lifetime();boundaries();revisit();endpointTraits();workerStatus();std::cout<<"PASS "<<checks<<" injected Volume provider checks (no native audio accessed)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

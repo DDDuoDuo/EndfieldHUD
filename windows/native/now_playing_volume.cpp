@@ -25,7 +25,9 @@ std::vector<modules::NowPlayingAudioRoute>nowPlayingAudioRoutes(std::span<const 
     std::vector<modules::NowPlayingAudioRoute>out;out.reserve(routes.size());
     for(const auto&route:routes){
         modules::NowPlayingAudioRoute next;next.id=route.id;next.pid=route.pid;next.available=route.available;
-        if(route.executable)next.executablePath=route.executable->path;
+        if(route.executable){next.executablePath=route.executable->path;next.executableIdentity=route.executable->identity;}
+        if(route.application){next.applicationPath=route.application->path;next.applicationIdentity=route.application->identity;}
+        next.packageFamily=route.packageFamily;
         next.state=route.state==AudioApplicationRouteState::active?modules::NowPlayingAudioRouteState::active
             :route.state==AudioApplicationRouteState::failed?modules::NowPlayingAudioRouteState::failed:modules::NowPlayingAudioRouteState::direct;
         if(route.gain&&std::isfinite(*route.gain))next.gain=static_cast<double>(*route.gain);

@@ -14,7 +14,7 @@ final class VolumeCanvas: HUDDesignCanvas {
     /// 0 Devices, 1 App volume; kept across visits (spec §2.9).
     private(set) var tab = 0
     private struct Structure: Equatable {
-        let language: AppLanguage, tab: Int, apps: [UInt32], supported: Bool, status: Bool
+        let language: AppLanguage, tab: Int, apps: [UInt32], supported: Bool, status: Bool, emptyReason: String?
     }
     private var renderedStructure: Structure?
     /// Updates of the visible controls from the current snapshot and routes.
@@ -85,19 +85,25 @@ final class VolumeCanvas: HUDDesignCanvas {
     /// while its app is silent and absent from the active-process list.
     var listedApplications: [AudioApplicationInfo] {
         guard snapshot.applicationActivitySupported else { return [] }
-        var apps = snapshot.availableApplications.isEmpty ? snapshot.activeApplications : snapshot.availableApplications
-        for session in perAppAudio.sessions where !apps.contains(where: { $0.id == session.processID }) {
-            apps.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
-                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
-        }
-        return apps.filter { app in
+        return perAppAudio.candidates(in: snapshot).filter { app in
             session(app.id) != nil || currentOutput.map { perAppAudio.availability(application: app, output: $0) == nil } ?? false
         }
     }
 
+    /// Only the App volume tab reads the per-app support flag, which the
+    /// first device read after launch turns on: the Devices page must not
+    /// rebuild under its entrance for it.
     private var structure: Structure {
-        Structure(language: L10n.resolvedLanguage, tab: tab, apps: tab == 1 ? listedApplications.map(\.id) : [],
-                  supported: snapshot.applicationActivitySupported, status: tab == 1 && perAppAudio.statusMessage != nil)
+        let apps = tab == 1 ? listedApplications.map(\.id) : []
+        return Structure(language: L10n.resolvedLanguage, tab: tab, apps: apps,
+                         supported: tab == 1 && snapshot.applicationActivitySupported, status: tab == 1 && perAppAudio.statusMessage != nil,
+                         emptyReason: tab == 1 && apps.isEmpty ? emptyReason : nil)
+    }
+
+    /// Why the app list is empty: process detection's own message, else why
+    /// the current output cannot carry app volume.
+    private var emptyReason: String? {
+        snapshot.applicationActivityMessage ?? currentOutput.flatMap(perAppAudio.outputAvailability)
     }
 
     private func changed() {
@@ -237,7 +243,7 @@ final class VolumeCanvas: HUDDesignCanvas {
             guard let self, let id = UInt32(item.id) else { return }
             if input { _ = self.controller.setDefaultInput(id); return }
             if id != self.snapshot.defaultOutputID {
-                self.perAppAudio.stopAll(reason: L10n.text("App routing stopped because the output device changed.", "输出设备已更改，应用混音已停止。"))
+                self.perAppAudio.stopAll()
             }
             _ = self.controller.setDefaultOutput(id)
         }
@@ -285,7 +291,7 @@ final class VolumeCanvas: HUDDesignCanvas {
         let viewport = appViewport
         guard snapshot.applicationActivitySupported, !apps.isEmpty else {
             let title = L10n.text("No adjustable audio apps", "暂无可调节音量的应用")
-            let detail = snapshot.applicationActivitySupported ? snapshot.applicationActivityMessage
+            let detail = snapshot.applicationActivitySupported ? emptyReason
                 : snapshot.applicationActivityMessage ?? L10n.text("Audio app detection requires macOS 14.2 or later", "音频应用检测需要 macOS 14.2 或更高版本")
             let empty = HUDEmptyState.make(title: title.uppercased(), subtitle: detail,
                                            size: CGSize(width: HUDMetric.box.width, height: appViewport.height), env: env)

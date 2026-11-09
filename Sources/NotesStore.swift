@@ -77,11 +77,11 @@ enum NotesStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .database(let detail): return L10n.text("Notes could not be saved or opened: ", "无法保存或打开便笺：") + detail
-        case .invalidRecord: return L10n.text("A saved note could not be read. The original database has been preserved.", "无法读取已保存的便笺，原始数据库已保留。")
-        case .newerDatabase: return L10n.text("These notes were saved by a newer version of EndfieldCharge.", "这些便笺由较新版本的 EndfieldCharge 保存。")
-        case .invalidImage: return L10n.text("This file could not be opened as an image.", "无法将此文件作为图片打开。")
-        case .imageTooLarge: return L10n.text("Choose an image smaller than 128 MB.", "请选择小于 128 MB 的图片。")
-        case .invalidImageName: return L10n.text("The note contains an invalid image reference.", "便笺中的图片引用无效。")
+        case .invalidRecord: return L10n.text("A saved note could not be read. The original database has been preserved", "无法读取已保存的便笺，原始数据库已保留")
+        case .newerDatabase: return L10n.text("These notes were saved by a newer version of EndfieldCharge", "这些便笺由较新版本的 EndfieldCharge 保存")
+        case .invalidImage: return L10n.text("This file could not be opened as an image", "无法将此文件作为图片打开")
+        case .imageTooLarge: return L10n.text("Choose an image smaller than 128 MB", "请选择小于 128 MB 的图片")
+        case .invalidImageName: return L10n.text("The note contains an invalid image reference", "便笺中的图片引用无效")
         }
     }
 }
@@ -119,7 +119,7 @@ final class NotesStore {
         let result = sqlite3_open_v2(path, &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
         database = opened
         guard result == SQLITE_OK else {
-            let detail = opened.map { String(cString: sqlite3_errmsg($0)) } ?? "Could not open the database."
+            let detail = opened.map { String(cString: sqlite3_errmsg($0)) } ?? "Could not open the database"
             if let opened { sqlite3_close_v2(opened) }
             database = nil
             throw NotesStoreError.database(detail)
@@ -439,6 +439,6 @@ final class NotesStore {
     }
 
     private func databaseError() -> NotesStoreError {
-        .database(database.map { String(cString: sqlite3_errmsg($0)) } ?? "The database is closed.")
+        .database(database.map { String(cString: sqlite3_errmsg($0)) } ?? "The database is closed")
     }
 }

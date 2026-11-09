@@ -1,6 +1,6 @@
 # Closure's Minigame
 
-Play Merge! OrbiPom! without sound. Move the next piece across the playfield and click to drop it. Matching pieces merge into larger pieces and increase your score.
+Play OrbiPom! MERGE! without sound. Move the next piece across the playfield and click to drop it. Matching pieces merge into larger pieces and increase your score.
 
 Earn SP for skills: Eliminate, Wind, Shake and Swap. The question-mark button explains the rules. Pieces reaching the top start a red danger countdown; game over and pause darken the board.
 

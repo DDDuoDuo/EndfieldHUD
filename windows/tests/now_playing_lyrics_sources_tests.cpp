@@ -438,7 +438,7 @@ int main(int argc,char**argv){
     try{
         check(argc==2,"Pass now-playing-lyrics-source.json");std::ifstream in(argv[1],std::ios::binary);check(bool(in),"Read original lyric source fixture");
         const auto j=Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),8*1024*1024);
-        check(j["sourceCommit"].string()=="4fda15a03ba50675e0b12d69a83efdb6526c19f6","Lyric source fixture is pinned to the authority commit (Mac 1.3.0)");
+        check(j["sourceCommit"].string()=="79bc6651959977d3c6aa89c8faeedb155a15f20d","Lyric source fixture is pinned to the authority commit (Mac 1.3.1)");
         matcher(j);urls(j);decoders(j);scenarios(j);windowsSources();deferredDecoding();playingListParser();playingListCatalog();decodeCost();
         longPlayingList();neteaseStamps();bodies();retries();
         std::cout<<"Now Playing lyrics sources: "<<checks<<" checks passed (original Swift oracle, injected responses only)\n";return 0;

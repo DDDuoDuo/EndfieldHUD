@@ -20,7 +20,7 @@ struct PowerOwner::Impl {
     Impl(app::UtilityExecutor& executor, native::LayerRasterizer& raster, native::ChargePanelOptions options, PowerOwnerCallbacks c,
          native::PowerService::Reader reader)
         : callbacks(std::move(c)),
-          panel(raster, std::move(options), [this](std::optional<m::ChargePosition> position) { positionFinished(position); }),
+          panel(raster, std::move(options), [this](std::optional<m::ChargeBarLayout> layout) { positionFinished(layout); }),
           coordinator(panel.state()),
           service(executor, [this](const m::BatteryReading& reading) { changed(reading); }, std::move(reader)) {}
     void clock(double t) {
@@ -36,16 +36,20 @@ struct PowerOwner::Impl {
         coordinator.receive(reading, time);
         if (callbacks.readingChanged) callbacks.readingChanged(reading);
     }
-    void positionFinished(const std::optional<m::ChargePosition>& position) {
-        if (position && callbacks.savePosition) callbacks.savePosition(*position);
-        if (position) {
-            // The saved position applies at once; the settings event that
+    void positionFinished(const std::optional<m::ChargeBarLayout>& layout) {
+        if (layout && callbacks.saveBarLayout) callbacks.saveBarLayout(*layout);
+        if (layout) {
+            // The saved layout applies at once; the settings event that
             // follows the queued save carries the same values.
             auto next = settings;
-            next.customPlacement = true;
-            next.customScreenID = position->screenID;
-            next.customX = position->x;
-            next.customY = position->y;
+            if (const auto& position = layout->position) {
+                next.customPlacement = true;
+                next.customScreenID = position->screenID;
+                next.customX = position->x;
+                next.customY = position->y;
+            }
+            next.scale = layout->scale;
+            next.length = layout->length;
             settings = next.normalized();
             panel.state().setSettings(settings);
             coordinator.setSettings(settings, time);

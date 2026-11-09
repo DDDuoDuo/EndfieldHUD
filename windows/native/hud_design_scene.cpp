@@ -24,7 +24,7 @@ Matrix matrix(const d::Affine& a) {
 float linear(double c) { c = std::clamp(c, 0., 1.); return float(c <= .04045 ? c / 12.92 : std::pow((c + .055) / 1.055, 2.4)); }
 std::array<float, 4> linearTint(const std::optional<d::Color>& c) {
     if (!c) return {1, 1, 1, 1};
-    return {linear(c->r), linear(c->g), linear(c->b), float(std::clamp(c->a, 0., 1.))};
+    return designLinearTint(*c);
 }
 // A lazy surface keeps no bitmap while it does not show (Mac: a layer at
 // opacity 0 keeps no backing store): its leaf holds one transparent point
@@ -63,6 +63,8 @@ core::Rect inflated(const core::Rect& r, double vertical) { return {r.x, r.y - v
 // An entrance (stagger, wipe, pop, grow) on the layer or an ancestor up to
 // `root` is pending (its delay not over yet) or running: the layer is about to
 // show. A layer merely resting at opacity 0 (a hidden slider bubble) is not.
+// Not design::entranceSlots (HUDMotion.entranceKeys, what a strip keeps):
+// a pop counts here and a wipe's fade does not; keep the two sets apart.
 bool entering(const d::Layer& layer, const d::Layer& root, double now) noexcept {
     constexpr std::array slots{d::MotionSlot::enter, d::MotionSlot::wipe, d::MotionSlot::pop, d::MotionSlot::grow};
     for (const d::Layer* l = &layer; l; l = l == &root ? nullptr : l->parent()) {
@@ -360,10 +362,20 @@ NativeDesignScene::NativeDesignScene(LayerRasterizer& r, LayerRasterOptions o, s
 NativeDesignScene::~NativeDesignScene() = default;
 void NativeDesignScene::setImages(DesignImages images) { impl_->images = std::move(images); impl_->imagesDirty = true; }
 
+void NativeDesignScene::setMagnification(double value) {
+    auto& i = *impl_;
+    if (i.options.magnification == value) return;
+    i.options.magnification = value;
+    i.synced = false; i.density = 0; // every part rasterizes again at the next sync
+}
 bool NativeDesignScene::syncContent(const d::Layer& root, const d::TextServices& text, std::uint64_t revision, double pixelsPerPoint, double now) {
     auto& i = *impl_;
     i.time(now);
-    need(std::isfinite(pixelsPerPoint) && pixelsPerPoint >= 1 && pixelsPerPoint <= 4, "Design density outside 1...4");
+    // layerContentsScale: 1...4 (x the options' magnification for a tree drawn
+    // under an enlarging or shrinking transform, such as the 0.7 bar editor strip).
+    const double magnification = core::renderMagnification(i.options.magnification);
+    need(std::isfinite(pixelsPerPoint) && pixelsPerPoint >= magnification && pixelsPerPoint <= core::maximumRenderScale * magnification,
+         "Design density outside 1...4 (times the magnification)");
     const bool content = !i.synced || i.revision != revision || i.density != pixelsPerPoint || i.root != &root || i.imagesDirty;
     if (!content) {
         // A scroll step or glide (no content event): only the visibility
@@ -678,11 +690,15 @@ bool NativeDesignScene::releaseResources(Renderer& r) {
     for (auto& p : i.parts) if (p->scene) ok = p->scene->releaseResources(r) && ok;
     return ok;
 }
+bool NativeDesignScene::holdsArtwork() const noexcept {
+    const auto& i = *impl_;
+    if (!i.retired.empty() || !i.kept.empty()) return true;
+    for (const auto& p : i.parts) if (p->scene) return true;
+    return false;
+}
 bool NativeDesignScene::park(Renderer& r) noexcept {
     auto& i = *impl_;
-    bool any = !i.retired.empty() || !i.kept.empty();
-    for (const auto& p : i.parts) any |= bool(p->scene);
-    if (!any) return false;
+    if (!holdsArtwork()) return false;
     // A composed part refuses (before anything is released): stay resident.
     try { if (!releaseResources(r)) return false; } catch (...) { return false; }
     // Destroying the scenes removes their shared raster entries; the next
@@ -701,12 +717,31 @@ void NativeDesignScene::setInsertion(const d::Layer* after, std::optional<LayerC
     i.refreshEntries();
 }
 core::Matrix4 designMatrix(const d::Affine& a) noexcept { return matrix(a); }
+std::array<float, 4> designLinearTint(const d::Color& c) noexcept {
+    return {linear(c.r), linear(c.g), linear(c.b), float(std::clamp(c.a, 0., 1.))};
+}
 std::optional<PlaneMask> designPlaneMask(const d::PoseMask& m, const core::Matrix4& inverseBox) noexcept {
     const auto inverse = m.world.inverse();
     if (!inverse || !(m.bounds.width > 0) || !(m.bounds.height > 0)) return std::nullopt;
     return PlaneMask{matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
 }
 const core::Matrix4& NativeDesignScene::boxWorld() const noexcept { return impl_->boxWorld; }
+bool NativeDesignScene::composes(std::string_view source) const noexcept {
+    const auto& i = *impl_;
+    const auto listed = [&](auto&& match) { return std::any_of(i.entries.begin(), i.entries.end(), match); };
+    for (const auto& p : i.parts) {
+        if (!p->scene) continue;
+        const auto draws = p->scene->draws();
+        if (std::none_of(draws.begin(), draws.end(), [&](const DrawObject& d) { return d.opacity > 0 && d.sourceID.find(source) != std::string_view::npos; })) continue;
+        const Impl::Part& owner = p->host ? *p->host : *p;
+        if (owner.group) {
+            const auto output = owner.group->draws();
+            if (owner.group->holdsTarget() && output.size() && output[0].opacity > 0 &&
+                listed([&](const LayerCompositionEntry& e) { return e.after.data() == output.data(); })) return true;
+        } else if (listed([&](const LayerCompositionEntry& e) { return e.scene == p->scene.get(); })) return true;
+    }
+    return false;
+}
 NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     const auto& i = *impl_;
     auto s = i.statistics;

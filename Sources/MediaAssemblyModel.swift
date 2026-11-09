@@ -182,14 +182,14 @@ enum MediaAssemblyError: LocalizedError {
     case unsupported, invalidAdjustment, unavailable, changedOnDisk, unsupportedExport, exportFailed, cancelled, exists
     var errorDescription: String? {
         switch self {
-        case .unsupported: return L10n.text("This media format is not supported for editing.", "此媒体格式不支持编辑。")
-        case .invalidAdjustment: return L10n.text("Choose a valid crop, adjustment or trim range.", "请选择有效的裁剪、调整或剪辑范围。")
-        case .unavailable: return L10n.text("The original media is unavailable.", "原始媒体不可用。")
-        case .changedOnDisk: return L10n.text("The original changed. Open it again before exporting.", "原文件已更改，请重新打开后再导出。")
-        case .unsupportedExport: return L10n.text("This Mac cannot export the selected format. Choose PNG, JPEG, TIFF, HEIC, MOV or MP4.", "此 Mac 无法导出所选格式，请选择 PNG、JPEG、TIFF、HEIC、MOV 或 MP4。")
-        case .exportFailed: return L10n.text("Export failed. The original file was preserved.", "导出失败，原文件已保留。")
-        case .cancelled: return L10n.text("Export cancelled.", "导出已取消。")
-        case .exists: return L10n.text("The destination already exists. Confirm overwrite or choose another name.", "目标文件已存在，请确认覆盖或选择其他名称。")
+        case .unsupported: return L10n.text("This media format is not supported for editing", "此媒体格式不支持编辑")
+        case .invalidAdjustment: return L10n.text("Choose a valid crop, adjustment or trim range", "请选择有效的裁剪、调整或剪辑范围")
+        case .unavailable: return L10n.text("The original media is unavailable", "原始媒体不可用")
+        case .changedOnDisk: return L10n.text("The original changed. Open it again before exporting", "原文件已更改，请重新打开后再导出")
+        case .unsupportedExport: return L10n.text("This Mac cannot export the selected format. Choose PNG, JPEG, TIFF, HEIC, MOV or MP4", "此 Mac 无法导出所选格式，请选择 PNG、JPEG、TIFF、HEIC、MOV 或 MP4")
+        case .exportFailed: return L10n.text("Export failed. The original file was preserved", "导出失败，原文件已保留")
+        case .cancelled: return L10n.text("Export cancelled", "导出已取消")
+        case .exists: return L10n.text("The destination already exists. Confirm overwrite or choose another name", "目标文件已存在，请确认覆盖或选择其他名称")
         }
     }
 }
