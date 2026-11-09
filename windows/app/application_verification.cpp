@@ -3234,6 +3234,11 @@ int Application::Impl::runHiddenVerification(){
                     const auto entriesPublished=[&](core::Module module){auto*owner=registry.presenter(module);if(!owner)return false;const auto entries=owner->entries(module);
                         return !entries.empty()&&std::all_of(entries.begin(),entries.end(),[&](const gpu::LayerCompositionEntry&e){
                             return std::any_of(ordered.begin(),ordered.end(),[&](const gpu::LayerCompositionEntry&p){return p.scene==e.scene;});});};
+                    // A part drawn directly (at rest, not through a fading group) by a module's scenes.
+                    const auto partDrawn=[&](core::Module module,std::string_view part){auto*owner=registry.presenter(module);if(!owner)return false;
+                        for(const auto&e:owner->entries(module))if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find(part)!=std::string::npos&&d.opacity>0)return true;return false;};
+                    const std::function<const modules::design::Layer*(const modules::design::Layer&,std::string_view)> layerEnding=[&](const modules::design::Layer&layer,std::string_view id)->const modules::design::Layer*{
+                        if(layer.id().ends_with(id))return &layer;for(const auto*child:layer.children())if(const auto*found=layerEnding(*child,id))return found;return nullptr;};
                     // B5-1 (5c8a905, 839d3b8): a switch the close catches lands hidden on
                     // its new module while the old screen finishes its .13 s leave below
                     // it, composed with falling opacity; a reversed switch keeps leaving
@@ -3276,6 +3281,35 @@ int Application::Impl::runHiddenVerification(){
                             contentCheck(notes->selected()==shown&&shownCore.canvas(shown)->isActive()&&entriesPublished(shown)&&notes->modulePresentation().current.opacity==1,
                                 switchName+": the next open shows "+(reversed?"Clipboard":"Event Log"));
                         }
+                    }
+                    // B5-4 and C7 (2e08932, 48584b5): the System page's Language menu,
+                    // opened through its accessible action (no input), leaves with the
+                    // page on a switch to Clipboard and through the close, taking no input.
+                    if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner)&&clipboardModuleOwner&&registry.enabled(*clipboardModuleOwner)){
+                        const auto systemModule=core::Module::system;auto&systemPage=settingsUI->canvas(systemModule);
+                        const auto languageMenu=[&]{return layerEnding(systemPage.top(),"language.menu");};
+                        // Drawn: in the page's tree at a visible opacity while the page is
+                        // composed (through a fade its parts may draw through a group target).
+                        const auto menuDrawn=[&](double at){const auto*menu=languageMenu();return menu&&menu->presented(modules::design::Channel::opacity,at)>0&&entriesPublished(systemModule);};
+                        const auto openMenu=[&](const char*when){closeShow(systemModule);
+                            const bool opened=systemPage.performAccessibilityAction("language",hostTime(t))&&systemPage.menuOpen();t=run(t,.3);
+                            contentCheck(opened&&languageMenu()&&partDrawn(systemModule,"language.menu"),std::string(when)+", the System page's Language dropdown opens its menu through its accessible action");};
+                        openMenu("Before a switch");
+                        {const double base=t;perform(lifecycle.selectModule(core::Module::clipboard),t);const double switched=hostTime(t);unsigned leaving=0;bool kept=true,quiet=true;
+                         for(unsigned n=1;n<=12;++n){t=base+n/60.;closeFrame(t);
+                             quiet=quiet&&!systemPage.menuOpen()&&settingsUI->inputModule()!=std::optional(systemModule)&&!settingsModuleOwner->capturesPointer();
+                             if(hostTime(t)-switched<core::DesignMotion::leave-1e-6){++leaving;kept=kept&&menuDrawn(hostTime(t));}}
+                         contentCheck(leaving>=3&&kept,"The Language menu stays drawn with the System page through the page's .13 s leave (B5-4)");
+                         contentCheck(quiet,"The leaving menu takes no input: it is closed and Settings is not the input module (B5-4)");}
+                        closeShow(systemModule);contentCheck(!systemPage.menuOpen()&&!languageMenu(),"Shown again, the System page has dropped the menu that left with it");
+                        openMenu("Before the close");
+                        perform(lifecycle.toggle(),t);
+                        {const double closedAt=t;bool kept=true,quiet=true;
+                         for(unsigned n=1;n<=6;++n){t=closedAt+n/60.;closeFrame(t);kept=kept&&menuDrawn(hostTime(t));quiet=quiet&&systemPage.isActive()&&!settingsUI->inputModule()&&!settingsModuleOwner->capturesPointer();}
+                         contentCheck(kept&&quiet,"Through the close the Language menu stays drawn on the active System page while Settings takes no input (C7)");}
+                        closeFinish();
+                        contentCheck(!systemPage.isActive()&&!systemPage.menuOpen(),"Once hidden the System page has left, its menu closed (C7)");
+                        closeReopen();contentCheck(notes->selected()==systemModule&&!languageMenu(),"The next open shows the System page without the menu");
                     }
                     closeShow(core::Module::notes);
                 }
