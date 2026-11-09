@@ -535,6 +535,11 @@ void ReaderCanvas::layoutPages() {
     const d::Size size{pageViewport.width, pageViewport.height};
     if (preferences.vertical() && !zoomed) {
         pendingTurn_.reset();
+        // Reopening the book shown (the module shown again) empties the
+        // rendered column until its render returns: the drawn pages and the
+        // scroll stay as they are until then (Mac dc1bf1b). This also covers a
+        // change that coalesces into the deactivation's revision.
+        if (state_->pages().empty() && !state_->error() && columnLocation_ == current->location && holdsPage(current->location)) return;
         if (columnLocation_ != current->location) { columnLocation_ = current->location; scrollOffset_ = 0; }
         clampOffset();
         current = state_->current();

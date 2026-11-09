@@ -332,6 +332,15 @@ void readerKeepsPages() {
     // The leave: the page goes as drawn.
     canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
     check(r.state->pages().empty() && shot() == drawn && canvas.scrollOffset() == offset, "Leaving keeps the neighbours and the scroll while the page fades out");
+    // Shown again: the reopened book renders later; the pages and the scroll stay meanwhile.
+    w.advance(1);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    if (r.state->revision() != r.seen) { r.seen = r.state->revision(); canvas.stateChanged(); }
+    check(r.state->pages().empty() && !r.queue.jobs.empty() && shot() == drawn && canvas.scrollOffset() == offset,
+        "Showing the module again keeps the drawn pages and the scroll until the render returns");
+    r.sync();
+    check(!r.state->pages().empty() && shot() == drawn && canvas.scrollOffset() == offset, "The returned render keeps them where they were");
+    for (const auto& kept : drawn) check(!enter(*kept.first).present() || enter(*kept.first).start < w.now - .5, "A kept neighbour does not fade in again");
     // A reopen that fails lays the column out as usual: the neighbours go.
     canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
     r.source->count = 0;
