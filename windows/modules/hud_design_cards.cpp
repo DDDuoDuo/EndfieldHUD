@@ -424,7 +424,6 @@ ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string tit
     well_->add(*brighten_); well_->add(codeBar); well_->add(code);
     doc_ = &docGlyph(b, sub(this->id(), "tile.doc"), extension, extensionLabel);
     doc_->setPosition({width / 2, wellHeight / 2});
-    doc_->setAnimatable();                               // fades out under a late poster (setPoster)
     if (classified) well_->add(classifiedStamp(b, sub(this->id(), "tile.stamp"), {width / 2, wellHeight / 2}));
     else well_->add(*doc_);
     if (size) {
@@ -466,7 +465,7 @@ ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string tit
 // docGlyph (:404-425): 40 x 50, ruled lines, the extension in the kind's colour, -6 deg.
 Layer& ArchiveTile::docGlyph(Builder& b, std::string_view id, Extension extension, const std::optional<std::string>& label) {
     Layer& doc = b.layer(id);
-    doc.setAnimatable();                                 // straightens and lifts on hover
+    doc.setAnimatable();                                 // straightens and lifts on hover, fades out under a late poster (setPoster)
     doc.setBounds({40, 50});
     const auto fold = PathBuilder().move({0, 0}).line({28, 0}).line({40, 11}).line({40, 50}).line({0, 50}).close();
     Layer& page = b.layer(sub(id, "page"));
