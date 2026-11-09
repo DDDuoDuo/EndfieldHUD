@@ -393,6 +393,17 @@ void wipe(Layer& l, WipeOrigin origin, double duration, const Clock& clock, core
     }
 }
 void removeWipe(Layer& l) { l.removeMotion(MotionSlot::fade); l.removeMotion(MotionSlot::wipe); }
+void crossFade(Layer& incoming, Layer* outgoing, double duration, const Clock& clock) {
+    requireAnimatable(incoming); if (outgoing) requireAnimatable(*outgoing); requireTime(clock);
+    const auto fade = [&](Layer& l, double from, double to) {
+        l.removeMotion(MotionSlot::fade);
+        l.setValue(Channel::opacity, to);
+        if (clock.reduceMotion || !(duration > 0) || from == to) return;
+        entry(l, MotionSlot::fade, 0, Channel::opacity) = timed(Track::basic(from, to, 0, duration, easing::easeInOut), clock.now, 0);
+    };
+    if (outgoing) fade(*outgoing, outgoing->presented(Channel::opacity, clock.now), 0);
+    fade(incoming, 0, 1);
+}
 // HUDMotion.grow (:161-169).
 void grow(Layer& l, double duration, const Clock& clock, double delay, core::CubicTiming timing) {
     requireAnimatable(l); requireTime(clock);

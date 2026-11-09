@@ -595,15 +595,21 @@ void NowPlayingCanvas::showArt(bool animated) {
     displayed_ = art.image;
     const auto clock = env().clock();
     if (animated && !clock.reduceMotion) {
+        // HUDMotion.crossFade (:339): one ease-in-out fade, finite, so a close
+        // or a switch away lets it end. A new cover fades in over the old one,
+        // which stays opaque underneath until fadeEnd_ (new x e + old x (1 - e),
+        // the CATransition's mix for opaque covers, with no dip through the
+        // two); with no new cover the old one fades out.
         const auto old = covers_[1];
         covers_ = {old, art};
         fadeEnd_ = clock.now + .2;
+        art_[0]->removeMotion(d::MotionSlot::fade);
         art_[0]->setValue(Channel::opacity, old.image ? 1 : 0);
-        if (art.image) { art_[1]->setValue(Channel::opacity, 0); d::motion::animate(*art_[1], Channel::opacity, 1, .2, clock, d::easing::easeInOut); }
-        else d::motion::animate(*art_[0], Channel::opacity, 0, .2, clock, d::easing::easeInOut);
+        d::motion::crossFade(*art_[1], art.image ? nullptr : art_[0], .2, clock);
     } else {
         covers_ = {NowPlayingCoverArt{}, art};
         fadeEnd_ = 0;
+        for (auto* layer : art_) layer->removeMotion(d::MotionSlot::fade);
         art_[0]->setValue(Channel::opacity, 0); art_[1]->setValue(Channel::opacity, 1);
     }
     if (placeholder_) placeholder_->setHidden(art.image != nullptr);

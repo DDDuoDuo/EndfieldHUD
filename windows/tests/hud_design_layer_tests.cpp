@@ -582,6 +582,29 @@ void strips() {
     check(&a.tracks() == &b.tracks(), "A layer stripped of its only (endless) track keeps no storage");
 }
 
+// HUDMotion.crossFade (b8cc1df) on the fade slot (X-D1).
+void crossFades() {
+    d::Deadlines deadlines;
+    d::LayerArena arena("fade", &deadlines);
+    auto& incoming = arena.make("in"); auto& outgoing = arena.make("out"); auto& plain = arena.make("plain");
+    incoming.setAnimatable(); outgoing.setAnimatable();
+    const auto io = d::easing::easeInOut;
+    m::crossFade(incoming, &outgoing, .22, {10, false, &deadlines});
+    check(incoming.value(C::opacity) == 1 && outgoing.value(C::opacity) == 0, "Models are set at once");
+    check(incoming.presented(C::opacity, 10) == 0 && near(incoming.presented(C::opacity, 10.11), io.value(.5)) && incoming.presented(C::opacity, 10.22) == 1, "Incoming 0 -> 1 ease-in-out");
+    check(outgoing.presented(C::opacity, 10) == 1 && near(outgoing.presented(C::opacity, 10.11), 1 - io.value(.5)) && outgoing.presented(C::opacity, 10.3) == 0, "Outgoing from what it shows to 0");
+    m::crossFade(outgoing, &incoming, .22, {10.11, false, &deadlines});
+    check(near(incoming.presented(C::opacity, 10.11), io.value(.5)) && outgoing.presented(C::opacity, 10.11) == 0, "A reversal starts the outgoing side from its presented value");
+    m::crossFade(incoming, nullptr, .2, {20, true, &deadlines});
+    check(incoming.presented(C::opacity, 20) == 1 && !incoming.animating(20), "Reduce Motion: no track");
+    rejects([&] { m::crossFade(plain, nullptr, .2, {30, false, &deadlines}); }, "A static layer cannot cross-fade");
+    m::crossFade(incoming, nullptr, .2, {40, false, &deadlines});
+    m::removeMotion(incoming, {d::entranceSlots, false});
+    check(incoming.animating(40.1), "The entrance keep list keeps a cross-fade (the wipe's fade slot)");
+    incoming.setValue(C::opacity, 1);
+    check(incoming.animating(40.1), "setValue cancels only property tracks: an instant path removes the fade slot itself");
+}
+
 // TODO(lead): when the L3 oracle fixture lands, compare emitted trees of the
 // fixture's component scenes node by node here (frames, colours, z order)
 // and its recorded allowsGroupOpacity flags (Q3). Until then the vectors
@@ -594,7 +617,7 @@ void oracle(const char* path) {
 int main(int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: hud_design_layer_tests <hud-design-source.json>");
-        affine(); model(); verbs(); strips(); emission(); poses(); hits(); lifetime(); oracle(argv[1]);
+        affine(); model(); verbs(); strips(); crossFades(); emission(); poses(); hits(); lifetime(); oracle(argv[1]);
         std::cout << "hud_design_layer contracts: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {

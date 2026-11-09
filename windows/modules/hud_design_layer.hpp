@@ -326,6 +326,15 @@ void release(Layer&, MotionSlot);
 void wipe(Layer&, WipeOrigin, double duration, const Clock&, core::CubicTiming = easing::standard, double delay = 0,
     std::optional<double> fadeFrom = {});
 void removeWipe(Layer&);
+// HUDMotion.crossFade (:85-94, b8cc1df): `incoming` fades 0 -> 1 and
+// `outgoing` (if any) from what it shows to 0, ease-in-out over `duration`.
+// Decision X-D1: the tracks live in MotionSlot::fade, the slot of the wipe's
+// fade, so every keep list that keeps one keeps the other (entranceSlots), as
+// the Mac's key sets treat hud.wipe.fade and the cross-fade alike. Models are
+// set at once; nothing animates under Reduce Motion. setValue cancels only
+// property tracks, so an instant path that sets these opacities removes the
+// fade slot itself.
+void crossFade(Layer& incoming, Layer* outgoing, double duration, const Clock&);
 // ruleIn: scaleX 0 -> 1 from the layer's anchor.
 void grow(Layer&, double duration, const Clock&, double delay = 0, core::CubicTiming = easing::standard);
 // pop: scale .4 -> 1, additive rotation -12 deg -> 0, opacity 0 -> o, SNAP group.

@@ -274,6 +274,55 @@ void stopKeepsFiniteMotion() {
     check(!resting(canvas.page().layer(), w.now) && resting(canvas.page().layer(), w.now + 1.1), "The kept entrance ends on its own");
 }
 
+// The cover cross-fade on motion::crossFade (showArt, :335-347, b8cc1df):
+// .2 s ease-in-out, the old cover drawn underneath until it ends, kept by a
+// stop mid-fade (finiteKeys), cancelled by the instant path.
+void coverCrossFade() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto frame = [](unsigned side) { auto f = std::make_shared<endfield::native::NotesImageFrame>(); f->width = f->height = side; return f; };
+    const auto a = frame(960), b = frame(961);
+    ctl.input.coverAvailable = true;
+    ctl.cover = {a, nullptr, 960, 960}; ctl.input.coverRevision = 1;
+    canvas.refresh(w.now);
+    w.now += 1; w.context.advance(w.now);
+    ctl.cover = {b, nullptr, 961, 961}; ctl.input.coverRevision = 2;
+    canvas.refresh(w.now);
+    const auto* top = find(canvas.root(), "nowPlaying.cover.art.1");
+    const auto* under = find(canvas.root(), "nowPlaying.cover.art.0");
+    const double start = w.now;
+    const auto views = canvas.coverViews(start + .1);
+    check(views[0].image == a && views[1].image == b, "Mid-fade both covers are drawn, the new one on top");
+    check(std::abs(top->presented(d::Channel::opacity, start + .1) - d::easing::easeInOut.value(.5)) < 1e-9 && under->presented(d::Channel::opacity, start + .1) == 1,
+        "The new cover fades in ease-in-out over the old one, which stays opaque underneath");
+    check(top->tracks().slots[std::size_t(d::MotionSlot::fade)][0].present(), "The cross-fade plays in the fade slot (X-D1)");
+    // A switch away mid-fade keeps the cross-fade (finiteKeys).
+    w.now = start + .1; w.context.advance(w.now);
+    canvas.setPresented(false, w.now);
+    check(top->presented(d::Channel::opacity, start + .2) == 1 && !canvas.coverViews(start + .2)[0].image && canvas.coverViews(start + .19)[0].image == a,
+        "A stop mid-fade lets it end at +.2; the old cover is drawn until then");
+    canvas.setPresented(true, w.now);
+    // Going away fades the old cover out.
+    w.now = start + 1; w.context.advance(w.now);
+    ctl.cover = {}; ctl.input.coverAvailable = false; ctl.input.coverRevision = 3;
+    canvas.refresh(w.now);
+    check(std::abs(under->presented(d::Channel::opacity, w.now + .1) - (1 - d::easing::easeInOut.value(.5))) < 1e-9 && canvas.coverViews(w.now + .1)[0].image == b,
+        "With no new cover the old one fades out");
+    // The instant path (Reduce Motion) cancels a running cross-fade.
+    w.now += 1; w.context.advance(w.now);
+    ctl.cover = {a, nullptr, 960, 960}; ctl.input.coverAvailable = true; ctl.input.coverRevision = 4;
+    canvas.refresh(w.now);
+    w.appearance(Language::english, false, true);
+    ctl.cover = {b, nullptr, 961, 961}; ctl.input.coverRevision = 5;
+    canvas.refresh(w.now);
+    check(top->presented(d::Channel::opacity, w.now) == 1 && under->presented(d::Channel::opacity, w.now) == 0 && !top->tracks().slots[std::size_t(d::MotionSlot::fade)][0].present()
+        && !canvas.coverViews(w.now)[0].image, "The instant path removes the running fade and shows the new cover at once");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -352,6 +401,7 @@ int main(int argc, char** argv) {
         behaviour();
         nothingPlaying();
         stopKeepsFiniteMotion();
+        coverCrossFade();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);
