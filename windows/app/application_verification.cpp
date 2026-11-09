@@ -3217,6 +3217,68 @@ int Application::Impl::runHiddenVerification(){
                         (!hudElements||hudElements->topEntries().empty()),"Hidden: the shell composes nothing and asks for no frame");
                     perform(lifecycle.reopen(),t);t=run(t,1.2);closeCheck(lifecycle.phase()==core::SystemOverlayPhase::open,"The HUD reopens after the checked close");
                 }
+                // The module content through the close (Mac 79bc665), on the
+                // production close and its frames, one module at a time.
+                {
+                    using P=core::SystemOverlayPhase;
+                    const auto contentCheck=[&](bool value,const std::string&why){need(value,why.c_str());++hostChecks;};
+                    const auto designCore=[](const std::unique_ptr<ModuleOwner>&owner)->tools::DesignOwnerCore&{return static_cast<tools::DesignModuleOwner&>(*owner).core();};
+                    // One host frame as run() draws it.
+                    const auto closeFrame=[&](double at){if(const auto wake=designOverlay->nextWakeTime(at);wake&&*wake<=at)(void)registry.guard(*designOverlay,[&]{(void)designOverlay->deadline(hostTime(at));},"deadline");present(at,true);settle(at);};
+                    const auto closeShow=[&](core::Module module){if(lifecycle.phase()!=P::open){perform(lifecycle.reopen(),t);t=run(t,1.2);}perform(lifecycle.selectModule(module),t);t=run(t,.8);
+                        need(lifecycle.phase()==P::open&&notes->selected()==module&&!notes->modulePresentation().transitioning,("The close's content checks show "+std::string(core::moduleIdentifier(module))).c_str());};
+                    // The rest of a checked close, then the next opening.
+                    const auto closeFinish=[&]{t=run(t+1./60,1.2);need(lifecycle.phase()==P::closed&&session->phase()==core::VisibilityPhase::concealed,"The checked close ends with the HUD hidden");};
+                    const auto closeReopen=[&]{perform(lifecycle.reopen(),t);t=run(t,1.2);need(lifecycle.phase()==P::open,"The HUD opens again after a checked close");};
+                    // A module's entries this frame, every one of them in the published order.
+                    const auto entriesPublished=[&](core::Module module){auto*owner=registry.presenter(module);if(!owner)return false;const auto entries=owner->entries(module);
+                        return !entries.empty()&&std::all_of(entries.begin(),entries.end(),[&](const gpu::LayerCompositionEntry&e){
+                            return std::any_of(ordered.begin(),ordered.end(),[&](const gpu::LayerCompositionEntry&p){return p.scene==e.scene;});});};
+                    // B5-1 (5c8a905, 839d3b8): a switch the close catches lands hidden on
+                    // its new module while the old screen finishes its .13 s leave below
+                    // it, composed with falling opacity; a reversed switch keeps leaving
+                    // on its own screen. Clipboard to Event Log at T, back to Clipboard at
+                    // T + .033 when reversed, the close at T + .05. Not here: a select the
+                    // text service deferred (pendingModule, C14) needs a text service that
+                    // holds its lock, which the hidden fixture cannot make.
+                    if(clipboardModuleOwner&&eventLogModuleOwner&&registry.enabled(*clipboardModuleOwner)&&registry.enabled(*eventLogModuleOwner)){
+                        const auto fromModule=core::Module::clipboard,toModule=core::Module::eventLog;auto&from=designCore(clipboardModuleOwner);auto&to=designCore(eventLogModuleOwner);
+                        for(const bool reversed:{false,true}){
+                            const std::string switchName=reversed?"A reversed switch (Clipboard to Event Log and back) the close catches":"A switch (Clipboard to Event Log) the close catches";
+                            closeShow(fromModule);
+                            const double base=t;perform(lifecycle.selectModule(toModule),t);const double switched=hostTime(t);
+                            for(unsigned n=1;n<=3;++n){if(reversed&&n==3)perform(lifecycle.selectModule(fromModule),t);t=base+n/60.;closeFrame(t);}
+                            perform(lifecycle.toggle(),t);
+                            {const auto&s=notes->modulePresentation();
+                             contentCheck(closing&&lifecycle.phase()==P::closing&&(reversed?(!s.departing&&s.current.module==fromModule&&s.current.attached&&notes->selected()==fromModule):
+                                 (s.departing&&s.departing->module==fromModule&&s.current.module==toModule&&!s.current.attached&&notes->selected()==toModule)),
+                                 switchName+(reversed?" keeps Clipboard committed and leaving, with no departing screen":" lands hidden on Event Log with Clipboard departing"));}
+                            const double closedAt=t;double previous=2,previousPose=2,last=-1;unsigned leaving=0;bool falling=true,drawn=true,landedHidden=true,quiet=true,ended=true;
+                            for(unsigned n=1;n<=12;++n){t=closedAt+n/60.;closeFrame(t);
+                                const double elapsed=hostTime(t)-switched;const auto&s=notes->modulePresentation();
+                                const auto*old=reversed?(s.current.module==fromModule?&s.current:nullptr):(s.departing?&*s.departing:nullptr);
+                                landedHidden=landedHidden&&!to.pose(toModule)&&!to.canvas(toModule)->isActive();
+                                quiet=quiet&&!from.inputModule()&&!to.inputModule();
+                                if(elapsed<core::DesignMotion::leave-1e-6){++leaving;const auto pose=from.pose(fromModule);
+                                    falling=falling&&old&&pose&&old->opacity<previous&&pose->opacity<previousPose;
+                                    drawn=drawn&&pose&&entriesPublished(fromModule)&&(!reversed||from.canvas(fromModule)->isActive());
+                                    if(old)previous=last=old->opacity;if(pose)previousPose=pose->opacity;}
+                                else if(elapsed>core::DesignMotion::leave+1e-6&&session->phase()!=core::VisibilityPhase::concealed)
+                                    ended=ended&&(reversed?(old&&old->opacity<1e-6):(!s.departing&&!from.pose(fromModule)));}
+                            contentCheck(leaving>=3&&falling&&drawn&&last>0,switchName+": the old screen is composed with falling opacity until .13 s ("+std::to_string(leaving)+" frames, last "+std::to_string(last)+")");
+                            contentCheck(landedHidden&&quiet,switchName+": Event Log is never drawn or activated and no screen takes input");
+                            contentCheck(ended,switchName+(reversed?": after .13 s the leave holds Clipboard at 0":": after .13 s the departing screen is gone"));
+                            closeFinish();
+                            contentCheck(!notes->modulePresentation().departing&&!from.canvas(fromModule)->isShown()&&!from.canvas(fromModule)->isActive()&&!to.canvas(toModule)->isActive(),
+                                switchName+": once hidden the old screen has left and nothing is departing");
+                            closeReopen();
+                            const auto shown=reversed?fromModule:toModule;auto&shownCore=reversed?from:to;
+                            contentCheck(notes->selected()==shown&&shownCore.canvas(shown)->isActive()&&entriesPublished(shown)&&notes->modulePresentation().current.opacity==1,
+                                switchName+": the next open shows "+(reversed?"Clipboard":"Event Log"));
+                        }
+                    }
+                    closeShow(core::Module::notes);
+                }
                 // Hand-offs to other applications (OverlayController afterSystemClose,
                 // openStorageAfterClose): requested while the HUD is open they close
                 // it with the normal animation and open only once it is hidden, so
