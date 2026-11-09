@@ -1214,8 +1214,14 @@ void centrePressFinishes(HWND hwnd,gpu::Renderer&renderer,const std::filesystem:
 // settles every track, the deleted card included, and nothing is left asking
 // for frames (concealCentre). The next open shows the module again.
 void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
-    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto notes=savedNotes(f.root.path);
-    check(notes.size()>=2,"The sample workspace has two notes");
+    // Three explicit notes (the sample workspace holds one): the first is
+    // pinned, so it stays on the desktop when Notes is left; the second is
+    // deleted; the third leaves and comes back with the section.
+    data::Note first=data::Note::textNote("First"),second=data::Note::textNote("Second"),third=data::Note::textNote("Third");
+    first.x=180;first.y=245;second.x=520;second.y=245;second.zIndex=1;third.x=860;third.y=245;third.zIndex=2;
+    for(auto*n:{&first,&second,&third}){n->width=240;n->height=145;}
+    gpu::LayerRasterizer raster;const std::array initial{first,second,third};Fixture f(hwnd,renderer,raster,formats,initial);const auto notes=savedNotes(f.root.path);
+    check(notes.size()==3,"The workspace holds the three notes");
     const auto total=[&]{const auto m=f.preview->motionTracks();return m.sectionIn+m.sectionOut+m.create+m.remove+m.mutation;};
     f.tick(1);
     // N-1: a mutation at t, the close at t+.1: no mutation track left.
