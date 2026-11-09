@@ -11,8 +11,8 @@
 #include <sstream>
 #include <stdexcept>
 
-// Source: bash windows/tools/audio_reference.sh (unchanged Mac sources at
-// ca04f142; SystemEventRecorder, AudioVolumeMath, localizedStandardCompare).
+// Source: bash windows/tools/audio_reference.sh (Mac sources at the PIN in that
+// script; SystemEventRecorder, AudioVolumeMath, localizedStandardCompare).
 namespace {
 namespace n=endfield::native;using Json=ehud::data::Json;
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
@@ -118,7 +118,7 @@ void bounds(){
 int main(int argc,char**argv){
     try{
         check(argc==2,"Usage: audio_endpoint_model_tests <audio-endpoint-source.json>");
-        const auto root=fixture(argv[1]);check(root["schemaVersion"].integer()==1&&root["sourceAuthority"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Pinned source oracle");
+        const auto root=fixture(argv[1]);check(root["schemaVersion"].integer()==1&&root["sourceAuthority"].string()=="79bc6651959977d3c6aa89c8faeedb155a15f20d","Pinned source oracle");
         classification();controls(root);ordering(root);topology(root);text();bounds();
         std::cout<<"PASS "<<checks<<" audio endpoint model checks against the Mac oracle (no native audio accessed)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
