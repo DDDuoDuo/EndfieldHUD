@@ -90,9 +90,10 @@ private:
 // asks for a frame). One job at a time; requests that change meanwhile are
 // submitted when it completes, and a full queue retries at
 // queueCapacityAvailable(). An answered request is never extracted again for
-// its revision (an explicit retry advances it); an icon evicted from the
-// cache is asked for again on the next visibility event, as the shared
-// facade above does. The default extractor (volumeExecutableIcon) opens the
+// its revision (an explicit retry advances it), and its answer binds when it
+// is asked for again, also one that landed while the plan did not list it
+// (no icon included); an icon evicted from the cache is asked for again on
+// the next visibility event, as the shared facade above does. The default extractor (volumeExecutableIcon) opens the
 // executable by its identity first, as the Shelf worker's lease does, so a
 // path that now names another file gives no icon, and reads the file's own
 // icon resource (SHDefExtractIcon: resource data only, no Shell icon handler

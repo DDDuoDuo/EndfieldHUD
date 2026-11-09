@@ -18,7 +18,7 @@
 //     bookmark renewal), a deleted one and one moved into "$Recycle.Bin" stay
 //     unavailable, and every untouched original survives remove and clear;
 //   - a Mac-imported Shelf item (an unresolved fileShelf.item entry of the
-//     import area's Migration/relink.json) listed as an unavailable tile,
+//     Migration/relink.json) listed as an unavailable tile,
 //     relinked from its card to a synthetic file that keeps the imported
 //     identifier, with the ledger entry resolved and shelfAdded recorded;
 //   - the UI Automation tree of the presented Shelf (Add, Clear, one tab per

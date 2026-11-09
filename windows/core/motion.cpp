@@ -65,6 +65,11 @@ std::string_view moduleIdentifier(Module module) {
         "system", "display", "hotkeys", "about", "storage", "activityMonitor", "power", "profile"};
     return identifiers.at(static_cast<std::size_t>(module));
 }
+std::optional<Module> moduleNamed(std::string_view identifier) noexcept {
+    for (unsigned n = 0; n <= static_cast<unsigned>(Module::profile); ++n)
+        if (moduleIdentifier(static_cast<Module>(n)) == identifier) return static_cast<Module>(n);
+    return std::nullopt;
+}
 MotionRect moduleContentFrame(Module module) {
     switch (module) {
     case Module::reader: case Module::archive: case Module::calendar:
@@ -134,6 +139,12 @@ void ModuleSelection::settle(Module module) {
     pending_.reset();
 }
 
+double DragGripMotion::edgeScrollStep(double offset, double length) noexcept {
+    constexpr double band = 36, step = 12;
+    if (offset < band) return -std::min(step, band - offset);
+    if (offset > length - band) return std::min(step, offset - length + band);
+    return 0;
+}
 double CubicTiming::value(double normalizedTime) const {
     if (!std::isfinite(normalizedTime))
         return normalizedTime > 0 ? 1 : 0;
@@ -206,6 +217,11 @@ double ModuleTransitionStyle::registrationOpacityAt(double elapsed) {
     return 0;
 }
 
+DesignMotion::ClosingFade DesignMotion::closingFade(double length, double reveal) noexcept {
+    length = std::isfinite(length) ? std::max(0.0, length) : 0;
+    const double duration = std::min(std::isfinite(reveal) ? std::max(0.0, reveal) : 0, length);
+    return {length - duration, duration};
+}
 double DesignMotion::staggerDelay(int index) noexcept {
     return staggerBase + std::min(std::max(0, index), staggerCap) * staggerStep;
 }

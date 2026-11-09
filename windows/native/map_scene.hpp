@@ -16,6 +16,10 @@ namespace endfield::native {
 // The canvas chrome (modules/map_canvas) is a design scene above it.
 struct MapAppearance {
     bool reducedMotion{},ambient{true};
+    // The HUD's close stripped the pulse animation (HUDMotion.closeKeys, L-D1):
+    // the pulsing set stays, its rings draw at their model opacity 0
+    // (WorldMapSurface.swift:454) and no frame samples the pulse.
+    bool pulseStripped{};
 };
 struct MapPlayerImages {std::shared_ptr<const MapPaintImage>halo,beam,glyph;};
 // The disc square in units (centre 220): 860 box px at unitScale.
@@ -35,7 +39,7 @@ struct MapScenePose {core::Matrix4 world;float opacity{1};double time{};std::spa
 // hostCutUploads: creations and in-place region updates of the host cut;
 // hostCutBytes: its GPU bytes resident now (an A8 alpha mask; 0 when released). groupPixels: the
 // retained group target's pixels at the current density.
-struct MapSceneStats {std::uint64_t imageUploads{},preparedImages{},pinBuilds{},poses{},localUpdates{},hostCutUploads{},densityChanges{};std::size_t visiblePins{},pulsingPins{},hostCutBytes{},cutoutMaskBytes{},groupPixels{};};
+struct MapSceneStats {std::uint64_t imageUploads{},preparedImages{},pinBuilds{},poses{},localUpdates{},hostCutUploads{},densityChanges{};std::size_t visiblePins{},pulsingPins{},strippedRings{},hostCutBytes{},cutoutMaskBytes{},groupPixels{};};
 class NativeMapScene final {
 public:
     NativeMapScene(modules::MapState&,NativeMapRaster&,LayerRasterizer&,LayerRasterOptions,MapPlayerImages,MapAppearance={});

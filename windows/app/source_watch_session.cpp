@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::app {
 using namespace core;
@@ -54,6 +56,16 @@ struct SourceWatchSession::Impl {
     DesktopScrollMotion scrollMotion;double scrollPosition{1};std::optional<double> bindingPosition;
     struct NavigationDrag {Point start;Projection plane;double lastLocalY{},hiddenLength{};bool active{};};
     std::optional<NavigationDrag> navigationDrag;
+    // Arrange on HUD: the right-hand source buttons (RightBottomNode), the
+    // dragged tile and the tiles sliding to their slots, the button holding
+    // the dragged tile (held hovered), and the list position the last frame
+    // drew under it.
+    std::set<std::string_view,std::less<>> rightButtons;
+    DesktopArrangeMotion arrange;std::optional<std::string_view> arrangeButton;
+    std::optional<double> arrangeDrawnPosition;bool arrangeScrolled{};
+    // This frame's placements, kept so a steady frame allocates nothing (an
+    // MSVC map holds a node even while empty).
+    SourceWatchFrameBuilder::TilePlacements arrangePlacements;
     void cancelDrag(double time){if(navigationDrag&&navigationDrag->active){scrollMotion.gesture(0,navigationDrag->hiddenLength,time,GesturePhase::ended,GesturePhase::none,settings.reduceMotion);scrollPosition=scrollMotion.position();}navigationDrag.reset();}
 
     bool input{},hidden{true};std::optional<double> clock,heldTime;
@@ -105,7 +117,8 @@ struct SourceWatchSession::Impl {
         :scene(s),document(d),cameraModel(c),resources(r),animation(s,library),playback(animation.entrance().lastKeyTime,animation.exit().lastKeyTime),ambient(animation,0),gyro(c.rootRotation()),
         buttons(s,library,bindings,transitions),selectable(s,d),hoverFeedback(s,d,selectable,std::move(profile)),builder(s,d,r,desktop),baseSettings(std::move(desktop)),appliedSettings(baseSettings){
         std::set<std::string_view,std::less<>> main;
-        for(const auto& b:document.buttons){const auto*n=scene.node(b.nodeID);need(n,"Missing source main-button node");main.insert(n->id);availableButtons.push_back(n->id);}
+        for(const auto& b:document.buttons){const auto*n=scene.node(b.nodeID);need(n,"Missing source main-button node");main.insert(n->id);availableButtons.push_back(n->id);
+            if(b.path.find("/RightBottomNode/")!=std::string::npos)rightButtons.insert(n->id);}
         for(const auto& n:scene.nodes()){
             if(const auto* component=document.component("UIButton",n.id)){const auto&raw=(*component)["_clickCd"];const double cooldown=raw.isNumber()?raw.number():0;
                 clicks.emplace(n.id,Click{flag((*component)["m_Interactable"],true),cooldown,{}});}
@@ -131,15 +144,16 @@ struct SourceWatchSession::Impl {
     Rect viewport()const{return {0,0,environment.viewport[0],environment.viewport[1]};}
     void invalidatePose(){poseCanvas.reset();lastHit.reset();}
     void clearClicks(){for(auto&[id,value]:clicks){(void)id;value.accepted.reset();}}
-    void updateStates(double time){
-        invalidatePose();const auto tintHovered=hoverFeedback.groupedButton(hovered),tintPressed=hoverFeedback.groupedButton(pressed);
+    // `settled`: this button takes its new look at once, as under Reduce Motion.
+    void updateStates(double time,std::optional<std::string_view> settled={}){
+        invalidatePose();const auto tintHovered=hoverFeedback.groupedButton(hovered),tintPressed=hoverFeedback.groupedButton(pressed),tintSettled=hoverFeedback.groupedButton(settled);
         for(const auto& binding:selectable.bindings()){
             const auto desired=!binding.sourceInteractable?SelectableState::disabled:tintPressed==binding.buttonNodeID?SelectableState::pressed:tintHovered==binding.buttonNodeID?SelectableState::highlighted:SelectableState::normal;
-            if(selectable.state(binding.buttonNodeID)!=desired)selectable.setState(desired,binding.buttonNodeID,time,settings.reduceMotion);
+            if(selectable.state(binding.buttonNodeID)!=desired)selectable.setState(desired,binding.buttonNodeID,time,settings.reduceMotion||(tintSettled&&*tintSettled==binding.buttonNodeID));
         }
-        for(const auto&[root,button]:animatorButtons){if(buttons.state(root)==ButtonState::disabled)continue;
-            buttons.setState(pressed==button?ButtonState::pressed:hovered==button?ButtonState::highlighted:ButtonState::normal,root,time,settings.reduceMotion);
-            buttons.setHovered(hovered==button,root,time,settings.reduceMotion);}
+        for(const auto&[root,button]:animatorButtons){if(buttons.state(root)==ButtonState::disabled)continue;const bool endpoint=settings.reduceMotion||(settled&&*settled==button);
+            buttons.setState(pressed==button?ButtonState::pressed:hovered==button?ButtonState::highlighted:ButtonState::normal,root,time,endpoint);
+            buttons.setHovered(hovered==button,root,time,endpoint);}
     }
     void cancelInput(double time,bool reset){pressed.reset();hovered.reset();clearClicks();if(reset){buttons.reset(time,settings.reduceMotion);selectable.reset(time);}updateStates(time);}
     void refreshStyles(const SelectableTints&tints){
@@ -186,6 +200,52 @@ struct SourceWatchSession::Impl {
         auto&h=scrollProbe.hits[0];h.rect=rect;h.world=rendered.camera.worldRoot*node.worldMatrix;
         return scrollProbe.buttonAt(point,rendered.camera.projection*rendered.camera.view,viewport()).has_value();
     }
+    // The right-hand buttons and the actions bound to them.
+    template<class F> void forRightTargets(F&&visit)const{for(const auto&[id,action]:actions)if(rightButtons.contains(id))visit(std::string_view(*rightButtons.find(id)),action);}
+    std::optional<std::string_view> rightButton(std::uint64_t action)const{std::optional<std::string_view> found;forRightTargets([&](std::string_view id,std::uint64_t a){if(a==action&&!found)found=id;});return found;}
+    // The right-hand button's resting place in the last frame, in the plane
+    // of the list's viewport: its centre and half its outline's extent.
+    struct Slot {Vec2 center,half;};
+    std::optional<Slot> slot(std::string_view button)const{
+        if(!hasFrame)return std::nullopt;const auto&info=rendered.sourceFrame->layoutReport.scroll;if(!info)return std::nullopt;
+        const auto*plane=resolved(info->viewportID),*node=resolved(button);if(!plane||!node||!node->activeInHierarchy||!node->rect)return std::nullopt;
+        auto world=node->worldMatrix;if(const auto t=rendered.sourceFrame->tileTranslations.find(button);t!=rendered.sourceFrame->tileTranslations.end())world=Matrix4::translation(-t->second[0],-t->second[1],-t->second[2])*world;
+        std::optional<Vec2> low,high;
+        for(const auto&corner:node->rect->corners()){const auto p=DesktopTiles::planePoint({corner[0],corner[1]},world,plane->worldMatrix);if(!p)return std::nullopt;
+            low=Vec2{std::min(low?(*low)[0]:(*p)[0],(*p)[0]),std::min(low?(*low)[1]:(*p)[1],(*p)[1])};high=Vec2{std::max(high?(*high)[0]:(*p)[0],(*p)[0]),std::max(high?(*high)[1]:(*p)[1],(*p)[1])};}
+        return Slot{{((*low)[0]+(*high)[0])/2,((*low)[1]+(*high)[1])/2},{((*high)[0]-(*low)[0])/2,((*high)[1]-(*low)[1])/2}};
+    }
+    // The list viewport's plane as drawn (the navigation drag, the edge
+    // scroll and the Arrange on HUD tile unproject client points through it).
+    Projection viewportPlane(const ResolvedNode&viewportNode)const{
+        return Projection::viewport(rendered.camera.projection*rendered.camera.view*rendered.camera.worldRoot*viewportNode.worldMatrix,environment.viewport[0],environment.viewport[1]);
+    }
+    // Each frame: the bound buttons drawn away from their slots, the one drawn
+    // above the others, and the dragged tile's button held hovered. Rebinding
+    // (the order or the scroll changed) put every button at rest, and the
+    // dragged tile can move to another button: the button holding it keeps
+    // the held look at once instead of lifting again.
+    void applyArrange(double time){
+        const bool reduce=settings.reduceMotion;arrange.prune(time,reduce);
+        auto&placements=arrangePlacements;placements.clear();std::optional<std::string_view> raised,lifted;
+        if(arrange.isActive())forRightTargets([&](std::string_view button,std::uint64_t action){
+            if(action==arrange.lifted()&&arrange.liftedCenter()){placements.emplace(std::string(button),DesktopTilePlacement::center(*arrange.liftedCenter()));lifted=button;}
+            else if(const auto offset=arrange.offset(action,time,reduce))placements.emplace(std::string(button),DesktopTilePlacement::offset(*offset));
+            if(action==arrange.raised())raised=button;});
+        if(builder.desktopTilePlacements()!=placements)builder.setDesktopTilePlacements(placements);
+        builder.setDesktopRaisedButton(raised);
+        const bool wasHeld=arrangeButton.has_value();if(lifted!=arrangeButton){arrangeButton=lifted;lastHit.reset();}
+        if(wasHeld&&lifted&&hovered!=lifted){hovered=lifted;updateStates(time,lifted);}
+    }
+    // keepDesktopArrangeLiftedBound: while a tile is dragged, the list scrolls
+    // no further than keeps its slot bound to a pooled row.
+    void keepLiftedBound(double time){
+        if(!arrange.lifted()||!navigation)return;const auto&right=navigationInput.rightActions;
+        const auto entry=std::find(right.begin(),right.end(),*arrange.lifted());if(entry==right.end())return;
+        const auto range=navigation->positions(static_cast<std::size_t>(entry-right.begin()));if(!range)return;
+        const auto sampled=std::clamp(scrollPosition,0.,1.);if(sampled>=range->first&&sampled<=range->second)return;
+        scrollMotion.reset(std::clamp(sampled,range->first,range->second),time);scrollPosition=scrollMotion.position();
+    }
     void applyAvailability(Pose&pose)const{for(const auto&id:availableButtons)pose.transforms[std::string(id)].active=true;for(const auto&id:hiddenDecorations)pose.transforms[std::string(id)].active=false;}
     bool makePose(const VisibilitySample&sample,Vec2 canvas,double time,bool reduce,bool settled){
         if(settled&&finalPose&&poseCanvas==canvas&&poseGeneration==playback.generation()&&buttonGeneration==buttons.stateGeneration()){
@@ -205,11 +265,19 @@ void SourceWatchSession::setEnvironment(WatchSessionEnvironment value,double tim
 void SourceWatchSession::setInputEnabled(bool value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||p.input==value)return;p.input=value;if(!value){p.cancelDrag(*at);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}p.lastHit.reset();}
 void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;(void)p.applyLogoStyles(p.logoOpacity);(void)p.applyIndicatorStyles();
     for(const auto&id:p.navigationInput.managedButtons){if(p.actions.contains(id))p.appliedSettings.hiddenNodes.erase(id);else p.appliedSettings.hiddenNodes.insert(id);}p.builder.setDesktopSettings(p.appliedSettings);p.lastHit.reset();}
-void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||(p.hasNavigation&&p.navigationInput==value))return;
+void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time,bool animated){auto&p=*impl_;const auto at=p.advance(time);if(!at||(p.hasNavigation&&p.navigationInput==value))return;
     for(const auto&[id,action]:value.fixedActions){(void)action;need(p.scene.node(id),"Navigation action node is absent");}for(const auto&id:value.managedButtons)need(p.scene.node(id),"Managed source button is absent");
     std::unique_ptr<DesktopNavigationLayout> navigation;if(!value.rightActions.empty())navigation=std::make_unique<DesktopNavigationLayout>(p.scene,p.document,static_cast<std::int64_t>(value.rightActions.size()));
+    // Arrange on HUD: the recycled rows stay put when only the order changes;
+    // each slot keeps its resting place and a tile moves from one to another.
+    const bool reduce=p.settings.reduceMotion;
+    const bool slides=animated&&!reduce&&p.playback.phase()==VisibilityPhase::visible&&value.rightActions.size()==p.navigationInput.rightActions.size();
+    std::map<std::uint64_t,Vec2> shown;std::map<std::string_view,Vec2,std::less<>> slots;
+    if(slides)p.forRightTargets([&](std::string_view button,std::uint64_t action){if(const auto slot=p.slot(button)){slots.emplace(button,slot->center);shown.emplace(action,p.arrange.shown(action,slot->center,*at,reduce));}});
     if(value.rightActions.size()!=p.navigationInput.rightActions.size()){p.scrollPosition=1;p.scrollMotion.reset(1,*at);}
     p.cancelDrag(*at);p.navigationInput=std::move(value);p.navigation=std::move(navigation);p.hasNavigation=true;p.refreshBindings(*at,true);
+    p.forRightTargets([&](std::string_view button,std::uint64_t action){const auto from=shown.find(action);const auto slot=slots.find(button);
+        if(from!=shown.end()&&slot!=slots.end())p.arrange.retarget(action,from->second,slot->second,*at,reduce);});
 }
 void SourceWatchSession::setHitFilter(HitFilter filter,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.filter=std::move(filter);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}
 std::uint64_t SourceWatchSession::open(double time,std::uint64_t seed,bool held){auto&p=*impl_;const auto at=p.advance(time);if(!at)return p.lifecycleToken;
@@ -238,7 +306,7 @@ void SourceWatchSession::pointerDown(Point point,double time){
     if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return;
     const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||info->hiddenLength<=0)return;
     const auto*node=p.resolved(info->viewportID);if(!node||!node->rect||!p.insidePlane(point,*node,*node->rect))return;
-    const auto plane=Projection::viewport(p.rendered.camera.projection*p.rendered.camera.view*p.rendered.camera.worldRoot*node->worldMatrix,p.environment.viewport[0],p.environment.viewport[1]);
+    const auto plane=p.viewportPlane(*node);
     if(const auto local=plane.unproject(point))p.navigationDrag=Impl::NavigationDrag{point,plane,local->y,info->hiddenLength,false};
 }
 std::optional<WatchActivation> SourceWatchSession::pointerUp(Point point,double time){
@@ -270,21 +338,66 @@ bool SourceWatchSession::scroll(Point point,double delta,bool precise,GesturePha
     if(phase==GesturePhase::began&&momentum==GesturePhase::none&&!inside){p.scrollMotion.reset(p.scrollPosition,*at);p.scrollPosition=p.scrollMotion.position();return false;}
     p.scrollMotion.gesture((precise?delta:delta*10)*p.unitsPerPoint(*node,*node->rect)/std::max(1.,info->hiddenLength),info->hiddenLength,*at,phase,momentum,p.settings.reduceMotion);p.scrollPosition=p.scrollMotion.position();return true;
 }
-bool SourceWatchSession::scrollDirection(int direction,bool animated,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||!p.input||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return false;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;
+bool SourceWatchSession::scrollDirection(int direction,bool animated,double time,double points){auto&p=*impl_;const auto at=p.advance(time);if(!at||!p.input||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return false;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;
     if(!info||!(info->hiddenLength>0)||!p.scrollMotion.canScroll(direction))return false;const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;
-    p.scrollMotion.scroll(-double(direction)*32*p.unitsPerPoint(*node,*node->rect)/std::max(1.,info->hiddenLength),info->hiddenLength,*at,!animated||p.settings.reduceMotion);p.scrollPosition=p.scrollMotion.position();return true;
+    p.scrollMotion.scroll(-double(direction)*points*p.unitsPerPoint(*node,*node->rect)/std::max(1.,info->hiddenLength),info->hiddenLength,*at,!animated||p.settings.reduceMotion);p.scrollPosition=p.scrollMotion.position();return true;
 }
+bool SourceWatchSession::scrollTowardEdge(Point point,double time){
+    need(finite(point),"Invalid Watch pointer");auto&p=*impl_;if(!p.hasFrame)return false;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info)return false;
+    const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;const auto&rect=*node->rect;
+    const auto local=p.viewportPlane(*node).unproject(point);if(!local||local->x<rect.origin[0]||local->x>rect.origin[0]+rect.size[0])return false;
+    // Source UI space is y-up: the list's top edge is its rect's maxY. The
+    // band and the step are measured on screen.
+    const double unitsPerPoint=std::max(std::numeric_limits<double>::epsilon(),p.unitsPerPoint(*node,rect));
+    const double step=DragGripMotion::edgeScrollStep((rect.origin[1]+rect.size[1]-local->y)/unitsPerPoint,rect.size[1]/unitsPerPoint);
+    return step!=0&&scrollDirection(step<0?-1:1,false,time,std::abs(step));
+}
+void SourceWatchSession::setArrangeDrag(std::optional<std::uint64_t> action,std::optional<Point> pointer,bool animated,double time){
+    auto&p=*impl_;const auto at=p.advance(time);if(!at)return;const bool reduce=p.settings.reduceMotion;
+    if(action&&pointer){
+        need(finite(*pointer),"Invalid Watch pointer");if(!p.hasFrame)return;const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info)return;
+        const auto*viewport=p.resolved(info->viewportID);if(!viewport||!viewport->rect)return;const auto&rect=*viewport->rect;
+        const auto local=p.viewportPlane(*viewport).unproject(*pointer);const auto button=p.rightButton(*action);if(!local||!button)return;
+        const auto slot=p.slot(*button);if(!slot)return;
+        if(p.arrange.lifted()!=action){p.arrange.lift(*action,p.arrange.shown(*action,slot->center,*at,reduce),{local->x,local->y});p.lastHit.reset();}
+        const Vec2 half{std::min(slot->half[0],rect.size[0]/2),std::min(slot->half[1],rect.size[1]/2)};
+        p.arrange.move({local->x,local->y},std::pair{Vec2{rect.origin[0]+half[0],rect.origin[1]+half[1]},Vec2{rect.origin[0]+rect.size[0]-half[0],rect.origin[1]+rect.size[1]-half[1]}});
+    }else if(!animated){p.arrange=DesktopArrangeMotion{};}
+    else if(const auto lifted=p.arrange.lifted()){
+        std::optional<Vec2> slot;if(const auto button=p.rightButton(*lifted))if(const auto s=p.slot(*button))slot=s->center;
+        p.arrange.drop(slot,*at,reduce);
+    }
+}
+std::optional<std::uint64_t> SourceWatchSession::rowAction(std::string_view id)const{
+    const auto&p=*impl_;if(!p.rightButtons.contains(id))return std::nullopt;const auto found=p.actions.find(id);return found==p.actions.end()?std::nullopt:std::optional(found->second);
+}
+std::optional<std::uint64_t> SourceWatchSession::rowActionAt(Point point,bool resting)const{
+    const auto&p=*impl_;if(!finite(point))return std::nullopt;
+    if(!resting){const auto id=buttonAt(point);return id?rowAction(*id):std::nullopt;}
+    if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame||!p.viewport().contains(point))return std::nullopt;
+    const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info)return std::nullopt;const auto*viewport=p.resolved(info->viewportID);if(!viewport||!viewport->rect)return std::nullopt;
+    const auto vp=p.rendered.camera.projection*p.rendered.camera.view;Polygon quad;
+    if(!projectQuad(quad,*viewport->rect,p.rendered.camera.worldRoot*viewport->worldMatrix,vp,p.viewport())||!polygonContains(std::span<const Point>(quad.p.data(),quad.n),point))return std::nullopt;
+    const auto&hits=p.rendered.sourceFrame->hits;
+    for(auto hit=hits.rbegin();hit!=hits.rend();++hit){if(!p.rightButtons.contains(hit->buttonID))continue;
+        if(projectQuad(quad,hit->rect,hit->restWorld.value_or(hit->world),vp,p.viewport())&&polygonContains(std::span<const Point>(quad.p.data(),quad.n),point))return rowAction(hit->buttonID);}
+    return std::nullopt;
+}
+std::optional<std::uint64_t> SourceWatchSession::arrangeLifted()const noexcept{return impl_->arrange.lifted();}
+bool SourceWatchSession::arrangeActive()const noexcept{return impl_->arrange.isActive();}
+bool SourceWatchSession::takeArrangeScrolled()noexcept{return std::exchange(impl_->arrangeScrolled,false);}
+std::optional<std::string_view> SourceWatchSession::raisedButton()const noexcept{return impl_->builder.desktopRaisedButton();}
 void SourceWatchSession::setScrollPosition(double value,double time){need(std::isfinite(value),"Invalid Watch scroll position");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.scrollMotion.reset(value,*at);p.scrollPosition=p.scrollMotion.position();p.lastHit.reset();}
 const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;const auto at=p.advance(value);if(!at)return p.hasFrame?&p.rendered:nullptr;
     if(p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed||p.environment.viewport[0]<=0||p.environment.viewport[1]<=0){++p.stats.concealedSamples;return nullptr;}
     try {
     const double time=p.heldTime.value_or(*at);const bool reduce=!p.heldTime&&p.settings.reduceMotion;
-    if(p.playback.phase()==VisibilityPhase::visible)p.scrollPosition=p.scrollMotion.advance(time);
+    if(p.playback.phase()==VisibilityPhase::visible){p.scrollPosition=p.scrollMotion.advance(time);p.keepLiftedBound(time);}
     if(p.environment.pointerLocked)p.gyro.stop(time);
     if(!reduce&&(p.environment.onScreen||p.environment.canAdvanceTransition)&&!p.environment.pointerLocked&&p.environment.pointer){const auto point=*p.environment.pointer;
         p.gyro.retarget(p.cameraModel.gyro().desktopTarget({point.x,point.y},p.environment.viewport,p.settings.parallax,p.settings.perspective),time,p.cameraModel.gyro().duration);}
     p.gyro.finishIfNeeded(time);const auto camera=p.cameraModel.desktopFrame(p.environment.viewport,p.gyro.rotation(time),p.settings.hudOffset,p.settings.hudScale);
-    p.refreshBindings(time);p.refreshIndicators();const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);p.refreshLogo(time);
+    p.refreshBindings(time);p.applyArrange(time);p.refreshIndicators();const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);p.refreshLogo(time);
     const bool settled=p.playback.phase()==VisibilityPhase::visible&&!p.buttons.requiresFrames(time)&&!p.selectable.requiresFrames(time);
     const auto visibility=p.playback.sample(time,reduce,p.usesAmbient());if(visibility&&visibility->completedGeneration)p.completion=p.lifecycleToken;
     if(!visibility||visibility->phase==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.input=false;return nullptr;}
@@ -295,14 +408,19 @@ const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;
     p.rendered={frame,camera,p.cameraModel.gpu(camera),p.usesAmbient()?static_cast<float>(time):0,*visibility};p.hasFrame=true;
     const bool interactive=p.input&&p.playback.phase()==VisibilityPhase::visible&&p.environment.onScreen;
     const auto revision=p.builder.presentationRevision();std::optional<std::string_view> next;
-    if(p.lastHit&&p.lastHit->point==p.environment.pointer&&p.lastHit->revision==revision&&p.lastHit->interactive==interactive)next=p.hovered;
+    if(p.arrangeButton)next=p.arrangeButton;
+    else if(p.lastHit&&p.lastHit->point==p.environment.pointer&&p.lastHit->revision==revision&&p.lastHit->interactive==interactive)next=p.hovered;
     else if(interactive&&p.environment.pointer&&!(p.navigationDrag&&p.navigationDrag->active))next=p.hit(*p.environment.pointer,true);
     if(next!=p.hovered){p.hovered=next;p.updateStates(time);const auto&updated=p.selectable.colors(time,reduce);p.refreshStyles(updated);
         p.makePose(*visibility,camera.layout.canvasSize,time,reduce,false);p.rendered.sourceFrame=&p.builder.build(*p.finalPose,camera.worldRoot,p.scrollPosition,p.navigation.get(),updated);++p.stats.hoverRebuilds;}
-    p.lastHit=Impl::HitQuery{p.environment.pointer,p.builder.presentationRevision(),interactive};++p.stats.samples;return &p.rendered;
+    p.lastHit=Impl::HitQuery{p.environment.pointer,p.builder.presentationRevision(),interactive};++p.stats.samples;
+    // Last, once this frame is the one hits test against: only while a tile is
+    // dragged; recorded first, so the host's answer cannot repeat it.
+    {const auto drawn=p.arrangeDrawnPosition;p.arrangeDrawnPosition=p.arrange.lifted()?std::optional(p.scrollPosition):std::nullopt;if(drawn&&drawn!=p.arrangeDrawnPosition)p.arrangeScrolled=true;}
+    return &p.rendered;
     }catch(...){conceal(*at);throw;}
 }
-FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||(p.scrollMotion.requiresFrames()&&!(p.navigationDrag&&p.navigationDrag->active))||p.logoStart.has_value();
+FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||(p.scrollMotion.requiresFrames()&&!(p.navigationDrag&&p.navigationDrag->active))||p.logoStart.has_value()||p.arrange.requiresFrames();
     return {p.playback.phase(),!p.hidden&&p.environment.presented,p.environment.onScreen,p.environment.canAdvanceTransition,p.heldTime.has_value(),finite,p.settings.ambientEnabled,p.settings.reduceMotion,p.settings.lowPower};}
 VisibilityPhase SourceWatchSession::phase()const noexcept{return impl_->playback.phase();}
 std::uint64_t SourceWatchSession::generation()const noexcept{return impl_->lifecycleToken;}

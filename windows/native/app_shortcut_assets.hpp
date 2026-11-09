@@ -16,7 +16,7 @@ public:
     explicit NativeAppShortcutAssets(std::filesystem::path root);
     const std::filesystem::path&root()const noexcept{return root_;}
     const modules::AppShortcutArtwork&artwork()const noexcept{return artwork_;}
-    static constexpr std::string_view artworkSHA256="4a7d9844fcb4ea04ccce12d292aacd41a996294021f655600fceb4ae57f3933d";
+    static constexpr std::string_view artworkSHA256="b0e37c9015c9ba59f504c1bcf7db9f5298137c563ca5aff53890239e32bd5cba";
 private:
     std::filesystem::path root_;modules::AppShortcutArtwork artwork_;
 };

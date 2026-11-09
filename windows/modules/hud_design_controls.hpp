@@ -52,7 +52,7 @@ public:
     Variant variant() const noexcept { return variant_; }
     void setTitle(std::string);
     void setSublabel(std::optional<std::string>);
-    void setTitleInset(double);                 // room for a leading grip or glyph (System > Modules: 56)
+    void setTitleInset(double);                 // room for a leading grip or glyph (Display > Modules: 56)
     Rect titleFrame() const noexcept;           // the label's line box (redaction, tests)
     void setCluster(std::vector<Layer*>);       // right-aligned at w - 12 (- 22 nav), 8 apart
     Rect controlArea() const noexcept;          // slider rows: x 202 to w - 12, 30 tall
@@ -195,16 +195,28 @@ private:
 };
 
 // HUDDragGrip (LIB-34): 2 x 3 dots of 2 px, 4 apart (6 x 10) in bracket ->
-// #111 while hovered or dragging (.22 ease, tint). A drag starts after 3 px
-// (began reports the press point), then moved, then ended; a press without a
-// drag activates; clearing mid-drag ends at the start point. No label: out of
-// the accessibility tree (owners expose move actions instead).
+// #111 while hovered or dragging (.22 ease, tint). A drag starts after
+// liftDistance (began reports the press point), then moved, then ended; a
+// press without a drag activates; clearing mid-drag ends at the start point.
+// No label: out of the accessibility tree (owners expose move actions instead).
 class DragGrip final : public Control {
 public:
     enum class Phase : std::uint8_t { began, moved, ended };
+    // How far the pointer travels before a press becomes a drag.
+    static constexpr double liftDistance = core::DragGripMotion::liftDistance;
     DragGrip(Builder&, std::string id, std::string label, Size size, Point dotsAt);
     std::function<void(Phase, Point)> onDrag;
     bool dragging() const noexcept { return dragging_; }
+    // HUDDragGrip.isUnderPointer: the grip is shown and unclipped under
+    // `rootPoint` (in `root`); its owner's cursor is the open hand there.
+    bool underPointer(Point rootPoint, const Layer& root) const noexcept;
+    // HUDDragGrip.cursor(lifted:grips:at:in:), the drag-to-reorder hint every
+    // grip list shares (TODO cards, App Shortcut rows, Modules): the closed
+    // hand while a row is lifted, the open hand over a shown grip, otherwise
+    // the owner has no cursor.
+    static std::optional<Cursor> cursor(bool lifted, std::span<DragGrip* const> grips, std::optional<Point> rootPoint, const Layer& root);
+    // HUDDragGrip.edgeScrollStep (core::DragGripMotion::edgeScrollStep).
+    static double edgeScrollStep(double offset, double length) noexcept { return core::DragGripMotion::edgeScrollStep(offset, length); }
     bool pointerDown(Point) override;
     void pointerDragged(Point) override;
     void pointerUp(Point) override;
@@ -213,6 +225,49 @@ public:
     std::optional<AccessibilityRole> accessibilityRole() const override;
 private:
     Layer* dots_; std::optional<Point> pressPoint_; bool dragging_{};
+};
+
+// HUDListReorder: a row lifted by its DragGrip in a scrolling list (the Notes
+// TODO cards, the App Shortcut rows). Lift: the row rises over the others (z
+// 10, scale 1.015 over the hover duration). Drag: it follows the pointer, the
+// list scrolls under it past its edges (half the distance past the edge per
+// event) and the others glide to their new slots (.18 s). Drop: it settles
+// into its slot (.18 s) and the owner saves order(); the owner re-renders
+// after landingDelay so the page order follows. Row `slot` sits at
+// `top + slot * pitch` in the list content; each row moves by its translateY
+// from the frame it was built at. Points are in the canvas root. Everything
+// happens on pointer events; nothing runs between them.
+class ScrollArea;
+class ListReorder final {
+public:
+    using Rows = std::function<Layer*(const std::string& id)>;
+    static constexpr double glide = .18, landing = .2;
+    // Lifts `id` (nullopt when it is not in `order`), grabbed at `grabY` in
+    // the list content (converted when the press began).
+    static std::optional<ListReorder> lift(const std::string& id, std::vector<std::string> order, Layer&, double grabY,
+        double top, double pitch, const motion::Clock&);
+    const std::string& id() const noexcept { return id_; }
+    int index() const noexcept { return index_; }
+    const std::vector<std::string>& order() const noexcept { return order_; }
+    double slotY(int slot) const noexcept { return top_ + double(slot) * pitch_; }
+    // The lifted row follows `rootPoint`; the others reflow when its slot changes.
+    void move(Point rootPoint, ScrollArea& list, const Layer& root, const Rows&, const motion::Clock&);
+    // The lifted row settles into its slot; the owner then saves order().
+    void drop(Layer*, const motion::Clock&) const;
+    // Every row returns at once to its slot in `saved` (the module was left
+    // mid-drag, or the order could not be saved).
+    void cancel(std::span<const std::string> saved, const Rows&) const;
+    // HUDListReorder.afterLanding: the delay before the owner re-renders.
+    static double landingDelay(bool reduceMotion) noexcept { return reduceMotion ? 0 : landing; }
+    // A whole grip drag from `start` by `slots` rows (verification).
+    static void simulate(Point start, int slots, double pitch, const std::function<void(DragGrip::Phase, Point)>& drag);
+private:
+    ListReorder(std::string id, std::vector<std::string> order, int index, double grab, double top, double pitch)
+        : id_(std::move(id)), order_(std::move(order)), index_(index), grab_(grab), top_(top), pitch_(pitch) {}
+    std::string id_;
+    std::vector<std::string> order_;
+    int index_;
+    double grab_, top_, pitch_;
 };
 
 // HUDSlider (LIB-56): height 30; readout column 58 (+8) unless hidden; track
@@ -239,6 +294,9 @@ public:
     const Range& range() const noexcept { return range_; }
     bool dragging() const noexcept { return dragging_; }
     void setValue(double);                      // no callback
+    // A range that depends on other values (the battery bar's Length minimum
+    // follows its Size and display); the value is clamped into it. No callback.
+    void setRange(Range, double value);
     void nudge(double direction);               // one step, commits
     void cancelDrag();
     std::function<void(double value, bool final)> onChange;
@@ -281,13 +339,24 @@ private:
     Builder* builder_; Layer *layer_, *shadow_, *body_, *arrow_, *text_; bool visible_{};
 };
 
+// HUDMenuAnchor: a control that shows while the menu it opened is open (the
+// dropdown's caret, the App Shortcut icon tile's chooser badge);
+// Canvas::openMenu / closeMenu set it on whichever anchor opened the menu.
+class MenuAnchor {
+public:
+    virtual bool isOpen() const noexcept = 0;
+    virtual void setOpen(bool) = 0;
+protected:
+    ~MenuAnchor() = default;
+};
+
 // HUDDropdown (LIB-51): regular 178 x 30 (or width), small 26 tall and
 // max(96, 12 + text + 14 + 9 + 10) wide; value ellipsised at x 12 (w - 45);
 // accent bar 2 x h scaleY 0 -> 1 (.14 E) on hover or open; caret 9 x 6 at
 // w - 14.5, open rotates 180 deg, hover moves 2 px down (.16 E); optional
 // value language; setArtwork replaces the value text with an aspect-fit
 // image (the icon-grid choosers), the text stays the spoken value.
-class Dropdown final : public Control {
+class Dropdown final : public Control, public MenuAnchor {
 public:
     enum class Height : std::uint8_t { regular, compact }; // Mac .small (`small` is a Windows macro, rpcndr.h)
     Dropdown(Builder&, std::string id, std::string label, std::string value, std::optional<TextRegion> valueLanguage = {},
@@ -295,8 +364,14 @@ public:
     const std::string& valueText() const noexcept { return value_; }
     void setValue(std::string, std::optional<TextRegion> language = {});
     void setArtwork(std::optional<ImageSource>, Size imageSize, double height);
-    bool isOpen() const noexcept { return open_; }
-    void setOpen(bool);
+    bool isOpen() const noexcept override { return open_; }
+    void setOpen(bool) override;
+    // HUDDropdown.caretLayer: the yellow chooser caret, `size` wide and tall,
+    // centred on `position` (animatable: it turns and nudges).
+    static Layer& caretLayer(Builder&, std::string_view id, Size size, Point position);
+    // HUDDropdown.renderCaret: the caret turns over while the menu is open
+    // and nudges 2 px toward the field's bottom on hover.
+    static void renderCaret(Layer& caret, bool open, bool hovered, const motion::Clock&);
     void hoverChanged() override;
     void enabledChanged() override;
     std::optional<AccessibilityRole> accessibilityRole() const override { return AccessibilityRole::popUp; }

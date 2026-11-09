@@ -68,7 +68,14 @@ public:
     std::optional<int> confirmationRemaining(double time)const;
     std::optional<double> nextWakeTime(double time)const;
     bool scalePending()const noexcept;bool positionPending()const noexcept;
-    void restoreDefaults();void close();
+    // restoreDefaults(_:) / isDefault(_:) (HUDSettingsController.swift): one
+    // scope's keys from the defaults, starting from the committed record and
+    // saved through applyPersistent; no hotkey or capture is touched. A scope
+    // that resets the UI scale or position (Display) drops a pending preview
+    // and writes them at once; another scope leaves it to Keep or Revert.
+    void restoreDefaults(ehud::data::SettingsScope);
+    bool isDefault(ehud::data::SettingsScope)const;
+    void close();
     std::optional<std::string>setShortcut(SettingsShortcut);
     void beginShortcutCapture();void endShortcutCapture();
     bool capturingShortcut()const noexcept{return capturing_;}
@@ -95,6 +102,6 @@ private:
     bool capturing_{};std::uint64_t revision_{1},observerSerial_{};std::vector<std::pair<std::uint64_t,std::function<void()>>>observers_;
     static Layout layout(const ehud::data::Settings&);static void applyLayout(ehud::data::Settings&,Layout);
     static ehud::data::Settings normalize(ehud::data::Settings);
-    void preview(Layout,double);void clearPreview();void applyPersistent(ehud::data::Settings,bool shortcutApplied=false,bool forceShortcut=false);void publish();
+    void preview(Layout,double);void clearPreview();void applyPersistent(ehud::data::Settings,bool shortcutApplied=false);void publish();
 };
 }

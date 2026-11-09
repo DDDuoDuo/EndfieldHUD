@@ -52,7 +52,7 @@ public:
 
     // --- design::Canvas ---
     void buildPage(design::Page&) override;
-    void show(double now) override;               // makeContent (:243-247)
+    void show(double now) override;               // makeContent (:243-249)
     void didActivate() override;
     void didDeactivate() override;
     // A new HUD session (the Mac's new EventLogCanvas, :220, :226): the All

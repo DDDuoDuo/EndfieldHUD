@@ -1,5 +1,6 @@
 #include "core/source_watch_layout.hpp"
 #include "core/shell_packet.hpp"
+#include "tests/source_watch_list_fixture.hpp"
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -112,4 +113,43 @@ void actual(const std::filesystem::path&root,const std::optional<std::filesystem
     std::cout<<scene.nodes().size()<<" mounted nodes, "<<document.buttons.size()<<" source buttons; Swift oracle "<<(oraclePath?"compared":"not supplied")<<'\n';
 }
 }
-int main(int argc,char**argv){try{spriteProjection();analytic();scrolling();if(argc>1)actual(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<std::setprecision(8)<<"Maximum relative error "<<maximumRelativeError<<"\n";std::cout<<checks<<" source Watch layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+// Arrange on HUD: HUDSourceDesktopNavigationLayout.positions(binding:) and
+// the HUDSourceDesktopTiles helpers.
+void arrangeHelpers(){
+    const auto fixture=endfield::tests::sourceListFixture();
+    for(const std::int64_t entries:{11,21,5}){
+        DesktopNavigationLayout navigation(fixture.scene,fixture.document,entries);check(navigation.rows().size()==4,"The fixture pools four rows");
+        for(std::size_t index=0;index<static_cast<std::size_t>(entries);++index){
+            const auto range=navigation.positions(index);check(range&&range->first<=range->second&&range->first>=0&&range->second<=1,"A listed entry has a range inside 0...1");
+            // Brute force: every sampled position inside the range binds the entry to a pooled button.
+            for(int step=0;step<=2000;++step){const double position=step/2000.;const auto sample=navigation.sample(position);
+                const bool bound=std::any_of(sample.assignments.begin(),sample.assignments.end(),[&](const auto&a){return a.second==index;});
+                if(position>=range->first&&position<=range->second)check(bound,"Inside its range the entry stays bound to a pooled row");}
+            const auto inside=[&](double position){const auto sample=navigation.sample(position);return std::any_of(sample.assignments.begin(),sample.assignments.end(),[&](const auto&a){return a.second==index;});};
+            if(range->first>1e-3)check(!inside(range->first-1e-3),"Just past the low end the entry leaves the pool");
+            if(range->second<1-1e-3)check(!inside(range->second+1e-3),"Just past the high end the entry leaves the pool");
+        }
+        check(!navigation.positions(static_cast<std::size_t>(entries)),"Past the list: no range");
+    }
+    {DesktopNavigationLayout shortList(fixture.scene,fixture.document,3);const auto all=shortList.positions(2);check(all&&all->first==0&&all->second==1,"Nothing hidden: every position binds");}
+    {DesktopNavigationLayout list(fixture.scene,fixture.document,21);const auto first=list.positions(0),middle=list.positions(10),last=list.positions(20);
+     check(first&&first->second==1&&first->first>0,"The first row binds from the top down to where it leaves the pool");
+     check(middle&&middle->first>0&&middle->second<1,"A middle row binds within the list");
+     check(last&&last->first==0&&last->second<1,"A row inside the last pool rows binds down to the bottom");}
+    // Tiles: the plane, translation, rest and raising rules.
+    const auto plane=Matrix4::translation(10,20,5)*Matrix4::scale(2,2,1),world=Matrix4::translation(30,40,5)*Matrix4::scale(2,2,1);const SourceRect rect{{-5,-5},{10,10}};
+    const auto center=DesktopTiles::center(world,rect,plane);check(center&&std::abs((*center)[0]-10)<1e-12&&std::abs((*center)[1]-10)<1e-12,"A tile's centre in the viewport's plane");
+    const auto offset=DesktopTiles::translation(DesktopTilePlacement::offset({3,-4}),world,rect,plane);check(offset&&*offset==Vec3{6,-8,0},"An offset is scaled into the scene by the plane");
+    const auto held=DesktopTiles::translation(DesktopTilePlacement::center({13,6}),world,rect,plane);check(held&&*held==Vec3{6,-8,0},"A held centre is the offset from the resting centre");
+    const auto moved=DesktopTiles::translated(ResolvedNode{nullptr,{},world,rect,true},*held);const auto root=Matrix4::scale(1.5,1.5,1);
+    const auto rest=DesktopTiles::restWorld(root*moved.worldMatrix,*held,root);for(unsigned n=0;n<16;++n)check(std::abs(rest.values[n]-(root*world).values[n])<1e-12,"The drawn world moved back is the resting world");
+    std::vector<int> items{1,2,3,4,5,6};DesktopTiles::raise(items,[](int v){return v==2;},[](int v){return v<=4;});
+    check(items==std::vector<int>{1,3,4,2,5,6},"The raised item draws just after the last item of its group");
+    DesktopTiles::raise(items,[](int v){return v==9;},[](int v){return v<=4;});check(items==std::vector<int>{1,3,4,2,5,6},"Nothing raised: unchanged");
+    // The subtree walk shared by the frame builder.
+    SourceLayout layout(fixture.scene);const auto row=*layout.nodeIndex("row1");const auto inside=layout.subtrees(std::array{row});
+    check(inside[row]&&inside[*layout.nodeIndex("b10")]&&inside[*layout.nodeIndex("b11label")]&&!inside[*layout.nodeIndex("b00")]&&!inside[*layout.nodeIndex("content")],"A root and everything under it");
+    auto nodes=layout.resolve();const auto label=*layout.nodeIndex("b10label");const auto before=nodes[label].worldMatrix;
+    check(DesktopTiles::moveNodes(nodes,{{*layout.nodeIndex("b10"),Vec3{1,2,0}}},layout)==2&&nodes[label].worldMatrix==Matrix4::translation(1,2,0)*before,"A moved button carries its subtree");
+}
+int main(int argc,char**argv){try{spriteProjection();analytic();scrolling();arrangeHelpers();if(argc>1)actual(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<std::setprecision(8)<<"Maximum relative error "<<maximumRelativeError<<"\n";std::cout<<checks<<" source Watch layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

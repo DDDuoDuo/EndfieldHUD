@@ -72,7 +72,7 @@ std::string shelfText(ShelfText, core::Language);
 // Event Log wiring). Every callback runs on the UI thread.
 struct FileShelfServices {
     // FileShelfStore: a store that could not open answers nothing (available
-    // false: "File shelf storage is unavailable."). refresh / add / remove /
+    // false: "File shelf storage is unavailable"). refresh / add / remove /
     // clear throw on failure; describe() gives the error's text for a toast.
     bool available{true};
     std::function<std::vector<FileShelfItem>()> items;
@@ -145,11 +145,11 @@ public:
     // A failure reported after the HUD closed (the reveal handoff): shown
     // when the shelf is next active (the Mac's pendingError).
     void deferError(std::string);
-    // The store changed outside the canvas (a relink, the import ledger read):
+    // The store changed outside the canvas (a relink, the relink ledger read):
     // reload, re-render when the structure changed (no selection change).
     void storeChanged();
-    // Accessibility and verification actions (:596-612): shelf:add,
-    // shelf:clear, shelf:<id>:select|open|reveal|remove (+ Windows :relink).
+    // Accessibility and verification actions (:601-624): shelf:add,
+    // shelf:clear, shelf:<id>:select|open|reveal|remove|menu (+ Windows :relink).
     bool perform(std::string_view);
     // ShelfFileProperties.read's completion (:378-385).
     void propertiesRead(const std::string& id, ShelfFileProperties);
@@ -192,7 +192,7 @@ public:
     // releases their artwork with the close (a switch inside the open HUD
     // keeps them).
     void overlayClosing();
-    void playEntrance(design::Point, double now) override;
+    void playPageEntrance(design::Point, double delay) override;
     void recordingModeChanged() override;
     void didInstall(design::Page&) override;      // the rerender override (:510-513)
     bool interceptPointerDown(design::Point, const design::PointerInput&) override;
@@ -243,6 +243,8 @@ private:
     std::optional<Structure> renderedStructure_;
     std::set<std::string, std::less<>> renderedSelection_;
     std::optional<std::string> renderedCard_;
+    // The page's card started its own selection slide when it was built (:83-84).
+    bool cardSlidIn_{};
     design::Deadlines::Token clearTimer_{};
     // The other layout's tiles (beside the card or without it), transparent
     // in the grid of the current page (buildAlternates).
@@ -268,6 +270,9 @@ private:
     void loadProperties(const FileShelfItem&);
     void selectionChanged();
     void beginDrag(const std::string& id);
+    // A file's Open / Reveal / Remove menu (Relink for an imported item
+    // awaiting it), from a right-click at a point or the tile's ⋯ (`anchor`).
+    void openItemMenu(std::string_view itemID, design::Rect anchorRect, const design::Control* anchor);
     void chooseFiles();
     void reveal(const std::set<std::string, std::less<>>&, bool animated);
     void finishClear();

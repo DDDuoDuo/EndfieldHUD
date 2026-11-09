@@ -97,7 +97,14 @@ void synthetic(){
     bool noMeasurer=false;try{DesktopClockArtworkPlan none{ClockTextWidth{}};}catch(const std::invalid_argument&){noMeasurer=true;}check(noMeasurer,"The clock needs its measurer");
     for(unsigned i=0;i<5;++i){const auto r=art.indicatorRect(i);check(art.indicatorAt({r.x,r.y})==i,"Indicator includes lower bounds");check(!art.indicatorAt({r.x+r.width,r.y}),"Indicator excludes max X as CGRect.contains");check(!art.indicatorAt({r.x,r.y+r.height}),"Indicator excludes max Y as CGRect.contains");}
     check(DesktopClockArtworkPlan::footerText("CTRL+SPACE","CLICK OUTSIDE TO CLOSE")=="ESC / CTRL+SPACE / CLICK OUTSIDE TO CLOSE","Footer preserves actual shortcut separators");
-    close(DesktopChromeTiming::opacity(true,.2),0,"Opening native fade starts at source delay");close(DesktopChromeTiming::opacity(true,.44),1,"Opening native fade ends at source time");close(DesktopChromeTiming::opacity(false,.35,.73),.73,"Closing retains captured current opacity");close(DesktopChromeTiming::opacity(false,.41,.73),0,"Closing native fade completes");close(DesktopChromeTiming::opacity(true,0,1,true),1,"Reduced-motion entrance is immediate");
+    close(DesktopChromeTiming::opacity(true,.2),0,"Opening native fade starts at source delay");close(DesktopChromeTiming::opacity(true,.44),1,"Opening native fade ends at source time");// The close (5b2a9d3): the opening's .24 s fade reversed with an ease-in,
+    // ending with the .3333 s Watch exit (HUDMotion.closingFade), from the captured opacity.
+    close(DesktopChromeTiming::opacity(false,0,.73,false,.3333),.73,"Closing starts from the captured opacity");close(DesktopChromeTiming::opacity(false,.09,.73,false,.3333),.73,"Closing holds the captured opacity until the fade's delay");
+    close(DesktopChromeTiming::opacity(false,.2133,.73,false,.3333),.73*(1-DesignEasing::easeIn.value(.5)),"Closing fades on the ease-in");
+    close(DesktopChromeTiming::opacity(false,.3333,.73,false,.3333),0,"Closing fade ends with the exit");close(DesktopChromeTiming::opacity(false,.5,.73,false,.3333),0,"Closing stays faded");
+    close(DesktopChromeTiming::opacity(false,0,.73,true,.3333),0,"A reduced close fades at once");close(DesktopChromeTiming::opacity(false,0,.73,false,0),0,"A close with no exit is faded at once");
+    {double previous=1;bool falling=true;for(int i=0;i<=40;++i){const double v=DesktopChromeTiming::opacity(false,.3333*i/40,1,false,.3333);falling=falling&&v<=previous+1e-12;previous=v;}check(falling,"The closing fade falls monotonically");}
+    close(DesktopChromeTiming::opacity(true,0,1,true),1,"Reduced-motion entrance is immediate");
     check(DesktopChromeTiming::styleMovesForward(4,0)&&!DesktopChromeTiming::styleMovesForward(0,4),"Clock style wrap direction matches source");
     // HUDDesignGeometry: box px -> design units at the disc, then the centre plane.
     const auto center=Matrix4::translation(40,-12)*Matrix4::scale(1.3,1.1);const double u=1470./(1920*1.15);

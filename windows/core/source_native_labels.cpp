@@ -112,6 +112,9 @@ NativeLabelPlan::NativeLabelPlan(const SceneDefinition& scene,std::vector<Native
         NativeLabelPlacement output;output.surfaceID=b.surfaceID;output.masks.reserve(8);output.clippedPolygon.reserve(64);placements_.push_back(std::move(output));
     }
     relevantNodes_.assign(relevant.begin(),relevant.end());previousNodes_.resize(relevantNodes_.size());previousButtons_.resize(buttonIDs_.size());clips_.resize(buttonIDs_.size());
+    rightButtons_.resize(buttonIDs_.size());buttonNodes_.resize(buttonIDs_.size());
+    for(std::size_t i=0;i<bindings_.size();++i){buttonNodes_[compiled_[i].button]=compiled_[i].buttonNode;if(bindings_[i].rightButton)rightButtons_[compiled_[i].button]=1;}
+    marks_.reserve(buttonIDs_.size());previousMarks_.reserve(buttonIDs_.size());
     for(auto& b:previousButtons_)b.masks.reserve(maximumButtonMasks);for(auto& c:clips_){c.masks.reserve(8);c.polygon.reserve(64);}
     staged_=placements_;for(auto& p:staged_){p.masks.reserve(8);p.clippedPolygon.reserve(64);}scratchA_.reserve(64);scratchB_.reserve(64);
 }
@@ -141,10 +144,18 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
         require(s.world.finite()&&(!s.rect||finite(*s.rect))&&std::isfinite(s.alpha)&&s.alpha>=0&&s.alpha<=1,"Invalid native source node state");same=same&&(s==previousNodes_[i]);}
     for(std::size_t i=0;i<buttons.size();++i){const auto& b=buttons[i];const auto& old=previousButtons_[i];require(b.masks.size()<=maximumButtonMasks,"Native button mask count exceeds eight GPU planes including viewport");
         for(const auto& m:b.masks)require(m.world.finite()&&finite(m.rect),"Invalid native button mask state");
-        same=same&&b.actionBound==old.actionBound&&b.hasHit==old.hasHit&&b.expandFileShelfCaption==old.expanded&&std::equal(b.masks.begin(),b.masks.end(),old.masks.begin(),old.masks.end());}
+        same=same&&b.actionBound==old.actionBound&&b.hasHit==old.hasHit&&b.expandFileShelfCaption==old.expanded&&b.arrangeMark==old.arrangeMark&&b.liftedMark==old.liftedMark&&b.raised==old.raised&&b.outline==old.outline&&std::equal(b.masks.begin(),b.masks.end(),old.masks.begin(),old.masks.end());}
     ++stats_.updates;if(same){++stats_.unchangedUpdates;return false;}
     const auto viewportPoints=viewportCorners(viewport);
     std::uint64_t projected=0,clipped=0,changed=0,boundsChanged=0;
+    // A tile's outline (its hit rect's corners, top-left first in y-up source space) projected.
+    const auto outline=[&](const NativeClipPlane& hit,std::array<Point,4>& out){const auto& r=hit.rect;
+        const std::array<Vec3,4> corners{{{r.origin[0],r.origin[1]+r.size[1],0},{r.origin[0]+r.size[0],r.origin[1]+r.size[1],0},{r.origin[0]+r.size[0],r.origin[1],0},{r.origin[0],r.origin[1],0}}};
+        for(unsigned c=0;c<4;++c){const auto p=projectNativePoint(corners[c],hit.world,viewProjection,viewport);if(!p)return false;out[c]=*p;}return true;};
+    // Arrange on HUD: the tile drawn above the others also covers their
+    // captions, icons and marks (the Mac cuts its outline out of their clip).
+    std::optional<std::size_t> raised;std::array<Point,4> raisedOutline{};
+    for(std::size_t i=0;i<buttons.size();++i)if(buttons[i].raised&&buttons[i].outline&&outline(*buttons[i].outline,raisedOutline)){raised=i;break;}
     for(std::size_t i=0;i<buttons.size();++i){auto& out=clips_[i];out.polygon.clear();out.masks.clear();if(!buttons[i].hasHit)continue;
         ++clipped;out.polygon.assign(viewportPoints.begin(),viewportPoints.end());out.masks.push_back({{},viewport});
         for(const auto& mask:buttons[i].masks){std::array<Point,4> points;bool validMask=true;const auto corners=mask.rect.corners();
@@ -155,7 +166,24 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
             try{out.masks.push_back({inverseSourceMatrix(nativeProjectiveTextTransform(points,{1,1})),{0,0,1,1}});}
             catch(const std::invalid_argument&){out.polygon.clear();out.masks.clear();break;}
         }
+        // The raised outline as a hole where it overlaps this right-hand tile's clip.
+        if(raised&&*raised!=i&&rightButtons_[i]&&out.polygon.size()>=3&&out.masks.size()<maximumButtonMasks+1){
+            clipInto(raisedOutline,out.polygon,scratchA_,scratchB_);
+            if(scratchA_.size()>=3)try{out.masks.push_back({inverseSourceMatrix(nativeProjectiveTextTransform(raisedOutline,{1,1})),{0,0,1,1},true});}catch(const std::invalid_argument&){}
+        }
     }
+    // The corner marks of each draggable tile, in its own button's masks,
+    // sized in points on the projected tile (only while the button is shown).
+    previousMarks_.swap(marks_);marks_.clear();
+    for(std::size_t i=0;i<buttons.size();++i){const auto& b=buttons[i];std::array<Point,4> corners{};
+        if(!b.arrangeMark||!b.outline||clips_[i].polygon.empty()||!nodes[buttonNodes_[i]].activeInHierarchy||!outline(*b.outline,corners))continue;
+        const Vec2 size{std::max(1.,std::hypot(corners[1].x-corners[0].x,corners[1].y-corners[0].y)),std::max(1.,std::hypot(corners[3].x-corners[0].x,corners[3].y-corners[0].y))};
+        NativeArrangeMark mark{buttonIDs_[i],nativeProjectiveTextTransform(corners,size),size,b.liftedMark,static_cast<float>(alpha.empty()?1:std::clamp(alpha[buttonNodes_[i]],0.,1.)),clips_[i].masks};
+        if(mark.world.finite())marks_.push_back(std::move(mark));
+    }
+    // The raised tile's marks draw over the others' (the Mac raises their z).
+    if(raised)if(const auto it=std::find_if(marks_.begin(),marks_.end(),[&](const NativeArrangeMark&m){return m.buttonID==buttonIDs_[*raised];});it!=marks_.end())std::rotate(it,it+1,marks_.end());
+    const bool marksChanged=marks_!=previousMarks_;
     for(std::size_t i=0;i<bindings_.size();++i){const auto& b=bindings_[i];const auto& c=compiled_[i];const auto& n=nodes[c.node];const auto& button=buttons[c.button];
         auto& out=staged_[i];const auto& old=placements_[i];out.world=old.world;out.contentBounds=old.contentBounds;out.visible=false;out.opacity=0;out.masks.clear();out.clippedPolygon.clear();
         const bool active=b.kind==NativeLabelKind::caption?n.activeInHierarchy:nodes[c.buttonNode].activeInHierarchy;
@@ -190,8 +218,9 @@ bool NativeLabelPlan::update(std::span<const ResolvedNode> nodes,std::span<const
         if(out.contentBounds!=old.contentBounds)++boundsChanged;
     }
     placements_.swap(staged_);for(std::size_t i=0;i<relevantNodes_.size();++i)previousNodes_[i]=snapshot(relevantNodes_[i]);
-    for(std::size_t i=0;i<buttons.size();++i){const auto& b=buttons[i];auto& old=previousButtons_[i];old.actionBound=b.actionBound;old.hasHit=b.hasHit;old.expanded=b.expandFileShelfCaption;old.masks.assign(b.masks.begin(),b.masks.end());}
+    for(std::size_t i=0;i<buttons.size();++i){const auto& b=buttons[i];auto& old=previousButtons_[i];old.actionBound=b.actionBound;old.hasHit=b.hasHit;old.expanded=b.expandFileShelfCaption;old.masks.assign(b.masks.begin(),b.masks.end());
+        old.arrangeMark=b.arrangeMark;old.liftedMark=b.liftedMark;old.raised=b.raised;old.outline=b.outline;}
     previousViewProjection_=viewProjection;previousWorldRoot_=camera.worldRoot;previousViewport_=viewport;initialized_=true;
-    stats_.projectionComputations+=projected;stats_.clipComputations+=clipped;stats_.changedPlacements+=changed;stats_.contentBoundsChanges+=boundsChanged;return changed!=0;
+    stats_.projectionComputations+=projected;stats_.clipComputations+=clipped;stats_.changedPlacements+=changed;stats_.contentBoundsChanges+=boundsChanged;return changed!=0||marksChanged;
 }
 } // namespace endfield::core::source

@@ -42,7 +42,7 @@ using Microsoft::WRL::ComPtr;
 using ShelfChoices = std::function<std::vector<mod::NotesShelfChoice>()>;
 using ShelfOpen = std::function<std::optional<std::pair<std::string, std::shared_ptr<void>>>(std::string_view)>;
 constexpr std::string_view shelfChoicesKey = "fileShelf.mediaChoices", shelfOpenKey = "fileShelf.openReference",
-    longWorkKey = "app.longWorkExecutor";
+    longWorkKey = app::longWorkExecutorKey;
 
 // Hidden coverage only: a deterministic synthetic still in the area's owned
 // coverage root (WIC PNG encoder; never user media).
@@ -514,7 +514,7 @@ private:
         fs::remove(photo);
         step.check(run.perform("tool:mirror"), "Mirror edits the removed source"); run.settle();
         step.check(session.error() == mod::MediaAssemblyError::sourceUnavailable &&
-                   mod::mediaAssemblyErrorMessage(*session.error(), core::Language::english) == "The original media file is unavailable. Choose it again to restore access.",
+                   mod::mediaAssemblyErrorMessage(*session.error(), core::Language::english) == "The original media file is unavailable. Choose it again to restore access",
                    "A removed source asks to be chosen again");
         writeSyntheticPNG(photo, 320, 200, 0);
         {   const std::array<std::string, 2> dropped{gpu::mediaAssemblyUTF8(photo), gpu::mediaAssemblyUTF8(shelfStill)};
@@ -611,6 +611,7 @@ private:
                             host_.rasterizer().stats().entries < entriesBefore,
                             "Once the HUD is closed the hidden Media Assembly releases its canvas artwork (" + std::to_string(hidden.sceneParts) + " parts, " +
                             std::to_string(entriesBefore - host_.rasterizer().stats().entries) + " shared raster entries)");
+            setOverlayVisible(true, step.time); // this owner's next opening (the harness keeps the HUD open)
         }
         {   // The host's refresh after the module step: the fragments follow the
             // owner (none while Media Assembly is not the accepting module).

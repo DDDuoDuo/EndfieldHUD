@@ -98,6 +98,24 @@ enum L10n {
         }
     }
 
+    /// Join two messages as consecutive sentences. Interface text has no final
+    /// stop, so the separator comes from the first message's script rather than
+    /// the UI language: audio workers call this without a language snapshot.
+    static func sentences(_ first: String, _ second: String?) -> String {
+        guard let second, !second.isEmpty else { return first }
+        let cjk = first.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF: return true
+            default: return false
+            }
+        }
+        if first.hasSuffix("。") || first.hasSuffix("．") || first.hasSuffix("！") || first.hasSuffix("？") { return first + second }
+        if first.hasSuffix(".") || first.hasSuffix("!") || first.hasSuffix("?") || first.hasSuffix("…") {
+            return first + (cjk ? "" : " ") + second
+        }
+        return first + (cjk ? "。" : ". ") + second
+    }
+
     /// Render each placeholder once. Inserted text is never rescanned or passed
     /// through a printf formatter, even if it contains braces or percent signs.
     static func render(_ template: String, arguments: [String]) -> String? {

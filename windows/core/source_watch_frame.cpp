@@ -1,5 +1,6 @@
 #include "core/source_watch_frame.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -91,21 +92,25 @@ struct SourceWatchFrameBuilder::Impl {
     std::vector<std::optional<Quaternion>> currentAmbientRotations;
     std::vector<AmbientBatch> ambientBatches;
     bool ambientSupported{},slantIndependent{true};std::uint64_t revision{};
+    // Arrange on HUD: the requested placements, those the retained frame drew,
+    // the raised button and its subtree, and the right-hand row pool.
+    SourceWatchFrameBuilder::TilePlacements placements,builtPlacements;std::optional<std::string> raisedButton;
+    std::vector<unsigned char> raisedNodes,rowPoolNodes;std::map<std::size_t,Vec3> tileMoves;
     static constexpr std::size_t noAmbient=std::numeric_limits<std::size_t>::max();
     struct Order {std::int64_t order{};std::size_t sequence{},index{};};std::vector<Order> batchOrder,hitOrder;
     Impl(const SceneDefinition&s,const MountedLayoutDocument&d,const SourceWatchFrameResources&r,SourceDesktopFrameSettings config)
       :scene(&s),document(&d),resources(&r),settings(std::move(config)),layout(s),writer(s,d),resolver(s),
        canvas(s,d,static_cast<std::int64_t>(d.component("Canvas",s.rootID())?number((*d.component("Canvas",s.rootID()))["m_SortingOrder"]):0)),nodes(s.nodes().size()),canvasInverse(s.nodes().size()),softMasks(s.nodes().size()) {
         ambientSlot.resize(s.nodes().size(),noAmbient);slantWritten.resize(s.nodes().size());
-        for(const auto&id:r.ambientRotationNodes)need(layout.nodeIndex(id).has_value(),"Unknown source ambient rotation node");
+        std::vector<std::size_t> ambientRootIndices;
+        for(const auto&id:r.ambientRotationNodes){const auto index=layout.nodeIndex(id);need(index.has_value(),"Unknown source ambient rotation node");ambientRootIndices.push_back(*index);}
+        const auto ambientNodes=layout.subtrees(ambientRootIndices);
         for(const auto index:layout.traversalIndices()){
-            const auto&node=s.nodes()[index];const auto parent=node.parent?layout.nodeIndex(*node.parent):std::nullopt;
-            const bool isRoot=r.ambientRotationNodes.contains(node.id);
-            if(isRoot||(parent&&ambientSlot[*parent]!=noAmbient)){
-                ambientSlot[index]=ambientTraversal.size();ambientTraversal.push_back({index,parent,isRoot});
-                if(isRoot)ambientRoots.push_back(index);
-            }
+            if(!ambientNodes[index])continue;const auto&node=s.nodes()[index];const bool isRoot=r.ambientRotationNodes.contains(node.id);
+            ambientSlot[index]=ambientTraversal.size();ambientTraversal.push_back({index,layout.parentIndex(index),isRoot});
+            if(isRoot)ambientRoots.push_back(index);
         }
+        {std::vector<std::size_t> rows;for(const auto&id:writer.slantRootIDs())if(const auto index=layout.nodeIndex(id))rows.push_back(*index);rowPoolNodes=layout.subtrees(rows);}
         ambientStaged.resize(ambientTraversal.size());currentAmbientRotations.resize(ambientRoots.size());
         presentationResolved.resize(s.nodes().size());ambientBatches.reserve(ambientTraversal.size());
         for(const auto index:layout.traversalIndices())if(const auto*effect=d.component("UIScrollCellSlantEffect",s.nodes()[index].id)){
@@ -174,7 +179,7 @@ struct SourceWatchFrameBuilder::Impl {
     }
     void hit(const Graphic&g,const SourceRect&rect,const Matrix4&world,std::span<const ResolvedNode>resolved,const Matrix4&root,std::int64_t order,std::size_t sequence){
         const auto&a=canvas.ancestry()[g.node];if(!g.raycast||!a.button||!a.acceptsInput)return;const auto&p=g.padding;
-        SourceWatchHit h{scene->nodes()[g.node].id,scene->nodes()[*a.button].id,{{rect.origin[0]+p[0],rect.origin[1]+p[1]},{rect.size[0]-p[0]-p[2],rect.size[1]-p[1]-p[3]}},world,{}};
+        SourceWatchHit h{scene->nodes()[g.node].id,scene->nodes()[*a.button].id,{{rect.origin[0]+p[0],rect.origin[1]+p[1]},{rect.size[0]-p[0]-p[2],rect.size[1]-p[1]-p[3]}},world,{},{}};
         for(const auto mask:a.rectMasks)if(resolved[mask].rect)h.masks.push_back({*resolved[mask].rect,root*resolved[mask].worldMatrix});hitOrder.push_back({order,sequence,frame.hits.size()});frame.hits.push_back(std::move(h));
     }
     const SourceImageMesh&local(Graphic&g,const SourceSprite*sp,const SourceRect&rect,Vec2 pivot,std::optional<double>fill,bool force){
@@ -253,18 +258,38 @@ struct SourceWatchFrameBuilder::Impl {
             if(entry.graphic){auto&g=graphics[*entry.graphic];const auto inv=inverse(canvasNode.worldMatrix);need(inv.has_value(),"Singular retained ambient Canvas");
                 const auto&mesh=g.raw?g.rawMesh:g.generator.mesh();baked(g,mesh,*node.rect,*inv*node.worldMatrix,settings.images.contains(b.sourceNodeID)&&!g.raw,false);}
         }
-        for(std::size_t i=0;i<ambientRoots.size();++i){const auto&id=scene->nodes()[ambientRoots[i]].id;const auto value=rotations.find(id);currentAmbientRotations[i]=value==rotations.end()?std::nullopt:value->second.localRotation;
-            layoutPose.transforms.at(id).localRotation=currentAmbientRotations[i];beforeSlant.transforms.at(id).localRotation=currentAmbientRotations[i];}
+        adoptAmbientRotations(rotations);
         beforeSlantResolved.clear();frame.resolved=presentationResolved;++counts.ambientFrames;if(direct)++counts.directAmbientFrames;
         counts.lastAmbientResolvedNodes=ambientTraversal.size();counts.ambientResolvedNodes+=ambientTraversal.size();return frame;
     }
     const SourceWatchFrame*settled(const Pose&ambient,std::uint64_t expected,const Matrix4&root,Vec2 size,double scroll,const DesktopNavigationLayout*navigation,const SourceFrameTints&tints){
         const auto entries=navigation?std::optional(navigation->entryCount()):std::nullopt;
-        if(!previousInput||revision!=expected||!ambientSupported||previousRoot!=root||previousScroll!=scroll||previousEntries!=entries||previousTints!=tints||
+        if(!previousInput||revision!=expected||!ambientSupported||previousRoot!=root||previousScroll!=scroll||previousEntries!=entries||previousTints!=tints||builtPlacements!=placements||
             !ambient.properties.empty()||!ambient.unboundPaths.empty()||!ambient.unregisteredBindings.empty()||ambient.transforms.size()!=ambientRoots.size())return nullptr;
         const auto r=layoutPose.transforms.find(scene->rootID());if(r==layoutPose.transforms.end()||r->second.sizeDelta!=std::optional(size))return nullptr;
         for(const auto&[id,value]:ambient.transforms)if(!resources->ambientRotationNodes.contains(id)||!value.localRotation||!rotationOnly(value))return nullptr;
         try{return &ambientFrame(ambient.transforms,true);}catch(...){previousInput.reset();layoutInput.reset();ambientSupported=false;++revision;throw;}
+    }
+    // Arrange on HUD: each placed tile's translation from its slot, given its
+    // resting node, in the list viewport's plane; the tiles and their subtrees
+    // move in `nodes` (resting on entry). Hits keep where they rest.
+    void moveTiles(std::span<ResolvedNode> moved){
+        tileMoves.clear();frame.tileTranslations.clear();if(placements.empty())return;
+        const auto&scroll=frame.layoutReport.scroll;const auto planeIndex=scroll?layout.nodeIndex(scroll->viewportID):std::nullopt;if(!planeIndex)return;
+        const auto&plane=moved[*planeIndex];
+        for(const auto&[id,placement]:placements){const auto index=layout.nodeIndex(id);if(!index)continue;const auto&button=moved[*index];if(!button.activeInHierarchy||!button.rect)continue;
+            if(const auto t=DesktopTiles::translation(placement,button.worldMatrix,*button.rect,plane.worldMatrix)){tileMoves.emplace(*index,*t);frame.tileTranslations.emplace(id,*t);}}
+        DesktopTiles::moveNodes(moved,tileMoves,layout);
+    }
+    void restHits(const Matrix4&root){
+        for(auto&h:frame.hits){const auto t=frame.tileTranslations.find(h.buttonID);
+            if(t==frame.tileTranslations.end())h.restWorld.reset();else h.restWorld=DesktopTiles::restWorld(h.world,t->second,root);}
+    }
+    // ambientFrame's rotation bookkeeping, also when a placement change sends
+    // an ambient sample down the world-only path.
+    void adoptAmbientRotations(const Overrides&rotations){
+        for(std::size_t i=0;i<ambientRoots.size();++i){const auto&id=scene->nodes()[ambientRoots[i]].id;const auto value=rotations.find(id);currentAmbientRotations[i]=value==rotations.end()?std::nullopt:value->second.localRotation;
+            layoutPose.transforms.at(id).localRotation=currentAmbientRotations[i];beforeSlant.transforms.at(id).localRotation=currentAmbientRotations[i];}
     }
     const SourceWatchFrame&worldOnly(const Matrix4&root){
         // Same desktop presentation under a different gyro/root transform.
@@ -284,7 +309,10 @@ struct SourceWatchFrameBuilder::Impl {
             else if(current==layoutPose.transforms.end())layoutPose.transforms.emplace(id,baseline->second);
             else if(current->second!=baseline->second)current->second=baseline->second;
         }
-        const auto resolved=resolver.resolve({},layoutPose.transforms);const auto cutInverse=inverse(root*resolved[cut].worldMatrix);
+        {const auto rest=resolver.resolve({},layoutPose.transforms);std::copy(rest.begin(),rest.end(),presentationResolved.begin());}
+        // Tiles away from their slots; the resolver keeps the resting resolve.
+        moveTiles(presentationResolved);const std::span<const ResolvedNode> resolved=presentationResolved;
+        const auto cutInverse=inverse(root*resolved[cut].worldMatrix);
         need(cutInverse.has_value(),"Unresolved original UIWatchPanelCut world matrix");
         for(const auto&p:softPlans)if(resolved[p.node].activeInHierarchy)softMasks[p.node]=makeSoft(p,resolved,root);
         std::fill(canvasInverse.begin(),canvasInverse.end(),std::nullopt);
@@ -299,7 +327,8 @@ struct SourceWatchFrameBuilder::Impl {
             }else {const auto uniform=b.uniformOverrides.find("_WatchWorldToLocalMatrix");need(uniform!=b.uniformOverrides.end(),"Retained source cut matrix is missing");updateMatrix(uniform->second,*cutInverse);}
         }
         for(auto&h:frame.hits){const auto index=*layout.nodeIndex(h.graphicID);h.world=root*resolved[index].worldMatrix;std::size_t m=0;for(const auto mask:canvas.ancestry()[index].rectMasks)if(resolved[mask].rect){need(m<h.masks.size(),"Retained hit masks changed");h.masks[m++].world=root*resolved[mask].worldMatrix;}need(m==h.masks.size(),"Retained hit mask count changed");}
-        std::copy(resolved.begin(),resolved.end(),presentationResolved.begin());frame.resolved=presentationResolved;previousRoot=root;layoutRoot=root;++revision;++counts.worldOnlyFrames;return frame;
+        restHits(root);builtPlacements=placements;
+        frame.resolved=presentationResolved;previousRoot=root;layoutRoot=root;++revision;++counts.worldOnlyFrames;return frame;
     }
     const SourceWatchFrame&build(const Pose&input,const Matrix4&root,double scroll,const DesktopNavigationLayout*navigation,const SourceFrameTints&tints,bool force){
         need(root.finite()&&std::isfinite(scroll),"Invalid source frame transform/scroll");++counts.builds;
@@ -307,7 +336,8 @@ struct SourceWatchFrameBuilder::Impl {
         const bool staticMatch=!force&&sameStaticInput(input);
         const bool rotationsMatch=staticMatch&&sameAmbientRotations(input.transforms);
         const bool dependenciesMatch=previousScroll==scroll&&previousEntries==entries&&previousTints==tints;
-        if(staticMatch&&rotationsMatch&&previousRoot==root&&dependenciesMatch){++counts.reusedFrames;return frame;}
+        const bool placed=builtPlacements==placements;
+        if(staticMatch&&rotationsMatch&&previousRoot==root&&dependenciesMatch&&placed){++counts.reusedFrames;return frame;}
         if(staticMatch&&rotationsMatch&&dependenciesMatch){
             // Keep the immutable snapshot in place on success. MSVC's node
             // containers allocate replacement sentinels even when moved; the
@@ -316,8 +346,13 @@ struct SourceWatchFrameBuilder::Impl {
             try{return worldOnly(root);}
             catch(...){previousInput.reset();layoutInput.reset();throw;}
         }
-        if(staticMatch&&previousRoot==root&&dependenciesMatch&&ambientSupported){
+        if(staticMatch&&previousRoot==root&&dependenciesMatch&&ambientSupported&&placed){
             try{return ambientFrame(input.transforms,false);}catch(...){previousInput.reset();layoutInput.reset();ambientSupported=false;++revision;throw;}
+        }
+        // A moved tile under a changed ambient sample: the world-only path
+        // with the new rotations (the slant is independent of the ambient).
+        if(staticMatch&&previousRoot==root&&dependenciesMatch&&ambientSupported&&!placed){
+            try{adoptAmbientRotations(input.transforms);beforeSlantResolved.clear();return worldOnly(root);}catch(...){previousInput.reset();layoutInput.reset();ambientSupported=false;++revision;throw;}
         }
         // Failed frames are not eligible for reuse. Local immutable mesh caches
         // can survive a failure; frame spans remain invalid until success.
@@ -328,7 +363,10 @@ struct SourceWatchFrameBuilder::Impl {
         const bool reuseLayout=!force&&layoutInput&&layoutInput->transforms==pose.transforms&&layoutRoot==root&&layoutScroll==scroll&&layoutEntries==entries;
         if(reuseLayout){auto properties=std::move(pose.properties);auto unbound=std::move(pose.unboundPaths),unregistered=std::move(pose.unregisteredBindings);pose=layoutPose;pose.properties=std::move(properties);pose.unboundPaths=std::move(unbound);pose.unregisteredBindings=std::move(unregistered);++counts.layoutReuses;}
         else{layoutInput=pose;frame.layoutReport=writer.apply(pose,scroll,root,navigation,{},[&](const Pose&value){beforeSlant=value;beforeSlantResolved.clear();},force);layoutPose=pose;layoutRoot=root;layoutScroll=scroll;layoutEntries=entries;++counts.layoutBuilds;}
-        frame.resolved=resolver.resolve({},pose.transforms);canvas.updateAlpha(pose);frame.inheritedAlpha=canvas.inheritedAlpha();const auto resolved=frame.resolved;
+        {const auto rest=resolver.resolve({},pose.transforms);std::copy(rest.begin(),rest.end(),presentationResolved.begin());}
+        // Tiles away from their slots; the cache keeps the resting resolve.
+        moveTiles(presentationResolved);frame.resolved=presentationResolved;
+        canvas.updateAlpha(pose);frame.inheritedAlpha=canvas.inheritedAlpha();const auto resolved=frame.resolved;
         frame.batches.clear();frame.hits.clear();frame.diagnostics.clear();batchOrder.clear();hitOrder.clear();std::fill(canvasInverse.begin(),canvasInverse.end(),std::nullopt);std::fill(softMasks.begin(),softMasks.end(),std::nullopt);
         for(const auto&p:softPlans)if(resolved[p.node].activeInHierarchy){try{softMasks[p.node]=makeSoft(p,resolved,root);}catch(const std::exception&e){frame.diagnostics.push_back("Source soft mask "+scene->nodes()[p.node].path+": "+e.what());}}
         const auto cutInverse=inverse(root*resolved[cut].worldMatrix);need(cutInverse.has_value(),"Unresolved original UIWatchPanelCut world matrix");const auto watchToLocal=flatten(*cutInverse);
@@ -371,8 +409,11 @@ struct SourceWatchFrameBuilder::Impl {
         // moving its storage into the retained presentation.
         std::vector<SourceWatchBatch> sorted;sorted.reserve(frame.batches.size());for(const auto&o:batchOrder)sorted.push_back(std::move(frame.batches[o.index]));frame.batches=std::move(sorted);
         std::vector<SourceWatchHit> hits;hits.reserve(frame.hits.size());for(const auto&o:hitOrder)hits.push_back(std::move(frame.hits[o.index]));frame.hits=std::move(hits);
+        // The raised tile draws over the other tiles of the row pool only.
+        if(raisedButton)DesktopTiles::raise(frame.batches,[&](const SourceWatchBatch&b){const auto i=layout.nodeIndex(b.sourceNodeID);return i&&raisedNodes[*i]!=0;},
+            [&](const SourceWatchBatch&b){const auto i=layout.nodeIndex(b.sourceNodeID);return i&&rowPoolNodes[*i]!=0;});
+        restHits(root);builtPlacements=placements;
         for(const auto&p:pose.unboundPaths)frame.diagnostics.push_back("Unbound source curve: "+p);for(const auto&p:pose.unregisteredBindings)frame.diagnostics.push_back("Ignored unregistered native animation binding: "+p);
-        std::copy(frame.resolved.begin(),frame.resolved.end(),presentationResolved.begin());frame.resolved=presentationResolved;
         prepareAmbient(input);previousInput=input;previousRoot=root;previousScroll=scroll;previousEntries=entries;previousTints=tints;++revision;return frame;
     }
 };
@@ -381,6 +422,17 @@ SourceWatchFrameBuilder::~SourceWatchFrameBuilder()=default;
 void SourceWatchFrameBuilder::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;if(p.settings==value)return;p.settings=std::move(value);p.previousInput.reset();p.layoutInput.reset();p.ambientSupported=false;++p.revision;}
 const SourceWatchFrame&SourceWatchFrameBuilder::build(const Pose&p,const Matrix4&root,double scroll,const DesktopNavigationLayout*nav,const SourceFrameTints&tints,bool force){return impl_->build(p,root,scroll,nav,tints,force);}
 const SourceWatchFrame*SourceWatchFrameBuilder::buildSettledAmbient(const Pose&p,std::uint64_t revision,const Matrix4&root,Vec2 size,double scroll,const DesktopNavigationLayout*nav,const SourceFrameTints&tints){return impl_->settled(p,revision,root,size,scroll,nav,tints);}
+void SourceWatchFrameBuilder::setDesktopTilePlacements(const TilePlacements&value){if(impl_->placements!=value)impl_->placements=value;}
+const SourceWatchFrameBuilder::TilePlacements&SourceWatchFrameBuilder::desktopTilePlacements()const noexcept{return impl_->placements;}
+void SourceWatchFrameBuilder::setDesktopRaisedButton(std::optional<std::string_view> id){
+    auto&p=*impl_;if(id==std::optional<std::string_view>(p.raisedButton))return;
+    p.raisedButton=id?std::optional<std::string>(std::string(*id)):std::nullopt;
+    const auto index=id?p.layout.nodeIndex(*id):std::nullopt;p.raisedNodes=index?p.layout.subtrees(std::array{*index}):std::vector<unsigned char>{};
+    if(!index)p.raisedButton.reset();
+    // Draw order is fixed per complete frame: the next build is one (its layout is kept).
+    p.previousInput.reset();++p.revision;
+}
+std::optional<std::string_view> SourceWatchFrameBuilder::desktopRaisedButton()const noexcept{return impl_->raisedButton?std::optional<std::string_view>(*impl_->raisedButton):std::nullopt;}
 std::uint64_t SourceWatchFrameBuilder::presentationRevision()const noexcept{return impl_->revision;}
 SourceWatchFrameStats SourceWatchFrameBuilder::stats()const noexcept{return impl_->counts;}
 const SourceFrameTints&SourceWatchFrameBuilder::emptyTints()noexcept{static const SourceFrameTints empty;return empty;}

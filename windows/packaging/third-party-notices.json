@@ -12,14 +12,14 @@
       "version": "0.17.0 (commit 6d46d07d04041b40f4f49eaa7fdebe44c314c699)",
       "url": "https://github.com/quickjs-ng/quickjs",
       "license": "MIT",
-      "use": "JavaScript engine that runs the Merge! OrbiPom! scripts and Matter.js.",
+      "use": "JavaScript engine that runs the OrbiPom! MERGE! scripts and Matter.js.",
       "ships": ["EndfieldHUD.exe (compiled in)"],
       "paths": ["third_party/quickjs-ng"],
       "texts": ["third_party/quickjs-ng/LICENSE"]
     },
     {
       "name": "Unicode Character Database",
-      "version": "Unicode 17.0 (QuickJS-NG's generated tables); the macOS Foundation/ICU character sets of source authority ca04f142185c7de40acd8523bdb563195d90a1d1",
+      "version": "Unicode 17.0 (QuickJS-NG's generated tables); the macOS Foundation/ICU character sets of source authority 2c047e0024aa337b11ab7d1e2577f7a918bace78",
       "url": "https://www.unicode.org/ucd/",
       "license": "Unicode-3.0",
       "use": "Unicode property tables compiled in: QuickJS-NG's case mapping, normalization, character category and script data for JavaScript strings and regular expressions (third_party/quickjs-ng/libunicode-table.h), and the Hypergryph account module's character sets for identifiers, whitespace and digits (modules/hypergryph_account_unicode.inc, generated from the macOS Foundation/ICU tables).",
@@ -103,7 +103,7 @@
       "version": "0.20.0",
       "url": "https://github.com/liabru/matter-js",
       "license": "MIT",
-      "use": "Physics engine of the Merge! OrbiPom! minigame, run by QuickJS-NG.",
+      "use": "Physics engine of the OrbiPom! MERGE! minigame, run by QuickJS-NG.",
       "ships": ["resources/orbipom/OrbiPom/matter-0.20.0.js", "resources/orbipom/OrbiPom/Matter-LICENSE.txt"],
       "paths": ["packaging/licenses/matter-js-LICENSE.txt"],
       "texts": ["packaging/licenses/matter-js-LICENSE.txt"],
@@ -131,14 +131,14 @@
       "texts": ["packaging/licenses/cppwinrt-LICENSE.txt"]
     },
     {
-      "name": "HarmonyOS Sans SC Medium (glyph subset)",
-      "version": "33 signed-distance-field glyphs from the game's font atlas",
-      "url": "",
-      "license": "HarmonyOS Sans Fonts License Agreement",
-      "use": "The account header's wallet numerals.",
-      "ships": ["resources/account/account-numerals.json"],
-      "paths": ["resources/account/account-numerals.json"],
-      "attribution": "HarmonyOS Sans is a typeface of Huawei Device Co., Ltd., used under Huawei's HarmonyOS Sans Fonts License Agreement. The glyph subset is unchanged game data taken from Arknights: Endfield; its ownership is unchanged."
+      "name": "EarTrumpet (interface declarations)",
+      "version": "commit 154980811087fb7c423d806e2d9816733db6a7a5",
+      "url": "https://github.com/File-New-Project/EarTrumpet",
+      "license": "MIT, with EarTrumpet's excluded-entities clause",
+      "use": "Adapted declarations of the undocumented IPolicyConfig interface (EarTrumpet/Interop/MMDeviceAPI/IPolicyConfig.cs and PolicyConfigClient.cs), with which the Volume Output and Input menus change the Windows default playback and recording device.",
+      "ships": ["EndfieldHUD.exe (compiled in)"],
+      "paths": ["native/audio_default_device.cpp", "native/audio_default_device_notice.txt"],
+      "texts": ["native/audio_default_device_notice.txt"]
     },
     {
       "name": "ETOPO 2022 (NOAA National Centers for Environmental Information)",
@@ -155,20 +155,21 @@
       "version": "5.1.1, 1:10m admin 0 countries",
       "url": "https://www.naturalearthdata.com/",
       "license": "Public domain",
-      "use": "The Map's country outlines.",
+      "use": "The Map's country outlines, except China's outline and its land borders, which come from WGII.",
       "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
       "paths": [],
       "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
-    }
-  ],
-  "notShipped": [
-    {
-      "path": "native/audio_default_device_notice.txt",
-      "reason": "EarTrumpet's interop declarations in native/audio_default_device.cpp compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
     },
     {
-      "path": "native/audio_default_device.cpp",
-      "reason": "Its EarTrumpet-derived declarations compile only under ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which no build sets."
+      "name": "WGII (World Geographic Information Integration) China boundary, from AMap",
+      "version": "1.0.0, China boundary (GCJ-02), generated 2026-04-15",
+      "url": "https://github.com/occultskyrong/wgii",
+      "license": "Used with the WGII author's permission",
+      "use": "The Map's outline of China and its land borders, converted from GCJ-02 to WGS84; every neighbouring country is cut along it.",
+      "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
+      "paths": [],
+      "attribution": "China's outline and its land borders follow China's official boundary from WGII (World Geographic Information Integration, https://github.com/occultskyrong/wgii), whose boundary data comes from AMap (https://lbs.amap.com/); it is used with the WGII author's permission and converted from GCJ-02 to WGS84."
     }
-  ]
+  ],
+  "notShipped": []
 }

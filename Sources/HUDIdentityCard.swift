@@ -178,7 +178,7 @@ final class HUDIdentityCard {
         face.addSublayer(shape(topGold, fill: nil, stroke: gold.withAlphaComponent(0.82), width: 1))
 
         renderAvatar(in: foreground, white: white, gold: gold)
-        text(details?.name ?? "Endministrator", in: foreground, rect: CGRect(x: 82, y: 10, width: 146, height: 24), size: 16.5,
+        text(details?.displayedName ?? UserProfile.defaultName, in: foreground, rect: CGRect(x: 82, y: 10, width: 146, height: 24), size: 16.5,
              color: white, weight: .medium, italic: true)
         let level = min(60, max(1, details?.permissionLevel ?? 60))
         text(String(level), in: foreground, rect: CGRect(x: 82, y: 40, width: 51, height: 25), size: 21,

@@ -1,5 +1,6 @@
 #include "native/clipboard_image.hpp"
 #include "native/system_services.hpp"
+#include "tests/wic_rotated_photo.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -41,7 +42,18 @@ void queueTests(){
     n::ClipboardImageResult failed; n::NativeClipboardImageProbe invalid(executor,[&](auto,auto r){failed=std::move(r);},[](const auto&){return n::ClipboardImageResult{};});invalid.request(1,input);executor.waitIdle();executor.drain();check(!failed.thumbnail&&failed.error==n::ClipboardImageError::decode&&invalid.stats().failed==1,"Decoder failure/invalid injected result never enters history");
 }
 #ifdef _WIN32
-void nativeTests(){
+// A sideways phone photo copied as PNG (orientation in its eXIf chunk): the
+// 96-pixel thumbnail decodes in well under a second (1.3.0 rotated straight
+// over the decoder) and comes out upright.
+void rotatedThumbnail(){
+    struct Com{HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);~Com(){if(SUCCEEDED(hr))CoUninitialize();}}com;const auto encoded=image(endfield::tests::rotatedPhoto(true));check(n::validClipboardEncodedImage(encoded),"The rotated PNG photo passes clipboard validation");
+    const auto start=std::chrono::steady_clock::now();const auto result=n::decodeClipboardImage(encoded);const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    std::cout<<"Clipboard rotated 3000x2000 PNG thumbnail s="<<seconds<<'\n';
+    check(result.thumbnail&&result.thumbnail->width==64&&result.thumbnail->height==96,"A sideways photo makes an upright 64x96 thumbnail");
+    check(seconds<5,"A sideways photo's thumbnail decodes without decoding the image again per turned row");
+    check(endfield::tests::rotatedPhotoUpright(result.thumbnail->rgba.data(),result.thumbnail->width,result.thumbnail->height,0,2),"eXIf orientation 6 puts the photo's left (red) half on top");
+}
+void nativeTests(){rotatedThumbnail();
     const auto input=image(png());const auto result=n::decodeClipboardImage(input);check(result.thumbnail&&result.error==n::ClipboardImageError::none,"Microsoft WIC actually decodes owned PNG");const auto&t=*result.thumbnail;check(t.width==2&&t.height==1&&t.rgba[0]==240&&t.rgba[3]==255&&t.rgba[7]==128,"PNG color and straight alpha survive bounded decode");check(t.encoded.bytes==input.bytes,"WIC holds unchanged encoded copyback reference");
     const auto scaled=n::decodeClipboardImage(image(png(200,50)));check(scaled.thumbnail&&scaled.thumbnail->sourceWidth==200&&scaled.thumbnail->sourceHeight==50&&scaled.thumbnail->width==96&&scaled.thumbnail->height==24&&scaled.thumbnail->rgba.size()==96*24*4,"Original dimensions preserved while only96px pixels allocated");
     auto corrupt=*input.bytes;corrupt[corrupt.size()-1]^=1;check(!n::decodeClipboardImage(image(std::move(corrupt))).thumbnail,"PNG CRC corruption rejected, not just structurally accepted");// Original ClipboardStore ImageIO options recover these two malformed

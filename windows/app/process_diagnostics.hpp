@@ -80,14 +80,31 @@ std::uint32_t countPoolWorkers();
 // One thread of this process at a capture: its context switches and CPU time
 // so far (NtQuerySystemInformation, the counters Process Explorer and the
 // section 9 gate read), with its start module, offset and description.
+// The kernel's scheduling state and wait reason (KTHREAD_STATE,
+// KWAIT_REASON) come from the same capture.
 struct ThreadActivity {
     std::uint32_t id{};
     std::string module, description;
     std::uint64_t offset{}, contextSwitches{};
     double cpuSeconds{};
+    std::uint32_t state{}, waitReason{};
+    // Started in ntdll: an OS thread-pool worker, as capturePoolWorkers and
+    // countPoolWorkers count them.
+    bool poolWorker{};
+    // Ended by the time it was opened after the capture (or terminated, its
+    // object only still referenced): no longer a thread of the process.
+    bool exited{};
 };
 // Every thread of this process now (empty when the system refuses the query).
 std::vector<ThreadActivity> captureThreadActivity();
+// An OS thread-pool worker (poolWorker above) still running and waiting for
+// work on its worker factory (Waiting, WrQueue): spare capacity the system
+// adds under load and retires on its own idle timer. It runs nothing of the
+// process and holds no handle in its handle table.
+bool idlePoolWorker(const ThreadActivity& thread) noexcept;
+// This process's open handles by object type name ("Event", "File", ...),
+// most first: type names and counts only (no object names are read).
+std::vector<std::pair<std::string, std::uint32_t>> captureHandleTypes();
 // What happened between two captures `seconds` apart: the wake-ups (context
 // switches) per second of the whole process and of each thread that ran,
 // busiest first (at most `top`; a thread created between the captures counts

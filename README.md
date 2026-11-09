@@ -193,14 +193,14 @@ Allow permissions when you use the features that need them:
 | Tool | What you can do |
 | --- | --- |
 | [**Map**](docs/map.md) | Explore the offline terrain map and place and customize pins. |
-| [**Closure's Minigame**](docs/orbipom-runtime.md) | Play Merge! OrbiPom! |
+| [**Closure's Minigame**](docs/orbipom-runtime.md) | Play OrbiPom! MERGE! |
 | [**Event Log**](docs/event-log.md) | Check the event log like a real Endministrator. |
 | [**Personal ID**](docs/personal-profile.md) | Customize your card. You can edit profile data freely. |
 | [**Account Binding**](docs/account-linking.md) | Link a HYPERGRYPH game account for profile data and sanity countdowns. |
 
 <sub>※ Linking is optional.</sub>
 
-![Merge! OrbiPom! gameplay](docs/media/readme/minigame.gif)
+![OrbiPom! MERGE! gameplay](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

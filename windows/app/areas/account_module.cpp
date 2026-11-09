@@ -5,6 +5,7 @@
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #include "modules/boot_log.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "modules/hypergryph_account_profile_relay.hpp"
@@ -214,7 +215,7 @@ public:
             return work && work->snapshot(clock()).phase == modules::WorkModePhase::running;
         };
         // SystemHUDView: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)),
-        // also when Work Mode is hidden in System > Modules (hidden means no list entry only).
+        // also when Work Mode is hidden in Display > Modules (hidden means no list entry only).
         // Hidden coverage counts the request instead of leaving its Account step.
         o.openWorkMode = w ? std::function<void()>([w] { ++w->workModeOpens; }) : std::function<void()>([host] { host->selectModule(core::Module::workMode); });
         const auto& appearance = host_.appearance();
@@ -233,10 +234,13 @@ public:
             o.login = &w->login;
         }
         owner_ = std::make_unique<tools::AccountLinkingOwner>(*c.utility, c.rasterizer, std::move(o));
+        // Show Sanity and the gauge's place before the first opening
+        // (SystemHUDView sets showsHeaderGauge as it starts).
+        applyOverlayLayout(clock_ ? clock_() : 0);
         if (const auto* work = host_.workMode()) workRevision_ = work->revision();
         host_.publish<AccountProfileLink>(AccountProfileLink::key, *this);
         // The quit asks only once an open recovery popover is closed (Mac 1.3.0).
-        quitPreemption_ = [this](double time) { return owner_ && owner_->dismissWalletPopover(time); };
+        quitPreemption_ = [this](double time, bool animated) { return owner_ && owner_->dismissWalletPopover(time, animated); };
         host_.publish<QuitPreemption>(quitPreemptionService, quitPreemption_);
         // The daily boot log's SANITY line (SystemHUDView.bootLogLines :3073-3075):
         // accountController.sanityPresentation() and the seconds from now to
@@ -281,6 +285,7 @@ public:
     void setOverlayVisible(bool v, double t) override { visible_ = v; owner_->setOverlayVisible(v, t); }
     void overlayClosing(double t) override { visible_ = false; owner_->overlayClosing(t); }
     void update(const ModuleFrame& f) override {
+        applyOverlayLayout(f.time);
         syncWorkMode(f.time);
         // The wallet follows the header chrome, which fades with the canvas.
         owner_->update(f, f.opacity);
@@ -289,6 +294,7 @@ public:
     // that opening shows Account) is posed hidden, so the host's upload right
     // after this installs its artwork and the first opening frame does not.
     void prewarm(const ModuleFrame& f) override {
+        applyOverlayLayout(f.time);
         (void)syncWorkMode(f.time);
         owner_->prewarm(f);
         if (world_) world_->prewarm.prewarmed = true;
@@ -302,6 +308,9 @@ public:
     }
     Entries entries(core::Module m) override { return m == core::Module::account ? owner_->moduleEntries() : Entries{}; }
     Entries floatingEntries() override { return owner_->headerEntries(); }
+    // The recovery menu draws on the HUD's top layer (b58f2e0), above the
+    // clock and pinned notes, on the gauge's position and size.
+    Entries topEntries() override { return owner_->recoveryEntries(); }
     void collected(native::Renderer& r) override { owner_->collected(r); }
     void release(native::Renderer& r) override { owner_->release(r); }
     bool covers(core::Point p) const override { return owner_->covers(p); }
@@ -332,10 +341,19 @@ public:
             const bool work = syncWorkMode(t);
             return owner_->deadline(t) || work;
         }
+        case K::settingsChanged:
+            // Display > HUD elements (Show Sanity, the gauge's place) is read
+            // again on the next frame.
+            overlayApplied_ = false;
+            return syncWorkMode(t);
         case K::overlayConcealed:
             // The HUD finished closing: a face that is not shown parks its
             // rasters (the next show rebuilds them); the wallet stays.
             owner_->concealed(t);
+            return syncWorkMode(t);
+        case K::overlayRetracted:
+            // A File Shelf drag's retract hid the HUD: the face leaves now.
+            owner_->retracted(t);
             return syncWorkMode(t);
         default: return syncWorkMode(t);
         }
@@ -386,7 +404,14 @@ public:
     native::AutomationTreeHost automationHost(IRawElementProviderFragmentRoot* root) {
         native::AutomationTreeHost view;
         view.root = root;
-        view.nodes = [this] { return owner_->accessibleNodes(); };
+        view.nodes = [this] {
+            auto nodes = owner_->accessibleNodes();
+            // SystemHUDView.layoutAccountGaugeControls: the gauge's controls
+            // hide while the HUD elements are placed.
+            if (!host_.allowsInputBesidePlacement())
+                std::erase_if(nodes, [](const native::AutomationNode& n) { return n.id.rfind("wallet:", 0) == 0; });
+            return nodes;
+        };
         view.toScreen = [this](core::Rect r, std::uint8_t space) -> std::optional<core::Rect> {
             const auto client = owner_->accessibleClientRect(r, space);
             return client ? screenRect(*client) : std::nullopt;
@@ -410,6 +435,21 @@ public:
     void profileAvatarChanged(const std::optional<std::string>& avatar) override { if (!world_) owner_->profileAvatarChanged(avatar); }
 
 private:
+    // SystemHUDView.applyOverlayLayout for the gauge and Show Sanity
+    // (accountController.showsHeaderGauge): only when the shown layout moved.
+    void applyOverlayLayout(double t) {
+        const auto revision = host_.overlayLayoutRevision();
+        if (overlayApplied_ && revision == overlayRevision_) return;
+        overlayApplied_ = true; overlayRevision_ = revision;
+        using G = core::OverlayGeometry;
+        const auto layout = host_.shownOverlayLayout();
+        const auto placement = G::clamped(G::Element::sanity, layout.sanity, G::gauge);
+        const auto frame = G::frame(G::Element::sanity, placement, G::gauge);
+        owner_->setHeaderPlacement({frame.x, frame.y}, placement.size, h::GaugePopoverLayout::direction(frame, G::plane), t);
+        owner_->setShowsHeaderGauge(layout.showsSanity, t);
+    }
+    bool overlayApplied_{};
+    std::uint64_t overlayRevision_{};
     ApplicationHost& host_;
     void* window_{};
     std::function<double()> clock_;
@@ -452,7 +492,7 @@ private:
     // (HUD concealed) and at the first opening frame's upload.
     std::uint64_t gaugeWork() const {
         const auto s = owner_->gauge().sceneStats();
-        return s.artworkRasters + s.numberRasters + s.tooltipRasters + s.popoverLoads + s.groupUploads + s.groupRedraws;
+        return s.artworkRasters + s.iconRasters + s.numberRasters + s.tooltipRasters + s.popoverLoads + s.groupUploads + s.groupRedraws;
     }
     void observePrewarm() {
         auto& p = world_->prewarm;
@@ -865,7 +905,9 @@ private:
         step.check(d.press(d.canvasPoint({segment.x + segment.width / 2, segment.y + segment.height / 2})) && !d.canvas().menuOpen() &&
                    controller().presentation() == w.reference, "The first press outside only closes the menu (the segment behind is not pressed)");
         d.settleAnimations();
-        step.check(d.click("header") && d.canvas().menuOpen() && d.control("header:hidden").has_value(), "The header menu offers every mode");
+        step.check(d.click("header") && d.canvas().menuOpen() && d.control("header:workMode").has_value() && d.control("header:endfield").has_value() &&
+                   d.control("header:arknights").has_value() && !d.control("header:hidden").has_value(),
+                   "The header menu offers the three modes; hiding the gauge is Display > HUD elements");
         step.check(d.keyDown(VK_ESCAPE) && !d.canvas().menuOpen() && controller().presentation() == w.reference, "Escape closes only the menu");
         // Disconnect asks through the shared confirm bar (Mac verification L160-170);
         // Esc cancels without an unlink.
@@ -879,12 +921,21 @@ private:
         step.check(!confirmState.request() && controller().record().linked && controller().presentation() == w.reference, "Esc cancels without an unlink");
         const auto toggle = d.gaugePoint("toggle");
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
+        // Mac b58f2e0 (accountPopoverDrawsOnTopForVerification): the menu is
+        // composed on the HUD's top layer, above the pinned notes and below
+        // the areas' modal cards.
+        step.check(!owner_->recoveryEntries().empty() && step.drawsOnTop && step.drawsOnTop(owner_->recoveryEntries()),
+                   "The open recovery menu draws on the top layer");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
         // The quit's preemption (SystemHUDView.presentQuitConfirmation): an
         // open popover is dismissed instead; a shut one lets the quit ask.
         if (const auto* preempt = host_.find<QuitPreemption>(quitPreemptionService)) {
-            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05) &&
-                       !owner_->gauge().model().popoverOpen() && !(*preempt)(d.t += .05), "A quit closes the open recovery popover instead of asking");
+            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05, true) &&
+                       !owner_->gauge().model().popoverOpen() && !(*preempt)(d.t += .05, true), "A quit closes the open recovery popover instead of asking");
+            // Placing the HUD elements closes it at once (dismiss(animated: false)).
+            step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen() && (*preempt)(d.t += .05, false), "Placing closes the open recovery popover");
+            d.frame();
+            step.check(!owner_->gauge().model().popoverOpen() && owner_->recoveryEntries().empty(), "The recovery popover closed for placing draws nothing at the next frame");
         } else step.check(false, "The quit preemption is published");
         {
             // The same controls through the ModuleOwner UIA hooks (Mac AX
@@ -991,6 +1042,7 @@ private:
             const auto gauge = owner_->gauge().sceneStats();
             step.check(!owner_->gauge().model().popoverOpen() && !gauge.popoverLoaded && !gauge.popoverUploaded,
                        "The shut recovery popover keeps no card once the HUD closed; the wallet stays");
+            setOverlayVisible(true, d.t); // this owner's next opening (the harness keeps the HUD open)
         }
         d.frame();
         if (step.cycle < 2 || w.finished || !w.linked) return;
@@ -1005,7 +1057,7 @@ private:
             step.check(w.login.isPresenting(), "Reconnect presents the login again");
             step.check(w.login.finish(std::nullopt, h::LoginFailure::pageUnavailable), "The fake site fails to load");
             d.settle();
-            step.check(controller().record().linked && says(controller().presentation().statusMessage, "Sign-in could not finish. Please try again."),
+            step.check(controller().record().linked && says(controller().presentation().statusMessage, "Sign-in could not finish. Please try again"),
                        "An unfinished sign-in reports the Mac failure and keeps the link");
             // Windows: no WebView2 Runtime, and the explanation page was closed.
             controller().perform(reconnect);
@@ -1021,7 +1073,7 @@ private:
         controller().refresh(true);
         d.settle();
         const auto requests = w.host.requests().size();
-        step.check(controller().record().requiresReconnect && says(controller().presentation().statusMessage, "Sign in again to continue syncing.") &&
+        step.check(controller().record().requiresReconnect && says(controller().presentation().statusMessage, "Sign in again to continue syncing") &&
                    owner_->gauge().model().value() == d.expectedGauge() && d.expectedGauge().find(" / 360") != std::string::npos &&
                    w.profileStore.profileSyncLocked(), "An expired session keeps cached sanity and the profile lock and asks for a new sign-in");
         w.wall += 900;
@@ -1048,7 +1100,7 @@ private:
 };
 std::unique_ptr<ModuleOwner> buildAccountModule(const ApplicationModuleContext& c) {
     if (!c.host || !c.utility || !c.window || !c.clock) throw std::invalid_argument("The account area needs the shared host, executor, HWND and clock");
-    // The header wallet's pinned sprites and numerals (resources/account).
+    // The header wallet's pinned sprites (resources/account).
     // Without the verified package (development previews) the area is absent.
     const auto resources = c.resource ? c.resource(gaugeResource) : fs::path{};
     if (resources.empty()) return nullptr;

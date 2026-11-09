@@ -91,6 +91,8 @@ void run(const std::filesystem::path& shader) {
     activityOptions.iconLoader = [&](const std::string& key, unsigned pixels) -> std::optional<gpu::ActivityIconPixels> {
         { std::lock_guard lock(loadsMutex); ++loads; loadedKeys.push_back(key); }
         if (key.ends_with("4")) return std::nullopt; // unavailable artwork: the generic tile
+        if (key.starts_with("ram-icon-") && key.ends_with("5")) throw std::runtime_error("Synthetic extraction failure"); // a throwing extraction: the generic tile
+        if (key.starts_with("ram-icon-") && key.ends_with("6")) return gpu::ActivityIconPixels{pixels + 1, pixels + 1, std::vector<std::uint8_t>(std::size_t(pixels + 1) * (pixels + 1) * 4, 255)}; // the wrong size
         gpu::ActivityIconPixels icon{pixels, pixels, std::vector<std::uint8_t>(std::size_t(pixels) * pixels * 4, 0)};
         for (std::size_t k = 0; k < icon.straightRGBA.size(); k += 4) { icon.straightRGBA[k] = 40; icon.straightRGBA[k + 1] = 160; icon.straightRGBA[k + 2] = 220; icon.straightRGBA[k + 3] = 255; }
         return icon;
@@ -203,6 +205,60 @@ void run(const std::filesystem::path& shader) {
         check(std::adjacent_find(keys.begin(), keys.end()) == keys.end(), "Cached icons are kept across sorts (no second load)");
     }
     check(!requiresFrames(t), "Settled Apps rows ask for no frames");
+    {
+        // 1.3.1 (20) item 11 (module-failures.txt on a user's PC: "Memory image
+        // <path> is missing or retired", frame [activityMonitor]): about fifty
+        // apps sorted by RAM, scrolled and re-sampled while their icons are
+        // still loading. A row rebound while its app's icon was in flight
+        // queued that icon again; the second load released the first image
+        // while rows still drew it, and the next raster of those rows threw.
+        // No icon loads twice, and every row draws again after its artwork
+        // was parked (the HUD hidden and shown).
+        check(activity.canvas()->perform("activity:sort:memory", t + .01), "The RAM sort is routed");
+        const auto target = activityCore.clientRect({292, 320, 0, 0});
+        check(target.has_value(), "The app list projects");
+        const auto batch = [&](double stamp, std::uint64_t shift) {
+            m::ActivityAppsSnapshot value; value.timestamp = stamp; value.uptime = stamp;
+            for (unsigned n = 0; n < 48; ++n) {
+                // Awkward icons among them: a packaged (UWP) app's AppsFolder key, an
+                // extraction that throws, an icon of the wrong size, artwork that is
+                // unavailable, and an app with no icon key at all.
+                const std::string key = n % 8 == 1 ? "appsfolder:Synthetic.Package_8wekyb3d8bbwe!App" + std::to_string(n) : n % 8 == 3 ? "" : "ram-icon-" + std::to_string(n);
+                m::ActivityApp a; a.identity = {"ram" + std::to_string(n), "RAM " + std::to_string(n), key, {500 + n}};
+                a.cpuPercent = double(n % 9); a.memoryBytes = 50000000ULL * ((n * 7 + shift) % 48 + 1); a.threads = 4 + n;
+                value.items.push_back(std::move(a));
+            }
+            return value;
+        };
+        t += .02;
+        for (unsigned step = 0; step < 60; ++step) {
+            // A new sample re-sorts the rows each second; the wheel rebinds them in between.
+            if (step % 6 == 0) activity.providerState().receiveApps(batch(2 + step, step));
+            check(activityOwner->wheel({target->x, target->y, step < 30 ? -1. : 1., false, 0, 3}, t), "The app list takes the wheel");
+            for (auto* o : owners) (void)o->deadline(t);
+            frame(core::Module::activityMonitor, t);
+            if (step % 4 == 3) (void)drain(t); // icons arrive while the list keeps moving
+            t += 1. / 30;
+        }
+        for (unsigned n = 0; n < 12; ++n) { (void)drain(t); t = settle(core::Module::activityMonitor, t, .1); }
+        {
+            std::lock_guard lock(loadsMutex);
+            auto keys = loadedKeys; std::sort(keys.begin(), keys.end());
+            check(std::adjacent_find(keys.begin(), keys.end()) == keys.end(), "An icon still loading is not queued again when its row is rebound (no second load)");
+        }
+        activityOwner->setOverlayVisible(false, t); t = settle(core::Module::activityMonitor, t + .02, .2);
+        activityOwner->setOverlayVisible(true, t); t = settle(core::Module::activityMonitor, t + .02, .5);
+        for (unsigned step = 0; step < 20; ++step) {
+            check(activityOwner->wheel({target->x, target->y, step < 10 ? -1. : 1., false, 0, 3}, t), "The app list takes the wheel after its artwork was parked");
+            for (auto* o : owners) (void)o->deadline(t);
+            frame(core::Module::activityMonitor, t); t += 1. / 30;
+        }
+        (void)drain(t); t = settle(core::Module::activityMonitor, t, .3);
+        check(activity.canvas() && activity.canvas()->isShowingApps(), "Activity keeps drawing its rows (every icon it shows is still published)");
+        check(activity.canvas()->perform("activity:sort:cpu", t) , "The CPU sort is routed back");
+        t = settle(core::Module::activityMonitor, t + .01, .4); (void)drain(t); t = settle(core::Module::activityMonitor, t, .2);
+        activity.providerState().receiveApps(batch(70, 0));
+    }
 
     // --- Storage --------------------------------------------------------------------------
     t += .1;

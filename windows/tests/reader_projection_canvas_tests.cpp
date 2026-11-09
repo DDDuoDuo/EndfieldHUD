@@ -289,6 +289,76 @@ void readerContracts() {
     }
 }
 
+// Mac e0ae44b and dc1bf1b, top to bottom: the scrolled column leaves as
+// drawn (the deactivation empties the rendered column, and its notice must
+// not recycle the neighbours), shows again as it was while the reopened book
+// renders, and a neighbour placed while the column is on screen fades in.
+void readerKeepsPages() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    d::Context::Appearance a; a.language = Language::english; a.reduceMotion = false; w.context.apply(a, w.now);
+    auto library = syntheticLibrary(1); library.selected = bookID(1); library.reading = true;
+    ReaderRig r(w, library);
+    auto& canvas = *r.canvas;
+    const auto shot = [&] {
+        std::vector<std::pair<const d::Layer*, d::Rect>> out;
+        for (const auto& view : canvas.pageViews()) out.emplace_back(view.layer, view.layer->frame());
+        return out;
+    };
+    const auto enter = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][0]; };
+    r.show(); r.activate(true);
+    check(canvas.tab() == m::ReaderCanvas::Tab::reading && r.state->library().preferences.vertical() && canvas.pageViews().size() == 3,
+        "Top to bottom: the current page and two neighbours are laid out");
+    // The book's first render builds the Reading page: its pages are placed
+    // before the column is on screen, so none fades in.
+    for (const auto& view : canvas.pageViews()) check(!enter(*view.layer).present(), "Pages placed while the page builds do not fade in");
+    // A page newly placed below the shown column fades in from offset zero.
+    w.advance(1);
+    const auto first = shot();
+    need(canvas, "next").activate(); r.sync();
+    std::size_t arrived{};
+    for (const auto& view : canvas.pageViews())
+        if (std::none_of(first.begin(), first.end(), [&](const auto& f) { return f.first == view.layer; })) {
+            ++arrived;
+            check(enter(*view.layer).present() && enter(*view.layer).start == w.now
+                && view.layer->tracks().slots[std::size_t(d::MotionSlot::enter)][1].kind != d::Track::Kind::enterTranslation, "The new neighbour fades in from offset zero");
+        }
+    check(arrived >= 1, "Turning on places a new neighbour");
+    w.advance(1);
+    canvas.scroll({295, m::ReaderCanvas::pageFrame.y + 100}, {0, 30}, w.now); r.sync();
+    const double offset = canvas.scrollOffset();
+    const auto drawn = shot();
+    check(offset > 0 && drawn.size() >= 3, "The column is scrolled with its neighbours drawn");
+    // The leave: the page goes as drawn.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    check(r.state->pages().empty() && shot() == drawn && canvas.scrollOffset() == offset, "Leaving keeps the neighbours and the scroll while the page fades out");
+    // Shown again: the reopened book renders later; the pages and the scroll stay meanwhile.
+    w.advance(1);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    if (r.state->revision() != r.seen) { r.seen = r.state->revision(); canvas.stateChanged(); }
+    check(r.state->pages().empty() && !r.queue.jobs.empty() && shot() == drawn && canvas.scrollOffset() == offset,
+        "Showing the module again keeps the drawn pages and the scroll until the render returns");
+    r.sync();
+    check(!r.state->pages().empty() && shot() == drawn && canvas.scrollOffset() == offset, "The returned render keeps them where they were");
+    for (const auto& kept : drawn) check(!enter(*kept.first).present() || enter(*kept.first).start < w.now - .5, "A kept neighbour does not fade in again");
+    // A reopen that fails lays the column out as usual: the neighbours go.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    r.source->count = 0;
+    canvas.show(w.now); canvas.setActive(true, w.now); r.sync();
+    check(r.state->error() && canvas.pageViews().size() <= 1, "A reopen that fails keeps no neighbours");
+    // Placed while inactive (Mac e0ae44b: `isActive && pageColumn.isVisible`):
+    // the state renders the column again for a canvas that has left, whose
+    // column is still in its page; the new neighbours are placed without a fade.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    r.source->count = 5;
+    w.advance(1);
+    r.state->setActive(true); r.sync();
+    check(!canvas.isActive() && !r.state->pages().empty() && canvas.pageViews().size() >= 2 && canvas.pageClip() && d::isVisible(*canvas.pageClip(), canvas.root()),
+        "The state renders the column again for the inactive canvas, its column still shown in the page");
+    for (const auto& view : canvas.pageViews()) check(!enter(*view.layer).present() || enter(*view.layer).start < w.now - .5, "A neighbour placed while inactive does not fade in");
+    r.state->setActive(false); r.sync();
+}
+
 // --- Projection fixtures --------------------------------------------------------------------------
 struct Pen {
     std::vector<ehud::data::ProjectionSettings> saved;
@@ -347,7 +417,7 @@ void projectionContracts() {
         canvas.show(w.now); canvas.setActive(true, w.now);
         check(on(canvas, "color:custom") && need(canvas, "clear").enabled(), "Activation captures the workspace: a custom colour, Clear all enabled (:20-23)");
         need(canvas, "clear").activate();
-        check(w.confirm() == "Clear the projection canvas?|Source files stay intact.|Clear all|danger", "Clear all asks first (:210-219)");
+        check(w.confirm() == "Clear the projection canvas?|Source files stay intact|Clear all|danger", "Clear all asks first (:210-219)");
         w.context.overlay().decide(d::ConfirmState::Decision::confirm);
         check(model.drawing().strokes().empty() && w.toast() == "Canvas cleared|" && !need(canvas, "clear").enabled(), "Confirmed: cleared, toasted, disabled");
         w.context.overlay().reset();
@@ -519,6 +589,9 @@ void readerOracle(Oracle& o) {
         for (const auto k : {d::key::down, d::key::down, d::key::down, d::key::enter}) r.canvas->keyDown(keyOf(k), w.now);
         o.reader("books", "removeConfirm", r);
         w.context.overlay().dismissConfirm(); w.context.overlay().reset();
+        check(r.canvas->rightPointerDown(centre(tile(2), r.canvas->root()), w.now), "A right-click on a book opens its menu");
+        o.reader("books", "bookRightClick", r);
+        r.canvas->closeMenu();
         tile(1).activate(); r.sync();
         o.reader("books", "reading", r);
         need(*r.canvas, "bookmark").activate(); r.sync();
@@ -633,6 +706,7 @@ void projectionOracle(Oracle& o) {
 int main(int argc, char** argv) {
     try {
         readerContracts();
+        readerKeepsPages();
         projectionContracts();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas", "projection"}, {"text", "layerDefaults", "reader", "readerFinal", "store"})) {
             Oracle oracle(*data);

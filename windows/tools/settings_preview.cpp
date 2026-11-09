@@ -121,7 +121,7 @@ SettingsPreview::SettingsPreview(gpu::LayerRasterizer& raster, d::Context& conte
         const auto bytes = ehud::data::detail::readFile(o.resources / "application-icons" / "manifest.json", 4 * 1024 * 1024);
         need(bytes.has_value(), "Settings icon roster is missing");
         const auto catalog = Json::parse(*bytes);
-        need(catalog["sourceCommit"].string() == "ca04f142185c7de40acd8523bdb563195d90a1d1", "Settings icon source differs");
+        need(catalog["sourceCommit"].string() == "c6b59b9b208ff1d810df209f1f54ff6a770c980b", "Settings icon source differs");
         for (const auto& icon : catalog["icons"].array()) if (icon["offered"].boolean())
             o.hooks.icons.push_back({icon["id"].string(), icon["title"].string(),
                 {d::ImageSource::Kind::asset, "application-icons/" + icon["app"]["file"].string(), icon["app"]["sha256"].string()}});

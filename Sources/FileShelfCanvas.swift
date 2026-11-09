@@ -80,6 +80,8 @@ final class FileShelfCanvas: HUDDesignCanvas {
     private var renderedStructure: Structure?
     private var renderedSelection: Set<UUID> = []
     private var renderedCard: UUID?
+    /// The page's card started its own selection slide when it was built.
+    private var cardSlidIn = false
 
     init(context: HUDDesignContext, store: FileShelfStore?, error: String? = nil) {
         self.store = store
@@ -116,9 +118,13 @@ final class FileShelfCanvas: HUDDesignCanvas {
         onDeactivate?()
     }
 
-    override func playEntrance(from offset: CGPoint) {
-        super.playEntrance(from: offset)
-        if let card { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env) }
+    /// A card that just slid in for a new selection keeps its own slide: the
+    /// in-phase replay of an entrance already under way (a negative delay)
+    /// would cut it short and pop the card in.
+    override func playPageEntrance(from offset: CGPoint, delay: CFTimeInterval) {
+        super.playPageEntrance(from: offset, delay: delay)
+        guard let card, delay >= 0 || !cardSlidIn else { return }
+        HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, delay: delay, env: env)
     }
 
     override func recordingModeChanged() {
@@ -148,7 +154,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
 
     override func buildPage(_ page: HUDDesignPage) {
         renderedStructure = structure
-        tiles = [:]; cardBinder = nil; card = nil; grid = nil
+        tiles = [:]; cardBinder = nil; card = nil; grid = nil; cardSlidIn = false
         let previousCard = renderedCard
         renderedCard = nil
         let add = HUDButton(id: "shelf.add", title: L10n.text("Add", "添加"), icon: .plus, kind: .primary, size: .small, env: env)
@@ -229,9 +235,9 @@ final class FileShelfCanvas: HUDDesignCanvas {
         let wantedIDs = Set(items[wanted].map(\.id))
         var changed = false
         for (id, tile) in tiles where !wantedIDs.contains(id) {
-            tile.clearInteractionState()
+            tile.clearInteractionState(); tile.more.clearInteractionState()
             HUDMotion.perform { tile.layer.removeFromSuperlayer() }
-            page.remove(tile); tiles[id] = nil; changed = true
+            page.remove(tile); page.remove(tile.more); tiles[id] = nil; changed = true
         }
         for index in wanted where tiles[items[index].id] == nil {
             let item = items[index]
@@ -240,7 +246,14 @@ final class FileShelfCanvas: HUDDesignCanvas {
             tile.tile.setSelected(selected && renderedSelection.contains(item.id), animated: false)
             HUDMotion.perform { tile.layer.frame = layout.frame(index); grid.content.addSublayer(tile.layer) }
             if selected { tile.tile.setSelected(true) }
-            page.add(tile)
+            tile.more.onActivate = { [weak self, weak tile] in
+                guard let self, let tile else { return }
+                if self.isMenuOpen { self.closeMenu(); return }
+                guard let item = self.items.first(where: { $0.id == tile.itemID }) else { return }
+                self.openItemMenu(item, anchorRect: tile.more.rect(in: self.root), anchor: tile.more)
+            }
+            // The ⋯ after its tile, so its press never selects or drags the tile.
+            page.add([tile, tile.more])
             if !routing { page.stagger(tile.layer) }
             tiles[item.id] = tile; changed = true
         }
@@ -362,7 +375,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
             let value = self.properties[item.id]
             HUDMotion.perform { for (layer, text) in live { layer.text = text(value) } }
         }
-        if replaying, root.superlayer != nil { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env) }
+        if replaying, root.superlayer != nil { HUDMotion.enter(card, from: CGPoint(x: 24, y: 0), duration: 0.3, env: env); cardSlidIn = true }
         renderedCard = item.id
         loadProperties(item)
     }
@@ -503,6 +516,8 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard renderedLanguage != nil else { pendingReveal.formUnion(ids); return }
         if structure != renderedStructure { rerender() }
         scrollGrid(to: .greatestFiniteMagnitude)
+        // The new files stay in view when the shelf is next shown.
+        keepsScrollOnNextShow()
         guard animated, isActive, root.superlayer != nil else { return }
         for id in ids { if let tile = tiles[id] { HUDMotion.enter(tile.layer, from: CGPoint(x: 0, y: 16), env: env) } }
     }
@@ -545,7 +560,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard !items.isEmpty, !clearing else { return }
         let count = items.count
         confirm(HUDConfirmRequest(id: "shelf.clear", title: L10n.text("Remove \(count) files from the shelf?", "从暂存架移除 \(count) 个文件？"),
-                                  message: L10n.text("Original files stay where they are.", "原文件保持不变。"),
+                                  message: L10n.text("Original files stay where they are", "原文件保持不变"),
                                   confirmTitle: L10n.text("Remove all", "全部移除"), danger: true, icon: .trash)) { [weak self] in
             self?.clearShelf()
         }
@@ -589,10 +604,10 @@ final class FileShelfCanvas: HUDDesignCanvas {
         toast(icon: .warn, "Notice", "提示", detail: message)
     }
 
-    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable.", "文件暂存架存储不可用。")) }
+    private func reportUnavailable() { showError(L10n.text("File shelf storage is unavailable", "文件暂存架存储不可用")) }
 
     /// Accessibility and verification actions: `shelf:add`, `shelf:clear`,
-    /// `shelf:<id>:select|open|reveal|remove`.
+    /// `shelf:<id>:select|open|reveal|remove|menu`.
     func perform(actionID value: String) {
         switch value {
         case "shelf:add": chooseFiles()
@@ -606,6 +621,11 @@ final class FileShelfCanvas: HUDDesignCanvas {
             case "open": open(id)
             case "reveal": reveal(id)
             case "remove": remove([id])
+            case "menu":
+                if let item = items.first(where: { $0.id == id }) {
+                    let rect = tiles[id].map { $0.more.rect(in: root) } ?? tileRect(for: id) ?? .zero
+                    openItemMenu(item, anchorRect: rect, anchor: tiles[id]?.more)
+                }
             default: break
             }
         }
@@ -663,18 +683,23 @@ final class FileShelfCanvas: HUDDesignCanvas {
         guard let tile = tiles.values.first(where: { $0.layer.isVisible(in: root) && $0.layer.isUnclipped(point, in: root)
                 && $0.contains($0.layer.convert(point, from: root)) }),
               let item = items.first(where: { $0.id == tile.itemID }) else { return false }
+        openItemMenu(item, anchorRect: CGRect(x: point.x, y: point.y, width: 1, height: 1), anchor: nil)
+        return true
+    }
+
+    /// A file's menu, from a right-click at a point or its ⋯ (`anchor`).
+    private func openItemMenu(_ item: ShelfItem, anchorRect: CGRect, anchor: HUDControl?) {
         let available = item.availabilityError == nil
         let menu = [HUDMenu.Item(id: "open", title: L10n.text("Open", "打开"), enabled: available),
                     HUDMenu.Item(id: "reveal", title: L10n.text("Reveal in Finder", "在访达中显示"), enabled: available),
                     HUDMenu.Item(id: "remove", title: L10n.text("Remove from shelf", "从暂存架移除"), danger: true, separatorBefore: true)]
-        openMenu(id: "shelf.menu", items: menu, anchorRect: CGRect(x: point.x, y: point.y, width: 1, height: 1), minimumWidth: 170) { [weak self] pick in
+        openMenu(id: "shelf.menu", items: menu, anchorRect: anchorRect, anchor: anchor, minimumWidth: 170) { [weak self] pick in
             switch pick.id {
             case "open": self?.open(item.id)
             case "reveal": self?.reveal(item.id)
             default: self?.remove([item.id])
             }
         }
-        return true
     }
 
     // MARK: Formatting (spec §2.15, §2.16)
@@ -748,6 +773,7 @@ final class FileShelfCanvas: HUDDesignCanvas {
 /// a click (selection) or, after 5 px, a drag-out of the selection.
 private final class ShelfTile: HUDControl {
     let tile: HUDArchiveTile
+    let more: HUDTileMoreButton
     let itemID: UUID
     let number: Int
     private weak var canvas: FileShelfCanvas?
@@ -759,8 +785,11 @@ private final class ShelfTile: HUDControl {
         tile = HUDArchiveTile(id: "tile:\(number)", number: number, title: item.name, ext: FileShelfCanvas.tileKind(item),
                               extLabel: FileShelfCanvas.extensionLabel(item), size: FileShelfCanvas.sizeTag(item), date: nil,
                               width: width, redacted: redacted, env: env)
-        let details = [redacted ? L10n.text("Redacted", "已隐藏") : item.name, FileShelfCanvas.kindText(item), FileShelfCanvas.sizeTag(item)]
-        super.init(id: "file:\(number)", label: details.compactMap { $0 }.joined(separator: ", "), env: env)
+        let name = redacted ? L10n.text("Redacted", "已隐藏") : item.name
+        let details = [name, FileShelfCanvas.kindText(item), FileShelfCanvas.sizeTag(item)]
+        let id = "file:\(number)"
+        more = tile.attachMore(id: id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: name))
+        super.init(id: id, label: details.compactMap { $0 }.joined(separator: ", "), env: env)
         HUDMotion.perform { layer.bounds = tile.layer.bounds; tile.layer.frame = layer.bounds; layer.addSublayer(tile.layer) }
     }
 

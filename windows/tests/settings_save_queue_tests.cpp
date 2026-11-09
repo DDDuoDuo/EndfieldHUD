@@ -84,4 +84,60 @@ void inFlightCoalescing(){
     auto restored=data::Settings::defaults();queue.save(restored);check(queue.flush()&&data::SettingsStore(t.root).value()==restored,"Returning to a previous value remains a real ordered save");
 }
 }
-int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// The owner's Character rule reaches the worker's store, which cuts the HUD
+// elements text on save (ASCII here: one byte per Character).
+void characterRule(){
+    Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;
+    app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}},[](std::string_view text,std::size_t count){return std::string(text.substr(0,count));});
+    check(queue.flush(),"Load the synthetic record");
+    data::OverlayLayout layout;layout.titleText="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";loaded.setOverlayLayout(layout);queue.save(loaded);
+    check(queue.flush()&&data::SettingsStore(t.root).value().overlayLayout().titleText=="ABCDEFGHIJKLMNOPQRSTUVWX","The queue's store saves the title cut to 24 Characters");
+}
+// The hidden-Sanity migration runs with the initial load on the worker, once,
+// only when the owner passes its check (a normal launch); without it
+// (diagnostic and test runs) nothing is marked.
+void sanityMigration(){
+    {Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;unsigned asked{};
+        app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}},{},[&]{++asked;return true;});
+        check(queue.flush()&&asked==1&&!loaded.overlayLayout().showsSanity,"A normal launch loads the record with Show Sanity migrated off");
+        check(data::SettingsStore(t.root).sanityMigrated(),"The migration flag is saved beside the record");}
+    {Temporary t;app::UtilityExecutor executor([]{},1);data::Settings loaded;
+        app::SettingsSaveQueue queue(t.root,executor,{[&](const auto&s){loaded=s;},{}});
+        check(queue.flush()&&loaded.overlayLayout().showsSanity&&!data::SettingsStore(t.root).sanityMigrated(),"A diagnostic run leaves the migration for a normal launch");}
+}
+// "Last opened" across relaunches: hudLastOpenedModule is read with the
+// initial record and saved beside it on the same route, written by the store
+// only when the saved name differs (HUDOverlayLayout.saveLastModule).
+void lastModule(){
+    {Temporary t;check(std::filesystem::create_directory(t.root),"Create the synthetic root");
+        {data::SettingsStore seeded(t.root);seeded.saveLastOpenedModule("calendar");}
+        app::UtilityExecutor executor([]{},2);app::SettingsSaveQueue queue(t.root,executor);
+        check(queue.flush()&&queue.status().lastModule=="calendar"&&!queue.status().lastModulePending,"The saved last module is read with the record");
+        const auto record=data::SettingsStore(t.root).value();const auto jobs=executor.stats().accepted;
+        queue.saveLastModule("notes");check(queue.status().lastModulePending&&queue.flush()&&!queue.status().lastModulePending&&queue.status().lastModule=="notes","flush() waits for the last module");
+        check(data::SettingsStore(t.root).lastOpenedModule()=="notes"&&data::SettingsStore(t.root).value()==record&&executor.stats().accepted==jobs+1,"One job saves it beside an unchanged record");
+        queue.saveLastModule("notes");check(!queue.status().lastModulePending&&executor.stats().accepted==jobs+1,"The same module again sends nothing");
+        // A worker held busy: the first name waits in flight, the later ones
+        // coalesce to the latest.
+        const auto route=executor.makeRoute();auto gate=std::make_shared<std::promise<void>>();const auto wait=gate->get_future().share();
+        check(executor.submit(route,[wait]{wait.wait();},[](auto){}),"Hold the shared worker");
+        struct Release{std::shared_ptr<std::promise<void>>p;~Release(){if(p)try{p->set_value();}catch(...){}}}release{gate};
+        queue.saveLastModule("map");queue.saveLastModule("archive");queue.saveLastModule("reader");
+        check(queue.status().busy,"The first name is accepted behind the held worker");
+        gate->set_value();release.p.reset();
+        check(queue.flush()&&data::SettingsStore(t.root).lastOpenedModule()=="reader"&&executor.stats().accepted==jobs+4,"A burst saves the name in flight, then only the latest one");
+        // A newer name sent while an older one is being written still lands.
+        auto held=std::make_shared<std::promise<void>>();const auto holding=held->get_future().share();
+        check(executor.submit(route,[holding]{holding.wait();},[](auto){}),"Hold the shared worker again");
+        struct ReleaseHeld{std::shared_ptr<std::promise<void>>p;~ReleaseHeld(){if(p)try{p->set_value();}catch(...){}}}releaseHeld{held};
+        queue.saveLastModule("volume");check(queue.status().busy,"Volume is in flight");queue.saveLastModule("reader");
+        held->set_value();releaseHeld.p.reset();
+        check(queue.flush()&&data::SettingsStore(t.root).lastOpenedModule()=="reader","Going back to the module saved before saves it again");
+    }
+    {Temporary t;app::UtilityExecutor executor([]{},1);app::SettingsSaveQueue queue(t.root,executor);
+        check(queue.flush()&&queue.status().lastModule=="map","A first launch reads Map");
+        queue.saveLastModule("map");check(queue.flush(),"Save Map");
+        const auto file=data::Json::parse(*data::detail::readFile(t.root/"settings.json",4*1024*1024));
+        check(file["hudLastOpenedModule"]==data::Json("map")&&!file["settings"].contains("hudLastOpenedModule"),"A missing last module is written like the Mac's (\"map\"), outside the record");}
+}
+int main(){try{readAndCoalesce();failureAndPreservation();acceptedLifetimeAndReentrancy();inFlightCoalescing();characterRule();sanityMigration();lastModule();std::cout<<"Settings save queue: "<<checks<<" checks passed; temporary data only\n";return 0;}catch(const std::exception&e){std::cerr<<"Settings save queue after "<<checks<<": "<<e.what()<<'\n';return 1;}}

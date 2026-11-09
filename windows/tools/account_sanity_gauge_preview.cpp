@@ -15,6 +15,12 @@ void need(bool v,const char* s) {if(!v) throw std::invalid_argument(s);}
 struct AccountSanityGaugePreview::Impl {
     h::HypergryphAccountController& controller;std::shared_ptr<const h::GaugeAssets> assets;h::SanityGaugeModel model;gpu::NativeSanityGaugeScene scene;
     AccountSanityGaugeOptions options;app::ClientMetrics metrics;core::Projection projection;bool overlayVisible{},posed{};double time{};
+    // SystemHUDView.designScale (DesktopChromeLayout::designScale): the HUD
+    // design scale with HUD Scale and the display adaptation, from the frame.
+    double designScale{1};
+    // The gauge's drawn top-left on the core plane and its size (Display >
+    // HUD elements; the authored place until the host places it).
+    core::Point origin{g::headerOrigin.x+g::headerPosition.x,g::headerOrigin.y+g::headerPosition.y};double size{1};
     gpu::Renderer* renderer{}; // the host's, from upload() (conceal() parks through it)
     gpu::LayerRasterizer* raster;
     Impl(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,std::shared_ptr<const h::GaugeAssets> a,AccountSanityGaugeOptions o)
@@ -23,10 +29,9 @@ struct AccountSanityGaugePreview::Impl {
         model.onRefresh=[this]{controller.refresh(true);refresh();};
         // Mac 1.3.0: accountGauge.onOpenWorkMode = activateNavigationTarget(.module(.workMode)).
         model.onOpenWorkMode=[this]{if(options.openWorkMode) {auto open=options.openWorkMode;open();}};
-        // HUDAccountGauge.Layout measures the menu's text: the source numerals'
-        // advances, else HUDText.width (standard faces, 14.4 medium, the UI
-        // region; a line-box measurement, rounded up to .5). Content events only.
-        model.widths.numerals=[this](std::string_view text){return assets->numerals.width(text,h::GaugePopoverLayout::textSize);};
+        // HUDAccountGauge.Layout measures the menu's text with HUDText.width
+        // (standard faces, 14.4 medium, the UI region; a line-box measurement,
+        // rounded up to .5). Content events only.
         model.widths.standard=[this](std::string_view text){
             const auto region=core::regionFor(options.language,raster->fontLanguage());
             const auto descriptor=ehud::data::Json::Object{{"string",std::string(text)},{"fontSize",h::GaugePopoverLayout::textSize},{"fontWeight",500},
@@ -35,7 +40,11 @@ struct AccountSanityGaugePreview::Impl {
         };
     }
     void advance(double t) {need(std::isfinite(t),"Gauge owner needs a finite clock");time=std::max(time,t);}
-    double scale() const {return std::clamp(metrics.scale>0?metrics.scale:2,1.0,3.0);}
+    // hudRasterScale: the backing scale times the design scale (the model
+    // applies the glyph rule and the Sanity size).
+    double scale() const {return (metrics.scale>0?metrics.scale:2)*designScale;}
+    // A HUD Scale, layout, display or size change between clock ticks.
+    void rescaled(const h::SanityGaugeModel::Changes& c) {if(c.number||c.icon||c.scale||c.tooltip) scene.sync(model,options.language,time,options.reduceMotion);}
     h::WorkModeGaugeInput work() const {return options.workMode?options.workMode():h::WorkModeGaugeInput{};}
     // HUDAccountGauge.update(visible:) follows the header mode only: the
     // wallet stays in the header while the HUD closes and fades out with it
@@ -55,11 +64,11 @@ struct AccountSanityGaugePreview::Impl {
     double toHost(double controllerTime) const {return time+std::max(0.0,controllerTime-controller.now());}
     // HUDAccountGauge.size at the gauge origin (its press and hit rect).
     static bool inWallet(core::Point q) {return q.x>=0&&q.y>=0&&q.x<g::bounds.width&&q.y<g::bounds.height;}
-    // HypergryphAccountController.gaugeValue shows Work Mode minutes unless the
-    // header is hidden or a linked game (sanity) mode is selected.
+    // HypergryphAccountController.gaugeValue shows Work Mode minutes unless
+    // Show Sanity is off or a linked game (sanity) mode is selected.
     bool showsWorkMode() const {
         using M=h::AccountPresentation::HeaderMode;const auto mode=controller.headerMode();
-        return mode!=M::hidden&&!(controller.record().linked&&(mode==M::endfield||mode==M::arknights));
+        return controller.showsHeaderGauge()&&!(controller.record().linked&&(mode==M::endfield||mode==M::arknights));
     }
 };
 AccountSanityGaugePreview::AccountSanityGaugePreview(h::HypergryphAccountController& c,gpu::LayerRasterizer& r,const std::filesystem::path& resources,AccountSanityGaugeOptions o)
@@ -69,18 +78,32 @@ void AccountSanityGaugePreview::resize(const app::ClientMetrics& m) {
     need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid gauge viewport");
     const bool rescale=impl_->metrics.scale!=m.scale;impl_->metrics=m;if(rescale) impl_->refresh();
 }
+void AccountSanityGaugePreview::setDesignScale(double value,double t) {
+    auto& i=*impl_;i.advance(t);if(!std::isfinite(value)||!(value>0)||value==i.designScale) return;
+    i.designScale=value;i.rescaled(i.model.setScale(i.scale()));
+}
+void AccountSanityGaugePreview::setPlacement(core::Point origin,double size,h::GaugePopoverDirection direction,double t) {
+    auto& i=*impl_;i.advance(t);need(std::isfinite(origin.x)&&std::isfinite(origin.y),"Invalid gauge placement");
+    i.origin=origin;i.size=std::isfinite(size)&&size>0?size:1;
+    i.rescaled(i.model.setSizeFactor(size));
+    if(i.model.setPopoverDirection(direction).popover) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);
+}
 void AccountSanityGaugePreview::setLanguage(core::Language l,double t) {impl_->advance(t);impl_->options.language=l;impl_->refresh();}
 void AccountSanityGaugePreview::setReduceMotion(bool v) noexcept {impl_->options.reduceMotion=v;}
 void AccountSanityGaugePreview::setOverlayVisible(bool v,double t) {
     auto& i=*impl_;i.advance(t);if(i.overlayVisible==v) return;i.overlayVisible=v;
-    if(!v) {i.model.dismiss();i.scene.setHover(std::nullopt,i.time,true);}
+    // The HUD close keeps the hover until the pointer leaves (the host's
+    // leave) or the hide (conceal, or the host's leave at a File Shelf hide),
+    // as the Mac defers clearControlHighlights.
+    if(!v) i.model.dismiss();
     i.refresh();
 }
 void AccountSanityGaugePreview::contentChanged(double t) {impl_->advance(t);impl_->refresh();}
 void AccountSanityGaugePreview::update(const Matrix& center,float opacity,double t) {
     auto& i=*impl_;i.advance(t);need(i.metrics.pixelWidth&&i.metrics.pixelHeight,"Resize the gauge before presentation");
-    // Header frame origin (270,2) plus HUDAccountGauge.headerPosition (292,0).
-    const auto world=center*Matrix::translation(g::headerOrigin.x+g::headerPosition.x,g::headerOrigin.y+g::headerPosition.y);
+    // The placed gauge (authored: header frame origin (270,2) plus
+    // HUDAccountGauge.headerPosition (292,0)), scaled by its size.
+    const auto world=center*Matrix::translation(i.origin.x,i.origin.y)*Matrix::scale(i.size,i.size);
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);
     i.projection=core::Projection::viewport(camera*world,i.metrics.pixelWidth,i.metrics.pixelHeight);i.posed=true;
     i.scene.updatePose(world,opacity,i.time);
@@ -122,7 +145,7 @@ bool AccountSanityGaugePreview::key(const app::KeyEvent& e,bool modified,double 
     i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);
     return true; // the open recovery menu owns the keyboard (host checks its summon shortcut first)
 }
-bool AccountSanityGaugePreview::dismiss(double t) {auto& i=*impl_;i.advance(t);const bool closed=i.model.dismiss();if(closed) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);return closed;}
+bool AccountSanityGaugePreview::dismiss(double t,bool animated) {auto& i=*impl_;i.advance(t);const bool closed=i.model.dismiss();if(closed) i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion||!animated);return closed;}
 std::optional<double> AccountSanityGaugePreview::nextWakeTime(double hostTime) const {
     const auto& i=*impl_;std::optional<double> wake;
     const auto earliest=[&](double at){wake=wake?std::min(*wake,at):at;};
@@ -170,8 +193,9 @@ std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const
 std::optional<std::string> AccountSanityGaugePreview::accessibilityValue() const {return impl_->model.accessibilityValue(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) {impl_->renderer=&r;impl_->scene.upload(r);}}
-bool AccountSanityGaugePreview::conceal() {return impl_->scene.park(impl_->renderer);}
+bool AccountSanityGaugePreview::conceal() {auto& i=*impl_;i.scene.setHover(std::nullopt,i.time,true);return i.scene.park(i.renderer);}
 std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::entries() {return impl_->posed?impl_->scene.entries():std::span<const gpu::LayerCompositionEntry>{};}
+std::span<const gpu::LayerCompositionEntry> AccountSanityGaugePreview::popoverEntries() {return impl_->posed?impl_->scene.popoverEntries():std::span<const gpu::LayerCompositionEntry>{};}
 void AccountSanityGaugePreview::collected(gpu::Renderer& r) {impl_->scene.collected(r);}
 void AccountSanityGaugePreview::release(gpu::Renderer& r) {need(impl_->scene.release(r),"Detach the gauge composition before releasing its resources");}
 }

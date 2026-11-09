@@ -78,6 +78,26 @@ void edits(const J& oracle, const m::ShortcutTextRules& rules) {
     m::saveShortcutDraft(file, packaged, packaged, "Packaged", "original", {}, id(3), 800, rules, same);
     check(file.items.back().native(), "Explicit packaged app identity can be retained without file path forgery");
 }
+// AppShortcutStore.move(id:to:) (Mac eebdf4c): a clamped index, one change,
+// none for the same slot or an unknown shortcut.
+void moves(const m::ShortcutTextRules& rules) {
+    m::ShortcutFile file;
+    for (unsigned n = 1; n <= 3; ++n) {
+        m::ShortcutCandidate candidate{"App " + std::to_string(n), {}, target("move-" + std::to_string(n))};
+        (void)m::saveShortcutDraft(file, candidate, candidate, candidate.name, "star", {}, id(n), 700 + n, rules, same);
+    }
+    const auto order = [&] { std::vector<std::string> ids; for (const auto& v : file.items) ids.push_back(v.id); return ids; };
+    const auto before = file;
+    check(!m::moveShortcut(file, id(2), 1) && file == before, "Moving to the same slot changes nothing");
+    check(!m::moveShortcut(file, id(99), 0) && file == before, "Moving an unknown shortcut changes nothing");
+    check(m::moveShortcut(file, id(1), 2) && order() == std::vector<std::string>{id(2), id(3), id(1)}, "A shortcut moves down to its slot");
+    check(m::moveShortcut(file, id(1), -5) && order() == std::vector<std::string>{id(1), id(2), id(3)}, "An index above the list clamps to the top");
+    check(m::moveShortcut(file, id(2), 40) && order() == std::vector<std::string>{id(1), id(3), id(2)}, "An index past the list clamps to the end");
+    check(!m::moveShortcut(file, id(2), 40), "Past the end again: already there");
+    check(file.items[2].name == "App 2" && file.items[2].createdAt == 702, "A move keeps every record as it was");
+    const std::string lower = "abcdef00-0000-4000-8000-000000000003";
+    check(m::moveShortcut(file, lower, 0) && order().front() == id(3), "The id is matched as a UUID, whatever its case");
+}
 void persistence(const J& oracle, const m::ShortcutTextRules& rules) {
     Temp temp; m::ShortcutRepository store(temp.root, rules);
     check(!std::filesystem::exists(temp.root), "Shortcut construction is IO-free");
@@ -105,7 +125,7 @@ int main(int argc, char** argv) {
         check(argc == 2, "Expected source fixture path");
         const auto oracle = J::parse(read(std::filesystem::u8path(argv[1])));
         const auto rules = endfield::native::nativeShortcutTextRules();
-        source(oracle, rules); edits(oracle, rules); persistence(oracle, rules);
+        source(oracle, rules); edits(oracle, rules); moves(rules); persistence(oracle, rules);
         std::cout << "Shortcut model/store passed " << checks << " checks\n"; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << checks << ": " << e.what() << '\n'; return 1; }
 }

@@ -86,8 +86,6 @@ inline constexpr std::size_t notesCentreMaximumBytes=16*1024*1024; // Windows bo
 // document (valid() false) is returned; the store sets both kinds aside.
 NotesCentreDocument decodeNotesCentre(std::string_view bytes);
 std::string encodeNotesCentre(const NotesCentreDocument&);
-// Mac importer check: decodable AND valid, else StoreError(invalid).
-NotesCentreDocument validatedNotesCentre(std::string_view bytes);
 
 class NotesCentreStore final {
 public:
@@ -97,7 +95,7 @@ public:
     // default document. An undecodable, invalid or oversized file is renamed
     // to centre-unreadable-<ISO8601 UTC, ':' -> '-'>.json beside it and never
     // overwritten (LoadIssue::setAside; the owner shows the Mac notice "The
-    // centre notes could not be read and were set aside."). A file that cannot
+    // centre notes could not be read and were set aside"). A file that cannot
     // be read or renamed leaves the store memory-only (LoadIssue::unavailable
     // or setAside with no rename): unlike the Mac, a later edit never replaces
     // it. unixNow stamps the set-aside name (default: system clock).

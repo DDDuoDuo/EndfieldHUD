@@ -42,6 +42,16 @@ void run(const std::filesystem::path&shader,bool shared=false){
     publish();check(publications==priorPublicationCount+1&&publishedRevision==workspace.compositionRevision(),"Production owner revision comparison republishes the delayed texture binding");const auto resources=renderer.stats();const auto rasters=raster.stats().rasterizations;
     allocations=0;counting=true;try{for(unsigned f=0;f<120;++f){const auto time=1.01+double(f)/60;probe->position=double(f)/60;probe->fresh=true;sample(time);auto p=pose(time);p.workspaceToScreen.values[12]=double(f)*.01;workspace.updatePose(p);publish();}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&renderer.stats().mediaTargetAllocations==resources.mediaTargetAllocations&&renderer.stats().textureUploads==resources.textureUploads&&raster.stats().rasterizations==rasters,"120 live-video/tilt frames retain layouts, texture bindings, resources and CPU storage");
+    // N-1: the HUD's close settles a running progress track (notes.media.progress): the fill
+    // and the handle drop back to the playing position at once and stop interpolating.
+    {const auto end=1.01+119./60;const m::NotesMediaLayout movie(200,150,m::NotesMediaKind::video,10);const auto rail=movie.geometry().seek;
+        const auto fill=[&]{return workspace.entries()[0].after[1].world.values[0];};const auto handle=[&]{return workspace.entries()[0].after[2].world.values[12];};
+        const auto movingFill=fill(),movingHandle=handle();
+        check(movingFill>rail.width*.1+1e-3,"While playing, the progress fill runs ahead of its last position tick");
+        workspace.settleMediaProgress();const auto settledFill=fill();
+        check(std::abs(settledFill-rail.width*.1)<1e-6&&std::abs((movingHandle-handle())-(movingFill-settledFill))<1e-6,"The settle puts the fill and the handle at the playing position (N-1)");
+        auto later=pose(end+.08);later.workspaceToScreen.values[12]=1.19;workspace.updatePose(later);
+        check(fill()==settledFill,"A settled progress fill no longer interpolates");}
     workspace.toggleMedia(noteID,3.1);publish();auto tilted=pose(3.2);tilted.workspaceToScreen=c::Matrix4::translation(3,4)*c::Matrix4::scale(.93,.9);tilted.workspaceToScreen.values[3]=.00005;workspace.updatePose(tilted);
     const auto projection=c::Projection::viewport(tilted.screenToClip*tilted.workspaceToScreen,640,360);m::NotesMediaLayout layout(200,150,m::NotesMediaKind::video,10);const auto seek=layout.geometry().seek;
     auto rail=[&](double fraction){const auto point=projection.project({20+seek.x+seek.width*fraction,20+seek.y+seek.height*.5});check(point.has_value(),"Original perspective projects media rail");return *point;};const auto seeks=probe->seeks;

@@ -73,12 +73,29 @@ struct ChargeStageGeometry {
     core::Point emblemCenter;
     double emblemWidth{}, emblemHeight{}, emblemRadius{}, boltScale{};
 };
-// ChargeIndicatorView.apply(_:duration:) stage table (canvas points, top-left).
-ChargeStageGeometry chargeStageGeometry(ChargeStage) noexcept;
+// ChargeIndicatorView.apply(_:duration:) stage table (canvas points, top-left)
+// for a compact bar of `barWidth` points (setBarWidth): only the compact bar
+// stretches; the circle and the 240-point banner stay centred in the canvas
+// (ChargeIndicatorMetrics::canvasWidthFor) and the compact parts keep their
+// distances from the bar's ends.
+ChargeStageGeometry chargeStageGeometry(ChargeStage, double barWidth = 264) noexcept;
 
 struct ChargeIndicatorMetrics {
+    // The classic canvas (the HUD's embedded badge keeps it exactly).
     static constexpr double canvasWidth = 300, canvasHeight = 84;
     static constexpr core::Point center{150, 42};
+    // OverlayGeometry: the compact bar inside the classic canvas, the shortest
+    // bar the Length setting allows and the canvas margin on each side of the
+    // bar (room for its shadow), in the bar's own points before its Size; and
+    // the bar's Size range (65 % to 160 %).
+    static constexpr double classicBarWidth = 264, minimumBarWidth = 200, barMargin = 18;
+    static constexpr double minimumScale = 0.65, maximumScale = 1.6;
+    // OverlayGeometry.canvasWidth: never narrower than the classic 300 points,
+    // so the circle and the 240-point banner keep their room; only a longer
+    // bar widens it.
+    static constexpr double canvasWidthFor(double barWidth) noexcept {
+        return barWidth + 2 * barMargin > canvasWidth ? barWidth + 2 * barMargin : canvasWidth;
+    }
     static constexpr double entranceDuration = 1.50, exitDuration = 0.64;
     static constexpr double bannerTitleWidth = 121, morphDuration = 0.26, hoverDuration = 0.16;
     // animateEntrance: circle 0.18; +0.20 supercharge 0.30 with ripples;
@@ -88,11 +105,16 @@ struct ChargeIndicatorMetrics {
     static constexpr double compactAt = 1.22, compactDuration = 0.28;
     static constexpr double exitCircle = 0.30, exitHiddenAt = 0.30, exitHidden = 0.34;
     static constexpr double rippleDuration = 0.76, rippleStagger = 0.15, rippleFrom = 0.06, rippleTo = 1.10;
-    // Fixed text frames {x while visible, x otherwise, y, width, height}.
-    // The banner pair is visible in .supercharge; the readings in .compact.
+    // Text frames of the classic bar {x while visible, x otherwise, y, width,
+    // height}; a longer bar moves the x values with its ends and widens the
+    // capacity reading to barWidth - 121 (chargeCapacityWidth). The banner
+    // pair is visible in .supercharge; the readings in .compact.
     static constexpr std::array<std::array<double, 5>, 4> textFrames{{
         {126, 150, 27, 116, 12}, {124, 149, 36, 121, 28}, {55, 83, 33, 143, 19}, {205, 192, 32.5, 40, 20}}};
 };
+// ChargeIndicatorView.capacityWidth: the capacity reading's room between the
+// emblem and the percentage (143 for the classic bar).
+constexpr double chargeCapacityWidth(double barWidth) noexcept { return barWidth - 121; }
 
 // One sampled presentation tree. Body and its source shadow layer share size,
 // radius, transform and opacity. Points are canvas coordinates.
@@ -114,6 +136,8 @@ struct ChargeIndicatorPose {
     double borderWidth{0.5};
     ChargeColor borderColor{};
     double canvasOpacity{1}; // includes the badge's additive deployment flicker
+    // The body's centre: the canvas centre (canvasWidthFor(barWidth) / 2, 42).
+    core::Point center{150, 42};
     // ChargeIndicatorView.embeddedBodyRect from presentation geometry.
     core::Rect bodyRect() const noexcept;
 };
@@ -152,6 +176,15 @@ public:
     void animateExit(double time) noexcept;
     // cancelAnimations: generation change, deadlines dropped, all tracks removed.
     void cancel() noexcept;
+    // ChargeIndicatorView.setBarWidth (the Length setting): a longer or
+    // shorter compact bar (at least 200 points; non-finite is the classic
+    // 264). The circle and banner keep their size, centred in the canvas; the
+    // current stage is redrawn in place (no entrance). Nothing happens when
+    // unchanged. Only the alert sets it; the HUD's embedded badge keeps the
+    // classic bar.
+    void setBarWidth(double width, double time) noexcept;
+    double barWidth() const noexcept { return barWidth_; }
+    double canvasWidth() const noexcept { return ChargeIndicatorMetrics::canvasWidthFor(barWidth_); }
     // Translates every pending time (tracks, the ripple group, the sequence
     // steps) `seconds` later: afterwards sample(t + seconds) equals the
     // previous sample(t), and every deadline moves by the same amount. A host
@@ -190,6 +223,7 @@ private:
     std::array<std::uint64_t, 3> rippleOrder_{};
     bool ripplesStarted_{}, reduced_{};
     ChargeStage stage_{ChargeStage::hidden};
+    double barWidth_{ChargeIndicatorMetrics::classicBarWidth};
     std::uint64_t generation_{}, order_{};
     Step step_{Step::none};
     double stepAt_{}, sequenceStart_{};
@@ -235,9 +269,11 @@ struct ChargeIndicatorContent {
 };
 // Font fitting runs the source loops with the caller's measurement: title
 // 20pt -> >=10pt in 0.5pt steps while wider than 119; metric line scale 1 -> 0.6
-// in 0.05 steps while wider than 143; trailing 13 -> >=9 while wider than 40.
+// in 0.05 steps while wider than the capacity width (143 for the classic bar,
+// chargeCapacityWidth(barWidth)); trailing 13 -> >=9 while wider than 40.
 ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppearance&, const BatteryReading&,
-    ChargeMetric, const std::optional<ChargeTelemetry>&, bool preview, const ChargeTextMeasure&);
+    ChargeMetric, const std::optional<ChargeTelemetry>&, bool preview, const ChargeTextMeasure&,
+    double barWidth = ChargeIndicatorMetrics::classicBarWidth);
 ehud::data::Json chargeTextDescriptor(const ehud::data::Json& textLayer); // layer["text"] convenience
 
 // Static vector leaves (white, tinted by the GPU): bolt, laptop, ring track,
@@ -248,12 +284,4 @@ ehud::data::Json chargeRingLayer(bool progress);
 ehud::data::Json chargeRippleLayer();
 ehud::data::Json chargeCapLayer();
 
-// OverlayController.PositionActionButton (28 x 28, flipped): a circle inset by
-// one point and a 1.7-point round-capped symbol, as white leaves the GPU tints.
-ehud::data::Json chargePositionButtonCircleLayer();
-ehud::data::Json chargePositionButtonSymbolLayer(bool confirm);
-struct ChargePositionButtonColors { ChargeColor fill, symbol; };
-ChargePositionButtonColors chargePositionButtonColors(bool dark, bool highlighted) noexcept;
-std::string chargePositionButtonLabel(bool confirm, core::Language);   // accessibility label
-std::string chargePositionButtonTooltip(bool confirm, core::Language); // "Discard (Esc)" / "Confirm (Return)"
 } // namespace endfield::modules

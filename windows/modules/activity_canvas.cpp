@@ -59,7 +59,7 @@ void ActivityAppIcons::clear() {
 void ActivityAppIcons::setScale(double scale) {
     if (scale == scale_) return;
     scale_ = scale;
-    clear(); queue_.clear();
+    clear(); queue_.clear(); loading_.clear();
     ++generation_; inFlight_ = false;
 }
 unsigned ActivityAppIcons::pixels() const noexcept { return unsigned(std::ceil(side * std::max(1., scale_))); }
@@ -67,7 +67,8 @@ ActivityAppIcons::Icon ActivityAppIcons::icon(const ActivityApp& item) {
     if (item.identity.iconKey.empty() || !loader_.load) return {Icon::Kind::generic, {}};
     if (const auto found = images_.find(item.identity.id); found != images_.end())
         return found->second ? Icon{Icon::Kind::image, *found->second} : Icon{Icon::Kind::generic, {}};
-    if (std::none_of(queue_.begin(), queue_.end(), [&](const Request& r) { return r.id == item.identity.id; }))
+    const auto same = [&](const Request& r) { return r.id == item.identity.id; };
+    if (std::none_of(queue_.begin(), queue_.end(), same) && std::none_of(loading_.begin(), loading_.end(), same))
         queue_.push_back({item.identity.id, item.identity.iconKey, pixels()});
     return {};
 }
@@ -82,18 +83,22 @@ void ActivityAppIcons::schedule() {
         const auto state = weak.lock();
         return state && state->owner && state->owner->loaded(generation, next, std::move(results));
     };
+    loading_ = next;
     if (!loader_.load(next, std::move(done))) {
         // Not accepted now (executor backpressure): the next lookup retries.
         queue_.insert(queue_.begin(), next.begin(), next.end());
-        inFlight_ = false;
+        loading_.clear(); inFlight_ = false;
     }
 }
 bool ActivityAppIcons::loaded(std::uint64_t generation, const std::vector<Request>& requests, std::vector<std::optional<d::ImageSource>> results) {
     if (generation != generation_) return false;          // loaded for another scale: not taken
     results.resize(requests.size());
-    inFlight_ = false;
-    if (images_.size() + requests.size() > capacity) clear();
+    inFlight_ = false; loading_.clear();
     std::vector<std::string> ids;
+    if (images_.size() + requests.size() > capacity) {
+        for (const auto& [id, image] : images_) if (image) ids.push_back(id); // released: their rows take their icon again
+        clear();
+    }
     for (std::size_t n = 0; n < requests.size(); ++n) {
         auto& slot = images_[requests[n].id];
         if (slot && loader_.release) loader_.release(*slot);
@@ -322,6 +327,7 @@ public:
         std::optional<ActivityApp> item;
         std::optional<ActivitySort> sortKey;
         std::optional<std::string> iconID;  // the app whose icon the row shows
+        std::optional<ActivityAppIcons::Icon> shown; // and the icon it draws
     };
 
     AppTable(d::Page& page, d::ScrollArea& area, std::vector<SortColumn*> columns, ActivityAppIcons& icons)
@@ -338,7 +344,8 @@ public:
     }
     std::function<void(const std::vector<Row*>&)> onRowsAdded; // new pooled rows need routing (hover, accessibility)
 
-    void update(std::vector<ActivityApp> next, bool waiting, ActivitySort sortKey, bool descending) {
+    // Returns the empty state when this update shows it (Mac 08cd96a).
+    d::Layer* update(std::vector<ActivityApp> next, bool waiting, ActivitySort sortKey, bool descending) {
         items_ = std::move(next);
         for (auto* column : columns_) column->render(column->key() == sortKey, descending);
         area_->setContentHeight(std::max(0., double(items_.size()) * pitch - d::metric::rowGap));
@@ -358,11 +365,14 @@ public:
             d::Layer& state = d::emptyState::bilingual(b, "activity.apps.empty." + std::to_string(++emptyCount_), "NO APP READINGS", "暂无应用读数",
                 {d::metric::boxWidth, 250});
             state.setOrigin({0, 0});
+            state.setAnimatable();                       // it enters with the rows' stagger
             area_->content().add(state);
             empty_ = &state;
+            return &state;
         } else if (!showsEmpty && empty_) {
             empty_->removeFromParent(); empty_ = nullptr;
         }
+        return nullptr;
     }
     // bind(sortKey:) (:535-549): places the pool over the visible slice.
     void bind(ActivitySort sortKey) {
@@ -378,13 +388,16 @@ public:
         for (std::size_t offset = 0; offset < rows_.size() && first + offset < items_.size(); ++offset) show(*rows_[offset], items_[first + offset], sortKey);
         icons_->schedule();
     }
-    // Icons that finished loading go to the visible rows showing their apps.
+    // Icons that loaded or were released go to every row showing their apps,
+    // hidden ones too: a row never keeps drawing a released (retired) image.
     void showIcons(const std::vector<std::string>& ids) {
         for (const auto& row : rows_) {
-            if (row->plate->layer().hidden() || !row->item) continue;
+            if (!row->item) continue;
             const auto& id = row->item->identity.id;
-            if (std::find(ids.begin(), ids.end(), id) == ids.end() || row->iconID == id) continue;
-            showIcon(*row, icons_->icon(*row->item), id);
+            if (std::find(ids.begin(), ids.end(), id) == ids.end()) continue;
+            const auto icon = icons_->icon(*row->item);
+            if (row->iconID == id && row->shown == icon) continue;
+            showIcon(*row, icon, id);
         }
     }
 private:
@@ -430,6 +443,7 @@ private:
     static void showIcon(Row& row, const ActivityAppIcons::Icon& value, const std::string& id) {
         using Kind = ActivityAppIcons::Icon::Kind;
         row.iconID = value.kind == Kind::pending ? std::nullopt : std::optional(id);
+        row.shown = value;
         if (value.kind == Kind::image) row.icon->setContent(d::image(row.icon->id(), d::localBounds(*row.icon), value.image));
         else row.icon->clearContent();
         row.icon->setHidden(value.kind != Kind::image);
@@ -524,8 +538,11 @@ void ActivityCanvas::sort(ActivitySort key) {
     updateApps();
     std::vector<d::Layer*> layers;
     for (auto* row : table_->visibleRows()) layers.push_back(&row->plate->layer());
-    d::motion::stagger(layers, {0, 12}, clock());
+    staggerApps(layers);
 }
+// The Apps table's rows (or its empty state) stagger in from below.
+void ActivityCanvas::staggerApps(std::span<d::Layer* const> layers) { d::motion::stagger(layers, {0, 12}, clock()); }
+const d::ScrollArea* ActivityCanvas::appList() const noexcept { return table_ ? &table_->area() : nullptr; }
 bool ActivityCanvas::handleScroll(d::Point point, d::Point delta) {
     if (!showingApps_ || !table_ || !table_->area().layer().frame().contains(point)) return false;
     if (table_->area().scroll(delta.y)) table_->bind(sortKey_);
@@ -587,22 +604,37 @@ void ActivityCanvas::buildApps(d::Page& page) {
     table_ = std::make_unique<AppTable>(page, area, columns, icons_);
     icons_.onLoad = [this](const std::vector<std::string>& ids) { if (table_) table_->showIcons(ids); };
     page.stagger(head);
-    table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
+    d::Layer* empty = table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
     page.restoreOffset(area);
     table_->bind(sortKey_);
     for (const auto& row : table_->rows()) { page.add(*row->plate); page.add(*row->readout); }
     for (auto* row : table_->visibleRows()) page.stagger(row->plate->layer());
+    if (empty) page.stagger(*empty);
     table_->onRowsAdded = [this, table = table_.get()](const std::vector<AppTable::Row*>& added) {
         if (table_.get() != table) return;
         for (auto* row : added) { table->page().add(*row->plate); table->page().add(*row->readout); }
         refreshRouter();
     };
 }
+// The first sample of a run fills a table built while it waited: the rows
+// that appear in an empty table, or the empty state, enter as the page's
+// rows do (Mac 08cd96a). Samples arrive from the executor's drain, outside a
+// frame, so the clock catches up to the host first. During a sub-page swap
+// the staged page is built again instead (the Q4 rebuild): its build staggers
+// the rows for the landing and sets the staging header's counter, which
+// header() would not reach here (it is the leaving one until the swap lands).
 void ActivityCanvas::updateApps() {
     if (!table_) return;
+    catchUpClock();
+    if (transitioning()) { rerender(); return; }
     const auto& snapshot = state_->appSnapshot();
+    const bool hadRows = !table_->visibleRows().empty();
     header().setCounter(d::format::pad2(std::int64_t(snapshot.items.size())));
-    table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
+    d::Layer* empty = table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
     table_->bind(sortKey_);
+    std::vector<d::Layer*> arrived;
+    if (!hadRows) for (auto* row : table_->visibleRows()) arrived.push_back(&row->plate->layer());
+    if (empty) arrived.push_back(empty);
+    if (!arrived.empty()) staggerApps(arrived);
 }
 } // namespace endfield::modules

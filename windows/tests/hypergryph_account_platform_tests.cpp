@@ -10,6 +10,8 @@
 #include <tlhelp32.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include "tests/wic_rotated_photo.hpp"
+#include <chrono>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -203,6 +205,15 @@ std::pair<unsigned,unsigned> pngSize(const std::vector<std::uint8_t>& png) {
     const auto be=[&](std::size_t at){return (unsigned(png[at])<<24)|(unsigned(png[at+1])<<16)|(unsigned(png[at+2])<<8)|png[at+3];};return {be(16),be(20)};
 }
 void avatar() {
+    // A sideways phone photo (EXIF 6) as an avatar: decoded in well under a
+    // second (1.3.0 rotated straight over the decoder and decoded the photo
+    // again for the rows it turned) and upright: 341x512, red over blue.
+    {const auto photo=endfield::tests::rotatedPhoto();const auto start=std::chrono::steady_clock::now();const auto avatar=n::downsampleAvatar(photo);const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+     std::cout<<"Avatar rotated 3000x2000 photo s="<<seconds<<'\n';
+     check(pngSize(avatar)==std::pair{341u,512u},"A sideways photo avatar is turned upright at the 512 px bound");check(seconds<5,"A sideways photo avatar decodes without decoding the image again per turned row");
+     using Microsoft::WRL::ComPtr;ComPtr<IWICImagingFactory> wic;check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(wic.GetAddressOf()))),"WIC");ComPtr<IWICStream> stream;wic->CreateStream(stream.GetAddressOf());stream->InitializeFromMemory(const_cast<BYTE*>(avatar.data()),static_cast<DWORD>(avatar.size()));
+     ComPtr<IWICBitmapDecoder> decoder;check(SUCCEEDED(wic->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,decoder.GetAddressOf())),"Avatar PNG decodes");ComPtr<IWICBitmapFrameDecode> frame;decoder->GetFrame(0,frame.GetAddressOf());ComPtr<IWICFormatConverter> bgra;wic->CreateFormatConverter(bgra.GetAddressOf());bgra->Initialize(frame.Get(),GUID_WICPixelFormat32bppBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom);
+     std::vector<std::uint8_t> pixels(341u*512u*4);check(SUCCEEDED(bgra->CopyPixels(nullptr,341*4,static_cast<UINT>(pixels.size()),pixels.data())),"Avatar pixels");check(endfield::tests::rotatedPhotoUpright(pixels.data(),341,512,2,0),"EXIF orientation 6 puts the avatar's left (red) half on top");}
     check(pngSize(n::downsampleAvatar(syntheticPNG(1024,600)))==std::pair{512u,300u},"Avatar is downsampled to the 512 px source thumbnail bound");
     check(pngSize(n::downsampleAvatar(syntheticPNG(100,80)))==std::pair{100u,80u},"Small avatars keep their size (no upscaling)");
     check(throws([]{const std::vector<std::uint8_t> junk(64,7);(void)n::downsampleAvatar(junk);})&&throws([]{(void)n::downsampleAvatar({});}),"Undecodable avatars are rejected");
@@ -265,7 +276,7 @@ void services() {
         check(c.cacheWritesAllowed()&&!c.record().linked&&c.gaugeValue({true,1500,0}).value=="25 / 25","Fresh Windows install starts unlinked with Work Mode minutes");
         c.setVisible(true,true);h::AccountAction connect;connect.kind=h::AccountAction::Kind::connect;connect.region=h::AccountPresentation::RegionChoice::china;c.perform(connect);
         bundle.drain();
-        check(c.presentation().statusMessage=="Sign-in could not finish. Please try again."&&!c.isPresentingLogin(),"Without WebView2 the official login reports a clear failure");
+        check(c.presentation().statusMessage=="Sign-in could not finish. Please try again"&&!c.isPresentingLogin(),"Without WebView2 the official login reports a clear failure");
         h::AccountAction header;header.kind=h::AccountAction::Kind::selectHeaderMode;header.headerMode=h::AccountPresentation::HeaderMode::arknights;c.perform(header);
         check(events==std::vector<std::string>{"settings"},"Preference change records one settings event");
         for(int i=0;i<50&&!std::filesystem::exists(temp.path/L"Account"/L"profile-cache.json");++i) {WaitForSingleObject(event,20);executor.drain();bundle.drain();}
@@ -299,7 +310,7 @@ void importedCache() {
         n::HypergryphAccountServices bundle(executor,options);auto& c=bundle.controller();
         check(c.record().linked&&c.record().requiresReconnect&&c.record().roles.size()==1&&c.cache().header=="arknights"&&c.cache().syncProfile,
               "The restarted owner reads the imported roles and settings");
-        check(c.presentation().statusMessage=="Sign in again to continue syncing."&&c.gaugeValue({false,0,0}).value=="120 / 135","Cached sanity stays visible while a new sign-in is required");
+        check(c.presentation().statusMessage=="Sign in again to continue syncing"&&c.gaugeValue({false,0,0}).value=="120 / 135","Cached sanity stays visible while a new sign-in is required");
         c.setVisible(true,true);c.tick();
         for(int i=0;i<100&&!n::ownerOnly(file);++i) {WaitForSingleObject(event,20);executor.drain();bundle.drain();}
         check(n::ownerOnly(file)&&n::readBoundedFile(file,h::maximumCacheBytes)==std::optional<std::string>(bytes),"The imported cache is re-secured owner-only in place, byte for byte");
@@ -308,9 +319,23 @@ void importedCache() {
     }
     executor.shutdown();CloseHandle(event);
 }
+// The hidden-Sanity migration's check reads the cache through the same
+// bounded read as the cache files and never changes the file.
+void storedHeader() {
+    TempDirectory temp;const auto directory=temp.path/L"Account";
+    check(!n::storedHeaderIsHidden(directory),"No cache: the gauge was shown");
+    std::filesystem::create_directories(directory);const auto file=directory/n::accountCacheName;
+    const auto put=[&](const std::string& bytes){std::ofstream out(file,std::ios::binary|std::ios::trunc);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));};
+    const std::string hidden=R"({"version":1,"header":"hidden","region":"mainland"})";
+    put(hidden);check(n::storedHeaderIsHidden(directory)&&n::readAccountCache(file)==std::optional<std::string>(hidden),"A version 1 hidden header is read and left as it is");
+    put(R"({"version":2,"header":"hidden"})");check(!n::storedHeaderIsHidden(directory),"Another cache version is ignored");
+    put(R"({"version":1,"header":"endfield"})");check(!n::storedHeaderIsHidden(directory),"A shown header is not migrated");
+    std::string large=hidden;large.insert(large.size()-1,std::string(h::maximumCacheBytes,' '));put(large);
+    check(!n::storedHeaderIsHidden(directory),"A cache over 1 MB is ignored");
+}
 int main() {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {vault();heads();session();transport();clientPlumbing();avatar();queuedCache();services();importedCache();if(SUCCEEDED(hr)) CoUninitialize();
+    try {vault();heads();session();transport();clientPlumbing();avatar();queuedCache();services();importedCache();storedHeader();if(SUCCEEDED(hr)) CoUninitialize();
         std::cout<<"PASS "<<checks<<" Windows account platform checks (WinHTTP "<<sessionReport<<")\n";return 0;}
     catch(const std::exception& e) {if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

@@ -36,8 +36,8 @@ struct NativeNotesWorkspaceStyle {
     // order, modules::notesMediaErrorText), caller-localized. A language event
     // replaces them through setStyle; retained media keep their decode state.
     modules::NotesMediaStrings media;
-    std::array<std::string,6> mediaErrors{"The saved media reference is invalid.","The original media file is unavailable. Choose it again to restore access.",
-        "This file is not a supported image or playable video.","Choose an image below 128 MB and 64 megapixels.","Choose a GIF with no more than 2,000 frames.","This media could not be decoded."};
+    std::array<std::string,6> mediaErrors{"The saved media reference is invalid","The original media file is unavailable. Choose it again to restore access",
+        "This file is not a supported image or playable video","Choose an image below 128 MB and 64 megapixels","Choose a GIF with no more than 2,000 frames","This media could not be decoded"};
 };
 // The cards' redesign controls (pin, delete, the editing tools, the footer
 // buttons, the TODO rows' buttons, the title and the scroll thumb:
@@ -170,6 +170,9 @@ public:
     // unchanged (false); invalid/repeated/nonfinite data throws before mutation.
     // No allocation, state scan, clock or resource upload; updatePose applies it.
     bool setCardMotions(std::span<const NativeNotesCardMotion>);
+    // A media progress fill still easing (notes.media.progress) jumps to its
+    // end: the HUD's close and the hidden HUD (NotesPreview settleMotion).
+    void settleMediaProgress();
     bool updatePose(const NativeNotesWorkspacePose&);
     bool requiresFrames(double time)const;
     void connectVideoPlayback(NativeNotesVideoPlayback&);

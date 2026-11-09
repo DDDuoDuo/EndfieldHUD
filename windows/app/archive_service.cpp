@@ -24,7 +24,7 @@ struct ArchiveService::Impl:std::enable_shared_from_this<Impl> {
             });
         }};
         state=std::make_unique<modules::ArchiveState>(repository,std::move(bridge),std::move(rules));
-        // Mac import relink rows of Archive attachments follow the entry writes
+        // Relink ledger rows of Archive attachments follow the entry writes
         // on the same FIFO queue (modules/notes_relink_ledger.hpp).
         modules::ArchiveRelinkLedger ledger;const auto root=appRoot;
         ledger.relinked=[root](std::string_view id,const modules::ArchiveJson&mac,std::string_view path){(void)modules::archiveMediaRelinked(root,id,mac,path);};

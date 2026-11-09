@@ -46,8 +46,8 @@ void run(){
     // A language event relabels the retained failure without reopening it.
     auto chinese=style;chinese.mediaErrors[1]=std::string(m::notesMediaErrorText(m::NotesMediaError::unavailable).simplifiedChinese);chinese.mediaErrors[0]=std::string(m::notesMediaErrorText(m::NotesMediaError::invalidReference).simplifiedChinese);
     check(workspace.setStyle(chinese),"Localized media texts are a style change");workspace.updatePose(pose);
-    check(footer(workspace,macID)=="原始媒体文件不可用，请重新选择以恢复访问。"&&action(workspace,macID,"relinkMedia")->label=="原始媒体文件不可用，请重新选择以恢复访问。","Relabelled unavailable text and relink label follow the language");
-    check(footer(workspace,brokenID)=="保存的媒体引用无效。","Invalid reference text follows the language");
+    check(footer(workspace,macID)=="原始媒体文件不可用，请重新选择以恢复访问"&&action(workspace,macID,"relinkMedia")->label=="原始媒体文件不可用，请重新选择以恢复访问","Relabelled unavailable text and relink label follow the language");
+    check(footer(workspace,brokenID)=="保存的媒体引用无效","Invalid reference text follows the language");
     // Explicit relink: a chosen, inspected Windows file replaces only the reference.
     const auto before=*state.note(macID);const auto reference=d::makeWindowsMediaReference("C:\\owned-synthetic\\photo.png","photo.png",4032,3024,"image",std::nullopt,1);
     check(workspace.relinkMedia(macID,reference)&&saves==1,"Relink persists the replacement reference once");

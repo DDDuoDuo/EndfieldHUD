@@ -40,12 +40,12 @@ enum NotesMediaError: LocalizedError {
     case invalidReference, unavailable, unsupportedFormat, imageTooLarge, tooManyFrames, decodingFailed
     var errorDescription: String? {
         switch self {
-        case .invalidReference: return L10n.text("The saved media reference is invalid.", "保存的媒体引用无效。")
-        case .unavailable: return L10n.text("The original media file is unavailable. Choose it again to restore access.", "原始媒体文件不可用，请重新选择以恢复访问。")
-        case .unsupportedFormat: return L10n.text("This file is not a supported image or playable video.", "此文件不是受支持的图片或可播放的视频。")
-        case .imageTooLarge: return L10n.text("Choose an image below 128 MB and 64 megapixels.", "请选择小于 128 MB 和 6400 万像素的图片。")
-        case .tooManyFrames: return L10n.text("Choose a GIF with no more than 2,000 frames.", "请选择不超过 2000 帧的 GIF。")
-        case .decodingFailed: return L10n.text("This media could not be decoded.", "无法解码此媒体。")
+        case .invalidReference: return L10n.text("The saved media reference is invalid", "保存的媒体引用无效")
+        case .unavailable: return L10n.text("The original media file is unavailable. Choose it again to restore access", "原始媒体文件不可用，请重新选择以恢复访问")
+        case .unsupportedFormat: return L10n.text("This file is not a supported image or playable video", "此文件不是受支持的图片或可播放的视频")
+        case .imageTooLarge: return L10n.text("Choose an image below 128 MB and 64 megapixels", "请选择小于 128 MB 和 6400 万像素的图片")
+        case .tooManyFrames: return L10n.text("Choose a GIF with no more than 2,000 frames", "请选择不超过 2000 帧的 GIF")
+        case .decodingFailed: return L10n.text("This media could not be decoded", "无法解码此媒体")
         }
     }
 }

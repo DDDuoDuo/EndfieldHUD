@@ -128,11 +128,17 @@ void trees(const Fixture& f) {
         std::vector<const Json*> layers;
         for (const auto& child : root["children"].array()) layers.push_back(&f.node(child));
         check(layers.size() == 9, "Original canvas paint order: shadow, body, emblem, bolt, four labels, ring");
+        // The Length setting: the requested bar width (the Mac clamps it to 200).
+        const double requestedWidth = tree.contains("barWidth") ? number(tree["barWidth"]) : ChargeIndicatorMetrics::classicBarWidth;
         const auto label = tree["snapshot"].string() + "/" + std::string(chargeStageKey(s)) + (dark ? "/dark" : "/light") +
-                           (tree["chinese"].boolean() ? "/zh" : "/en") + "/" + tree["metric"].string() + "/" + tree["telemetry"].string();
+                           (tree["chinese"].boolean() ? "/zh" : "/en") + "/" + tree["metric"].string() + "/" + tree["telemetry"].string() +
+                           "/bar " + std::to_string(requestedWidth);
         // Model geometry for the settled stage.
         ChargeIndicatorTimeline timeline;
         timeline.setStage(s, false, 0);
+        timeline.setBarWidth(requestedWidth, 0);
+        near(timeline.barWidth(), requestedWidth, 0, label + " bar width");
+        near(timeline.canvasWidth(), number(tree["canvasWidth"]), 0, label + " canvas width (at least the classic 300)");
         const auto pose = timeline.sample(0);
         for (std::size_t surface : {0u, 1u}) {
             const auto& layer = *layers[surface];
@@ -143,8 +149,9 @@ void trees(const Fixture& f) {
             near(pose.bodyScale, number(layer["transform"].array()[0].array()[0]), 1e-6, label + " body scale");
             near(pose.bodyOpacity, number(layer["opacity"]), 1e-6, label + " body opacity");
             const auto position = numbers(layer["position"]);
-            near(position[0], 150, 0, label + " body center x");
+            near(position[0], timeline.canvasWidth() / 2, 0, label + " body center x");
             near(position[1], 42, 0, label + " body center y");
+            near(pose.center.x, position[0], 0, label + " pose centre x");
         }
         const auto rect = numbers(tree["embeddedBodyRect"]);
         const auto bodyRect = pose.bodyRect();
@@ -158,7 +165,7 @@ void trees(const Fixture& f) {
             const auto& source = id == "charge/5" ? layers[5] : id == "charge/6" ? layers[6] : layers[7];
             const double sourceSize = number((*source)["text"]["runs"].array()[0]["attributes"]["NSFont"]["pointSize"]);
             return number(d["runs"].array()[0]["attributes"]["NSFont"]["pointSize"]) > sourceSize + 1e-9 ? 1e6 : 0.0;
-        });
+        }, timeline.barWidth());
         const auto colors = chargeIndicatorColors(appearance, reading, m, content.reading.progress, s, hovered);
         color(colors.background, (*layers[1])["backgroundColor"], label + " body background");
         color(colors.background, (*layers[0])["backgroundColor"], label + " shadow plate background");
@@ -373,6 +380,13 @@ void timelines(const Fixture& f) {
         check(samples > 5, name + " sampled");
     };
     replay("entrance", ChargeStage::hidden, false, {{0, [](auto& t, double at) { t.animateEntrance(at); }}});
+    // A 520-point bar (the Length setting): the circle and banner stay centred
+    // in the 556-point canvas, the compact parts follow the bar's ends.
+    replay("stretchedEntrance", ChargeStage::hidden, false, {{0, [](auto& t, double at) {
+        t.setBarWidth(520, at);
+        check(t.canvasWidth() == 556 && t.sample(at).center.x == 278, "A long bar widens the canvas around its centre");
+        t.animateEntrance(at);
+    }}});
     replay("exit", ChargeStage::compact, false, {{0, [](auto& t, double at) { t.animateExit(at); }}});
     replay("interruptedEntrance", ChargeStage::hidden, false,
            {{0, [](auto& t, double at) { t.animateEntrance(at); }}, {0.55, [](auto& t, double at) { t.animateExit(at); }}});

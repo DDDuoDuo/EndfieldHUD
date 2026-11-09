@@ -1,4 +1,5 @@
 #include "core/system_overlay_state.hpp"
+#include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #include <cmath>
 #include <iostream>
@@ -13,8 +14,7 @@ unsigned checks{};
 void check(bool value, const std::string& why) { ++checks; if (!value) throw std::runtime_error(why); }
 
 core::Module moduleNamed(std::string_view name) {
-    for (unsigned n = 0; n <= static_cast<unsigned>(core::Module::profile); ++n)
-        if (core::moduleIdentifier(static_cast<core::Module>(n)) == name) return static_cast<core::Module>(n);
+    if (const auto module = core::moduleNamed(name)) return *module;
     throw std::runtime_error("Unknown source module " + std::string(name));
 }
 int phaseIndex(core::SystemOverlayPhase value) { return static_cast<int>(value); }
@@ -67,7 +67,27 @@ std::string effectText(const core::SystemOverlayEffect& e) {
 void scripts(const Json& source) {
     std::size_t total{};
     for (const auto& script : source["scripts"].array()) {
+        // The app's wiring (Application::Impl): Display > Open on read from
+        // the configuration, Display > Modules' restore rule, and the module
+        // last opened restored from the settings envelope (SettingsStore::
+        // lastOpenedModule: Map when missing or not a module) on a normal run.
+        // rememberModule saves it as SettingsStore::saveLastOpenedModule does:
+        // only a name that differs from the saved one is written.
+        auto configuration = ehud::data::Settings::defaults();
+        ehud::data::ModuleLayout modules;
+        std::optional<std::string> saved;
+        std::int64_t writes{};
         core::SystemOverlayLifecycle life;
+        const auto relaunch = [&](bool diagnostic) {
+            life = core::SystemOverlayLifecycle{};
+            life.setModuleRestore([&](core::Module last) { return core::moduleNamed(modules.restorable(core::moduleIdentifier(last))).value_or(last); });
+            life.setOpenModule([&]() -> std::optional<core::Module> {
+                const auto chosen = configuration.overlayLayout().openModule;
+                return chosen ? core::moduleNamed(*chosen) : std::nullopt;
+            });
+            if (!diagnostic) life.restoreLastModule(core::moduleNamed(saved.value_or("map")).value_or(core::Module::map));
+        };
+        relaunch(false);
         bool defaults{};
         unsigned stops{};
         double now{};
@@ -116,12 +136,27 @@ void scripts(const Json& source) {
             else if (name == "resume") life.setSuspended(false);
             else if (name == "editing") life.setEditingPosition(argument == "on");
             else if (name == "advance") { now += std::stod(argument); effects = life.advance(now); }
+            else if (name == "choose") {
+                auto layout = configuration.overlayLayout();
+                layout.openModule = argument == "last" ? std::nullopt : std::optional(argument);
+                configuration.setOverlayLayout(layout);
+            }
+            else if (name == "hide" || name == "show") (void)modules.setHidden(argument, name == "hide");
+            else if (name == "saved") saved = argument;
+            else if (name == "restart" || name == "diagnostic") { relaunch(name == "diagnostic"); stops = 0; }
+            // AppShortcutArea::requestReopen: the failed launch's explicit Add App request.
+            else if (name == "launchFailed") effects = life.openSettingsModule(core::Module::addApp);
+            else if (name == "projectionReturn") effects = life.returnFromProjection();
             else throw std::runtime_error("Unknown scripted event " + event);
             const auto where = " after " + event + " (script event " + std::to_string(index) + ")";
             Json::Array texts;
             for (const auto& e : effects) {
                 if (e.kind == core::SystemOverlayEffect::Kind::markLaunched) defaults = true;
                 if (e.kind == core::SystemOverlayEffect::Kind::quitAccepted) ++stops;
+                if (e.kind == core::SystemOverlayEffect::Kind::rememberModule) {
+                    const auto module = std::string(core::moduleIdentifier(e.module));
+                    if (saved != module) { saved = module; ++writes; }
+                }
                 if (auto text = effectText(e); !text.empty()) texts.emplace_back(std::move(text));
             }
             const auto& expected = row["effects"].array();
@@ -139,6 +174,8 @@ void scripts(const Json& source) {
             check(life.terminating() == row["terminating"].boolean(), "terminating" + where);
             check(stops == row["shortcutStops"].integer(), "Shortcut stops" + where);
             check(defaults == row["hasLaunched"].boolean(), "hasLaunched marker" + where);
+            check(row["saved"].isNull() ? !saved : saved == row["saved"].string(), "Saved hudLastOpenedModule" + where);
+            check(writes == row["savedWrites"].integer(), "hudLastOpenedModule writes" + where);
             const auto& timers = row["timers"].array();
             check(life.pendingSelections() == timers.size(), "Pending delayed selections" + where);
             for (std::size_t n = 0; n < timers.size(); ++n)
@@ -146,7 +183,7 @@ void scripts(const Json& source) {
             ++total;
         }
     }
-    check(total > 300, "Scripted lifecycle coverage");
+    check(total > 450, "Scripted lifecycle coverage");
 }
 
 void contracts() {
@@ -203,6 +240,131 @@ void contracts() {
     bool rejected{};
     try { (void)visible.advance(std::nan("")); } catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Nonfinite caller clocks reject instead of spinning");
+}
+// HUDOverlayLayout.initialModule and "Last opened" across relaunches
+// (OverlayController.lastSystemModule's didSet): an explicit request, then the
+// module chosen under Display > Open on, then the module last opened; a hidden
+// module swapped for the first visible one; the module left saved at every
+// teardown of a normal run, never in a diagnostic one.
+void openOn() {
+    using K = core::SystemOverlayEffect::Kind;
+    std::optional<core::Module> chosen;
+    const auto hiddenMap = [](core::Module m) { return m == core::Module::map || m == core::Module::calendar ? core::Module::notes : m; };
+    const auto openedOn = [](const core::SystemOverlayEffects& e) {
+        for (const auto& effect : e) if (effect.kind == K::open) return std::optional(effect.module);
+        return std::optional<core::Module>{};
+    };
+    const auto remembered = [](const core::SystemOverlayEffects& e) {
+        std::optional<core::Module> result;
+        for (const auto& effect : e) if (effect.kind == K::rememberModule) { check(!result, "One save per teardown"); result = effect.module; }
+        return result;
+    };
+    const auto cycle = [&](core::SystemOverlayLifecycle& life, core::SystemOverlayEffects opening, std::optional<core::Module> select = {}) {
+        const auto module = openedOn(opening);
+        (void)life.didOpen(life.generation());
+        if (select) (void)life.selectModule(*select);
+        (void)life.close();
+        return std::pair{module, remembered(life.didClose(life.generation()))};
+    };
+    {   core::SystemOverlayLifecycle life;
+        life.setOpenModule([&] { return chosen; });
+        auto [first, saved] = cycle(life, life.toggle(), core::Module::archive);
+        check(first == core::Module::map && !saved && life.lastModule() == core::Module::archive, "Without a restored module the first open shows Map and nothing is saved");
+        chosen = core::Module::calendar;
+        check(cycle(life, life.toggle()).first == core::Module::calendar, "A chosen module replaces the module last opened");
+        check(life.lastModule() == core::Module::calendar, "The chosen module becomes the last one once shown");
+        chosen = core::Module::hotkeys;
+        check(cycle(life, life.openSettingsModule(core::Module::about)).first == core::Module::about, "An explicit request wins over the chosen module");
+        life.setModuleRestore(hiddenMap);
+        chosen = core::Module::calendar;
+        check(cycle(life, life.toggle()).first == core::Module::notes, "A hidden chosen module opens the first visible one");
+        chosen.reset();
+        (void)cycle(life, life.toggle(), core::Module::map);
+        check(life.lastModule() == core::Module::map && cycle(life, life.toggle()).first == core::Module::notes, "Last opened goes through the same swap");
+        chosen = core::Module::calendar;
+        check(cycle(life, life.openSettingsModule(core::Module::map)).first == core::Module::map, "An explicit request is never swapped");
+        // A failed app launch reopens on Add App through the same explicit
+        // request (AppShortcutArea::requestReopen -> openSettingsModule).
+        chosen = core::Module::hotkeys;
+        check(cycle(life, life.openSettingsModule(core::Module::addApp)).first == core::Module::addApp && life.lastModule() == core::Module::addApp,
+              "A failed launch reopens on Add App over a chosen module");
+        check(cycle(life, life.toggle()).first == core::Module::hotkeys, "The next ordinary open goes back to the chosen module");
+        // Projection closes the HUD it was opened from, then returns to the
+        // module the HUD left, swapped when hidden, over a chosen module.
+        chosen = core::Module::calendar;
+        (void)cycle(life, life.toggle(), core::Module::projection);
+        check(life.lastModule() == core::Module::projection && cycle(life, life.returnFromProjection()).first == core::Module::projection,
+              "The return from Projection opens Projection over a chosen module");
+        (void)cycle(life, life.toggle(), core::Module::map);
+        check(cycle(life, life.returnFromProjection()).first == core::Module::notes && !life.initialModuleRequest(),
+              "A hidden module left is swapped for the first visible one, and the request is consumed");
+        (void)life.toggle();
+        check(life.returnFromProjection().empty() && !life.initialModuleRequest(), "An active HUD is not reopened");
+        (void)life.didOpen(life.generation()); (void)life.close(); (void)life.didClose(life.generation());
+        life.setSuspended(true);
+        check(life.returnFromProjection().empty() && !life.initialModuleRequest(), "A refused return leaves no request behind");
+        life.setSuspended(false);
+        check(cycle(life, life.toggle()).first == core::Module::notes, "The next open goes back to the chosen module (hidden, so the first visible one)");
+        // Tray Work Mode during Projection (Application::trayAction after the
+        // dismissal): the return opens on the module left, then Work Mode is
+        // selected after the entrance, as openWorkMode schedules it.
+        (void)cycle(life, life.toggle(), core::Module::projection);
+        const auto workMode = life.returnFromProjection(10);
+        check(openedOn(workMode) == core::Module::projection && life.nextWakeTime() == 10 + core::SystemOverlayLifecycle::entranceDuration + 0.3,
+              "Work Mode during Projection reopens on Projection and waits for the entrance");
+        (void)life.didOpen(life.generation());
+        const auto selected = life.advance(11.1);
+        check(selected.size() == 1 && selected[0].kind == K::select && selected[0].module == core::Module::workMode && life.viewModule() == core::Module::workMode,
+              "Then Work Mode is selected");
+        (void)life.close(); (void)life.didClose(life.generation());
+        life.setSuspended(true);
+        check(life.returnFromProjection(20).empty() && !life.nextWakeTime() && !life.initialModuleRequest(), "A refused Work Mode return schedules nothing");
+        life.setSuspended(false);
+        bool nonfinite{};
+        try { (void)life.returnFromProjection(std::nan("")); } catch (const std::invalid_argument&) { nonfinite = true; }
+        check(nonfinite && !life.active(), "A nonfinite Work Mode clock is refused");
+    }
+    {   // A normal run: the saved module opens first, and every teardown asks
+        // the owner to save the module left (the store writes only a change).
+        core::SystemOverlayLifecycle life;
+        life.setOpenModule([&] { return chosen; });
+        chosen.reset();
+        life.restoreLastModule(core::Module::reader);
+        check(life.remembersLastModule() && life.lastModule() == core::Module::reader, "The saved module is the last one");
+        std::optional<std::string> store{"reader"};
+        unsigned writes{};
+        const auto save = [&](std::optional<core::Module> module) {
+            check(module.has_value(), "A normal run saves at every teardown");
+            const auto name = std::string(core::moduleIdentifier(*module));
+            if (store != name) { store = name; ++writes; }
+        };
+        auto [first, saved] = cycle(life, life.toggle());
+        check(first == core::Module::reader && saved == core::Module::reader, "A relaunch opens on the module last opened");
+        save(saved);
+        check(writes == 0, "Closing on the saved module writes nothing");
+        auto next = cycle(life, life.toggle(), core::Module::volume);
+        save(next.second);
+        check(next.second == core::Module::volume && writes == 1 && store == "volume", "A different module is saved once");
+        chosen = core::Module::calendar;
+        next = cycle(life, life.toggle());
+        save(next.second);
+        check(next.first == core::Module::calendar && store == "calendar" && writes == 2, "The chosen module shown is the one last opened");
+        // Projection's hand-off closes the HUD on Projection: that close saves
+        // "projection" (finishConcealment performs it before Projection shows).
+        (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(core::Module::projection);
+        (void)life.close();
+        const auto handoff = life.didClose(life.generation());
+        check(handoff.size() == 1 && handoff[0].kind == K::rememberModule && handoff[0].module == core::Module::projection,
+              "Handing the HUD off to Projection saves Projection as the module left");
+        // Forced closes and a quit save the module first, then terminate.
+        (void)life.toggle(); (void)life.didOpen(life.generation()); (void)life.selectModule(core::Module::eventLog);
+        const auto forced = life.forceClose();
+        check(forced.size() == 1 && forced[0].kind == K::rememberModule && forced[0].module == core::Module::eventLog, "A forced close saves the module left");
+        (void)life.toggle(); (void)life.didOpen(life.generation());
+        (void)life.requestQuit();
+        const auto quit = life.didClose(life.generation());
+        check(quit.size() == 2 && quit[0].kind == K::rememberModule && quit[1].kind == K::terminate, "A quit saves the module before terminating");
+    }
 }
 // Sources/ShelfDragPresentationState.swift, compiled unchanged
 // (tools/shelf_drag_presentation_reference.py): every seeded transition.
@@ -360,6 +522,7 @@ int main(int argc, char** argv) {
         raw(source);
         scripts(source);
         contracts();
+        openOn();
         const auto shelfBytes = ehud::data::detail::readFile(argv[2], 4 * 1024 * 1024);
         check(shelfBytes.has_value(), "Read the bounded Shelf drag oracle");
         const auto shelfSource = Json::parse(*shelfBytes);

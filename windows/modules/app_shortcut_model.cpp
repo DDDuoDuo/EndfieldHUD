@@ -73,15 +73,15 @@ J record(const ShortcutRecord& value, const ShortcutTextRules& rules) {
 }
 }
 ShortcutError::ShortcutError(ShortcutErrorCode c)
-    : std::runtime_error(c == ShortcutErrorCode::invalidName ? "Enter a name of 1–128 characters without line breaks."
-        : c == ShortcutErrorCode::duplicate ? "This application is already saved. Edit its existing shortcut instead."
-        : c == ShortcutErrorCode::missing ? "This app shortcut is no longer available."
-        : c == ShortcutErrorCode::applicationChanged ? "The application changed. Choose it again."
-        : c == ShortcutErrorCode::newerVersion ? "These shortcuts were saved by a newer version."
-        : c == ShortcutErrorCode::changedOnDisk ? "App shortcuts changed outside this window. Restart before editing."
-        : c == ShortcutErrorCode::unavailable ? "The application is unavailable."
-        : c == ShortcutErrorCode::capacity ? "App shortcut metadata exceeds its storage limit."
-        : "The saved app shortcuts could not be read. The original data has been preserved."), code_(c) {}
+    : std::runtime_error(c == ShortcutErrorCode::invalidName ? "Enter a name of 1–128 characters without line breaks"
+        : c == ShortcutErrorCode::duplicate ? "This application is already saved. Edit its existing shortcut instead"
+        : c == ShortcutErrorCode::missing ? "This app shortcut is no longer available"
+        : c == ShortcutErrorCode::applicationChanged ? "The application changed. Choose it again"
+        : c == ShortcutErrorCode::newerVersion ? "These shortcuts were saved by a newer version"
+        : c == ShortcutErrorCode::changedOnDisk ? "App shortcuts changed outside this window. Restart before editing"
+        : c == ShortcutErrorCode::unavailable ? "The application is unavailable"
+        : c == ShortcutErrorCode::capacity ? "App shortcut metadata exceeds its storage limit"
+        : "The saved app shortcuts could not be read. The original data has been preserved"), code_(c) {}
 bool validShortcutIcon(std::string_view s) noexcept {
     constexpr std::array<std::string_view, 14> icons{"original", "bolt", "star", "terminal", "globe",
         "folder", "music", "play", "brush", "code", "game", "camera", "grid", "textBubble"};
@@ -154,6 +154,19 @@ std::string saveShortcutDraft(ShortcutFile& file, const ShortcutCandidate& selec
 bool removeShortcut(ShortcutFile& file, std::string_view id) {
     const auto key = uuid(std::string(id));
     return std::erase_if(file.items, [&](const auto& v) { return uuid(v.id) == key; }) != 0;
+}
+bool moveShortcut(ShortcutFile& file, std::string_view id, std::ptrdiff_t index) {
+    const auto key = uuid(std::string(id));
+    auto& items = file.items;
+    const auto found = std::find_if(items.begin(), items.end(), [&](const auto& v) { return uuid(v.id) == key; });
+    if (found == items.end()) return false;
+    const auto from = found - items.begin();
+    const auto target = std::clamp<std::ptrdiff_t>(index, 0, std::ptrdiff_t(items.size()) - 1);
+    if (target == from) return false;
+    auto moved = std::move(*found);
+    items.erase(found);
+    items.insert(items.begin() + target, std::move(moved));
+    return true;
 }
 ShortcutRepository::ShortcutRepository(std::filesystem::path directory, ShortcutTextRules rules)
     : directory_(std::move(directory)), path_(directory_ / "shortcuts.json"), rules_(std::move(rules)) {

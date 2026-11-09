@@ -106,7 +106,8 @@ final class NowPlayingAppleEvents: NowPlayingBackend {
     func requestPermission(for app: NowPlayingApplication, cancelled: () -> Bool) throws {
         try check(app, cancelled: cancelled)
         _ = try scriptingDictionary(app)
-        // This is the only call permitted to prompt, reached by Connect only.
+        // This is the only call permitted to prompt, reached from the Now
+        // Playing volume button only.
         try permission(app, ask: true)
     }
 
@@ -217,7 +218,7 @@ final class NowPlayingScriptingDictionary: NSObject, XMLParserDelegate {
     private(set) var commands: [String: (UInt32, UInt32)] = [:]
     private(set) var enumerators: [String: UInt32] = [:]
     private(set) var classes: [String: UInt32] = [:]
-    private static let optionalProperties: Set<String> = ["persistent ID", "id", "raw data", "artwork url"]
+    private static let optionalProperties: Set<String> = ["persistent ID", "id", "raw data", "artwork url", "sound volume"]
     private static let propertyNames: Set<String> = ["player state", "player position", "current track", "name", "artist", "album", "duration"]
     private static let commandNames: Set<String> = ["playpause", "previous track", "next track"]
 

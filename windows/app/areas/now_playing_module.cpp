@@ -246,13 +246,18 @@ public:
         }
         // Each activation (selection of a visible Now Playing) creates one provider.
         provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
-        service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock);
+        // An explicit AppUserModelID's player executable comes from its Start
+        // shortcut (production only; fixtures name no installed browser).
+        gpu::NowPlayingLaunchResolver launch;
+        if (mode_ == ApplicationAreaMode::production) launch = gpu::nowPlayingAppsFolderExecutable;
+        service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock, 3., std::move(launch));
 
         tools::NowPlayingSessionOptions options;
-        // Covers are decoded (WIC Fant, scaled down only) to the size the
-        // canvas draws its 480 px slot at (B11: setArtworkPixels from the
-        // live render scale) and drawn 1:1 by the cover carrier.
-        options.decodeAt = [](std::span<const std::uint8_t> bytes, unsigned pixels) { return gpu::decodeNowPlayingCover(bytes, pixels); };
+        // Covers are decoded for the slot the canvas draws its 480 px cover
+        // in (B11: setArtworkPixels from the live render scale): scaled down
+        // (WIC Fant) to the slot, or, when small, enlarged at most twice
+        // (Lanczos) over a baked backdrop, and drawn 1:1 by the cover carrier.
+        options.decodeAt = [](std::span<const std::uint8_t> bytes, modules::NowPlayingCoverSlot slot) { return gpu::decodeNowPlayingCover(bytes, slot); };
         if (mode_ == ApplicationAreaMode::production) {
             // Visible-only LRCLIB/NetEase lookups and catalog covers over one
             // kept-alive WinHTTP session (retained while Now Playing is
@@ -298,10 +303,10 @@ public:
         core_ = std::make_unique<tools::DesignOwnerCore>(c.rasterizer, *host_.designContext(), std::move(design));
         modules::NowPlayingCanvasServices services;
         services.input = [this]() -> const modules::NowPlayingViewInput& { return session_->input(); };
-        services.artwork = [this] { return session_->artwork(); };
+        services.artwork = [this] { return session_->coverArt(); };
         services.setPresented = [this](bool value) { session_->setActive(value, time_); followPresentation(); };
         services.perform = [this](const modules::NowPlayingIntent& intent) { const bool done = session_->dispatch(intent, time_); synchronize(time_); return done; };
-        services.setArtworkPixels = [this](unsigned pixels) { session_->setArtworkPixels(pixels); };
+        services.setArtworkPixels = [this](modules::NowPlayingCoverSlot slot) { session_->setArtworkPixels(slot); };
         auto canvas = std::make_unique<modules::NowPlayingCanvas>(*host_.designContext(), std::move(services));
         canvas_ = canvas.get();
         core_->add(std::move(canvas));
@@ -344,20 +349,25 @@ public:
     void setAppearance(const app::ModuleAppearance& a, double t) override { clock(t); core_->setAppearance(a, t); }
     void setOverlayVisible(bool visible, double t) override {
         clock(t);
+        // A hide, or a reopen mid-close, ends that close's presentation first.
+        if (!visible || closing_) concealPresentation();
         overlayVisible_ = visible;
-        if (!visible) canvas_->setPresented(false, time_);
         core_->setOverlayVisible(visible, t);
         followPresentation();
     }
-    void overlayClosing(double t) override { clock(t); canvas_->setPresented(false, time_); core_->overlayClosing(t); overlayVisible_ = false; followPresentation(); }
+    // The close's start (6e72c30): Now Playing stays presented (its clock,
+    // its volume pop-up and the audio vote) until the HUD is hidden; only
+    // input stops (DesignOwnerCore::overlayClosing cancels the seek and
+    // volume drags with the canvas's gestures).
+    void overlayClosing(double t) override { clock(t); closing_ = true; core_->overlayClosing(t); }
     // setPresented follows the presentation exactly as v1.2.0's owner did:
     // the module is the current or incoming surface, requested, in a visible
     // HUD (Mac: from the start of the reveal, before input is accepted).
     void update(const app::ModuleFrame& f) override {
         clock(f.time);
         const auto& sample = f.presentation;
-        const bool shown = sample.current.module == core::Module::nowPlaying || (sample.incoming && sample.incoming->module == core::Module::nowPlaying);
-        canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
+        const bool shown = sample.shows(core::Module::nowPlaying);
+        if (!closing_) canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
         synchronize(time_);
         core_->update(f);
         placeCover();
@@ -425,7 +435,11 @@ public:
         case app::HostEvent::Kind::utilityCompleted:
             // Service results, downloads, decoded artwork/lyrics, queue capacity.
             return deliver(time_);
+        case app::HostEvent::Kind::overlayRetracted:
+            concealPresentation(); overlayVisible_ = false;
+            return core_->hostEvent(e, t);
         case app::HostEvent::Kind::overlayConcealed: {
+            concealPresentation(); overlayVisible_ = false;
             followPresentation();
             (void)core_->hostEvent(e, t);   // canvases not shown keep no artwork
             // Closed on another module: keep no cover texture and only the
@@ -509,6 +523,12 @@ private:
     }
     // The WinHTTP session is retained exactly while Now Playing is presented;
     // released, it closes with its connections once no download is in flight.
+    // The hidden HUD (or a reopen mid-close): the presentation the close kept ends.
+    void concealPresentation() {
+        closing_ = false;
+        canvas_->setPresented(false, time_);
+        followPresentation();
+    }
     void followPresentation() {
         if (!http_) return;
         const bool active = service_->snapshot().active;
@@ -580,6 +600,14 @@ private:
                    "Fixture metadata reaches the canvas");
         step.check(std::abs(position() - 42) < 1e-9 && !playing() && modules::nowPlayingTime(in.track->duration) == "03:30", "The fixture starts paused at 42 of 210 seconds");
         step.check(in.coverAvailable && session_->artworkStats().decoded > 0 && canvas_->coverViews(t)[1].image, "The fixture cover decodes on the shared executor and shows");
+        {
+            // A slot a finished cross-fade emptied stays resident until the
+            // renderer collects it, so residency is bounded, not exact.
+            const auto cover = cover_->stats();
+            step.check(canvas_->coverViews(t)[1].backdrop && cover.drawnTextures == 2
+                && cover.residentTextures >= 2 && cover.residentTextures <= 4,
+                "The 96 px fixture cover is small: drawn whole over its backdrop, two textures drawn once the cross-fade has settled");
+        }
         step.check(canvas_->showsLyrics() && lyricRow(in, t) == "Current", "Fixture timed lyrics show the current line");
         step.check(in.volumeAvailable && in.volume && std::abs(*in.volume - 1) < 1e-9 && audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
                    "The synthetic process route resolves through the per-app audio bridge");
@@ -821,6 +849,83 @@ private:
         present(.5);
         step.check(title() == "EndfieldHUD Fixture 1" && origin() == modules::NowPlayingSessionOrigin::mediaSession && !playing() &&
                        service_->snapshot().media.sessions.size() == 1, "When the player exits the fixture media session is presented again");
+        if (step.cycle == 0) closingCoverage(step, t);
+    }
+    // C12 and OPEN-9, once: the close's start (the host's overlayClosing, then
+    // Volume's setVisible(false)) keeps Now Playing presented with its volume
+    // pop-up open and its audio vote, taking no input; the vote ends only with
+    // the presentation, at the hide. A reopen mid-close (the area's own path
+    // for it) ends that close's presentation first, as the hide does, and the
+    // next frame presents Now Playing again with a new provider.
+    void closingCoverage(app::ModuleCoverage& step, double t) {
+        const auto present = [&](double seconds) { t += seconds; observe(t); step.present(t); };
+        const auto startsAt = *starts_;
+        settle(step);
+        const bool popup = canvas_->perform("volume", t) && canvas_->volumeOpen();
+        present(.2);
+        step.check(popup && canvas_->volumeOpen() && audioFixture_->nowPlayingVisible(), "The volume pop-up is open before the close");
+        overlayClosing(t);
+        present(.05);
+        step.check(canvas_->presented() && canvas_->volumeOpen() && service_->snapshot().active && audioFixture_->nowPlayingVisible() &&
+                       !capturesPointer() && !pointerLocked() && !covers({1, 1}),
+                   "Through the close Now Playing stays presented, its volume pop-up open and its audio vote kept, taking no input");
+        present(.1);
+        step.check(canvas_->presented() && audioFixture_->nowPlayingVisible(), "The audio vote lasts through the close's frames (until the hide)");
+        setOverlayVisible(true, t);
+        step.check(!canvas_->presented() && !canvas_->volumeOpen() && !audioFixture_->nowPlayingVisible(),
+                   "Ending the close (the hide's path) unpresents Now Playing, closes the pop-up and withdraws the vote");
+        settle(step);
+        present(.5);
+        settle(step);
+        step.check(canvas_->presented() && service_->snapshot().active && audioFixture_->nowPlayingVisible(), "The next frame presents Now Playing again");
+        // B5-6 (Mac d6370b0, 45b62b8): a cover cross-fade the close catches keeps
+        // both covers drawn until its .2 s fade ends, then the old one drops.
+        // The fixture player has one cover (as on the Mac), so a decode for
+        // another slot size stands in for a new one: the canvas cross-fades
+        // whenever the decoded cover changes. The close here starts .1 s in.
+        {
+            const auto slot = session_->artworkPixels();
+            const unsigned side = std::min(slot.layout, 192u) == 160u ? 150u : 160u; // a small cover's size other than the shown one
+            const auto shown = canvas_->coverViews(t)[1].image;
+            const auto coverComposed = [&] {
+                const auto* carrier = cover_->entry().scene;
+                for (const auto& e : core_->entries(core::Module::nowPlaying)) if (e.scene == carrier) return true;
+                return false;
+            };
+            session_->setArtworkPixels({side, side});
+            settle(step);
+            const double changed = t; // the refresh that started the fade ran on this clock
+            {
+                const auto views = canvas_->coverViews(t);
+                step.check(shown && views[0].image == shown && views[1].image && views[1].image != shown, "A new decoded cover starts the cross-fade over the shown one");
+            }
+            present(.1);
+            overlayClosing(t);
+            unsigned frames = 0;
+            bool both = true;
+            while (t + 1. / 60 < changed + .2 - 1e-6) {
+                present(1. / 60);
+                const auto views = canvas_->coverViews(t);
+                both = both && canvas_->presented() && views[0].image == shown && views[1].image && views[0].backdrop && views[1].backdrop &&
+                       cover_->stats().drawnTextures == 4 && coverComposed();
+                ++frames;
+            }
+            step.check(frames >= 4 && both, "Through the close both small covers and their backdrops stay drawn until the cross-fade ends (" + std::to_string(frames) + " frames)");
+            present(1. / 30);
+            {
+                const auto views = canvas_->coverViews(t);
+                step.check(t > changed + .2 && !views[0].image && views[1].image && cover_->stats().drawnTextures == 2 && coverComposed(),
+                           "Once the cross-fade ended inside the close only the new cover is drawn");
+            }
+            setOverlayVisible(true, t);
+            session_->setArtworkPixels(slot);
+            settle(step);
+            present(.5);
+            settle(step);
+            step.check(canvas_->presented() && canvas_->coverViews(t)[1].image && cover_->stats().drawnTextures == 2, "Its own slot's cover shows again once the HUD is back");
+        }
+        // The later cycles count one provider start per presentation from here.
+        startsBefore_ += *starts_ - startsAt;
     }
     void idleCoverage(app::ModuleCoverage& step) {
         settle(step); // e.g. the withdrawn audio vote's publication
@@ -865,6 +970,9 @@ private:
                            "Closed on another module, Now Playing releases its scene (" + std::to_string(held->residentPixelBytes) + " raster bytes, " +
                                std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries) and its cover texture, and keeps " +
                                std::to_string(kept.artworkBytes) + " decoded cover bytes for its warm reopen");
+            // The next opening, as the host's open reaches every owner: the
+            // hidden HUD left Now Playing unpresented until it.
+            setOverlayVisible(true, step.time + .1);
         }
     }
     CoverageGroup* coverageGroup() {
@@ -899,6 +1007,7 @@ private:
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
     const d::Layer* insertedAfter_{};
     bool insertion_{}, httpRetained_{}, overlayVisible_{true};
+    bool closing_{};   // overlayClosing until the hidden HUD (concealPresentation)
     double time_{};
     std::uint64_t seenRevision_{};
     // Coverage evidence (never user content: action and source only).

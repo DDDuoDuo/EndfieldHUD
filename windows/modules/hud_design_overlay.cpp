@@ -1,6 +1,7 @@
 // The shared centre overlay: the port of Sources/HUDDesignOverlay.swift
-// (HUDConfirmState :28-50, HUDConfirmBar :56-201, HUDToastState :213-223,
-// HUDToast :227-311, HUDCenterOverlay :316-525). LIB-59..67.
+// (HUDConfirmState, HUDConfirmBand, HUDConfirmBar, HUDToastState, HUDToast,
+// HUDCenterOverlay) and Sources/HUDPlacementEditor.swift (the place-and-
+// confirm strip on the confirm bar's band). LIB-59..67.
 //
 // Timers and completion blocks are Context deadlines on the caller's clock:
 // the 120 ms confirm callback, the 1.5 s toast, the .18 s collapse and the
@@ -14,6 +15,7 @@
 // top edge are deliberately not drawn (owner request, round 4).
 #include "modules/hud_design_overlay.hpp"
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace endfield::modules::design {
@@ -61,7 +63,53 @@ void ConfirmState::setCountdown(int value) { if (request_ && request_->countdown
 void ConfirmState::close() noexcept { request_.reset(); decision_.reset(); }
 
 // ---------------------------------------------------------------------------
-// HUDConfirmBar (:56-201)
+// HUDConfirmBand: the band, its hairlines and the double-bar marker, shared by
+// the confirm bar and the place-and-confirm strip.
+// ---------------------------------------------------------------------------
+ConfirmBand::ConfirmBand(Builder& b, Size size) : env_(&b.env) {
+    layer_ = &b.layer("band");
+    layer_->setFrame({0, 0, size.width, size.height});
+    layer_->setAnimatable();                             // bandIn: the wipe from the centre
+    for (std::size_t i = 0; i < hairlines_.size(); ++i) {
+        Layer& hairline = b.layer("hairline." + std::to_string(i));
+        hairline.setFrame({size.width * .05, i == 0 ? 0 : size.height - 1, size.width * .9, 1});
+        layer_->add(hairline); hairlines_[i] = &hairline;
+    }
+    applyPalette();
+}
+// applyPalette: the standard band in the current Theme (light: a pale band).
+void ConfirmBand::applyPalette() {
+    const auto& p = env_->palette;
+    setStyle(false);
+    const std::array<Color, 4> hairline{p.foreground(0), p.foreground(.22), p.foreground(.22), p.foreground(0)};
+    for (Layer* line : hairlines_) horizontal(*line, hairline, hairlineStops);
+}
+// setStyle: `alert` is the red band with white text (Settings' facility-alert easter egg).
+void ConfirmBand::setStyle(bool alert) {
+    if (alert) {
+        const std::array<Color, 4> band{withAlpha(fixed::red, 0), withAlpha(fixed::red, .97), withAlpha(fixed::red, .97), withAlpha(fixed::red, 0)};
+        horizontal(*layer_, band, bandStops);
+        return;
+    }
+    const auto& p = env_->palette;
+    const Color charcoal = p.tone(0x181818, .97), edge = p.tone(0x181818, 0);
+    const std::array<Color, 4> band{edge, charcoal, charcoal, edge};
+    horizontal(*layer_, band, bandStops);
+}
+// marker: the 12 x 18 double-bar marker beside a band's title; its host positions it.
+Layer& ConfirmBand::marker(Builder& b) {
+    Layer& marker = b.layer("marker");
+    marker.setFrame({0, 0, 12, 18});
+    setMarker(marker, b.env.palette.accentInk());
+    return marker;
+}
+void ConfirmBand::setMarker(Layer& marker, Color tone) {
+    const std::array<Color, 6> colors{tone, tone, clear, clear, tone, tone};
+    horizontal(marker, colors, markerStops);
+}
+
+// ---------------------------------------------------------------------------
+// HUDConfirmBar
 // ---------------------------------------------------------------------------
 struct ConfirmBar::PillSet {
     LayerArena arena; ControlSet controls; Builder builder;
@@ -70,44 +118,29 @@ struct ConfirmBar::PillSet {
 };
 ConfirmBar::ConfirmBar(Environment& env, Deadlines::Token)
     : env_(&env), arena_("confirm", &env.deadlines), builder_{env, arena_, controls_} {
-    const Rect bounds{0, 0, size.width, size.height};
     layer_ = &builder_.layer("confirm");
-    band_ = &builder_.layer("band");
+    band_ = std::make_unique<ConfirmBand>(builder_, size);
     column_ = &builder_.layer("text");
-    marker_ = &builder_.layer("marker");
+    marker_ = &ConfirmBand::marker(builder_);
     title_ = &makeText(builder_, "title", "", type::confirmTitle(env.palette), {});
     message_ = &makeText(builder_, "message", "", type::confirmDescription(env.palette), {});
     layer_->setBounds(size); layer_->setZPosition(order::confirmBar);
     layer_->setAnimatable();                             // bandOut: scaleY and opacity
-    band_->setFrame(bounds);
-    band_->setAnimatable();                              // bandIn: the wipe from the centre
-    for (std::size_t i = 0; i < hairlines_.size(); ++i) {
-        Layer& hairline = builder_.layer("hairline." + std::to_string(i));
-        hairline.setFrame({size.width * .05, i == 0 ? 0 : size.height - 1, size.width * .9, 1});
-        band_->add(hairline); hairlines_[i] = &hairline;
-    }
-    marker_->setFrame({0, 1.5, 12, 18});
+    marker_->setOrigin({0, 1.5});
     column_->setFrame({46, 18, 320, 80});
     column_->setAnimatable();                            // the text column enters from the left
     for (Layer* child : {marker_, title_, message_}) column_->add(*child);
-    layer_->add(*band_); layer_->add(*column_);
+    layer_->add(band_->layer()); layer_->add(*column_);
     layer_->setHidden(true);
     applyPalette();
 }
 ConfirmBar::~ConfirmBar() { cancel(env_->deadlines, hideToken_); }
 
-// applyPalette (:99-108): the standard band in the current Theme; configure
-// takes it for every request that is not an alert.
-void ConfirmBar::applyPalette() {
-    const auto& p = env_->palette;
-    const Color charcoal = p.tone(0x181818, .97), edge = p.tone(0x181818, 0);
-    const std::array<Color, 4> band{edge, charcoal, charcoal, edge};
-    horizontal(*band_, band, bandStops);
-    const std::array<Color, 4> hairline{p.foreground(0), p.foreground(.22), p.foreground(.22), p.foreground(0)};
-    for (Layer* line : hairlines_) horizontal(*line, hairline, hairlineStops);
-}
+// applyPalette: the standard band in the current Theme; configure takes it
+// for every request that is not an alert.
+void ConfirmBar::applyPalette() { band_->applyPalette(); }
 
-// configure (:110-162).
+// configure.
 void ConfirmBar::configure(const ConfirmRequest& request) {
     Environment& env = *env_;
     const auto& p = env.palette;
@@ -125,16 +158,8 @@ void ConfirmBar::configure(const ConfirmRequest& request) {
     pills_ = {&cancel, &confirm};
     const bool alert = request.style == ConfirmRequest::Style::alert;
     const Color tone = alert ? white(1) : request.danger ? fixed::red : p.accentInk();
-    if (alert) {
-        const std::array<Color, 4> band{withAlpha(fixed::red, 0), withAlpha(fixed::red, .97), withAlpha(fixed::red, .97), withAlpha(fixed::red, 0)};
-        horizontal(*band_, band, bandStops);
-    } else {
-        const Color charcoal = p.tone(0x181818, .97), edge = p.tone(0x181818, 0);
-        const std::array<Color, 4> band{edge, charcoal, charcoal, edge};
-        horizontal(*band_, band, bandStops);             // the standard band again after an alert
-    }
-    const std::array<Color, 6> marker{tone, tone, clear, clear, tone, tone};
-    horizontal(*marker_, marker, markerStops);
+    band_->setStyle(alert);                              // the standard band again after an alert
+    ConfirmBand::setMarker(*marker_, tone);
     const double columnWidth = size.width - 46 - 34 - 16 - std::max(cancel.layer().bounds().width, confirm.layer().bounds().width);
     column_->setFrame({46, 18, columnWidth, 80});
     // Without a description the title may wrap, up to three lines; one too
@@ -179,7 +204,7 @@ void ConfirmBar::show(const motion::Clock& clock) {
     if (auto completion = std::exchange(pendingCompletion_, {})) completion();
     layer_->setHidden(false);
     layer_->setValue(Channel::opacity, 1); layer_->setValue(Channel::scaleY, 1);   // removes hud.bandOut
-    motion::wipe(*band_, WipeOrigin::centerX, duration::bandIn, clock, easing::snap);
+    motion::wipe(band_->layer(), WipeOrigin::centerX, duration::bandIn, clock, easing::snap);
     motion::enter(*column_, {-12, 0}, clock, duration::confirmText, duration::confirmTextDelay);
     for (std::size_t i = 0; i < pills_.size(); ++i)
         motion::enter(pills_[i]->layer(), {12, 0}, clock, duration::confirmText, duration::pillDelay + double(i) * duration::pillStep);
@@ -209,6 +234,159 @@ std::string ConfirmBar::titleText() const { return textOf(*title_).text(); }
 std::string ConfirmBar::messageText() const { return textOf(*message_).text(); }
 double ConfirmBar::titleSize() const { return textOf(*title_).style().size; }
 int ConfirmBar::titleLines() const { return textOf(*title_).maximumLines; }
+
+// ---------------------------------------------------------------------------
+// HUDPlacementDrag and HUDPlacementEditor (Sources/HUDPlacementEditor.swift)
+// ---------------------------------------------------------------------------
+std::optional<Point> PlacementDrag::anchor(Point pointer) const noexcept {
+    if (!startAnchor_ || !startPointer_) return std::nullopt;
+    return Point{startAnchor_->x + pointer.x - startPointer_->x, startAnchor_->y + pointer.y - startPointer_->y};
+}
+TextStyle PlacementEditor::titleStyle(const Palette& p) { return TextStyle{13, FontWeight::medium, p.token(ThemeToken::titleText)}; }
+PlacementEditor::PlacementEditor(Environment& env, std::string id, std::vector<SliderSpec> specs)
+    : env_(&env), arena_("placement", &env.deadlines), builder_{env, arena_, controls_} {
+    const auto& p = env.palette;
+    layer_ = &builder_.layer("editor");
+    cancel_ = &builder_.make<Pill>(id + ":cancel", core::localized("Cancel", "取消", env.language), Icon::x, Pill::Kind::cancel);
+    confirm_ = &builder_.make<Pill>(id + ":confirm", core::localized("Confirm", "确认", env.language), Icon::check, Pill::Kind::confirm);
+    const TextStyle style = titleStyle(p);
+    double titleWidth = 48;
+    for (const auto& spec : specs) titleWidth = std::max(titleWidth, std::ceil(env.text.width(spec.title, style)));
+    const double sliderX = 46 + titleWidth + 14;
+    const double pillWidth = std::max(cancel_->layer().bounds().width, confirm_->layer().bounds().width);
+    const double pillX = specs.empty() ? 46 : sliderX + sliderWidth + 26;
+    const Size size{pillX + pillWidth + 34, std::max(112.0, rowPitch * double(specs.size()) + 14)};
+    band_ = std::make_unique<ConfirmBand>(builder_, size);
+    marker_ = &ConfirmBand::marker(builder_);
+    layer_->setBounds(size);
+    layer_->add(band_->layer());
+    marker_->setOrigin({22, 28});
+    marker_->setAnimatable();                            // enters from the left
+    layer_->add(*marker_);
+    for (std::size_t index = 0; index < specs.size(); ++index) {
+        const auto& spec = specs[index];
+        const double center = 37 + rowPitch * double(index);
+        auto& slider = builder_.make<Slider>(spec.id, spec.title, spec.value, spec.range, spec.format, sliderWidth, true);
+        Layer& title = makeText(builder_, "title." + std::to_string(index), spec.title, style, {46, center - 8, titleWidth + 2, 16});
+        slider.layer().setOrigin({sliderX, center - 13.5});
+        slider.layer().setAnimatable(); title.setAnimatable();   // rows enter from the left
+        slider.setBubbleHost(layer_);
+        slider.onChange = [this, sliderID = spec.id](double value, bool final) { if (onChange) onChange(sliderID, value, final); };
+        sliders_.push_back(&slider); titles_.push_back(&title);
+    }
+    cancel_->onActivate = [this] { decide(ConfirmState::Decision::cancel); };
+    confirm_->onActivate = [this] { decide(ConfirmState::Decision::confirm); };
+    for (Layer* title : titles_) layer_->add(*title);
+    for (Slider* slider : sliders_) layer_->add(slider->layer());
+    double y = 18;
+    for (Pill* pill : {cancel_, confirm_}) {
+        Layer& l = pill->layer();
+        const Size s = l.bounds();
+        l.setFrame({pillX + pillWidth - s.width, y, s.width, s.height});
+        l.setAnimatable();                               // enters from the right
+        layer_->add(l);
+        y += rowPitch;
+    }
+    router_.set(controls());
+    ConfirmRequest request;
+    request.id = std::move(id);
+    request.confirmTitle = confirm_->label;
+    state_.present(std::move(request));
+}
+PlacementEditor::~PlacementEditor() { router_.set({}); }
+std::vector<Control*> PlacementEditor::controls() const {
+    std::vector<Control*> out(sliders_.begin(), sliders_.end());
+    out.push_back(cancel_); out.push_back(confirm_);
+    return out;
+}
+// show: the confirm bar's entrance. The band wipes open from its centre, then
+// the rows slide in from the left and the pills from the right.
+void PlacementEditor::show(const motion::Clock& clock) {
+    motion::wipe(band_->layer(), WipeOrigin::centerX, duration::bandIn, clock, easing::snap);
+    motion::enter(*marker_, {-12, 0}, clock, duration::confirmText, duration::confirmTextDelay);
+    for (std::size_t index = 0; index < sliders_.size(); ++index)
+        for (Layer* item : {titles_[index], &sliders_[index]->layer()})
+            motion::enter(*item, {-12, 0}, clock, duration::confirmText, duration::confirmTextDelay + double(index) * duration::pillStep);
+    std::size_t index = 0;
+    for (Pill* pill : {cancel_, confirm_})
+        motion::enter(pill->layer(), {12, 0}, clock, duration::confirmText, duration::pillDelay + double(index++) * duration::pillStep);
+}
+Slider* PlacementEditor::slider(std::string_view id) const noexcept {
+    for (Slider* s : sliders_) if (s->id() == id) return s;
+    return nullptr;
+}
+std::optional<double> PlacementEditor::value(std::string_view id) const {
+    if (const Slider* s = slider(id)) return s->value();
+    return std::nullopt;
+}
+void PlacementEditor::setValue(double v, std::string_view id) { if (Slider* s = slider(id)) s->setValue(v); }
+void PlacementEditor::setRange(Slider::Range range, double v, std::string_view id) { if (Slider* s = slider(id)) s->setRange(range, v); }
+bool PlacementEditor::key(const KeyInput& k) {
+    if (k.virtualKey != key::escape && !k.isReturn()) return false;
+    if (const auto decision = state_.key(k)) finish(*decision);
+    return true;
+}
+void PlacementEditor::decide(ConfirmState::Decision decision) {
+    if (const auto decided = state_.decide(decision)) finish(*decided);
+}
+void PlacementEditor::finish(ConfirmState::Decision decision) {
+    cancelPointer();
+    if (onDecision) onDecision(decision);
+}
+void PlacementEditor::pointerDown(Point point, const Layer& root, Point pointer, Point anchor) {
+    if (!state_.isOpen()) return;
+    if (stripContains(point, root)) {
+        router_.pointerDown(point, root);
+        updateHighlights(root, point, true);
+    } else {
+        drag_.begin(anchor, pointer);
+    }
+}
+std::optional<Point> PlacementEditor::pointerDragged(Point point, const Layer& root, Point pointer) {
+    if (router_.tracking()) { router_.pointerDragged(point, root); return std::nullopt; }
+    return drag_.anchor(pointer);
+}
+void PlacementEditor::pointerUp(Point point, const Layer& root) {
+    if (router_.tracking()) router_.pointerUp(point, root);
+    drag_.end();
+    updateHighlights(root, point);
+}
+void PlacementEditor::cancelPointer() {
+    for (Slider* s : sliders_) s->cancelDrag();
+    router_.cancel();
+    drag_.end();
+    for (Control* c : controls()) c->clearInteractionState();
+}
+bool PlacementEditor::stripContains(Point point, const Layer& root) const {
+    if (!isVisible(*layer_, root)) return false;
+    const auto local = design::convert(point, root, *layer_);
+    const Size s = layer_->bounds();
+    return local && local->x >= 0 && local->y >= 0 && local->x < s.width && local->y < s.height;
+}
+void PlacementEditor::updateHighlights(const Layer& root, std::optional<Point> point, bool pressed) {
+    std::optional<Point> local;
+    if (point) local = design::convert(*point, root, *layer_);
+    design::updateHighlights(*layer_, local, pressed);
+}
+void PlacementEditor::accessibilityItems(const Layer& root, std::vector<AccessibilityItem>& out) const { router_.accessibilityItems(root, out); }
+void PlacementEditor::perform(std::string_view id) {
+    for (Control* c : controls()) if (c->id() == id) { c->activate(); return; }
+}
+void PlacementEditor::adjust(std::string_view id, double v) {
+    Slider* s = slider(id);
+    if (!s) return;
+    s->setValue(v);
+    if (onChange) onChange(s->id(), s->value(), true);
+}
+Rect PlacementEditor::frame(Size size, Rect target, Rect bounds, double gap) noexcept {
+    const double boundsMaxY = bounds.y + bounds.height;
+    double y = target.y + target.height + gap;
+    if (y + size.height > boundsMaxY && target.y - gap - size.height >= bounds.y) y = target.y - gap - size.height;
+    y = std::max(bounds.y, std::min(y, boundsMaxY - size.height));
+    const double x = size.width > bounds.width ? bounds.x + bounds.width / 2 - size.width / 2
+        : std::max(bounds.x, std::min(target.x + target.width / 2 - size.width / 2, bounds.x + bounds.width - size.width));
+    return {x, y, size.width, size.height};
+}
 
 // ---------------------------------------------------------------------------
 // HUDToastState (:213-223)
@@ -380,7 +558,7 @@ bool CenterOverlay::decide(ConfirmState::Decision decision) {
 void CenterOverlay::finish(ConfirmState::Decision decision) {
     auto onConfirm = std::exchange(onConfirm_, {});
     auto onCancel = std::exchange(onCancel_, {});
-    router_.set({});
+    suspendInput();
     const auto clock = env_->clock();
     bar_->hide(true, clock, [this] {
         if (!confirm_.decision()) return;                // a new request was presented meanwhile
@@ -397,13 +575,13 @@ void CenterOverlay::finish(ConfirmState::Decision decision) {
 // dismissConfirm (:439-447): no decision, no callback.
 void CenterOverlay::dismissConfirm() {
     if (!confirm_.request()) return;
-    onConfirm_ = {}; onCancel_ = {};
+    suspendInput();
     confirm_.close();
-    router_.set({});
     bar_->hide(false, env_->clock());
     if (!toastState_.current()) setDimmed(false);
     notify();
 }
+void CenterOverlay::suspendInput() { onConfirm_ = {}; onCancel_ = {}; router_.set({}); }
 // showToast (:449-461).
 void CenterOverlay::showToast(ToastRequest request, std::function<void()> completion) {
     if (confirm_.isOpen()) return;                       // dropped: its completion never runs

@@ -61,12 +61,15 @@ bool StorageService::requestDetails(bool refresh, double now) {
 }
 std::unique_ptr<DesignModuleOwner> StorageService::makeOwner(native::LayerRasterizer& raster, modules::design::Context& context, DesignOwnerOptions options) {
     auto& i = *impl_;
-    need(!i.canvas, "Storage has one owner");
+    need(!i.canvas, "Storage has one owner at a time");
     auto canvas = std::make_unique<modules::StorageCanvas>(context, i.controller);
     canvas->onOpenSystemStorage = [this] { if (impl_->openSettings) impl_->openSettings(); };
     i.canvas = canvas.get();
+    // The owner's options die with it: the service then holds no canvas, so
+    // an owner rebuilt after a failure (Application::repairModule) can follow.
+    std::shared_ptr<void> forget(impl_.get(), [](Impl* gone) { gone->canvas = nullptr; });
     auto previous = std::move(options.hostEvent);
-    options.hostEvent = [this, previous = std::move(previous)](const app::HostEvent& e, double t) {
+    options.hostEvent = [this, previous = std::move(previous), forget](const app::HostEvent& e, double t) {
         bool changed = previous && previous(e, t);
         auto& s = *impl_;
         if (e.kind == app::HostEvent::Kind::utilityCompleted) {

@@ -152,6 +152,31 @@ void bannerMotion() {
     banner.show(memory());
     banner.hide(false);
     check(!banner.isShowing() && banner.queue().empty() && banner.layer().hidden() && hidden == 2, "hide(false) drops everything at once");
+    // The HUD close (19e5575, 5c8a905): a banner still arriving keeps its
+    // drop and unfold, only the hazard loop stops; the close's hide then
+    // rises it out over .26 s.
+    w.at(50);
+    banner.show(memory());
+    w.at(50.1);
+    banner.stopLoops();
+    check(banner.isShowing() && !banner.isHazardRunning() && plate.presented(Channel::wipe, 50.1) < 1 && plate.presented(Channel::translateY, 50.1) < 0,
+        "stopLoops stops only the hazard: the drop and the unfold keep playing");
+    check(near(plate.presented(Channel::wipe, 50.42), 1) && near(plate.presented(Channel::translateY, 50.42), 0, 1e-3), "the arrival still ends at .42 s");
+    banner.hide(true);
+    w.at(50.2);
+    check(banner.isShowing() && plate.presented(Channel::opacity, 50.2) < 1, "the close's hide leaves animated");
+    // 808e850 is not needed: no cancel strips the leave on Windows, so a
+    // leave caught by the close's hide keeps its motion and its removal.
+    banner.hide(true);
+    check(banner.isShowing() && plate.presented(Channel::opacity, 50.3) < plate.presented(Channel::opacity, 50.2), "a hide during a leave keeps the leave and its motion");
+    w.at(50.36);
+    check(!banner.isShowing() && banner.layer().hidden() && hidden == 3, "the leave ends at +.26 s");
+    banner.show(memory());
+    w.at(51);
+    banner.hide(true);
+    w.at(51.1);
+    banner.hide(false);
+    check(!banner.isShowing() && banner.layer().hidden() && hidden == 4, "hide(false) during a leave ends it at once");
     // Reduce Motion: no drop or unfold, the rule stays whole, the leave is instant, no hazard loop.
     World r(Language::english, true);
     f::FacilityBanner reduced(r.env);
@@ -226,6 +251,19 @@ void tagStack() {
     stack.setActive(false);
     check(!stack.tag(FacilityAlertKind::memory)->looping, "inactive stacks stop the hazard loops");
     stack.setActive(true);
+    // The HUD close stops the loops and keeps the stack active, so a tag
+    // added during the close loops (5c8a905 strips only the running ones).
+    w.at(13);
+    check(stack.shownKinds() == std::vector{FacilityAlertKind::memory} && stack.tag(FacilityAlertKind::memory)->looping, "active again, the loops run");
+    stack.stopLoops();
+    check(!stack.tag(FacilityAlertKind::memory)->looping && stack.isActive(), "stopLoops stops every running loop and keeps the stack active");
+    stack.setActive(true);
+    check(!stack.tag(FacilityAlertKind::memory)->looping, "setting the stack active again restarts nothing");
+    stack.update({memory(), disk()}, false);
+    check(stack.tag(FacilityAlertKind::disk)->looping && !stack.tag(FacilityAlertKind::memory)->looping, "a tag added after stopLoops loops");
+    stack.setActive(false); stack.setActive(true);
+    check(stack.tag(FacilityAlertKind::memory)->looping, "the hidden HUD's next showing restarts every loop");
+    stack.update({memory()}, false);
     // Reduce Motion: dismiss removes at once.
     World r(Language::english, true);
     f::FacilityTagStack reduced(r.env);

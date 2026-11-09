@@ -12,6 +12,7 @@
 #include "modules/hud_design_controls.hpp"
 #include "modules/notes_canvas.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -22,7 +23,6 @@
 #include <map>
 #include <set>
 #include <thread>
-#include <tlhelp32.h>
 #include <psapi.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
@@ -48,6 +48,66 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"worldOnlyFrames",std::int64_t(b.frame.worldOnlyFrames-a.frame.worldOnlyFrames)},
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
+// The centre's contrast backdrop (SystemHUDView.moduleContrast, SHELL-27) as
+// the owned target shows it. A grid over its disc (box px around `centre`,
+// `radius` = 220 design units, through the centre's design plane `plane`
+// into target pixels) compares the frame with the backdrop (`on`) to the
+// same frame without it (`off`). Each premultiplied target pixel is first
+// composed over a mid grey desktop (encoded .5, as the transparent window is
+// composed), then the ink's alpha is recovered in encoded sRGB, where Core
+// Animation blends: black ink gives base x (1 - a), white ink a + base x
+// (1 - a). Each sample joins a bin of a tenth of the radius (10 and 11 lie
+// just outside the disc). Module content drawn above the backdrop hides it
+// (alpha 0 there), so a bin's median reads the uncovered majority. The Mac's
+// ramp is .58 at the centre, .40 at 60 % of the radius and 0 at the rim.
+struct ContrastReading{std::array<double,12> median{},expected{},baseAlpha{};std::array<std::size_t,12> samples{};Json bins;};
+double contrastRamp(double r){return r<=.6?.58+(.40-.58)*r/.6:r<1?.40*(1-(r-.6)/.4):0.;}
+double medianOf(std::vector<double>&v){if(v.empty())return 0;std::nth_element(v.begin(),v.begin()+static_cast<std::ptrdiff_t>(v.size()/2),v.end());return v[v.size()/2];}
+ContrastReading readContrast(const gpu::Readback&on,const gpu::Readback&off,const core::Projection&plane,core::Point centre,double radius,bool white){
+    need(!on.pixels.empty()&&on.width==off.width&&on.height==off.height&&on.rowBytes==off.rowBytes&&on.pixels.size()==off.pixels.size(),"The contrast readbacks share one target");
+    const auto shown=[](const gpu::Readback&image,std::size_t at){const auto*p=image.pixels.data()+at;return (.0722*p[0]+.7152*p[1]+.2126*p[2])/255.+.5*(1-p[3]/255.);}; // over the grey desktop
+    std::array<std::vector<double>,12> bins,bases;constexpr int steps=192; // about 200 samples in the innermost bin
+    for(int y=0;y<=steps;++y)for(int x=0;x<=steps;++x){
+        const double u=2.4*x/steps-1.2,v=2.4*y/steps-1.2,r=std::hypot(u,v);if(r>=1.2)continue;
+        const auto p=plane.project({centre.x+u*radius,centre.y+v*radius});if(!p||!(p->x>=0)||!(p->y>=0)||p->x>=on.width||p->y>=on.height)continue;
+        const auto at=static_cast<std::size_t>(std::floor(p->y))*on.rowBytes+static_cast<std::size_t>(std::floor(p->x))*4;
+        const double base=std::min(shown(off,at),1.),ink=std::min(shown(on,at),1.);
+        if(white?base>.98:base<.02)continue;
+        const auto bin=std::min<std::size_t>(11,static_cast<std::size_t>(r*10));
+        bins[bin].push_back(white?(ink-base)/(1-base):1-ink/base);bases[bin].push_back(off.pixels[at+3]/255.);}
+    ContrastReading reading;Json::Array rows;
+    for(std::size_t n=0;n<bins.size();++n){reading.samples[n]=bins[n].size();reading.expected[n]=contrastRamp((static_cast<double>(n)+.5)/10);
+        reading.median[n]=medianOf(bins[n]);reading.baseAlpha[n]=medianOf(bases[n]);
+        rows.push_back(Json::Object{{"radius",static_cast<double>(n)/10},{"samples",std::int64_t(reading.samples[n])},{"alpha",reading.median[n]},{"expected",reading.expected[n]},{"baseAlpha",reading.baseAlpha[n]}});}
+    reading.bins=std::move(rows);return reading;}
+// The traced host never spins on a past wake: an owner that keeps reporting
+// a wake already due (one that waits for a frame or an event that does not
+// come) has the host's deadline wake fire about 2,000 times a second, with
+// frames between them or without (alongside 165 Hz frames about 160 a
+// second). Between frames the deadline wakes stay within a small burst and
+// rate, and in each second, whatever its frames, within twice the fastest
+// owner cadence (Now Playing's 30 Hz display); the traces peak at a few a
+// second, and the closed HUD past its grace stays under 20 a second
+// (run_idle_trace.cmake). The most wakes in any one second is reported.
+class WakeSpinCheck {
+    static constexpr double burst=50,rate=100,perSecond=60;
+    std::uint64_t frames_{},wakes_{},secondFrames_{},secondWakes_{},peak_{};double since_{},second_{};bool started_{};
+public:
+    // After each traced pump; throws when a stretch's deadline wakes passed the bound.
+    void sample(const OverlayHostStats&s,double now){
+        if(!started_){started_=true;frames_=secondFrames_=s.frames;wakes_=secondWakes_=s.externalWakes;since_=second_=now;return;}
+        const bool frameless=s.frames==frames_;const auto wakes=s.externalWakes-wakes_,inSecond=s.externalWakes-secondWakes_;
+        if(frameless&&double(wakes)>burst+rate*(now-since_)){
+            std::cout<<"Traced host deadline wakes: "<<wakes<<" in "<<now-since_<<" s without a frame\n";
+            need(false,"No owner's past wake spins the host while no frame runs");}
+        if(double(inSecond)>perSecond*std::max(1.,now-second_)){
+            std::cout<<"Traced host deadline wakes: "<<inSecond<<" in "<<now-second_<<" s with "<<s.frames-secondFrames_<<" frames\n";
+            need(false,"No owner's past wake spins the host in any second, with frames or without");}
+        if(!frameless||now-since_>=1){frames_=s.frames;wakes_=s.externalWakes;since_=now;}
+        if(now-second_>=1){peak_=std::max(peak_,inSecond);secondFrames_=s.frames;secondWakes_=s.externalWakes;second_=now;}
+    }
+    std::uint64_t peak()const{return peak_;}
+};
 }
 
 // watch_session_preview --startup-trace: the production owner with the module
@@ -246,11 +306,13 @@ int Application::Impl::runIdleTrace(){
         if(chrome&&chrome->styleTransitionActive())visit("clock style");
         if(session->demand(at).finiteAnimation)visit("source shell");
     };
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames!=frames&&session->phase()==core::VisibilityPhase::visible){const auto at=clock();
                 if(demand(at).finiteAnimation)requesters(at,[&](std::string_view name){++finiteRequests[std::string(name)];});}}
     };
@@ -331,13 +393,41 @@ int Application::Impl::runIdleTrace(){
     const auto opened=[&]{return lifecycle.phase()==core::SystemOverlayPhase::open;};
     const auto closed=[&]{return lifecycle.phase()==core::SystemOverlayPhase::closed&&session->phase()==core::VisibilityPhase::concealed;};
     const auto ambient=[&](bool on){configuration.set("ambientAnimation",on);configurationPending=true;applyConfiguration(clock());host.setFrameDemand(demand(clock()));host.invalidate();};
-    const auto openHUD=[&]{perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
-    const auto closeHUD=[&]{perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();pump(10,closed);need(closed(),"The traced HUD closed");};
+    // A summon: the opening's first frame is drawn, then the window shows
+    // (showOpening shows the offscreen window in this trace too), so the
+    // window never composites what was presented before it (as
+    // OverlayController orders the panel front with the entrance's first
+    // pose committed): the last frame of the previous close, whose canvas is
+    // still opaque (its fade waits past the exit), or the HUD a lock or
+    // sleep hid. Its pose is the entrance's first: the session opening, the
+    // canvas at 0 (the frame time the design density recorded). Under Reduce
+    // Motion the first frame is the stable HUD.
+    const auto drawn=[&]{const auto s=renderer.stats();return s.nativePasses+s.nativePassesSkipped;};
+    const auto summon=[&]{const auto before=drawn();std::optional<std::uint64_t>atFrame;bool shownAtFrame{};
+        openingFrameForTest=[&]{atFrame=drawn();shownAtFrame=host.stats().visible;};
+        try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+        const bool first=atFrame&&*atFrame>before&&!shownAtFrame&&host.stats().visible&&session->phase()!=core::VisibilityPhase::concealed&&(settings.reduceMotion||
+            (session->phase()==core::VisibilityPhase::opening&&(!designOverlay||(designDensityFrameTime&&canvasOpacity(*designDensityFrameTime)<.01))));
+        if(!first)std::cout<<"Idle trace summon: frames drawn before the show +"<<(atFrame?*atFrame-before:0)<<", shown at that frame "<<shownAtFrame<<", shown "<<host.stats().visible
+                           <<", session "<<static_cast<unsigned>(session->phase())<<", first pose canvas "<<(designDensityFrameTime?canvasOpacity(*designDensityFrameTime):-1.)<<"\n";
+        need(first,"A summon draws the opening's first pose, then shows the window");};
+    const auto openHUD=[&]{summon();host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");};
+    // Each close's frames and the group targets its canvas fade takes (the
+    // HUD close's every native layer fading with it: Mac 5b2a9d3).
+    Json::Array closes;
+    const auto closeHUD=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;std::size_t peak=before.nativeGroupBytes;
+        perform(lifecycle.toggle(),clock());host.setFrameDemand(demand(clock()));host.invalidate();
+        pump(10,[&]{peak=std::max(peak,renderer.stats().nativeGroupBytes);return closed();});need(closed(),"The traced HUD closed");
+        const auto after=renderer.stats();
+        closes.push_back(Json::Object{{"frames",std::int64_t(host.stats().frames-frames)},{"groupRenders",std::int64_t(after.nativeGroupRenders-before.nativeGroupRenders)},
+            {"groupTargetAllocations",std::int64_t(after.nativeGroupTargetAllocations-before.nativeGroupTargetAllocations)},
+            {"groupBytesPeak",std::int64_t(peak)},{"groupBytesAfter",std::int64_t(after.nativeGroupBytes)}});};
     // An opening as the summon hotkey asks for it (OverlayController toggle):
-    // the time to its first frame and to the open phase.
-    struct Opening {double firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
+    // the time to the window shown (its first pose drawn), to its first host
+    // frame and to the open phase.
+    struct Opening {double shown{},firstFrame{-1},opened{},resume{};std::uint64_t resumes{};};
     const auto timedOpening=[&]{const auto before=renderer.stats();const auto frames=host.stats().frames;const auto at=OverlayHost::clockNow();Opening o;
-        perform(lifecycle.toggle(),clock());host.show(false);host.setFrameDemand(demand(clock()));
+        summon();o.shown=OverlayHost::clockNow()-at;host.setFrameDemand(demand(clock()));
         pump(10,[&]{if(o.firstFrame<0&&host.stats().frames!=frames)o.firstFrame=OverlayHost::clockNow()-at;return opened();});
         need(opened(),"The traced HUD opened");const auto after=renderer.stats();
         o.opened=OverlayHost::clockNow()-at;o.resume=after.deviceResumeSeconds-before.deviceResumeSeconds;o.resumes=after.deviceResumes-before.deviceResumes;return o;};
@@ -366,7 +456,7 @@ int Application::Impl::runIdleTrace(){
         prepareGraphics(true);need(renderer.devicePrepared()&&preparedGraphicsUntil.has_value(),"Pointing at the tray icon prepares the released device");
         pump(.35,{});const auto early=timedOpening();
         need(early.resumes==1&&!preparedGraphicsUntil,"The anticipated opening takes the prepared device");
-        anticipated=Json::Object{{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
+        anticipated=Json::Object{{"shownSeconds",early.shown},{"firstFrameSeconds",early.firstFrame},{"openedSeconds",early.opened},{"deviceResumeSeconds",early.resume},{"anticipationSeconds",.35}};
         // A media owner still holding the device at the deadline (a movie
         // playing, an edit pass) refuses the release; it follows shortly
         // after the owner lets go. (Same-device media exists with the shared
@@ -398,14 +488,266 @@ int Application::Impl::runIdleTrace(){
         {"device",renderer.deviceInfo().name},{"warp",args.warp},{"refreshHz",stats.refreshRate},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},
         {"closedGraphicsGraceSeconds",grace},{"productionClosedGraphicsGraceSeconds",closedGraphicsGraceSeconds},{"closedSeconds",closedFor},{"releaseExpected",releaseExpected},
         {"sharedMedia",bool(mediaBroker)},
-        {"openingSeconds",first.opened},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
+        {"openingSeconds",first.opened},{"openingShownSeconds",first.shown},{"openingFirstFrameSeconds",first.firstFrame},{"openingDeviceResumeSeconds",first.resume},
         {"deviceResume",Json::Object{{"resumes",std::int64_t(renderer.stats().deviceResumes)},{"deviceSeconds",renderer.stats().deviceCreateSeconds},{"programSeconds",renderer.stats().pipelineCreateSeconds},
             {"resourceSeconds",renderer.stats().resourceRestoreSeconds},{"sourceSeconds",renderer.stats().sourceRestoreSeconds}}},
-        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
+        {"reopeningAfterClose",Json::Object{{"closedSeconds",closedFor+seconds},{"shownSeconds",reopening.shown},{"firstFrameSeconds",reopening.firstFrame},{"openedSeconds",reopening.opened},{"deviceResumeSeconds",reopening.resume},{"deviceResumes",std::int64_t(reopening.resumes)}}},
         {"anticipatedOpening",std::move(anticipated)},{"mediaRefusal",std::move(refusal)},{"anticipationDiscard",std::move(discard)},
-        {"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)}};
+        {"quickReopeningShownSeconds",warm.shown},{"quickReopeningFirstFrameSeconds",warm.firstFrame},{"windows",std::move(windows)},{"closes",std::move(closes)}};
     const std::size_t bound=8*1024*1024;ehud::data::detail::replaceFile(args.idleTrace,std::nullopt,report.encode(bound),bound);
     std::cout<<"Wrote hidden idle trace\n";
+    // After the report (its numbers stay those of the windows above), the
+    // close and opening ends on the same real scheduling (the HUD is closed).
+    using P=core::SystemOverlayPhase;
+    const auto reduceMotion=[&](bool on){configuration.set("reduceMotion",on);configurationPending=true;applyConfiguration(clock());};
+    // A normal close ends on its frames, before its transition deadline.
+    openHUD();
+    {const auto at=OverlayHost::clockNow();closeHUD();const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace normal close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(elapsed<closingTransitionBound,"A normal close ends on its frames before its transition deadline");}
+    // The Windows key with motion on: the HUD has the keyboard, so the key
+    // reaches it first and is not taken; its release opens Start, which takes
+    // the foreground (WM_KILLFOCUS, WM_ACTIVATEAPP), and Close when focus is
+    // lost closes the HUD on its frames, before the transition deadline. The
+    // hidden run ignores activation changes (visibleMode) and its window
+    // never has the keyboard, so the trace asks the focus-loss close
+    // WM_ACTIVATEAPP asks in production.
+    const auto windowsKeyFocusLoss=[&]{const auto window=static_cast<HWND>(host.hwnd());
+        need(!onKey({KeyKind::down,VK_LWIN})&&!onKey({KeyKind::up,VK_LWIN})&&opened(),"The Windows key passes through the open HUD and changes nothing");
+        SendMessageW(window,WM_ACTIVATEAPP,FALSE,0);
+        need(closeForFocusLoss(clock()),"Start taking the foreground asks the focus-loss close");};
+    const bool focusLossOriginal=configuration.boolean("closeOnFocusLost");
+    configuration.set("closeOnFocusLost",true);configurationPending=true;applyConfiguration(clock());
+    openHUD();
+    {const auto at=OverlayHost::clockNow();windowsKeyFocusLoss();need(lifecycle.phase()==P::closing||closed(),"Start taking the foreground starts the close");
+     host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace Windows key close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
+     need(closed()&&!host.stats().visible&&elapsed<closingTransitionBound,"The Windows key's focus loss closes the HUD on its frames before the transition deadline");
+     SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);}
+    // Reduce Motion (the preference, or Windows "Animation effects" off):
+    // the close conceals the source at once and, as on the Mac
+    // (HUDSourceWatchAnimation.close calls its completion), finishes there
+    // without a frame - the window hides and the lifecycle closes, so the
+    // next summon opens the HUD again.
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows on the transitions below,
+    // kept in memory (never written): where each lands and what it records.
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});memoryTraceRows=true;
+    const auto row=[&](std::string_view stage)->std::optional<std::size_t>{const auto&rows=memoryTrace->rows();
+        for(std::size_t n=0;n<rows.size();++n)if(const auto&name=rows[n]["stage"];name.isString()&&name.string()==stage)return n;return std::nullopt;};
+    const auto traced=[&](std::string_view stage,std::string_view field)->const Json&{static const Json none;const auto n=row(stage);return n?memoryTrace->rows()[*n]["scheduling"][field]:none;};
+    const auto tracedIs=[&](std::string_view stage,std::string_view field,std::string_view value){const auto&v=traced(stage,field);return v.isString()&&v.string()==value;};
+    const auto tracedTrue=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isBool()&&v.boolean();};
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
+          "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
+     // C11: inside that request the hidden HUD's deactivation already ran
+     // (overlayConcealed): no owner takes input, the overlay is reset and the
+     // module plays no close leave (none under Reduce Motion) or departing screen.
+     {bool capturing=false;registry.forEach([&](ModuleOwner&o){capturing=capturing||o.capturesPointer()||o.capturesKeys()||o.pointerLocked();},"reduce motion close");
+      need(!capturing&&designOverlay&&!designOverlay->context().overlay().capturesInput()&&notes&&!notes->modulePresentation().departing&&notes->modulePresentation().current.opacity==1,
+           "Inside the Reduce Motion close's request no owner takes input, the overlay is reset and no module leave plays");}
+     pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");
+     need(row("close-1")&&row("closed-1")&&*row("close-1")<*row("closed-1")&&tracedIs("close-1","lifecycle","closing")&&tracedIs("close-1","session","visible")&&
+          tracedTrue("close-1","closePending")&&tracedTrue("close-1","reduceMotion")&&traced("close-1","host")["visible"].isBool()&&traced("close-1","host")["visible"].boolean(),
+          "The memory trace's close row records the request, before the Reduce Motion close finishes");}
+    openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
+    {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // The Windows key under Reduce Motion (the preference here; Windows
+    // "Animation effects" off sets the same flag): Start's focus loss closes
+    // inside WM_ACTIVATEAPP, without a frame, and the next summon opens again.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;windowsKeyFocusLoss();const auto s=host.stats();
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==framesBefore,
+          "The Windows key's focus loss closes the Reduce Motion HUD without a frame");
+     SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);
+     openHUD();need(opened(),"A summon after the Windows key's close opens the Reduce Motion HUD again");
+     closeHUD();}
+    configuration.set("closeOnFocusLost",focusLossOriginal);configurationPending=true;applyConfiguration(clock());
+    // The other closes a user reaches, each through Impl::close: inside the
+    // request the window hides, leaves the topmost band and the lifecycle
+    // closes, with no frame (the hidden run never launches an application,
+    // opens Windows Settings or registers a chord).
+    const auto closedWithoutFrame=[&](std::uint64_t frames){const auto s=host.stats();
+        return closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!s.visible&&!s.topmost&&!s.framePending&&s.frames==frames;};
+    // A shortcut recording on the Hotkeys page (its record button; the
+    // recording holds the chord, so the hotkey cannot close the HUD), then a
+    // press outside the displayed circle: the close ends the recording
+    // (SettingsCanvas::didDeactivate) and hides the HUD without a frame.
+    if(settingsUI){openHUD();selectModule(core::Module::hotkeys,clock());auto&hotkeys=settingsUI->canvas(core::Module::hotkeys);
+     pump(3,[&]{return hotkeys.isActive()&&!hotkeys.transitioning();});
+     need(hotkeys.performAccessibilityAction("capture",clock())&&settingsUI->controller().capturingShortcut(),"The Hotkeys page's record button starts a shortcut recording");
+     const core::Point side{2,metrics.height*.5};const auto framesBefore=host.stats().frames;
+     need(backgroundPressCloses(side),"A press on the side of the screen during a recording is a background press");
+     (void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});(void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore)&&!settingsUI->controller().capturingShortcut(),
+          "A press outside the circle during a shortcut recording ends it and closes the Reduce Motion HUD without a frame");}
+    // The summon hotkey (WM_HOTKEY and the low-level hook's message reach
+    // trayAction) closes; the next press opens again.
+    openHUD();
+    {const auto framesBefore=host.stats().frames;trayAction(gpu::TrayAction::openOverlay,true,clock());
+     need(closedWithoutFrame(framesBefore),"The summon hotkey closes the Reduce Motion HUD without a frame");
+     trayAction(gpu::TrayAction::openOverlay,true,clock());need(lifecycle.phase()==P::opening,"The next summon hotkey press opens the HUD again");
+     host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");}
+    // A press outside the displayed circle (SystemHUDView.mouseDown); its release changes nothing.
+    {const core::Point side{2,metrics.height*.5};need(backgroundPressCloses(side),"A press on the side of the screen is a background press");
+     const auto framesBefore=host.stats().frames;(void)onPointer({PointerKind::down,PointerButton::left,side.x,side.y});
+     need(closedWithoutFrame(framesBefore),"A press outside the displayed circle closes the Reduce Motion HUD without a frame");
+     (void)onPointer({PointerKind::up,PointerButton::left,side.x,side.y});need(closedWithoutFrame(framesBefore),"Its release changes nothing");}
+    // An area's close (App Shortcut's launch: its overlayConcealed starts the launch).
+    if(areaHost){openHUD();const auto framesBefore=host.stats().frames;areaHost->closeOverlay();
+     need(closedWithoutFrame(framesBefore),"An area's close (App Shortcut's launch) finishes under Reduce Motion without a frame");}
+    // The hand-offs that open once the HUD is hidden: Storage Settings and a
+    // link. The request (a canvas event) hides the HUD; the Shell opens from
+    // the posted notice after it, never inside the event.
+    if(storageFixture){openHUD();const auto framesBefore=host.stats().frames;const auto before=storageFixture->settingsRequests;openStorageSettingsAfterClose(clock());
+     need(closedWithoutFrame(framesBefore)&&pendingStorageSettings&&afterCloseQueued&&storageFixture->settingsRequests==before,"Storage Settings closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingStorageSettings;});
+     need(closedWithoutFrame(framesBefore)&&!pendingStorageSettings&&!afterCloseQueued&&storageFixture->settingsRequests==before+1,"Windows Settings opens once, after the request");}
+    {openHUD();const auto framesBefore=host.stats().frames;const auto links=linkRequests;openAfterClose("https://github.com/DDDuoDuo/EndfieldHUD",clock());
+     need(closedWithoutFrame(framesBefore)&&pendingLink&&afterCloseQueued&&linkRequests==links,"A Settings link closes the Reduce Motion HUD without a frame and opens nothing inside the request");
+     pump(1,[&]{return !pendingLink;});
+     need(closedWithoutFrame(framesBefore)&&!pendingLink&&!afterCloseQueued&&linkRequests==links+1,"The browser opens once, after the request");}
+    // Projection (openProjection, the page's button) under Reduce Motion
+    // with no display left: the hand-off ends inside the click, the HUD
+    // closes without a frame and no Projection stays active (charge alerts
+    // show again, OverlayController.cancelProjection).
+    openHUD();
+    {const auto framesBefore=host.stats().frames;
+     projectionDisplayForTest=[](std::uintptr_t){return std::optional<gpu::DisplayDescriptor>{};};
+     const bool projectionPage=std::exchange(args.projection,true);openProjection(clock());args.projection=projectionPage;projectionDisplayForTest={};
+     auto*power=powerArea();
+     need(power&&!power->projectionActive()&&!projectionHandoff.active()&&closedWithoutFrame(framesBefore),
+          "Projection with no display left ends its hand-off: the Reduce Motion HUD closes without a frame and no Projection stays active");}
+    // Projection's hand-off closes the HUD, then takes the window over in
+    // finishConcealment. The workspace needs the visible HUD (--projection),
+    // so this hand-off only carries a summon queued during the close
+    // (projectionActionMessage's external action), which reopens the HUD;
+    // without a display the hand-off ends with the HUD closed.
+    // The queued summon reopens on the module the HUD left, over a module
+    // chosen under Open on (OverlayController.returnFromProjection).
+    openHUD();
+    {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
+     const auto left=lifecycle.viewModule().value_or(core::Module::map);auto layout=configuration.overlayLayout();const auto chosenBefore=layout.openModule;
+     layout.openModule=std::string(core::moduleIdentifier(left==core::Module::calendar?core::Module::notes:core::Module::calendar));configuration.setOverlayLayout(layout);
+     const auto framesBefore=host.stats().frames;
+     const auto command=projectionHandoff.open({session->phase()==core::VisibilityPhase::visible,quitRequested,pendingClose,false},{hudDisplay,previousApplication});
+     need(command&&command->action==ProjectionHandoff::Action::closeHUD,"Projection's hand-off closes the HUD first");
+     (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
+     const bool reopened=lifecycle.phase()==P::opening;
+     need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),
+          "Projection's hand-off with a summon queued finishes the Reduce Motion close without a frame and goes on");
+     // The hand-off placed the window on its display: the trace's own place back.
+     need(host.place(placed.left,placed.top,placed.right-placed.left,placed.bottom-placed.top),"The traced window returns to its place");
+     if(reopened){host.show(false);host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The summon queued during Projection's hand-off opens the HUD");
+         need(lifecycle.viewModule()==restorableModule(left),"The summon queued during Projection's hand-off reopens on the module left, not the chosen one");}
+     else openHUD();
+     layout.openModule=chosenBefore;configuration.setOverlayLayout(layout);
+     closeHUD();}
+    // A fresh memory trace for the rows read below: the transition deadlines
+    // by index, and the close rows (at most eight closes).
+    memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
+    reduceMotion(false);
+    // OverlayController.transitionDeadline: an opening and a close no frame
+    // finishes (the window kept hidden under them, so the host's frame gate
+    // stays shut) end on the host's deadline wake. Escape during that opening
+    // waits for it, then closes. (The summon still draws the opening's first
+    // pose before it shows the window; that is not a host frame.)
+    {const auto framesBefore=host.stats().frames;const auto wakesBefore=host.stats().externalWakes;const auto at=OverlayHost::clockNow();
+     perform(lifecycle.toggle(),clock());host.hide();(void)onKey({KeyKind::down,VK_ESCAPE});
+     need(lifecycle.phase()==P::opening&&lifecycle.state().closeAfterOpening()&&transitionDeadline.has_value(),"Escape during an opening waits for it");
+     pump(openingTransitionBound+1,[&]{return lifecycle.phase()!=P::opening;});const auto openedAfter=OverlayHost::clockNow()-at;
+     need(lifecycle.phase()==P::closing&&closing&&openedAfter>=openingTransitionBound-.05&&host.stats().frames==framesBefore,
+          "The transition deadline finishes an opening no frame finished, and the close queued during it starts");
+     pump(closingTransitionBound+1,closed);const auto ended=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace frameless transitions: opening ended at "<<openedAfter<<" s, close at "<<ended<<" s (closed "<<closed()<<", concealed "<<concealedBroadcast
+              <<", closing "<<lifecycleClosing.has_value()<<", deadline "<<transitionDeadline.has_value()<<", visible "<<host.stats().visible<<", frames +"<<host.stats().frames-framesBefore<<")\n";
+     need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!host.stats().visible&&host.stats().frames==framesBefore,
+          "The transition deadline finishes a close no frame finished: the window hides and the lifecycle closes");
+     need(tracedIs("transition-deadline-1","lifecycle","opening")&&tracedTrue("transition-deadline-1","closeAfterOpening")&&tracedIs("transition-deadline-2","lifecycle","closing")&&
+          traced("transition-deadline-2","host")["frames"].isNumber()&&traced("transition-deadline-2","host")["frames"].integer()==std::int64_t(framesBefore),
+          "The memory trace records the expired opening and close deadlines");
+     // When each deadline expired, from the start of its own transition, on
+     // the host time of the wake (the rows' clock in this hidden trace). The pumps return later:
+     // after the expiry's work (the queued close runs inside the opening's;
+     // the snapshots of this memory trace).
+     const auto since=[&](std::string_view stage,std::string_view field){const auto&v=traced(stage,field);return v.isNumber()?v.number():-1.;};
+     const double openingExpired=since("transition-deadline-1","secondsSinceOpening"),closeExpired=since("transition-deadline-2","secondsSinceClose");
+     std::cout<<"Idle trace frameless transition deadlines: the opening expired "<<openingExpired<<" s after it started, the close "<<closeExpired<<" s after it started\n";
+     need(openingExpired>=openingTransitionBound-.001&&openingExpired<openingTransitionBound+.5&&closeExpired>=closingTransitionBound-.001&&closeExpired<closingTransitionBound+.5,
+          "The opening and the close no frame finished end on their own transition deadlines");
+     // No owner wake spins while no frame can present: an owner's wake that
+     // waits for a frame is handed to the host once.
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace frameless transitions: "<<wakes<<" deadline wakes\n";
+     need(wakes<=20,"No owner wake spins while a frameless opening and close wait for their deadlines");}
+    // A conceal dispatched inside an opening's first frame (present()'s
+    // backdrop COM calls run nested messages: the display turned off, sleep,
+    // a session end) hides the HUD before the summon would show the window:
+    // it stays hidden over the concealed session, and the next summon opens.
+    {openingFrameForTest=[&]{suspend(Suspension::display,clock());};
+     try{perform(lifecycle.toggle(),clock());}catch(...){openingFrameForTest={};throw;}openingFrameForTest={};
+     const auto after=host.stats();
+     std::cout<<"Idle trace conceal inside an opening's first frame: closed "<<closed()<<", visible "<<after.visible<<", frame pending "<<after.framePending<<"\n";
+     need(closed()&&!after.visible&&!after.topmost&&!after.framePending,"A conceal inside an opening's first frame leaves the window hidden");
+     resume(Suspension::display,clock());pump(.3,{});
+     need(!host.stats().visible&&host.stats().frames==after.frames,"The HUD concealed inside its opening presents nothing afterwards");
+     openHUD();closeHUD();}
+    // A Calendar owner a failure disabled (a synthetic one here) cannot
+    // re-arm its midnight wake: the host wakes for that midnight once. The
+    // registry never enables a failed owner again, so this stays the last
+    // scenario before the Quit (run_idle_trace.cmake passes --calendar).
+    need(calendarModuleOwner&&registry.contains(*calendarModuleOwner),"The idle trace runs the Calendar owner");
+    {const bool isolating=registry.isolating();registry.setIsolation(true);
+     (void)registry.guard(*calendarModuleOwner,[]{throw std::runtime_error("Synthetic Calendar failure");},"idle trace");registry.setIsolation(isolating);
+     need(!registry.guard(*calendarModuleOwner,[]{},"idle trace"),"The synthetic failure disables the Calendar owner");
+     const auto wakesBefore=host.stats().externalWakes;calendarNextWake=now();scheduleDeadline();pump(1,{});
+     const auto wakes=host.stats().externalWakes-wakesBefore;
+     std::cout<<"Idle trace disabled Calendar midnight: "<<wakes<<" deadline wakes\n";
+     need(!calendarNextWake&&wakes<=20,"A disabled Calendar owner's midnight does not spin the host");}
+    // The bottom-left Quit button answered on the confirm bar under Reduce
+    // Motion (--idle-trace-quit-button): the bar accepts at once and the run
+    // ends inside the key press, without a frame.
+    if(args.idleTraceQuit==1){
+        reduceMotion(true);openHUD();pump(.5,{});
+        need(designOverlay&&!quitButtons.empty(),"The traced HUD has its Quit button and the confirm bar");
+        const auto framesBefore=host.stats().frames;
+        const auto activation=session->activate(*quitButtons.begin(),clock());need(activation&&activation->action==quitAction,"The Quit button is a source button");
+        activate(*activation);need(quitPromptOpen&&designOverlay->context().overlay().capturesInput()&&lifecycle.phase()==P::open&&!quitRequested,"The Quit button asks on the confirm bar");
+        need(onKey({KeyKind::down,VK_RETURN}),"The confirm bar takes Return");
+        const auto after=host.stats();
+        need(stopping&&quitRequested&&lifecycle.phase()==P::closed&&!after.visible&&!after.topmost&&after.frames==framesBefore,
+             "Quit on the confirm bar under Reduce Motion closes the HUD and stops without a frame");
+        shutdownVisible();
+        return 0;
+    }
+    // A lock during an accepted Quit's close (--idle-trace-quit-locked):
+    // suspend's forced close hides the HUD and the quit still runs, as on
+    // the Mac (forceCloseSystemOverlay, then onQuitAfterSystemClose).
+    if(args.idleTraceQuit==2){
+        reduceMotion(false);openHUD();
+        perform(lifecycle.requestQuit(),clock());need(quitRequested&&lifecycle.phase()==P::closing&&closing&&!stopping,"The accepted Quit's close plays");
+        suspend(Suspension::session,clock());
+        need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&!host.stats().topmost,"A lock during an accepted Quit's close hides the HUD and quits");
+        // OPEN-6: a quit inside the close conceals first (forceConceal's
+        // overlayConcealed broadcast), so what the close kept drawing (the
+        // shown canvases, a departing screen, menus leaving with their
+        // module, Now Playing's presentation) has ended before the quit, and
+        // no owner takes input.
+        {bool still=false;registry.forEach([&](ModuleOwner&o){still=still||o.capturesPointer()||o.pointerLocked()||o.capturesKeys()||o.capturesWheel();},"quit check");
+         need(concealedBroadcast&&!closing&&!still,"A quit inside the close conceals every owner first and leaves none taking input");}
+        shutdownVisible();
+        return 0;
+    }
+    // The tray's Quit under Reduce Motion ends the run without a frame.
+    reduceMotion(true);openHUD();
+    {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
+     const auto request="close-"+std::to_string(memoryTrace->closes);
+     need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
+          "The memory trace records Quit's close request, then the quit");}
+    std::cout<<"Idle trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
 }
@@ -435,11 +777,13 @@ int Application::Impl::runAnimationTrace(){
     // hysteresis path RC 139 took). The settled HUD must hold exactly it.
     std::optional<double> rc139Density;
     const auto density=[&]{return designOverlay?designOverlay->context().boxScale():0.;};
+    WakeSpinCheck spins;
     const auto pump=[&](double duration,const std::function<bool()>&until,const std::function<void()>&onFrame){
         const double end=OverlayHost::clockNow()+duration;
         for(;;){const double left=end-OverlayHost::clockNow();if(left<=0||(until&&until()))return;
             const auto frames=host.stats().frames;
             need(host.pumpOnce(static_cast<std::uint32_t>(std::ceil(left*1000))),"The traced host stopped");
+            spins.sample(host.stats(),OverlayHost::clockNow());
             if(host.stats().frames==frames)continue;
             if(rc139Density&&chromePlan&&chromePlan->projection().center&&session->phase()!=core::VisibilityPhase::concealed)
                 rc139Density=tools::designDensity(core::source::designBoxWorld(*chromePlan->projection().center),metrics.scale,*rc139Density);
@@ -520,6 +864,7 @@ int Application::Impl::runAnimationTrace(){
             rows.push_back(Json::Object{{"atMS",(now-start)*1000},{"intervalMS",interval},{"busyMS",cpu},{"presentMS",presentMS},{"afterDone",after},{"stages",std::move(stages)},{"owners",std::move(byOwner)},
                 {"textureUploads",std::int64_t(b.renderer.textureUploads-a.renderer.textureUploads)},{"textureUploadMS",(b.renderer.textureUploadSeconds-a.renderer.textureUploadSeconds)*1000},
                 {"meshUploads",std::int64_t(b.renderer.meshUploads-a.renderer.meshUploads)},{"nativeGroupRenders",std::int64_t(b.renderer.nativeGroupRenders-a.renderer.nativeGroupRenders)},
+                {"groupTargetAllocations",std::int64_t(b.renderer.nativeGroupTargetAllocations-a.renderer.nativeGroupTargetAllocations)},{"groupBytes",std::int64_t(b.renderer.nativeGroupBytes)},
                 {"drawListMS",(b.renderer.drawListSeconds-a.renderer.drawListSeconds)*1000},{"parkedRestores",std::int64_t(b.renderer.parkedRestores-a.renderer.parkedRestores)},
                 {"rasterizations",std::int64_t(b.raster.rasterizations-a.raster.rasterizations)},{"textLayouts",std::int64_t(b.raster.textLayoutsCreated-a.raster.textLayoutsCreated)},
                 {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},{"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)},
@@ -631,9 +976,27 @@ int Application::Impl::runAnimationTrace(){
         {"device",renderer.deviceInfo().name},{"refreshHz",args.idleTraceRefreshRate},{"closedGraphicsGraceSeconds",closedGraphicsGrace()},{"cyclesPerMillisecond",cyclesPerMS},
         {"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"dpiScale",metrics.scale},{"contentScale",contentScale},{"densityReplayMilliseconds",replayMS},{"launchStartUnderDefaults",launchStartDefault},{"launchStart",launchStart},{"cutRecorded",cutRecorded.value_or(0.)},{"cutLive",cutLive.value_or(0.)},{"cutSteps",cutSteps},{"firstPoseRawUnderDefaults",firstRawDefault},{"firstPoseRaw",firstRaw},{"densityPlaneResolves",std::int64_t(designDensityResolves)},{"densityPlaneResolveMilliseconds",designDensityResolveMilliseconds},{"segments",std::move(segments)}};
     const std::size_t bound=32*1024*1024;ehud::data::detail::replaceFile(args.animationTrace,std::nullopt,report.encode(bound),bound);
-    std::cout<<"Wrote hidden animation trace\n";
+    std::cout<<"Wrote hidden animation trace\n"<<"Animation trace peak deadline wakes in a second: "<<spins.peak()<<"\n";
     shutdownVisible();
     return 0;
+}
+
+// The top layer (SystemHUDView topPlane, Mac b58f2e0) as last composed:
+// every entry is drawn, after every floating entry (the pinned notes last)
+// and before every area's modal card.
+bool Application::Impl::composedOnTopLayer(std::span<const gpu::LayerCompositionEntry> entries){
+    const auto at=[&](const gpu::LayerCompositionEntry&e)->std::optional<std::size_t>{
+        for(std::size_t n=0;n<ordered.size();++n)if(ordered[n].scene==e.scene)return n;
+        return std::nullopt;};
+    if(entries.empty())return false;
+    std::size_t first=ordered.size(),last=0;
+    for(const auto&e:entries){const auto n=at(e);if(!n)return false;first=std::min(first,*n);last=std::max(last,*n);}
+    bool inOrder=true;
+    registry.forEach([&](ModuleOwner&o){
+        for(const auto&e:o.floatingEntries())if(const auto n=at(e);n&&*n>=first)inOrder=false;
+        if(&o!=designOverlay.get()&&&o!=facilityOwner)for(const auto&e:o.modalEntries())if(const auto n=at(e);n&&*n<=last)inOrder=false;
+    },"verify");
+    return inOrder;
 }
 
 int Application::Impl::runHiddenVerification(){
@@ -664,6 +1027,90 @@ int Application::Impl::runHiddenVerification(){
         const double scrollAfter=session->scrollPosition();need(scrollAfter<scrollBefore-1e-6,"Navigation scroll benchmark did not move downward");
         close(at(14));measure("closing",31,[&](unsigned i){present(at(14+i/60.),true);});
         measure("concealed",120,[&](unsigned i){need(!session->sample(at(15+i/60.)),"Concealed session emitted geometry");need(!session->demand(at(15+i/60.)).presented,"Concealed session requested presentation");});
+        // SystemHUDView.moduleContrast (SHELL-27, 1.3.1 item 16): the centre's
+        // radial contrast backdrop renders as on the Mac. The close above ends
+        // as a real one does (concealed(): the backdrop's scene is parked),
+        // then one opening (17...19.95 s, before the coverage opening at 20 s)
+        // on Power: the backdrop is one part and one surface right below the
+        // module entries, it covers HUDModuleContent.viewportFrame (280, 100,
+        // 440 x 440) on the centre plane, and the readback with it over the
+        // same frame without it shows the Mac's ramp: in the ring Power leaves
+        // uncovered (from 30 % of the radius out; Power's opaque centre is
+        // drawn above it) on the shown frame, and over the whole disc, centre
+        // included, drawn without the modules, black (dark) and white (the
+        // Light theme setting), with nothing outside the disc. It fades out
+        // behind Now Playing and back on Power.
+        Json contrastReport;
+        if(moduleContrast&&notes){namespace d=modules::design;auto&c=*moduleContrast;
+            const auto frames=[&](double from,double to){for(double t=from;t<to+1e-9;t+=1/60.)present(at(t),true);};
+            const auto opacity=[&](double t){return d::samplePlacement(c.ramp,c.root,hostTime(at(t))).opacity;};
+            const auto original=notes->selected();
+            concealed(at(16.9));const auto parks=c.scene.stats().parks;
+            need(parks>=1&&!c.posed,"A concealed HUD parks the contrast backdrop");
+            open(at(17));frames(17,18.2);
+            selectModule(core::Module::power,at(18.2));frames(18.2,18.8);
+            need(notes->selected()==core::Module::power&&chromePlan&&chromePlan->projection().center,"The contrast probe shows Power on the open HUD");
+            need(c.posed&&c.dark==true&&c.visible,"The reopened HUD poses the dark contrast backdrop again");
+            const auto stats=c.scene.stats();
+            need(stats.parts==1&&stats.surfaces==1,("The contrast backdrop is one part and one surface ("+std::to_string(stats.parts)+" parts, "+std::to_string(stats.surfaces)+" surfaces)").c_str());
+            const auto entries=c.scene.entries();bool below=!entries.empty()&&moduleEntryBegin>=entries.size()&&moduleEntryBegin<=ordered.size();
+            for(std::size_t n=0;below&&n<entries.size();++n)below=ordered[moduleEntryBegin-entries.size()+n].scene==entries[n].scene;
+            need(below,"The contrast backdrop's entries sit right below the module entries");
+            // The sampled surface corners through designBoxWorld against the
+            // viewport frame's design corners through the centre, in target px.
+            const auto&center=*chromePlan->projection().center;
+            const auto viewport=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+            const auto boxPlane=core::Projection::viewport(viewport*source::designBoxWorld(center),metrics.pixelWidth,metrics.pixelHeight);
+            const auto designPlane=core::Projection::viewport(viewport*center,metrics.pixelWidth,metrics.pixelHeight);
+            const auto pose=d::samplePlacement(c.ramp,c.root,hostTime(at(18.8)));const auto size=c.ramp.bounds();double cornerError=0;
+            for(unsigned n=0;n<4;++n){const double u=n&1,v=n>>1;
+                const auto shown=boxPlane.project(pose.world.apply({u*size.width,v*size.height})),expected=designPlane.project({280+440*u,100+440*v});
+                need(shown&&expected,"The contrast backdrop's corners project onto the target");cornerError=std::max(cornerError,std::hypot(shown->x-expected->x,shown->y-expected->y));}
+            need(cornerError<.5,("The contrast backdrop covers the module viewport frame (280, 100, 440 x 440) on the centre plane (corner off by "+std::to_string(cornerError)+" px)").c_str());
+            need(pose.visible&&opacity(18.8)==1,"The contrast backdrop shows at full opacity on Power");
+            // Readbacks of the shown frame: with it, then without it (its opacity
+            // 0 for one frame). Power's opaque centre covers the inner disc there.
+            const core::Point disc{295,305};const double radius=220/d::geometry::baseUnit;
+            present(at(18.81),true);const auto on=renderer.readback();saveTarget("contrast-on",at(18.81));
+            c.ramp.setValue(d::Channel::opacity,0);present(at(18.82),true);const auto off=renderer.readback();saveTarget("contrast-off",at(18.82));
+            c.ramp.setValue(d::Channel::opacity,1);
+            // The whole disc, its centre included: one frame time drawn only up to
+            // the module entries, with the backdrop and without it. The next
+            // present publishes the full list again (published cleared).
+            const auto bare=[&](double t,bool shown){c.ramp.setValue(d::Channel::opacity,shown?1.:0.);present(at(t),true);
+                composition.setEntries(renderer,std::span<const gpu::LayerCompositionEntry>(ordered).first(moduleEntryBegin));composition.present(renderer);renderer.draw(false);
+                auto image=renderer.readback();published.clear();c.ramp.setValue(d::Channel::opacity,1);return image;};
+            const auto bareOn=bare(18.83,true),bareOff=bare(18.83,false);saveTarget("contrast-bare",at(18.83));
+            // Light through the theme setting, as the app applies it (theme ->
+            // watchAppearance.dark -> the ramp's white ink), then the saved theme.
+            const auto theme=configuration.string("theme");
+            configuration.set("theme","light");configurationPending=true;applyConfiguration(at(18.84));present(at(18.84),true);
+            need(c.dark==false,"The Light theme repaints the contrast backdrop white");
+            const auto lightOn=bare(18.85,true),lightOff=bare(18.85,false);
+            configuration.set("theme",theme);configurationPending=true;applyConfiguration(at(18.86));present(at(18.86),true);
+            need(c.dark==watchAppearance.dark,"The saved theme repaints the contrast backdrop again");
+            const auto dark=readContrast(on,off,boxPlane,disc,radius,false),darkBare=readContrast(bareOn,bareOff,boxPlane,disc,radius,false),white=readContrast(lightOn,lightOff,boxPlane,disc,radius,true);
+            // Now Playing hides it after the .13 s linear fade; Power shows it again.
+            selectModule(core::Module::nowPlaying,at(18.87));frames(18.87,19.07);
+            const auto hidden=opacity(19.07);const bool hiddenSelected=notes->selected()==core::Module::nowPlaying;
+            selectModule(core::Module::power,at(19.07));frames(19.07,19.27);const auto reshown=opacity(19.27);
+            selectModule(original,at(19.27));frames(19.27,19.42);
+            close(at(19.42));frames(19.42,19.95);
+            need(session->phase()==core::VisibilityPhase::concealed,"The contrast probe's HUD closed before the coverage opening");
+            const auto edge=boxPlane.project({disc.x+radius,disc.y}),middle=boxPlane.project(disc);need(edge&&middle,"The contrast disc projects onto the target");
+            contrastReport=Json::Object{{"module","power"},{"driver",args.warp?"WARP":"hardware"},{"sourcePassEnabled",renderer.stats().sourcePassEnabled},{"parks",std::int64_t(parks)},
+                {"parts",std::int64_t(stats.parts)},{"surfaces",std::int64_t(stats.surfaces)},{"entries",std::int64_t(entries.size())},{"cornerErrorPixels",cornerError},
+                {"radiusPixels",std::hypot(edge->x-middle->x,edge->y-middle->y)},{"opacityPower",1.},{"opacityNowPlaying",double(hidden)},{"opacityReselected",double(reshown)},
+                {"centreRatio",1-darkBare.median[0]},{"dark",dark.bins},{"darkWithoutModules",darkBare.bins},{"lightWithoutModules",white.bins}};
+            // Shown frame: the ring Power leaves uncovered (30 % of the radius
+            // out). Without the modules: every bin, the centre's .58 included.
+            for(const auto*reading:{&dark,&darkBare,&white})for(std::size_t n=reading==&dark?3:0;n<reading->median.size();++n){
+                const auto miss=std::abs(reading->median[n]-reading->expected[n]);
+                need(reading->samples[n]>=100&&miss<=(n<10?.04:.01),("The "+std::string(reading==&white?"Light":reading==&dark?"dark":"dark (without the modules)")+" contrast backdrop's readback at "+std::to_string(n*10)+" % of its radius shows the Mac ramp (alpha "+
+                    std::to_string(reading->median[n])+" for "+std::to_string(reading->expected[n])+", "+std::to_string(reading->samples[n])+" samples)").c_str());}
+            need(hiddenSelected&&hidden==0,"The contrast backdrop fades out behind Now Playing");
+            need(reshown==1,"The contrast backdrop fades back in on Power");
+        }
         unsigned coverageOpening{},coverageButtons{};Json::Array coverageResults;
         if(args.coverage){
             settings.ambientEnabled=true;session->setSettings(settings,at(20));session->setScrollPosition(1,at(20));open(at(20));
@@ -715,6 +1162,7 @@ int Application::Impl::runHiddenVerification(){
                 const NativeMessage m{host.hwnd(),id,wParam,lParam};
                 return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,hostTime(last));},"message")!=nullptr;};
             step.timing=[&](Json row){areaTimings.push_back(std::move(row));};
+            step.drawsOnTop=[&](std::span<const gpu::LayerCompositionEntry> entries){return composedOnTopLayer(entries);};
             ++counts.steps;
             try{area.owner->coverage(step);}catch(const std::exception&e){throw std::runtime_error("Module area "+area.name+" coverage: "+e.what());}
             areaLatest=std::max(areaLatest,last);
@@ -846,9 +1294,15 @@ int Application::Impl::runHiddenVerification(){
                             const auto stopped=gameSession->snapshot().simulationTime;
                             tick(time+1.5);tick(time+1.7);
                             need(gameSession->manuallyPaused()&&!game->hasFrameTimer()&&gameSession->snapshot().simulationTime==stopped,"Manual pause advances no game steps");
-                            settingsUI->controller().restoreDefaults();need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
+                            // Display's Restore (the broadest scope) after a Display change: it saves at once and keeps the unscoped keys.
+                            auto&settingsController=settingsUI->controller();auto changed=settingsController.configuration();changed.set("dailyBootLog",!changed.dailyBootLog());
+                            settingsController.update(changed,time+1.7);need(!settingsController.isDefault(ehud::data::SettingsScope::display),"A Display change enables Display's Restore");
+                            const auto hotkey=settingsController.committed().fields["windowsSummonShortcut"];
+                            settingsController.restoreDefaults(ehud::data::SettingsScope::display);need(settingsSaves->flush(),"Isolated settings reset saves through the shared executor");
                             const ehud::data::SettingsStore verified(args.dataRoot);
+                            need(settingsController.isDefault(ehud::data::SettingsScope::display)&&verified.value().isDefault(ehud::data::SettingsScope::display),"Display's Restore saves the Display defaults");
                             need(verified.value().fields["orbipom.bestScore.v1"].integer()==71&&gameSession->bestScore()==71,"Settings reset preserves saved game progress and the live session");
+                            need(verified.value().fields["windowsSummonShortcut"]==hotkey,"Settings reset leaves the hotkey alone");
                         }else need(gameSession->manuallyPaused()&&!game->hasFrameTimer(),"Returning to Minigame preserves manual pause");
                     }
                     if(module==core::Module::map&&map){
@@ -905,7 +1359,48 @@ int Application::Impl::runHiddenVerification(){
                         need(activity->state().sortKey()==endfield::modules::ActivitySort::memory&&canvas.sortKey()==endfield::modules::ActivitySort::memory,"The RAM sort reaches the shared readings");
                         const auto retained=rasterizer.stats();for(unsigned frame=0;frame<12;++frame)present(time+1.35+double(frame)/60,true);
                         need(rasterizer.stats().rasterizations==retained.rasterizations,"Settled Activity frames (the rows' re-stagger included) rasterize nothing");
-                        need(canvas.perform("activity:overview",time+1.55),"The Overview tab is routed");present(time+1.9,true);
+                        double overviewAt=time+1.55;
+                        // 1.3.1 (20) item 11: the RAM list scrolled hard downward past its end
+                        // (wheel detents, a trackpad's small fractions, page scrolling) while
+                        // apps exit and appear keeps the module and stops at the list's end.
+                        if(cycle==0){
+                            auto&provider=activity->providerState();const auto fixture=provider.appSnapshot();
+                            const auto apps=[&](std::size_t count,double stamp){auto value=fixture;value.timestamp=stamp;value.items.clear();
+                                for(std::size_t n=0;n<count;++n){auto item=fixture.items[n%fixture.items.size()];item.identity.id="coverage.drag."+std::to_string(n);item.identity.name="Drag "+std::to_string(n);item.identity.processIDs={std::uint32_t(40000+n)};item.memoryBytes=std::uint64_t(4096+n)*1048576;value.items.push_back(std::move(item));}
+                                return value;};
+                            const auto target=static_cast<tools::DesignModuleOwner&>(*activityModuleOwner).core().clientRect({292,320,0,0});need(target.has_value(),"Activity's app list projects");
+                            const auto area=[&]{return canvas.appList();};
+                            const auto atEnd=[&]{const auto*a=area();return a&&a->maximumOffset()>0&&a->offset()==a->maximumOffset();};
+                            double drag=time+1.56;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);
+                            need(canvas.page().scrollAreas().size()==1&&canvas.appList()==canvas.page().scrollAreas().front().get(),("The Apps page is the shown page before the drag (page areas "+std::to_string(canvas.page().scrollAreas().size())+", swapping "+std::to_string(canvas.transitioning())+", list "+std::to_string(canvas.appList()!=nullptr)+", active "+std::to_string(canvas.isActive())+")").c_str());
+                            const auto turn=[&](double steps,std::uint32_t lines){drag+=.001;need(activityModuleOwner->wheel({target->x,target->y,steps,false,0,lines},drag),"Activity takes the wheel over its app list");(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
+                            const auto publish=[&](std::size_t count,double stamp){provider.receiveApps(apps(count,stamp));drag+=.001;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
+                            // Mac 08cd96a: the rows that fill an emptied table stagger in from below,
+                            // from the sample's own (caught-up) time.
+                            publish(0,fixture.timestamp+.5);publish(5,fixture.timestamp+.6);
+                            {const std::function<const modules::design::Layer*(const modules::design::Layer&)>fifthRow=[&](const modules::design::Layer&l)->const modules::design::Layer*{
+                                 if(l.id().ends_with("activity.app.4"))return &l;for(const auto*child:l.children())if(const auto*hit=fifthRow(*child))return hit;return nullptr;};
+                             const auto*fifth=fifthRow(canvas.root());
+                             need(fifth&&!fifth->hidden()&&fifth->animating(drag)&&fifth->presented(modules::design::Channel::opacity,drag)<.05&&fifth->animating(drag+.3)&&!fifth->animating(drag+1.1),
+                                 "Rows that fill an emptied Activity table stagger in: the fifth is still below .05 on the next frame and settles within the entrance");}
+                            publish(200,fixture.timestamp+1);
+                            for(unsigned n=0;n<40;++n)turn(-1,3);
+                            for(unsigned n=0;n<30;++n)turn(-.12,3);
+                            for(unsigned n=0;n<40;++n)turn(-1,UINT32_MAX);
+                            const auto where=[&]{const auto*a=area();return std::string(" (offset ")+std::to_string(a?a->offset():-1)+" of "+std::to_string(a?a->maximumOffset():-1)+", content "+std::to_string(a?a->contentHeight():-1)+", apps "+std::to_string(activity->state().appSnapshot().items.size())+", page areas "+std::to_string(canvas.page().scrollAreas().size())+", apps page "+std::to_string(canvas.isShowingApps())+")";};
+                            need(atEnd(),("A long RAM list scrolled past its end stops at its last row"+where()).c_str());
+                            publish(5,fixture.timestamp+2);
+                            for(unsigned n=0;n<10;++n)turn(-1,3);
+                            need(area()&&area()->offset()==0,"Apps that exit while the list is at its end bring the offset back within the shorter list");
+                            publish(endfield::modules::ActivityState::maximumApps,fixture.timestamp+3);
+                            for(unsigned n=0;n<80;++n)turn(n%2?-1.:-3.,n%2?UINT32_MAX:3);
+                            need(atEnd(),("More apps appearing mid-scroll still scroll to the end"+where()).c_str());
+                            for(unsigned n=0;n<12;++n)turn(40,3);need(area()&&area()->offset()==0,"Scrolling back up returns to the top");
+                            provider.receiveApps(fixture);drag+=.001;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);
+                            need(area()&&area()->offset()==0&&canvas.isShowingApps()&&activity->canvas()==&canvas,"The Activity module survives the drag and returns to the top of its own readings");
+                            overviewAt=std::max(overviewAt,drag+.01);
+                        }
+                        need(canvas.perform("activity:overview",overviewAt),"The Overview tab is routed");present(std::max(time+1.9,overviewAt+.02),true);
                     }
                     if(module==core::Module::storage&&storage&&storage->canvas()){auto&canvas=*storage->canvas();
                         need(storageFixture!=nullptr,"Hidden Storage must never retain OS capacity/scanner callbacks");
@@ -1060,6 +1555,46 @@ int Application::Impl::runHiddenVerification(){
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
             }
+            // Module self-repair (1.3.1): an owner the registry disabled comes
+            // back, rebuilt through its construction, when its module is opened
+            // again, at most moduleRepairLimit times per run; each failure and
+            // rebuild leaves a record, and a rebuild leaks no canvas, raster
+            // entry or registry slot. The throw is injected here with the
+            // registry's isolation on, as production isolates owners.
+            if(activity&&activityModuleOwner){
+                if(!failureLog){failureLog=std::make_unique<ModuleFailureLog>(args.dataRoot/"Diagnostics"/"module-failures.txt");registry.setFailureObserver([this](const ModuleFailure&f){recordModuleFailure(f);});}
+                const auto settleOn=[&](core::Module module,double seconds){selectModule(module,time);const unsigned n=unsigned(std::ceil(seconds*30));for(unsigned f=0;f<n;++f){time+=1./30;(void)designOverlay->deadline(time);present(time,true);}};
+                const auto fail=[&]{const bool isolating=registry.isolating();registry.setIsolation(true);
+                    (void)registry.guard(*activityModuleOwner,[]{throw std::runtime_error("Synthetic Activity failure");},"frame");registry.setIsolation(isolating);
+                    need(!registry.enabled(*activityModuleOwner)&&!registry.presenter(core::Module::activityMonitor),"The injected throw disables Activity's owner");};
+                const auto drawn=[&]{auto*owner=registry.presenter(core::Module::activityMonitor);return owner&&!owner->entries(core::Module::activityMonitor).empty()&&activity->canvas()&&activity->canvas()->isActive();};
+                const auto repairs=[&]{for(auto&r:moduleRepairs)if(r.module==core::Module::activityMonitor)return &r;need(false,"Activity is listed for repair");return (ModuleRepair*)nullptr;};
+                settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                need(drawn(),"Activity draws before the injected failure");
+                const auto canvases=designOverlay->context().canvases().size();const auto entries=rasterizer.stats().entries;const auto slots=registry.size();const auto routes=utility->stats();
+                for(unsigned round=1;round<=moduleRepairLimit;++round){
+                    fail();settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                    {auto*shown=registry.presenter(core::Module::activityMonitor);
+                     const auto state="(rebuild "+std::to_string(round)+": rebuilds "+std::to_string(repairs()->rebuilds)+", enabled "+std::to_string(activityModuleOwner&&registry.enabled(*activityModuleOwner))+", presenter "+std::to_string(shown!=nullptr)+
+                        ", entries "+std::to_string(shown?shown->entries(core::Module::activityMonitor).size():0)+", canvas "+std::to_string(activity->canvas()!=nullptr)+", active "+std::to_string(activity->canvas()&&activity->canvas()->isActive())+", selected "+std::string(core::moduleIdentifier(notes->selected()))+")";
+                     need(registry.enabled(*activityModuleOwner)&&drawn()&&repairs()->rebuilds==round,("Reopened, the disabled Activity is rebuilt and draws its content "+state).c_str());}
+                    need(activity->state().appSnapshot().items.size()==18,"A rebuild keeps the module's readings (its data service stays)");
+                    need(designOverlay->context().canvases().size()==canvases&&registry.size()==slots,"A rebuild leaves no extra canvas or registry slot");
+                    need(rasterizer.stats().entries<=entries,("A rebuild holds no more raster entries than the owner it replaced ("+std::to_string(rasterizer.stats().entries)+" of "+std::to_string(entries)+")").c_str());
+                    need(utility->stats().pending==routes.pending,"A rebuild leaves no queued work behind");}
+                fail();settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,.5);
+                need(!registry.enabled(*activityModuleOwner)&&!registry.presenter(core::Module::activityMonitor)&&repairs()->capped&&repairs()->rebuilds==moduleRepairLimit,"Past the cap the failing Activity stays off (no rebuild loop)");
+                settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,.3);
+                need(repairs()->rebuilds==moduleRepairLimit,"Reopening past the cap rebuilds nothing more");
+                {const auto text=ehud::data::detail::readFile(failureLog->path(),ModuleFailureLog::maximumBytes).value_or(std::string());
+                 const auto count=[&](std::string_view what){std::size_t n{};for(auto at=text.find(what);at!=std::string::npos;at=text.find(what,at+1))++n;return n;};
+                 need(count("message: Synthetic Activity failure\n")==moduleRepairLimit+1&&count("message: rebuilt after a failure (")==moduleRepairLimit&&count("message: stopped: rebuilt ")==1&&count("operation: repair\n")==moduleRepairLimit+1,
+                     "module-failures.txt records every failure, every rebuild and the stop at the cap");}
+                // Coverage only: lift the cap once so the checks below find Activity as before.
+                repairs()->rebuilds=0;repairs()->capped=false;settleOn(core::Module::storage,.3);settleOn(core::Module::activityMonitor,1);
+                need(registry.enabled(*activityModuleOwner)&&drawn(),"Activity runs again for the remaining coverage");
+                time+=1;
+            }
             // RC 140 report (not reproduced): starting a Work Mode countdown or
             // switching an Event Log tab hid Work Mode, Event Log, Personal ID,
             // Account binding, the sanity wallet and Power. After both triggers,
@@ -1167,6 +1702,14 @@ int Application::Impl::runHiddenVerification(){
                 recordingToggle=std::move(toggles);
             }
             checkPages("afterRecording");
+            // 24 synthetic files beside this run's own Shelf data root (never a user file).
+            const auto syntheticShelfFiles=[&]{
+                const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
+                std::vector<std::string> paths;
+                for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
+                    {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
+                    const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                return paths;};
             // Action timing (the owner's "slight freeze" on Work Mode start/pause
             // and Shelf selection, and the other in-place changes of a shown
             // canvas): with every module built, each action runs through the path
@@ -1328,11 +1871,7 @@ int Application::Impl::runHiddenVerification(){
                 // File Shelf: synthetic files in this run's own data root (never a user file).
                 if(shelf&&shelf->canvas()&&shelfModuleOwner&&registry.enabled(*shelfModuleOwner)&&!args.shelfDataRoot.empty()){
                     const auto M=core::Module::fileShelf;auto*canvas=shelf->canvas();
-                    const auto folder=args.shelfDataRoot.parent_path()/"freeze-probe-files";std::filesystem::create_directories(folder);
-                    std::vector<std::string> paths;
-                    for(unsigned n=1;n<=24;++n){char name[32];std::snprintf(name,sizeof name,"Synthetic %02u.txt",n);const auto file=folder/name;
-                        {std::ofstream out(file,std::ios::binary);out<<"Synthetic freeze probe file "<<n<<"\n";}
-                        const auto utf8=file.u8string();paths.emplace_back(reinterpret_cast<const char*>(utf8.data()),utf8.size());}
+                    const auto paths=syntheticShelfFiles();
                     const std::vector<std::string> seed(paths.begin(),paths.end()-1),last(paths.end()-1,paths.end());
                     // The archive saves an action hands to the utility worker (and makes at once, on this thread).
                     std::int64_t savesQueued{},savesAtOnce{};
@@ -1820,18 +2359,10 @@ int Application::Impl::runHiddenVerification(){
                 if(notes&&notes->selected()!=before)(void)showModule(before);}
                 actionTiming=std::move(timings);
             }
-            // Host integration over the same owner: the restart service is
-            // production-only, the System row of the macImport area, the UI
-            // Automation root over the Volume fragments and the OLE drop
-            // route's Shelf navigation hit test.
+            // Host integration over the same owner: the UI Automation root
+            // over the Volume fragments and the OLE drop route's Shelf
+            // navigation hit test.
             {
-                hostCheck(!restart.restartWith([]{},[]{})&&!restartPending,"A data-root restart cannot be requested outside production");
-                if(settingsUI&&areaHost&&areaHost->find<MacImportEntry>(macImportEntryService)){
-                    settingsUI->refreshViews(time);
-                    const auto&system=settingsUI->canvas(core::Module::system);
-                    if(system.renderedLanguage()&&system.section()=="main")
-                        hostCheck(std::any_of(system.page().controls().begin(),system.page().controls().end(),[](const auto*c){return c->id()=="macImport";}),"System lists Import macOS data from the macImport area");
-                }
                 if(volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
                     selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
@@ -1878,15 +2409,60 @@ int Application::Impl::runHiddenVerification(){
                         for(const auto&row:plan.applications()){if(!row.executable){exact=false;continue;}const auto*binding=plan.binding(row.applicationID);
                             if(row.executable->identity.objectID[0]!=3){++withIcon;exact=exact&&binding&&binding->image&&volumeIcons->images().acquire(binding->imageKey,binding->revision)!=nullptr;}
                             else{++without;exact=exact&&(!binding||!binding->image||binding->typeFallback);}}
-                        {const bool late=volumeCanvas->iconsChanged();hostCheck(exact&&withIcon>=2&&without==1&&!late,"Volume's app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon ("+std::to_string(plan.applications().size())+" rows, "+std::to_string(withIcon)+" with, "+std::to_string(without)+" without, exact "+std::to_string(exact)+", late "+std::to_string(late)+")");}
+                        {const bool late=volumeCanvas->iconsChanged(time);hostCheck(exact&&withIcon>=2&&without==1&&!late,"Volume's app rows show their executables' icons from the shared queue; one without an icon resource keeps the nil icon ("+std::to_string(plan.applications().size())+" rows, "+std::to_string(withIcon)+" with, "+std::to_string(without)+" without, exact "+std::to_string(exact)+", late "+std::to_string(late)+")");}
                         const auto loaded=volumeIcons->stats();
                         hostCheck(loaded.jobs>=1&&loaded.published>=withIcon&&!loaded.inFlight&&utility->stats().workersStarted==workers&&(!shelf||shelf->resources().iconWorkerStarts==shelfIcons),
                             "Volume icons load on the shared utility worker: no thread of their own, and the Shelf's Shell icon worker is untouched");
                         volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(0,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
-                        hostCheck(volumeCanvas->tab()==0&&!volumeIcons->plan().active(),"Leaving App volume withdraws its icon requests");
+                        {const auto listed=volumeCanvas->listedApplications();const auto apps=volumeIcons->plan().applications();
+                         hostCheck(volumeCanvas->tab()==0&&listed.size()==5&&apps.size()==4&&apps.front().applicationID==listed.front()->id&&apps.back().applicationID==listed[3]->id,
+                             "On Devices the icon requests fall back to the rows App volume opens on ("+std::to_string(apps.size())+" apps)");}
                         volumeCanvas->env().now=time;volumeCanvas->page().tabs->select(1,true);for(unsigned frame=0;frame<40;++frame){(void)designOverlay->deadline(time+double(frame)/60);present(time+double(frame)/60,true);}time+=1;
-                        hostCheck(volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volumeCanvas->iconsChanged(),"Returning to App volume binds the cached icons at once, without loading them again");
+                        hostCheck(volumeIcons->plan().active()&&volumeIcons->stats().jobs==loaded.jobs&&!volumeCanvas->iconsChanged(time),"Returning to App volume binds the cached icons at once, without loading them again");
                         for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=1;
+                        // Every square shows its icon (or the grey no-icon square,
+                        // the synthetic app 3) and none of them faded in: the
+                        // request bound them from the cache.
+                        using Shows=modules::VolumeCanvas::IconSquare::Shows;
+                        // `seen` lists each row as shows/opacity/faded (shows: 0 clear, 1 icon, 2 none).
+                        const auto cachedAtOnce=[&](std::size_t rows,std::string&seen){const auto listed=volumeCanvas->listedApplications();bool all=listed.size()>=rows;
+                            for(std::size_t n=0;n<rows&&n<listed.size();++n){const auto*square=volumeCanvas->iconSquareForTesting(listed[n]->id);const bool none=listed[n]->executable&&listed[n]->executable->identity.objectID[0]==3;
+                                if(!square){all=false;seen+=" -";continue;}
+                                const double opacity=square->layer->value(modules::design::Channel::opacity);const bool faded=square->layer->tracks().property[std::size_t(modules::design::Channel::opacity)].present();
+                                seen+=" "+std::to_string(int(square->shows))+"/"+std::to_string(opacity)+"/"+std::to_string(faded);
+                                all=all&&square->shows==(none?Shows::none:Shows::icon)&&opacity==1&&!faded;}
+                            return all;};
+                        const auto drainIcons=[&]{for(unsigned round=0;round<8;++round){utility->waitIdle();utilityCompleted();if(!volumeIcons->stats().inFlight)break;}
+                            for(unsigned frame=0;frame<30;++frame)present(time+double(frame)/60,true);time+=1;};
+                        // A row scrolled out of the icon window keeps its icon when the
+                        // list's bottom asks for the lower rows' icons, and scrolling
+                        // back up shows the cached icons at once.
+                        if(const auto list=static_cast<tools::DesignModuleOwner&>(*volumeModuleOwner).core().clientRect({295,125+87,0,0})){
+                            const auto wheel=[&](double steps){bool taken=true;for(unsigned detent=0;detent<5;++detent){taken=volumeModuleOwner->wheel({list->x,list->y,steps,false,0,3},time)&&taken;
+                                for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.4;}return taken;};
+                            const auto first=volumeCanvas->listedApplications().front()->id,lastID=volumeCanvas->listedApplications().back()->id;
+                            const bool down=wheel(-1);drainIcons();const double bottom=volumeCanvas->applicationScrollOffset();
+                            const auto*last=volumeIcons->plan().binding(lastID);const auto*kept=volumeCanvas->iconSquareForTesting(first);
+                            hostCheck(down&&bottom==120&&last&&last->image&&!volumeIcons->plan().binding(first)&&kept&&kept->shows==Shows::icon,
+                                "A row scrolled out of the icon window keeps its icon when the lower rows' icons show (offset "+std::to_string(bottom)+")");
+                            const bool up=wheel(1);drainIcons();std::string seen;const bool cached=cachedAtOnce(4,seen);const bool late=volumeCanvas->iconsChanged(time);
+                            hostCheck(up&&volumeCanvas->applicationScrollOffset()==0&&cached&&!late,"Scrolling back up the app list shows the cached icons at once (offset "+
+                                std::to_string(volumeCanvas->applicationScrollOffset())+", rows"+seen+", late "+std::to_string(late)+")");
+                        }else hostCheck(false,"The Volume app list has a client rectangle");
+                        // Back on App volume after its page went stale while another
+                        // module showed (a render-scale change): the page is rebuilt
+                        // before it is active, and the activation shows the cached
+                        // icons at once, without loading them again.
+                        if(workModeModuleOwner&&registry.enabled(*workModeModuleOwner)){
+                            const auto jobs=volumeIcons->stats().jobs;
+                            selectModule(core::Module::workMode,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                            const bool hidden=!volumeCanvas->isActive();volumeCanvas->renderScaleChanged();
+                            selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                            std::string seen;const bool cached=cachedAtOnce(4,seen);const bool late=volumeCanvas->iconsChanged(time);
+                            hostCheck(hidden&&volumeCanvas->isActive()&&volumeCanvas->tab()==1&&cached&&!late&&volumeIcons->stats().jobs==jobs,
+                                "Returning to App volume after a rebuild while hidden shows the cached icons at once, without loading them again (rows"+seen+", late "+std::to_string(late)+", jobs "+
+                                std::to_string(volumeIcons->stats().jobs-jobs)+")");
+                        }else hostCheck(false,"Work Mode is available for the Volume stale-return check");
                     }
                     uia.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&uia.groups()==0,"Concealing disconnects every fragment");
                     uia.shutdown();
@@ -2140,6 +2716,233 @@ int Application::Impl::runHiddenVerification(){
                         auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
                 }
+                // Display > HUD elements > Edit position and size (SystemHUDView
+                // overlay placement, Mac a93b2c5 ... fe3f046): the strip and its marks
+                // on the top layer, the inputs beside placement off (the clock's
+                // peers withdrawn, its press refused), the cursor (open over an
+                // element, closed while dragging, normal over the strip), a drag,
+                // a size slider, the strip beside the element dragged, a theme
+                // flip, Esc dropping the draft (the clock's peers back), the HUD
+                // closing dropping it, and Return saving the placement as drawn
+                // with a title text committed in the same turn.
+                if(chrome&&settingsUI&&hudElements){
+                    using G=core::OverlayGeometry;
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const auto saved=appliedOverlayLayout;
+                    const auto world=chrome->statusWorld();
+                    const auto viewProjection=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    std::optional<core::Point> clockBody;
+                    if(world)if(const auto p=core::Projection::viewport(viewProjection**world,metrics.pixelWidth,metrics.pixelHeight).project({170,50}))clockBody=core::Point{p->x/metrics.scale,p->y/metrics.scale};
+                    // A strip slider through its UI Automation peer (RangeValue).
+                    const auto setStripSlider=[&](std::string_view id,double value){
+                        HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();bool applied{};
+                        for(std::size_t n=0;n<hudElements->automationCount()&&!applied;++n){
+                            ComPtr<IRawElementProviderFragment>f;ComPtr<IRawElementProviderSimple>simple;ComPtr<IUnknown>pattern;ComPtr<IRangeValueProvider>range;
+                            if(SUCCEEDED(hudElements->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==id&&SUCCEEDED(f.As(&simple))&&
+                                SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId,&pattern))&&pattern&&SUCCEEDED(pattern.As(&range)))applied=range->SetValue(value)==S_OK;}
+                        uia.disconnectOwners();uia.shutdown();return applied;};
+                    const auto drag=[&](core::Point from,core::Point by){
+                        (void)hudElements->pointer({PointerKind::down,PointerButton::left,from.x,from.y},time);
+                        (void)hudElements->pointer({PointerKind::move,PointerButton::none,from.x+by.x,from.y+by.y},time+.05);
+                        (void)hudElements->pointer({PointerKind::up,PointerButton::left,from.x+by.x,from.y+by.y},time+.1);present(time+.15,true);time+=.2;};
+                    hostCheck(clockBody&&clockAcceptsInput(),"Before placing the clock takes input");
+                    beginOverlayPlacement(time);for(unsigned frame=0;frame<30;++frame)present(time+double(frame)/60,true);time+=.6;
+                    hostCheck(placingOverlay()&&hudElements->strip()&&!allowsInputBesidePlacement()&&!clockAcceptsInput()&&moduleInputAllowed(),
+                        "Edit position and size starts placing; the clock and the navigation wait, the HUD keeps its module input");
+                    hostCheck(registry.first(ModuleRegistry::Chain::pointerCapture,[](ModuleOwner&o,const ModuleRouting&){return o.capturesPointer();},"verify")==hudElements.get(),
+                        "The placement captures the pointer ahead of every module");
+                    // The top layer (b58f2e0): after the pinned notes, before the areas' modal cards.
+                    hostCheck(notesModuleOwner&&!notesModuleOwner->floatingEntries().empty(),"Pinned notes are composed while placing on Notes");
+                    hostCheck(composedOnTopLayer(hudElements->topEntries()),"The strip and its marks draw on the top layer, above the pinned notes and below the modal cards");
+                    if(clockBody)hostCheck(!clockPress({PointerKind::down,PointerButton::left,clockBody->x,clockBody->y},time),"The clock refuses its press while placing");
+                    {std::vector<HudButtonPeer> peers;navigationPeers(peers);
+                        hostCheck(!peers.empty()&&std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return navigationPress(peer);}),"The module, Quit and scroll buttons are refused while placing");}
+                    if(clockAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                        hostCheck(clockAutomation->automationCount()==0&&hudElements->automationCount()==5,"The clock's peers are withdrawn; the strip lists three sliders and two pills");
+                        uia.disconnectOwners();uia.shutdown();}
+                    // Sanity size 150 %: the draft the HUD shows and the gauge's drawn frame follow.
+                    {const auto revision=overlayLayoutRevision;
+                        hostCheck(setStripSlider("sanity",150)&&hudElements->draft()&&hudElements->draft()->sanity.size==1.5&&shownOverlayLayout().sanity.size==1.5&&overlayLayoutRevision>revision&&
+                            std::abs(hudElements->frames()[G::index(G::Element::sanity)].width-G::gauge.width*1.5)<1e-6,"The Sanity size slider sizes the gauge in the draft the HUD shows");}
+                    present(time,true);time+=.1;
+                    // A drag of the gauge from where it is drawn.
+                    const auto frames=hudElements->frames();const auto gauge=frames[G::index(G::Element::sanity)];
+                    const auto grab=hudElements->clientPoint({gauge.x+gauge.width/2,gauge.y+gauge.height/2});
+                    hostCheck(grab&&cursorAt(*grab)==ModuleCursor::openHand,"The open hand shows over an element");
+                    if(grab){
+                        (void)hudElements->pointer({PointerKind::down,PointerButton::left,grab->x,grab->y},time);
+                        hostCheck(hudElements->dragged()==G::Element::sanity&&cursorAt(*grab)==ModuleCursor::closedHand,"A press on the gauge drags it; the closed hand shows");
+                        (void)hudElements->pointer({PointerKind::move,PointerButton::none,grab->x-60,grab->y+40},time+.05);
+                        (void)hudElements->pointer({PointerKind::up,PointerButton::left,grab->x-60,grab->y+40},time+.1);present(time+.15,true);time+=.2;
+                        const auto*draft=hudElements->draft();
+                        hostCheck(draft&&draft->sanity.x<-1&&draft->sanity.y>1&&!hudElements->dragged()&&shownOverlayLayout().sanity==draft->sanity,"The drag moves the gauge in the draft the HUD shows");
+                        // layoutOverlayEditor: the strip settles below the element last dragged.
+                        if(const auto*editor=hudElements->strip()){
+                            const auto moved=G::grown(hudElements->frames()[G::index(G::Element::sanity)],G::hitSlop);const auto title=hudElements->frames()[G::index(G::Element::title)];
+                            const auto below=hudElements->clientPoint({moved.x+moved.width/2,moved.y+moved.height});
+                            const auto titleCenter=hudElements->clientPoint({title.x+title.width/2,title.y+title.height/2});
+                            const auto stripTop=hudElements->stripClientPoint({editor->size().width/2,0});
+                            hostCheck(below&&titleCenter&&stripTop&&stripTop->y>below->y&&std::abs(stripTop->x-below->x)<std::abs(stripTop->x-titleCenter->x),"The strip sits below the gauge last dragged");}
+                    }
+                    if(const auto*editor=hudElements->strip();editor&&!editor->sliders().empty()){
+                        const auto slider=editor->sliders().front()->layer().frame();
+                        const auto over=hudElements->stripClientPoint({slider.x+slider.width/2,slider.y+slider.height/2});
+                        hostCheck(over&&cursorAt(*over)==ModuleCursor::source,"The normal cursor shows over the strip");}
+                    // viewDidChangeEffectiveAppearance: a theme flip rebuilds the strip from the draft.
+                    if(const auto*before=hudElements->strip();before&&hudElements->draft()){
+                        const auto draft=*hudElements->draft();auto flipped=moduleAppearance;flipped.dark=!flipped.dark;
+                        hudElements->setAppearance(flipped,time);const auto*rebuilt=hudElements->strip();
+                        const bool kept=placingOverlay()&&rebuilt&&rebuilt!=before&&hudElements->draft()&&*hudElements->draft()==draft&&rebuilt->sliders().size()==3&&rebuilt->sliders()[1]->value()==150;
+                        hudElements->setAppearance(moduleAppearance,time);present(time,true);time+=.1;
+                        hostCheck(kept&&placingOverlay()&&hudElements->strip()!=rebuilt,"A theme flip while placing rebuilds the strip from the draft");}
+                    hostCheck(onKey({KeyKind::down,VK_ESCAPE})&&!placingOverlay()&&appliedOverlayLayout==saved&&shownOverlayLayout()==saved,"Esc drops the draft");
+                    for(unsigned frame=0;frame<10;++frame)present(time+double(frame)/60,true);time+=.3;
+                    hostCheck(clockAcceptsInput()&&allowsInputBesidePlacement(),"After Cancel the clock and the navigation take input again");
+                    if(clockAutomation){HudAutomation uia(host.hwnd(),automationSource());(void)uia.refresh();
+                        hostCheck(clockAutomation->automationCount()>0&&hudElements->automationCount()==0,"After Cancel the clock's peers are listed again and the strip's are gone");
+                        uia.disconnectOwners();uia.shutdown();}
+                    // The HUD close (48584b5): a press on an element ends at once and
+                    // nothing takes input; the strip, the marks and the moved draft
+                    // stay drawn to fade with the close; the closed HUD drops the
+                    // draft unsaved once hidden.
+                    beginOverlayPlacement(time);present(time,true);time+=.1;
+                    {const auto shut=hudElements->frames()[G::index(G::Element::sanity)];
+                        if(const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2}))drag(*press,{-40,30});}
+                    // The press is on the title, away from the gauge the strip sits beside:
+                    // the close's cancel ends it with no release, so the strip stays where
+                    // it is drawn (the Mac lays it out again only on a release or an alert).
+                    {const auto*draft=hudElements->draft();const bool moved=draft&&draft->sanity!=saved.sanity;const auto movedDraft=draft?std::optional(*draft):std::nullopt;
+                        const auto shut=hudElements->frames()[G::index(G::Element::title)];const auto press=hudElements->clientPoint({shut.x+shut.width/2,shut.y+shut.height/2});
+                        const auto stripAt=[&]{const auto*strip=hudElements->strip();return strip?hudElements->stripClientPoint({strip->size().width/2,0}):std::nullopt;};
+                        const auto stripBefore=stripAt();
+                        if(press)(void)hudElements->pointer({PointerKind::down,PointerButton::left,press->x,press->y},time);
+                        const bool pressed=hudElements->dragged()==G::Element::title;
+                        hudElements->overlayClosing(time);present(time+.05,true);
+                        const auto stripAfter=stripAt();
+                        const bool kept=placingOverlay()&&hudElements->draft()&&*hudElements->draft()==*movedDraft&&shownOverlayLayout()==*movedDraft&&!hudElements->dragged()&&
+                            !hudElements->topEntries().empty()&&!hudElements->capturesPointer()&&!hudElements->capturesKeys()&&!hudElements->covers({0,0})&&
+                            stripBefore&&stripAfter&&std::abs(stripAfter->x-stripBefore->x)<.5&&std::abs(stripAfter->y-stripBefore->y)<.5;
+                        const bool ignored=press&&!hudElements->pointer({PointerKind::move,PointerButton::none,press->x+50,press->y},time+.06)&&
+                            !hudElements->pointer({PointerKind::up,PointerButton::left,press->x+50,press->y},time+.07)&&*hudElements->draft()==*movedDraft;
+                        hostCheck(moved&&pressed&&kept&&ignored,"The HUD close ends the press and keeps the strip where it is drawn, the marks and the moved draft, taking no input");
+                        (void)hudElements->hostEvent({HostEvent::Kind::overlayConcealed,0},time+.4);
+                        const bool dropped=!placingOverlay()&&shownOverlayLayout()==saved&&settingsUI->controller().committed().overlayLayout(graphemes)==saved;
+                        hudElements->setOverlayVisible(true,time+.4);present(time+.4,true);time+=.5;
+                        hostCheck(dropped,"The hidden HUD drops the moved draft unsaved");}
+                    // A Title text committed in the same turn as Edit position and size
+                    // (published before a frame applies it): placing starts from it,
+                    // and Return saves every placement as drawn and keeps it.
+                    {auto next=settingsUI->controller().committed();auto layout=next.overlayLayout(graphemes);layout.titleText="PLACED TITLE";
+                        next.setOverlayLayout(layout,graphemes);settingsUI->controller().update(std::move(next),time);}
+                    const bool stale=appliedOverlayLayout.titleText!="PLACED TITLE";
+                    beginOverlayPlacement(time);
+                    hostCheck(stale&&placingOverlay()&&hudElements->draft()&&hudElements->draft()->titleText=="PLACED TITLE","Placing starts from the record just committed, before a frame applies it");
+                    present(time,true);time+=.1;
+                    const auto title=hudElements->frames()[G::index(G::Element::title)];
+                    if(const auto press=hudElements->clientPoint({title.x+10,title.y+10}))drag(*press,{80,30});
+                    hostCheck(setStripSlider("sanity",150),"The Sanity size slider takes a value");
+                    const auto moved=hudElements->draft()?std::optional(*hudElements->draft()):std::nullopt;
+                    {const bool confirmed=onKey({KeyKind::down,VK_RETURN})&&!placingOverlay();const auto stored=settingsUI->controller().committed().overlayLayout(graphemes);
+                        hostCheck(confirmed&&moved&&moved->title.x>1&&stored.title==moved->title&&stored.sanity.size==1.5&&stored.titleText=="PLACED TITLE",
+                            "Return saves the moved title and the Sanity size and keeps the title text just committed");}
+                    present(time+.2,true);time+=.3;
+                    hostCheck(chromeContent.title.origin.x>270&&std::abs(chromeContent.title.origin.x-(270+moved.value_or(saved).title.x))<1e-6,"The title is drawn at its saved place");
+                    auto restore=settingsUI->controller().committed();restore.setOverlayLayout(saved,graphemes);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
+                }
+                // Display > Modules > Arrange on HUD (SystemHUDView module
+                // arrangement, S2): the open hand over a module tile and the
+                // closed hand from the press, before the lift; the lift past 3
+                // points, held under the pointer and drawn above the others; Esc
+                // dropping it back with no write and swallowing the release; a
+                // drag onto another tile saving once in the order of the release
+                // slot; the wheel during a drag keeping the preview on the slot
+                // under the pointer; Add App doing nothing; closing mid-drag
+                // snapping with no write.
+                if(chrome&&settingsUI&&session){
+                    selectModule(core::Module::display,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    // Display > Modules (the page swap runs on the design deadlines), then
+                    // the Arrange on HUD switch (the canvas tells the HUD).
+                    const auto settle=[&](double seconds){for(unsigned frame=0;frame<unsigned(seconds*60);++frame){const double t=time+double(frame)/60;
+                        if(const auto wake=designOverlay?designOverlay->nextWakeTime(t):std::nullopt;wake&&*wake<=t)onDeadline(t);present(t,true);}time+=seconds+.05;};
+                    auto&arrangePage=settingsUI->canvas(core::Module::display);
+                    const bool opened=arrangePage.performAccessibilityAction("modules",time);settle(1);
+                    const bool switched=arrangePage.performAccessibilityAction("modulesArrange",time);settle(.2);
+                    struct Tile{std::string module,button;std::uint64_t action{};core::Point centre;};
+                    const auto tilesNow=[&]{std::vector<Tile> tiles;std::optional<core::Point> addApp;
+                        for(const auto&[id,action]:session->actions()){if(!session->rowAction(id))continue;const auto*entry=navigationEntry(action);if(!entry)continue;
+                            const std::array<std::string,1> ids{id};const auto frame=session->buttonFrame(ids);if(!frame)continue;const core::Point centre{frame->x+frame->width/2,frame->y+frame->height/2};
+                            if(entry->module&&entry->target=="addApp")addApp=centre;
+                            else if(entry->module&&ehud::data::ModuleLayout::listsTarget(entry->target))tiles.push_back({entry->target,id,action,centre});}
+                        std::sort(tiles.begin(),tiles.end(),[](const Tile&a,const Tile&b){return a.centre.y<b.centre.y||(a.centre.y==b.centre.y&&a.centre.x<b.centre.x);});
+                        return std::pair{tiles,addApp};};
+                    const auto [tiles,unusedAddApp]=tilesNow();(void)unusedAddApp;
+                    hostCheck(opened&&switched&&arrangingModules&&arrangePage.arrangingModules()&&tiles.size()>=3,"Display > Modules > Arrange on HUD turns arranging on; the module tiles are listed on the right");
+                    if(tiles.size()>=3){
+                        // The host reads its own clock; `at` names the moment for the reader.
+                        const auto pointer=[&](PointerKind kind,core::Point p,double at){(void)at;return onPointer({kind,kind==PointerKind::move?PointerButton::none:PointerButton::left,p.x,p.y,kind==PointerKind::move?std::uint32_t(MK_LBUTTON):0u});};
+                        const auto&a=tiles[0];const auto&b=tiles[2];const auto saved=configuration.moduleLayout();
+                        hostCheck(arrangeableModule(a.centre)==std::optional<std::string_view>(a.module)&&cursorAt(a.centre)==ModuleCursor::openHand,"The open hand shows over a module tile");
+                        {std::vector<HudButtonPeer> peers;navigationPeers(peers);const auto drag=core::localized("Drag to reorder","拖动以调整顺序",watchAppearance.language==core::Language::system?core::Language::english:watchAppearance.language);
+                            hostCheck(std::any_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag;})&&
+                                std::none_of(peers.begin(),peers.end(),[&](const HudButtonPeer&peer){return peer.help==drag&&navigationPress(peer);}),"The module tiles say they are dragged, and a press through UI Automation opens nothing");}
+                        // Whatever reaches a tile's activation opens nothing (SystemHUDView onAction).
+                        activate({a.button,a.action});present(time,true);
+                        hostCheck(notes&&notes->selected()==core::Module::display&&notes->modulePresentation().current.module==core::Module::display&&arrangingModules,"An activation of a module tile opens nothing while arranging");
+                        // Press, then Esc: dropped back, no write, the release swallowed.
+                        const auto revision=settingsUI->controller().revision();
+                        hostCheck(pointer(PointerKind::down,a.centre,time)&&arrangeDrag&&!arrangeDrag->lifted&&cursorAt({5,5})==ModuleCursor::closedHand&&!session->navigationPointerActive(),
+                            "The closed hand shows from the press, before the lift, wherever the pointer is; the press starts no list drag");
+                        (void)pointer(PointerKind::move,{a.centre.x,a.centre.y+2},time);hostCheck(arrangeDrag&&!arrangeDrag->lifted&&!session->arrangeLifted(),"Within 3 points nothing lifts");
+                        (void)pointer(PointerKind::move,{a.centre.x,a.centre.y+12},time);present(time+.02,true);
+                        hostCheck(arrangeDrag&&arrangeDrag->lifted&&session->arrangeLifted()==a.action&&pointerLocked()&&session->raisedButton().has_value(),"Past 3 points the tile lifts under the pointer, above the others, the parallax held");
+                        hostCheck(onKey({KeyKind::down,VK_ESCAPE})&&!arrangeDrag&&swallowsArrangePress&&configuration.moduleLayout()==saved&&settingsUI->controller().revision()==revision,"Esc drops the tile back in its saved place and writes nothing");
+                        hostCheck(pointer(PointerKind::move,b.centre,time)&&!arrangeDrag&&pointer(PointerKind::up,b.centre,time)&&!swallowsArrangePress&&settingsUI->controller().revision()==revision,"The rest of that press does nothing");
+                        for(unsigned frame=0;frame<20;++frame)present(time+.1+double(frame)/60,true);time+=.5;
+                        // A drag onto the third tile: the preview follows, the release saves once.
+                        (void)pointer(PointerKind::down,a.centre,time);
+                        for(unsigned n=1;n<=10;++n){const double f=n/10.;(void)pointer(PointerKind::move,{a.centre.x+(b.centre.x-a.centre.x)*f,a.centre.y+(b.centre.y-a.centre.y)*f},time+n*.02);present(time+n*.02,true);}
+                        const auto preview=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
+                        hostCheck(preview&&preview->order!=saved.order&&std::find(preview->order.begin(),preview->order.end(),a.module)-preview->order.begin()==std::find(saved.order.begin(),saved.order.end(),b.module)-saved.order.begin(),
+                            "Over another module the dragged module takes its place in the preview");
+                        {const auto wheelRevision=settingsUI->controller().revision();const auto scrolledFrom=session->scrollPosition();const auto slotBefore=session->rowActionAt(b.centre,true);
+                            const auto previewBefore=arrangeDrag?std::optional(arrangeDrag->preview.order):std::nullopt;
+                            const bool wheeled=onWheel({b.centre.x,b.centre.y,-1,false,0,6});for(unsigned frame=0;frame<30;++frame)present(time+.3+double(frame)/60,true);
+                            hostCheck(wheeled&&session->scrollPosition()!=scrolledFrom&&session->rowActionAt(b.centre,true)!=slotBefore&&arrangeDrag&&arrangeDrag->lifted&&arrangeDrag->preview.order!=previewBefore&&
+                                !arrangeDrag->preview.arranging(arrangeDrag->module,rightRowTarget(b.centre))&&settingsUI->controller().revision()==wheelRevision,
+                                "A wheel turned during the drag scrolls the list under the tile, and the preview follows the new slot under the pointer, unsaved");}
+                        time+=1;const auto shown=arrangeDrag?std::optional(arrangeDrag->preview):std::nullopt;
+                        hostCheck(pointer(PointerKind::up,b.centre,time)&&!arrangeDrag&&shown&&configuration.moduleLayout().order==shown->order&&settingsUI->controller().revision()==revision+1,"The release saves the order of the release slot once");
+                        for(unsigned frame=0;frame<20;++frame)present(time+double(frame)/60,true);time+=.5;
+                        hostCheck(!session->arrangeActive()&&moduleLayout==configuration.moduleLayout(),"The tile settles into its slot and the saved order applies");
+                        // Add App does nothing; closing mid-drag slides the tiles back.
+                        // Add App ends the list: scrolled into the bound rows first.
+                        const auto scrollList=[&](int direction){for(unsigned n=0;n<40&&session->scrollDirection(direction,false,time,1000);++n)present(time,true);present(time,true);};
+                        scrollList(1);const auto [unusedTiles,lastAddApp]=tilesNow();(void)unusedTiles;
+                        hostCheck(lastAddApp&&pointer(PointerKind::down,*lastAddApp,time)&&!arrangeDrag&&pointer(PointerKind::up,*lastAddApp,time)&&notes&&notes->selected()==core::Module::display,"A press on Add App opens nothing while arranging");
+                        scrollList(-1);const auto [again,unused]=tilesNow();(void)unused;
+                        hostCheck(!again.empty(),"The module tiles are still listed after the save");
+                        if(!again.empty()){const auto&c=again.front();const auto before=settingsUI->controller().revision();
+                            (void)pointer(PointerKind::down,c.centre,time);(void)pointer(PointerKind::move,{c.centre.x,c.centre.y+20},time);present(time+.02,true);
+                            const bool lifted=arrangeDrag&&arrangeDrag->lifted&&session->arrangeLifted()==c.action;
+                            close(time+.05);
+                            // d8100a9: the lifted tile and the tiles that moved aside slide back
+                            // to the saved order as the HUD folds (.18 s, inside the close).
+                            // Arranging itself ends with the Settings page's deactivation
+                            // once the HUD is hidden (Mac 79bc665: the close's start only
+                            // drops the press, dropArrangePress(closing:)).
+                            hostCheck(lifted&&!arrangeDrag&&swallowsArrangePress&&session->arrangeActive()&&settingsUI->controller().revision()==before,
+                                "Closing mid-drag writes nothing and drops the tile; the tiles slide back with the close");
+                            std::optional<double> settledAt;
+                            for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f){const double frameAt=time+.1+double(f)/60;present(frameAt,true);if(!settledAt&&!session->arrangeActive())settledAt=frameAt;}
+                            hostCheck(settledAt&&*settledAt<=time+.05+core::DesignMotion::listSlide+1.5/60,"The tiles settle into the saved order within .18 s, before the close ends");
+                            time+=1.6;concealed(time);hostCheck(!arrangingModules,"The hidden HUD ends arranging");
+                            time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
+                        // The order changed above goes back.
+                        auto restore=settingsUI->controller().committed();restore.setModuleLayout(saved);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
+                    }
+                    if(arrangingModules)(void)arrangePage.performAccessibilityAction("modulesArrange",time);
+                    hostCheck(!arrangingModules,"Arrange on HUD is off at the end");
+                }
                 // The clock section scrolls with a Windows mouse wheel too (the Mac
                 // reads the horizontal swipe), and a style change pushes the inner
                 // clipped page (HUDClockPageViewport.transition: 0.26 s,
@@ -2325,8 +3128,10 @@ int Application::Impl::runHiddenVerification(){
             // Real event routes (onKey/onPointer) read the host time (here the
             // synthetic clock), so this phase continues on it.
             if(designOverlay&&!quitButtons.empty()){
+                // The end of a frame as the host's frame handler runs it: an opening
+                // completes through the production finishOpening (the S3 checks need it).
                 const auto settle=[&](double t){
-                    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
+                    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(t);if(stopping||concealedBroadcast)return;}
                     if(shelfDragFrame(t,true))return;
                     if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();concealed(t);perform(lifecycle.didClose(token),t);openAfterConcealed();}
                 };
@@ -2343,6 +3148,14 @@ int Application::Impl::runHiddenVerification(){
                 double t=std::max(now(),time+2);
                 const auto lifecycleCheck=[&](bool value,const char*why){need(value,why);++lifecycleChecks;};
                 lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed,"Lifecycle starts closed after the direct coverage close");
+                // The Mac registers a design canvas for every module (SystemHUDView registerModule),
+                // so each one the HUD opens into plays the delayed opening entrance, Home (Power)
+                // included: here every module a registered owner presents is a design screen.
+                {std::string unmarked;
+                 for(unsigned moduleIndex=0;moduleIndex<=static_cast<unsigned>(core::Module::profile);++moduleIndex){const auto presented=static_cast<core::Module>(moduleIndex);
+                     if(registry.presenter(presented)&&!notes->isDesignScreen(presented))unmarked+=" "+std::string(core::moduleIdentifier(presented));}
+                 need(registry.presenter(core::Module::power)&&notes->isDesignScreen(core::Module::power)&&unmarked.empty(),
+                     ("Every presented module is a design screen with an opening entrance, Home included (not:"+unmarked+")").c_str());++hostChecks;}
                 perform(lifecycle.toggle(),t);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::opening&&notes->selected()==core::Module::map,"First summon opens on Map");
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty()&&lifecycle.openOverlay().empty(),"Summons during opening start nothing");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open,"Opening completes through the source session");
@@ -2351,6 +3164,222 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // The HUD close's shell (Mac 5b2a9d3, 48584b5): input stops at its start, and
+                // every native layer (they all sample canvasOpacity) fades on the opening's
+                // .24 s fade reversed with an ease-in, ending with the Watch exit clip; the
+                // last presented frame is not near 0 (at 60 Hz it is about .11). Nothing of
+                // the shell is composed or asks for frames once the HUD is hidden.
+                {
+                    const auto closeCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                    // Presses held on the industry logo and on the list's down arrow, and
+                    // the clock's hover plate lit, as the close starts (SH4, S-D4).
+                    session->setScrollPosition(1,t);t=run(t,.1);
+                    const auto logo=session->logoFrame();const auto arrowFrame=session->scrollFrame()?session->scrollIndicatorFrame(1):std::nullopt;
+                    const auto logoAt=logo?std::optional(core::Point{logo->x+logo->width/2,logo->y+logo->height/2}):std::nullopt;
+                    const auto arrowAt=arrowFrame?std::optional(core::Point{arrowFrame->x+arrowFrame->width/2,arrowFrame->y+arrowFrame->height/2}):std::nullopt;
+                    const bool logoHeld=centerLogoMainID.empty()||(logoAt&&logoPointer({PointerKind::down,PointerButton::left,logoAt->x,logoAt->y},t)&&logoPressed);
+                    const bool arrowHeld=arrowAt&&scrollIndicatorPointer({PointerKind::down,PointerButton::left,arrowAt->x,arrowAt->y},t)&&scrollIndicatorPressed==std::optional(1);
+                    const double scrolledAt=session->scrollPosition();setClockHovered(true);
+                    perform(lifecycle.toggle(),t);
+                    closeCheck(logoHeld&&arrowHeld&&closing&&!session->inputEnabled()&&!moduleInputAllowed()&&!clockAcceptsInput()&&!logoPressed&&!scrollIndicatorPressed&&
+                        !registry.any([](ModuleOwner&o){return o.capturesPointer()||o.capturesKeys();},"close check"),
+                        "Input stops at the close's start: the logo and arrow presses end, nothing captures the pointer or the keys");
+                    // Their releases during the close do nothing, and a press on the
+                    // header sanity wallet opens no recovery menu.
+                    {const bool logoQuiet=!logoAt||(!logoPointer({PointerKind::up,PointerButton::left,logoAt->x,logoAt->y},t)&&!session->logoFlickering());
+                     const bool arrowQuiet=arrowAt&&!scrollIndicatorPointer({PointerKind::up,PointerButton::left,arrowAt->x,arrowAt->y},t)&&session->scrollPosition()==scrolledAt;
+                     std::optional<core::Point> wallet;
+                     if(chromePlan&&chromePlan->projection().center){
+                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)**chromePlan->projection().center,metrics.pixelWidth,metrics.pixelHeight);
+                         if(const auto q=plane.project({646,23}))wallet=core::Point{q->x/metrics.scale,q->y/metrics.scale};}
+                     if(wallet){(void)onPointer({PointerKind::down,PointerButton::left,wallet->x,wallet->y});(void)onPointer({PointerKind::up,PointerButton::left,wallet->x,wallet->y});}
+                     closeCheck(logoQuiet&&arrowQuiet&&wallet&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing&&
+                         !registry.any([](ModuleOwner&o){return o.capturesPointer()||o.capturesKeys();},"close check"),
+                         "During the close a logo or arrow release does nothing and a wallet press opens no recovery menu");}
+                    // S-D4 (Mac parity): a move during the close keeps the kept hover;
+                    // the pointer leaving the HUD clears it.
+                    {(void)onPointer({PointerKind::move,PointerButton::none,metrics.width*.5,metrics.height*.5});const bool kept=chromeContent.clockHovered;
+                     (void)onPointer({PointerKind::leave,PointerButton::none,0,0});
+                     closeCheck(kept&&!chromeContent.clockHovered,"A move during the close keeps the clock's hover plate; leaving the HUD clears it");}
+                    const double exitLength=chromePlan?chromePlan->exitSeconds():0.;
+                    const auto fade=core::DesignMotion::closingFade(exitLength,source::DesktopChromeTiming::openingDuration);
+                    double previous=canvasCapturedOpacity,last=-1;bool onCurve=true,falling=true;unsigned closingFrames=0;
+                    for(unsigned n=1;n<=90&&session->phase()!=core::VisibilityPhase::concealed;++n){const double frameAt=t+double(n)/60;
+                        const double opacity=canvasOpacity(frameAt);
+                        const double expected=fade.duration>0?canvasCapturedOpacity*(1-core::DesignEasing::easeIn.value((frameAt-canvasClosedAt-fade.delay)/fade.duration)):0.;
+                        onCurve=onCurve&&std::abs(opacity-expected)<1e-9;falling=falling&&opacity<=previous+1e-12;previous=opacity;
+                        if(const auto wake=designOverlay->nextWakeTime(frameAt);wake&&*wake<=frameAt)(void)registry.guard(*designOverlay,[&]{(void)designOverlay->deadline(hostTime(frameAt));},"deadline");
+                        present(frameAt,true);if(session->phase()!=core::VisibilityPhase::concealed){last=opacity;++closingFrames;}settle(frameAt);}
+                    closeCheck(exitLength>.3&&fade.duration==source::DesktopChromeTiming::openingDuration&&closingFrames>=10&&onCurve&&falling&&last>0&&last<canvasCapturedOpacity,
+                        ("Every closing frame's canvas opacity follows the reversed fade ending with the exit ("+std::to_string(closingFrames)+" frames, last "+std::to_string(last)+")").c_str());
+                    t=run(t+1.6,.4);
+                    closeCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&!chromeContent.clockHovered&&(!facilityOwner||(facilityOwner->planeEntries().empty()&&facilityOwner->modalEntries().empty()&&!facilityOwner->requiresFrames(t)))&&
+                        (!hudElements||hudElements->topEntries().empty()),"Hidden: the shell composes nothing and asks for no frame");
+                    perform(lifecycle.reopen(),t);t=run(t,1.2);closeCheck(lifecycle.phase()==core::SystemOverlayPhase::open,"The HUD reopens after the checked close");
+                }
+                // The module content through the close (Mac 79bc665), on the
+                // production close and its frames, one module at a time.
+                {
+                    using P=core::SystemOverlayPhase;
+                    const auto contentCheck=[&](bool value,const std::string&why){need(value,why.c_str());++hostChecks;};
+                    const auto designCore=[](const std::unique_ptr<ModuleOwner>&owner)->tools::DesignOwnerCore&{return static_cast<tools::DesignModuleOwner&>(*owner).core();};
+                    // One host frame as run() draws it.
+                    const auto closeFrame=[&](double at){if(const auto wake=designOverlay->nextWakeTime(at);wake&&*wake<=at)(void)registry.guard(*designOverlay,[&]{(void)designOverlay->deadline(hostTime(at));},"deadline");present(at,true);settle(at);};
+                    const auto closeShow=[&](core::Module module){if(lifecycle.phase()!=P::open){perform(lifecycle.reopen(),t);t=run(t,1.2);}perform(lifecycle.selectModule(module),t);t=run(t,.8);
+                        need(lifecycle.phase()==P::open&&notes->selected()==module&&!notes->modulePresentation().transitioning,("The close's content checks show "+std::string(core::moduleIdentifier(module))).c_str());};
+                    // The rest of a checked close, then the next opening.
+                    const auto closeFinish=[&]{t=run(t+1./60,1.2);need(lifecycle.phase()==P::closed&&session->phase()==core::VisibilityPhase::concealed,"The checked close ends with the HUD hidden");};
+                    const auto closeReopen=[&]{perform(lifecycle.reopen(),t);t=run(t,1.2);need(lifecycle.phase()==P::open,"The HUD opens again after a checked close");};
+                    // A module's entries this frame, every one of them in the published order.
+                    const auto entriesPublished=[&](core::Module module){auto*owner=registry.presenter(module);if(!owner)return false;const auto entries=owner->entries(module);
+                        return !entries.empty()&&std::all_of(entries.begin(),entries.end(),[&](const gpu::LayerCompositionEntry&e){
+                            return std::any_of(ordered.begin(),ordered.end(),[&](const gpu::LayerCompositionEntry&p){return p.scene==e.scene;});});};
+                    // A part drawn directly (at rest, not through a fading group) by a module's scenes.
+                    const auto partDrawn=[&](core::Module module,std::string_view part){auto*owner=registry.presenter(module);if(!owner)return false;
+                        for(const auto&e:owner->entries(module))if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find(part)!=std::string::npos&&d.opacity>0)return true;return false;};
+                    // An entrance (the row stagger, the header's wipe and rule) pending or running in a canvas's tree.
+                    const std::function<bool(const modules::design::Layer&,double)> entering=[&](const modules::design::Layer&layer,double at){
+                        for(const auto slot:{modules::design::MotionSlot::enter,modules::design::MotionSlot::wipe,modules::design::MotionSlot::grow})
+                            for(const auto&track:layer.tracks().slots[std::size_t(slot)])if(track.running(at))return true;
+                        for(const auto*child:layer.children())if(entering(*child,at))return true;return false;};
+                    const std::function<const modules::design::Layer*(const modules::design::Layer&,std::string_view)> layerEnding=[&](const modules::design::Layer&layer,std::string_view id)->const modules::design::Layer*{
+                        if(layer.id().ends_with(id))return &layer;for(const auto*child:layer.children())if(const auto*found=layerEnding(*child,id))return found;return nullptr;};
+                    // B5-1 (5c8a905, 839d3b8): a switch the close catches lands hidden on
+                    // its new module while the old screen finishes its .13 s leave below
+                    // it, composed with falling opacity; a reversed switch keeps leaving
+                    // on its own screen. Clipboard to Event Log at T, back to Clipboard at
+                    // T + .033 when reversed, the close at T + .05. Not here: a select the
+                    // text service deferred (pendingModule, C14) needs a text service that
+                    // holds its lock, which the hidden fixture cannot make.
+                    if(clipboardModuleOwner&&eventLogModuleOwner&&registry.enabled(*clipboardModuleOwner)&&registry.enabled(*eventLogModuleOwner)){
+                        const auto fromModule=core::Module::clipboard,toModule=core::Module::eventLog;auto&from=designCore(clipboardModuleOwner);auto&to=designCore(eventLogModuleOwner);
+                        for(const bool reversed:{false,true}){
+                            const std::string switchName=reversed?"A reversed switch (Clipboard to Event Log and back) the close catches":"A switch (Clipboard to Event Log) the close catches";
+                            closeShow(fromModule);
+                            const double base=t;perform(lifecycle.selectModule(toModule),t);const double switched=hostTime(t);
+                            for(unsigned n=1;n<=3;++n){if(reversed&&n==3)perform(lifecycle.selectModule(fromModule),t);t=base+n/60.;closeFrame(t);}
+                            perform(lifecycle.toggle(),t);
+                            {const auto&s=notes->modulePresentation();
+                             contentCheck(closing&&lifecycle.phase()==P::closing&&(reversed?(!s.departing&&s.current.module==fromModule&&s.current.attached&&notes->selected()==fromModule):
+                                 (s.departing&&s.departing->module==fromModule&&s.current.module==toModule&&!s.current.attached&&notes->selected()==toModule)),
+                                 switchName+(reversed?" keeps Clipboard committed and leaving, with no departing screen":" lands hidden on Event Log with Clipboard departing"));}
+                            const double closedAt=t;double previous=2,previousPose=2,last=-1;unsigned leaving=0;bool falling=true,drawn=true,landedHidden=true,quiet=true,ended=true;
+                            for(unsigned n=1;n<=12;++n){t=closedAt+n/60.;closeFrame(t);
+                                const double elapsed=hostTime(t)-switched;const auto&s=notes->modulePresentation();
+                                const auto*old=reversed?(s.current.module==fromModule?&s.current:nullptr):(s.departing?&*s.departing:nullptr);
+                                landedHidden=landedHidden&&!to.pose(toModule)&&!to.canvas(toModule)->isActive();
+                                quiet=quiet&&!from.inputModule()&&!to.inputModule();
+                                if(elapsed<core::DesignMotion::leave-1e-6){++leaving;const auto pose=from.pose(fromModule);
+                                    falling=falling&&old&&pose&&old->opacity<previous&&pose->opacity<previousPose;
+                                    drawn=drawn&&pose&&entriesPublished(fromModule)&&(!reversed||from.canvas(fromModule)->isActive());
+                                    if(old)previous=last=old->opacity;if(pose)previousPose=pose->opacity;}
+                                else if(elapsed>core::DesignMotion::leave+1e-6&&session->phase()!=core::VisibilityPhase::concealed)
+                                    ended=ended&&(reversed?(old&&old->opacity<1e-6):(!s.departing&&!from.pose(fromModule)));}
+                            contentCheck(leaving>=3&&falling&&drawn&&last>0,switchName+": the old screen is composed with falling opacity until .13 s ("+std::to_string(leaving)+" frames, last "+std::to_string(last)+")");
+                            contentCheck(landedHidden&&quiet,switchName+": Event Log is never drawn or activated and no screen takes input");
+                            contentCheck(ended,switchName+(reversed?": after .13 s the leave holds Clipboard at 0":": after .13 s the departing screen is gone"));
+                            closeFinish();
+                            contentCheck(!notes->modulePresentation().departing&&!from.canvas(fromModule)->isShown()&&!from.canvas(fromModule)->isActive()&&!to.canvas(toModule)->isActive(),
+                                switchName+": once hidden the old screen has left and nothing is departing");
+                            const auto shown=reversed?fromModule:toModule;auto&shownCore=reversed?from:to;
+                            // The next open reveals the landed (or kept) screen with the opening's
+                            // entrance (ModulePresentation::reveal, then beginEntrance): .10 s in, the
+                            // entrance started at this open and its rows are still entering.
+                            {const double reopened=hostTime(t);perform(lifecycle.reopen(),t);t=run(t,.1);const auto&s=notes->modulePresentation();
+                             contentCheck(s.current.module==shown&&s.current.attached&&s.current.entrance&&s.current.entrance->start>=reopened-1e-6&&entering(shownCore.canvas(shown)->root(),hostTime(t)),
+                                 switchName+": the next open plays "+(reversed?"Clipboard":"Event Log")+"'s entrance");
+                             t=run(t,1.1);need(lifecycle.phase()==P::open,"The HUD opens again after a checked close");}
+                            contentCheck(notes->selected()==shown&&shownCore.canvas(shown)->isActive()&&entriesPublished(shown)&&notes->modulePresentation().current.opacity==1,
+                                switchName+": the next open shows "+(reversed?"Clipboard":"Event Log"));
+                        }
+                    }
+                    // B5-4 and C7 (2e08932, 48584b5): the System page's Language menu,
+                    // opened through its accessible action (no input), leaves with the
+                    // page on a switch to Clipboard and through the close, taking no input.
+                    if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner)&&clipboardModuleOwner&&registry.enabled(*clipboardModuleOwner)){
+                        const auto systemModule=core::Module::system;auto&systemPage=settingsUI->canvas(systemModule);
+                        const auto languageMenu=[&]{return layerEnding(systemPage.top(),"language.menu");};
+                        // Drawn: in the page's tree at a visible opacity, and the scene part
+                        // that draws it composed this frame (directly, or through the group a
+                        // fade draws it into: NativeDesignScene::composes) in the page's
+                        // published entries.
+                        const auto menuDrawn=[&](double at){const auto*menu=languageMenu();
+                            return menu&&menu->presented(modules::design::Channel::opacity,at)>0&&settingsUI->core().composes(systemModule,"language.menu")&&entriesPublished(systemModule);};
+                        const auto openMenu=[&](const char*when){closeShow(systemModule);
+                            const bool opened=systemPage.performAccessibilityAction("language",hostTime(t))&&systemPage.menuOpen();t=run(t,.3);
+                            contentCheck(opened&&languageMenu()&&partDrawn(systemModule,"language.menu"),std::string(when)+", the System page's Language dropdown opens its menu through its accessible action");};
+                        openMenu("Before a switch");
+                        {const double base=t;perform(lifecycle.selectModule(core::Module::clipboard),t);const double switched=hostTime(t);unsigned leaving=0;bool kept=true,quiet=true;
+                         for(unsigned n=1;n<=12;++n){t=base+n/60.;closeFrame(t);
+                             quiet=quiet&&!systemPage.menuOpen()&&settingsUI->inputModule()!=std::optional(systemModule)&&!settingsModuleOwner->capturesPointer();
+                             if(hostTime(t)-switched<core::DesignMotion::leave-1e-6){++leaving;kept=kept&&menuDrawn(hostTime(t));}}
+                         contentCheck(leaving>=3&&kept,"The Language menu stays drawn with the System page through the page's .13 s leave (B5-4)");
+                         contentCheck(quiet,"The leaving menu takes no input: it is closed and Settings is not the input module (B5-4)");}
+                        closeShow(systemModule);contentCheck(!systemPage.menuOpen()&&!languageMenu(),"Shown again, the System page has dropped the menu that left with it");
+                        openMenu("Before the close");
+                        perform(lifecycle.toggle(),t);
+                        {const double closedAt=t;bool kept=true,quiet=true;
+                         for(unsigned n=1;n<=6;++n){t=closedAt+n/60.;closeFrame(t);kept=kept&&menuDrawn(hostTime(t));quiet=quiet&&systemPage.isActive()&&!settingsUI->inputModule()&&!settingsModuleOwner->capturesPointer();}
+                         contentCheck(kept&&quiet,"Through the close the Language menu stays drawn on the active System page while Settings takes no input (C7)");}
+                        closeFinish();
+                        contentCheck(!systemPage.isActive()&&!systemPage.menuOpen(),"Once hidden the System page has left, its menu closed (C7)");
+                        closeReopen();contentCheck(notes->selected()==systemModule&&!languageMenu(),"The next open shows the System page without the menu");
+                    }
+                    // B5-5 (5c8a905, 939926a; L-D1, Mac parity): a running stopwatch blinks
+                    // Work Mode's FOCUS square (an endless loop); the close's start stops
+                    // it at its model.
+                    if(workMode&&workModeCanvas&&workModeModuleOwner&&registry.enabled(*workModeModuleOwner)){
+                        using Phase=modules::WorkModePhase;using Kind=modules::WorkModeKind;
+                        closeShow(core::Module::workMode);const auto kind=workMode->snapshot(hostTime(t)).kind;
+                        if(workMode->snapshot(hostTime(t)).phase!=Phase::idle){(void)workModeCanvas->performAccessibilityAction("workMode.reset",hostTime(t));t=run(t,.3);}
+                        if(kind!=Kind::stopwatch){(void)workModeCanvas->performAccessibilityAction("workMode.kind:1",hostTime(t));t=run(t,.5);}
+                        const bool started=workModeCanvas->performAccessibilityAction("workMode.primary",hostTime(t))&&workMode->snapshot(hostTime(t)).phase==Phase::running;t=run(t,.5);
+                        const auto*dot=layerEnding(workModeCanvas->root(),"workMode.state.dot");
+                        contentCheck(started&&dot&&dot->animating(hostTime(t)),"A running Work Mode stopwatch blinks its FOCUS square");
+                        perform(lifecycle.toggle(),t);
+                        {const double closedAt=t;bool still=true;
+                         for(unsigned n=1;n<=6;++n){t=closedAt+n/60.;closeFrame(t);const auto*square=layerEnding(workModeCanvas->root(),"workMode.state.dot");
+                             still=still&&square&&!square->animating(hostTime(t))&&std::abs(square->presented(modules::design::Channel::opacity,hostTime(t))-square->value(modules::design::Channel::opacity))<1e-9;}
+                         contentCheck(still&&workModeCanvas->isActive(),"From the close's first frame the FOCUS square shows its model opacity: its blink stopped as the close started (B5-5)");}
+                        closeFinish();closeReopen();
+                        // Work Mode idle again on its own tab: paused (a running stopwatch offers Lap, not Reset), then reset.
+                        if(workMode->snapshot(hostTime(t)).phase==Phase::running){(void)workModeCanvas->performAccessibilityAction("workMode.primary",hostTime(t));t=run(t,.3);}
+                        (void)workModeCanvas->performAccessibilityAction("workMode.reset",hostTime(t));t=run(t,.3);
+                        if(kind!=Kind::stopwatch){(void)workModeCanvas->performAccessibilityAction("workMode.kind:0",hostTime(t));t=run(t,.5);}
+                        need(workMode->snapshot(hostTime(t)).phase==Phase::idle&&workMode->snapshot(hostTime(t)).kind==kind,"Work Mode is idle again on its own tab after the loop check");
+                    }
+                    // C4 (48584b5): a Notes text card's size menu (the format pop-up),
+                    // opened through its accessible action, finishes its .14 s fade
+                    // inside the close.
+                    if(notesModuleOwner&&registry.enabled(*notesModuleOwner)){
+                        closeShow(core::Module::notes);
+                        std::vector<gpu::NotesAutomationElement>elements;notes->automationElements(elements);std::string note;
+                        for(const auto&e:elements)if(e.enabled&&e.id.starts_with("note:")&&e.id.ends_with(":edit")){note=e.id.substr(5,e.id.size()-10);break;}
+                        // The pop-up's draws: its scene's surfaces, or the group output a fade
+                        // draws them through (notes.desk.N.group). -1 when none is composed.
+                        const auto menuOpacity=[&]{double most=-1;for(const auto&e:notes->entries()){if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find("notes.desk.")!=std::string::npos)most=std::max(most,double(d.opacity));
+                            for(const auto&d:e.after)if(d.sourceID.find("notes.desk.")!=std::string::npos)most=std::max(most,double(d.opacity));}return most;};
+                        const auto formatMenu=[&]{return menuOpacity()>=0;};
+                        const auto menuControls=[&]{std::vector<gpu::NotesAutomationElement>peers;notes->automationElements(peers);
+                            return std::any_of(peers.begin(),peers.end(),[](const gpu::NotesAutomationElement&e){return e.id.starts_with("notes.desk:");});};
+                        const bool opened=!note.empty()&&notes->perform("note:"+note+":formatSize",hostTime(t));t=run(t,.3);
+                        contentCheck(opened&&formatMenu()&&menuControls(),"A Notes text card's size menu opens through its accessible action");
+                        perform(lifecycle.toggle(),t);
+                        contentCheck(closing&&!menuControls(),"The close's start takes the Notes size menu's controls out of input (C4)");
+                        // Its own fade: the drawn opacity over the canvas opacity the frame
+                        // composes the notes with (canvasOpacity), falling every frame and
+                        // below half .10 s in (.14 s ease leaves about .06 there).
+                        {const double closedAt=t;double previous=2,tenth=2;bool falling=true,gone=false;
+                         for(unsigned n=1;n<=9;++n){t=closedAt+n/60.;closeFrame(t);
+                             if(n<=6){const double canvas=canvasOpacity(t),menu=menuOpacity();const double own=canvas>1e-3&&menu>=0?menu/canvas:-1;
+                                 falling=falling&&own>0&&own<previous;previous=own;if(n==6)tenth=own;}
+                             if(n==9)gone=!formatMenu();}
+                         contentCheck(falling&&tenth<.5&&gone,"The close fades the Notes size menu out over .14 s: falling and drawn .10 s in (own opacity "+std::to_string(tenth)+"), gone at .15 s (C4)");}
+                        closeFinish();closeReopen();
+                        contentCheck(notes->selected()==core::Module::notes&&!formatMenu(),"The next open shows the notes without the menu");
+                    }
+                    closeShow(core::Module::notes);
+                }
                 // Hand-offs to other applications (OverlayController afterSystemClose,
                 // openStorageAfterClose): requested while the HUD is open they close
                 // it with the normal animation and open only once it is hidden, so
@@ -2485,21 +3514,98 @@ int Application::Impl::runHiddenVerification(){
                         need(lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&notes->selected()==core::Module::fileShelf,"The Shelf is open before its drag");};
                     const auto cancel=[](DWORD&effect){effect=DROPEFFECT_NONE;return HRESULT(DRAGDROP_S_CANCEL);};
                     const auto copy=[](DWORD&effect){effect=DROPEFFECT_COPY;return HRESULT(DRAGDROP_S_DROP);};
-                    // Cancelled once hidden: the same presentation comes back with its entrance.
-                    onShelf();bool retracting{},hidden{};
+                    // Cancelled once hidden: the same presentation comes back with its entrance,
+                    // its grid at the scroll it was left at (the Mac keeps the same view; here
+                    // the retract's close left the canvas, shelfDragEffect keeps its scroll).
+                    const auto gridOffset=[&]{if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid")return area->offset();return 0.;};
+                    // The module the HUD opens into plays its entrance as the centre starts to
+                    // show (Mac a5d58f1, SystemHUDView.playOpeningModuleEntrance): with the canvas
+                    // fade, DesktopChromeTiming::openingDelay after the open, not under the still
+                    // transparent centre; the end of the open (`ended`: finishOpening, which the
+                    // frames' settle runs as the frame handler does, or the drag's restore, Mac
+                    // e15d824) leaves it running. From the open's own
+                    // sample, on the Shelf; returns at the open + 1.2 s at the earliest.
+                    const auto openingEntrance=[&](const std::function<bool()>&openingEnded,const std::string&subject){
+                        const double entranceOpened=canvasOpenedAt,entranceDelay=source::DesktopChromeTiming::openingDelay;
+                        const auto staggeredRows=[&]{auto*shelfCanvas=shelf->canvas();need(shelfCanvas!=nullptr,"The Shelf canvas is built");return shelfCanvas->page().staggered();};
+                        const auto staggeredRow=[&](std::size_t rowIndex)->const modules::design::Layer&{return *staggeredRows()[rowIndex];};
+                        const auto opacityAt=[&](std::size_t rowIndex,double sampleTime){return staggeredRow(rowIndex).presented(modules::design::Channel::opacity,sampleTime);};
+                        const auto restsAt=[&](std::size_t rowIndex,double sampleTime){return !staggeredRow(rowIndex).animating(sampleTime)&&std::abs(opacityAt(rowIndex,sampleTime)-staggeredRow(rowIndex).value(modules::design::Channel::opacity))<1e-9;};
+                        const auto entranceLabel=[&](const std::string&part){return subject+": "+part;};
+                        dragCheck(notes->selected()==core::Module::fileShelf&&!staggeredRows().empty(),entranceLabel("the HUD opens into the Shelf, which staggers its rows").c_str());
+                        t=run(t,.18);
+                        const double beforeShowing=entranceOpened+.19;
+                        dragCheck(hostTime(t)<beforeShowing&&staggeredRow(0).animating(beforeShowing)&&std::abs(opacityAt(0,beforeShowing))<1e-9,
+                            entranceLabel("at the open + .19 s the first row is still at its start pose").c_str());
+                        const std::size_t lastRow=std::min<std::size_t>(staggeredRows().size()-1,14);
+                        const double lastRowSettles=entranceOpened+entranceDelay+modules::design::staggerDelay(int(lastRow))+modules::design::duration::entrance;
+                        while(!openingEnded()&&hostTime(t)<entranceOpened+3)t=run(t+1./60,0);
+                        const double openEnded=hostTime(t);
+                        dragCheck(openingEnded()&&openEnded<lastRowSettles&&staggeredRow(lastRow).animating(openEnded),
+                            entranceLabel("the open ends (at +"+std::to_string(openEnded-entranceOpened)+" s) with its last row still entering").c_str());
+                        t=run(t,lastRowSettles-openEnded+1./60);
+                        const double firstRowSettles=entranceOpened+entranceDelay+modules::design::staggerDelay(0)+modules::design::duration::entrance+1e-6,settledAt=hostTime(t);
+                        dragCheck(settledAt>lastRowSettles&&restsAt(0,firstRowSettles)&&restsAt(lastRow,settledAt),
+                            entranceLabel("the first row has settled at the open + .20 + .06 + .38 s, and the last one after it").c_str());
+                        if(const double rest=entranceOpened+1.2-hostTime(t);rest>0)t=run(t,rest);
+                    };
+                    onShelf();
+                    if(!args.shelfDataRoot.empty()){need(shelf->importFiles(syntheticShelfFiles(),hostTime(t)),"The drag probe's synthetic files are added to the Shelf");t=run(t,.8);}
+                    const double scrolled=gridOffset();bool retracting{},hidden{},hoverCleared{},activeThroughRetract{},leftAtHide{};
+                    // C10 (Mac SystemHUDView.swift:1037-1042): the drag-out starts from a
+                    // press on a tile (one fully inside the grid's viewport, through the
+                    // host's pointer route) that ends without a click. The retract's close
+                    // keeps the canvas active, taking no input, until the hide, which
+                    // deactivates it; the press's release once the Shelf is back (a drag
+                    // cancelled with the button still down) activates nothing.
+                    std::optional<core::Point> tileAt;
+                    if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid"){
+                        const auto view=modules::design::convert({0,0,area->layer().bounds().width,area->layer().bounds().height},area->layer(),c->root());
+                        for(const auto*control:c->page().controls()){
+                            if(!control->id().starts_with("file:")||control->id().ends_with(modules::design::TileMoreButton::suffix))continue;
+                            const auto r=control->rect(c->root());if(r.x<view.x||r.y<view.y||r.x+r.width>view.x+view.width||r.y+r.height>view.y+view.height)continue;
+                            if(const auto client=shelf->core()->clientRect(r)){tileAt=core::Point{client->x+client->width/2,client->y+client->height/2};break;}}}
+                    const auto selectedBefore=shelf->canvas()?shelf->canvas()->selectedIDs():std::set<std::string,std::less<>>{};
+                    const bool cardBefore=shelf->canvas()&&shelf->canvas()->hasPropertiesCardForTesting();
+                    // The press, then a move past the tile's 5 px: the tile asks for its
+                    // drag-out (the action the host's message runs, taken here as the
+                    // Shelf Open probe takes its own, so no OLE loop starts), and the
+                    // stand-in loop below runs it.
+                    {const bool held=tileAt&&onPointer({PointerKind::down,PointerButton::left,tileAt->x,tileAt->y})&&shelf->core()->capturesPointer();
+                     if(held)(void)onPointer({PointerKind::move,PointerButton::none,tileAt->x+8,tileAt->y});
+                     MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
+                     const auto action=shelf->takeAction();
+                     dragCheck(held&&action&&action->kind==tools::ShelfServiceAction::Kind::drag&&!action->itemID.empty(),"The drag-out starts from a tile pressed inside the grid and moved past 5 px");}
                     const bool cancelled=shelfDragOut([&](DWORD&effect){
                         retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
                             session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
+                        activeThroughRetract=shelf->canvas()&&shelf->canvas()->isActive()&&!shelf->core()->inputModule()&&!shelf->core()->capturesPointer();
+                        // A hover plate kept through the retract (no concealment follows).
+                        setClockHovered(true);
+                        for(unsigned n=0;n<60&&lifecycle.shelfDrag().phase()==P::retracting;++n){t=run(t+1./60,0);
+                            if(lifecycle.shelfDrag().phase()==P::retracting)activeThroughRetract=activeThroughRetract&&shelf->canvas()->isActive()&&!shelf->core()->capturesPointer();}
+                        leftAtHide=lifecycle.shelfDrag().phase()==P::hidden&&shelf->canvas()&&!shelf->canvas()->isActive();
                         t=run(t,1.2);
                         hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
+                        hoverCleared=!chromeContent.clockHovered;
+                        // A re-render while the HUD is away (a store refresh) keeps the scroll too.
+                        if(auto*c=shelf->canvas())c->rerender();
                         return cancel(effect);},t);
                     dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
                     dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
+                    dragCheck(hoverCleared,"The retracted HUD's hide clears the highlights kept through the retract");
+                    dragCheck(activeThroughRetract,"Through the retract the Shelf canvas stays active and drawn, taking no input, its press dropped (C10)");
+                    dragCheck(leftAtHide,"The retracted HUD's hide deactivates the Shelf canvas (C10)");
                     dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
                         "A cancelled drag shows the HUD again with its entrance");
-                    t=run(t,1.2);
+                    openingEntrance([&]{return !lifecycle.shelfDragActive();},"The Shelf back after a cancelled drag");
                     dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
                         notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
+                    if(!args.shelfDataRoot.empty())dragCheck(scrolled>0&&gridOffset()==scrolled,"The restored Shelf keeps its grid's scroll");
+                    {(void)onPointer({PointerKind::up,PointerButton::left,tileAt->x,tileAt->y});t=run(t,.2);
+                     const bool captures=shelf->core()->capturesPointer(),card=shelf->canvas()->hasPropertiesCardForTesting();const auto&selected=shelf->canvas()->selectedIDs();
+                     dragCheck(!captures&&selected==selectedBefore&&card==cardBefore,("The release of the press the drag-out began from activates nothing once the Shelf is back (C10; captures "+
+                         std::to_string(captures)+", selected "+std::to_string(selectedBefore.size())+" -> "+std::to_string(selected.size())+", card "+std::to_string(cardBefore)+" -> "+std::to_string(card)+")").c_str());}
                     // Delivered once hidden: closed without a second animation.
                     const bool delivered=shelfDragOut([&](DWORD&effect){t=run(t,1.2);return copy(effect);},t);
                     dragCheck(delivered&&lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!closing&&unshown()&&!lifecycle.shelfDragActive()&&
@@ -2511,10 +3617,15 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(fast&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast delivery still finishes the exit");
                     t=run(t,1.2);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive(),"Then the HUD closes without a second animation");
                     onShelf();
+                    // C10: a drag cancelled before the hide (the restore ends the
+                    // retract's close, which leaves the canvas) keeps the grid's scroll.
+                    if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid")area->setOffset(area->maximumOffset()*.5);
+                    t=run(t,.1);const double fastScrolled=gridOffset();
                     (void)shelfDragOut([&](DWORD&effect){t=run(t,.05);return cancel(effect);},t);
                     dragCheck(lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast cancellation still finishes the exit");
                     t=run(t,2.4);dragCheck(lifecycle.phase()==L::open&&!lifecycle.shelfDragActive()&&session->phase()==V::visible&&lifecycle.interactionEnabled(),
                         "Then the HUD comes back with its entrance");
+                    if(!args.shelfDataRoot.empty())dragCheck(fastScrolled>0&&gridOffset()==fastScrolled,"A drag cancelled during the exit keeps the grid's scroll (C10)");
                     // The summon hotkey during the drag waits for it, then closes the hidden HUD.
                     bool deferred{};
                     (void)shelfDragOut([&](DWORD&effect){t=run(t,1.2);trayAction(gpu::TrayAction::openOverlay,true,t);
@@ -2530,33 +3641,63 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(held,"A forced close during the drag conceals the HUD at once and holds its presentation until the drag ends");
                     dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive()&&!lifecycle.forceCloseAfterShelfDrag(),
                         "The drag's end completes the forced close without restoring");
-                    perform(lifecycle.reopen(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
+                    perform(lifecycle.reopen(),t);
+                    openingEntrance([&]{return lifecycle.phase()==L::open&&!lifecycleOpening&&!transitionDeadline;},"The HUD reopening into the Shelf (finishOpening)");
+                    perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.8);
                     dragCheck(lifecycle.phase()==L::open&&notes->selected()==core::Module::notes,"The HUD reopens normally after the drags");
                 }
-                // DataRootRestart through the host's own members (a gate opened
-                // for hidden coverage only): a failed save declines it.
-                const auto restartCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
-                restartVerification=true;
-                {auto ran=std::make_shared<unsigned>(0),declined=std::make_shared<unsigned>(0);auto token=std::make_shared<int>(0);const std::weak_ptr<int>alive=token;
-                 restartCheck(restart.restartWith([ran,token]{++*ran;},[declined]{++*declined;})&&restartPending,"A data-root restart is requested through the host");
-                 token.reset();reopenAfterSaveFailure(core::Module::notes,t);
-                 restartCheck(!restartPending&&alive.expired()&&*ran==0&&restartDeclinePosted&&*declined==0,"A failed save destroys the pending restart work unrun and posts its decline");
-                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
-                 restartCheck(*declined==1&&!restartDeclinePosted,"The decline runs once from its notice");
-                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
-                 restartCheck(*declined==1,"A repeated notice runs no second decline");
-                 t=run(t,.3);}
                 // Repeated summon cycles retain no extra raster resources,
                 // handles or threads once the first cycles have warmed caches.
-                const auto handles=[]{DWORD count{};need(GetProcessHandleCount(GetCurrentProcess(),&count)!=FALSE,"Read own handle count");return count;};
-                const auto threads=[]{const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);need(snapshot!=INVALID_HANDLE_VALUE,"Read own threads");THREADENTRY32 entry{};entry.dwSize=sizeof(entry);unsigned count{};
-                    for(BOOL more=Thread32First(snapshot,&entry);more;more=Thread32Next(snapshot,&entry))if(entry.th32OwnerProcessID==GetCurrentProcessId())++count;CloseHandle(snapshot);return count;};
+                // The process's threads include the OS thread pool's workers
+                // (most of them run WARP rasterisation): the system adds them
+                // under CPU load, such as other suites running beside this one,
+                // and retires them on its own idle timer, and they hold no handle
+                // in this process. So both counts are read settled (the GPU has
+                // finished every frame and the utility queues are idle) with the
+                // idle pool workers left out. The settled read waits (bounded)
+                // until every pool worker is back waiting for work, so one that
+                // has just finished the last frame's WARP work is not caught on
+                // its way back; a thread that has exited since the capture is not
+                // counted. A pool worker still busy at the bound, and every
+                // thread the application or a driver starts, counts.
+                struct Census{DWORD handles{};unsigned threads{},idlePool{},busyPool{};std::vector<ThreadActivity>list;};
+                const auto censusNow=[&]{
+                    Census c;need(GetProcessHandleCount(GetCurrentProcess(),&c.handles)!=FALSE,"Read own handle count");
+                    c.list=captureThreadActivity();need(!c.list.empty(),"Read own threads");
+                    for(const auto&thread:c.list){if(thread.exited)continue;if(idlePoolWorker(thread))++c.idlePool;else{++c.threads;if(thread.poolWorker)++c.busyPool;}}
+                    return c;};
+                const auto census=[&](bool settled){
+                    if(!settled)return censusNow();
+                    (void)renderer.waitForGpuIdle();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();}
+                    // How long the pool workers get to go back to waiting for work.
+                    constexpr auto poolSettleBound=std::chrono::seconds(2);
+                    const auto until=std::chrono::steady_clock::now()+poolSettleBound;
+                    auto c=censusNow();
+                    while(c.busyPool&&std::chrono::steady_clock::now()<until){Sleep(2);c=censusNow();}
+                    return c;};
                 const auto cycle=[&]{perform(lifecycle.toggle(),t);t=run(t,1.2);perform(lifecycle.toggle(),t);t=run(t,1.2);};
                 for(unsigned n=0;n<3;++n)cycle();
-                const auto warmRaster=rasterizer.stats();const auto warmHandles=handles();const auto warmThreads=threads();
-                for(unsigned n=0;n<20;++n)cycle();
+                const auto warmRaster=rasterizer.stats();const auto warm=census(true);const auto warmTypes=captureHandleTypes();
+                // The kernel's thread state is read right: settled, the pool workers
+                // this process has are seen waiting for work.
+                lifecycleCheck(warm.busyPool==0||warm.idlePool>0,"The settled census sees the OS pool workers waiting for work");
+                // Each cycle's counts as they stand (not settled), for the failure message.
+                std::string perCycle;
+                for(unsigned n=0;n<20;++n){cycle();const auto c=census(false);perCycle+=" "+std::to_string(c.handles)+"/"+std::to_string(c.threads)+"+"+std::to_string(c.idlePool);}
                 lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&rasterizer.stats().entries==warmRaster.entries&&rasterizer.stats().resourceBytes==warmRaster.resourceBytes,"Twenty summon cycles retain the warmed raster cache exactly");
-                lifecycleCheck(handles()<=warmHandles+8&&threads()<=warmThreads+2,"Twenty summon cycles leak no handles or threads");
+                {const auto after=census(true);
+                 std::string detail;
+                 if(after.handles>warm.handles+8||after.threads>warm.threads+2){
+                     // What grew: handle types and the threads that were not there warm.
+                     std::map<std::string,long long>types;for(const auto&[name,n]:warmTypes)types[name]-=n;for(const auto&[name,n]:captureHandleTypes())types[name]+=n;
+                     detail=" (handles "+std::to_string(warm.handles)+" -> "+std::to_string(after.handles)+", threads "+std::to_string(warm.threads)+" -> "+std::to_string(after.threads)+
+                         " with idle pool workers "+std::to_string(warm.idlePool)+" -> "+std::to_string(after.idlePool)+", busy at the settle bound "+std::to_string(warm.busyPool)+" -> "+std::to_string(after.busyPool)+"; handles/threads+idle per cycle:"+perCycle+"; handle types:";
+                     for(const auto&[name,n]:types)if(n)detail+=" "+name+(n>0?" +":" ")+std::to_string(n);
+                     detail+="; new threads:";
+                     for(const auto&thread:after.list)if(!thread.exited&&!idlePoolWorker(thread)&&std::none_of(warm.list.begin(),warm.list.end(),[&](const ThreadActivity&w){return w.id==thread.id;}))
+                         detail+=" "+thread.module+"+"+std::to_string(thread.offset)+(thread.description.empty()?"":" '"+thread.description+"'")+" state "+std::to_string(thread.state)+"/"+std::to_string(thread.waitReason);
+                     detail+=")";}
+                 lifecycleCheck(after.handles<=warm.handles+8&&after.threads<=warm.threads+2,("Twenty summon cycles leak no handles or threads"+detail).c_str());}
                 if(args.sessionEndCoverage){
                     // WM_QUERYENDSESSION drains dirty writes and keeps running;
                     // WM_ENDSESSION conceals without animation, drains and stops.
@@ -2591,7 +3732,7 @@ int Application::Impl::runHiddenVerification(){
                  const auto language=designOverlay->context().env().language;
                  lifecycleCheck(quitPromptOpen&&overlay.capturesInput()&&request&&request->id=="quit"&&request->danger&&request->icon==modules::design::Icon::power&&
                      request->title==core::localized("Quit EndfieldHUD?","退出 EndfieldHUD？",language)&&
-                     request->message==core::localized("Notes, shelf files and settings are saved.","便笺、暂存文件与设置均已保存。",language)&&
+                     request->message==core::localized("Notes, shelf files and settings are saved","便笺、暂存文件与设置均已保存",language)&&
                      request->confirmTitle==core::localized("Quit","退出",language)&&request->cancelTitle.empty(),
                      state.c_str());}
                 lifecycleCheck(registry.covers({metrics.width*.5,metrics.height*.5})&&registry.covers({1,1}),"The bar covers every underlying control");
@@ -2601,13 +3742,10 @@ int Application::Impl::runHiddenVerification(){
                 press(t+1.1);t=run(t+1.1,.4);
                 // The bar captures everything: a press outside the circle stays with it.
                 (void)onPointer({PointerKind::down,PointerButton::left,2,metrics.height*.5});(void)onPointer({PointerKind::up,PointerButton::left,2,metrics.height*.5});t=run(t,.2);
-                restartCheck(overlay.capturesInput()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit bar is up stays with the bar");
+                need(overlay.capturesInput()&&lifecycle.phase()==core::SystemOverlayPhase::open&&!closing,"A press outside the circle while the quit bar is up stays with the bar");++hostChecks;
                 const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The bar consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The bar consumes the release");};
                 click(pill("quit:cancel"));t=run(t,.4);lifecycleCheck(!overlay.capturesInput()&&!quitPromptOpen&&!quitRequested,"Projected Cancel dismisses the bar");
-                // A restart pending at the confirmed quit is accepted: its work is handed out once.
-                auto restartRuns=std::make_shared<unsigned>(0);
                 press(t+1.1);t=run(t+1.1,.4);
-                restartCheck(restart.restartWith([restartRuns]{++*restartRuns;},[]{})&&restartPending,"A data-root restart can be requested while the bar is up");
                 key(VK_RETURN);key(VK_ESCAPE);
                 lifecycleCheck(!quitRequested&&lifecycle.phase()==core::SystemOverlayPhase::open&&overlay.capturesInput(),"Return answers Quit; the quit waits for the bar's 120 ms press and a second answer is swallowed");
                 t=run(t,.1);lifecycleCheck(!quitRequested,"Nothing quits before 120 ms");
@@ -2618,14 +3756,12 @@ int Application::Impl::runHiddenVerification(){
                 {const auto state="The ordered drain runs after concealment, then the owner stops (stopping="+std::to_string(stopping)+" phase="+std::to_string(int(lifecycle.phase()))+
                     " bar="+std::to_string(overlay.capturesInput())+" quit="+std::to_string(quitRequested)+")";
                  lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!overlay.capturesInput(),state.c_str());}
-                {auto work=takeRestartWork();restartCheck(restartAccepted==false&&work&&!takeRestartWork(),"The accepted restart's work is handed out exactly once");
-                 work();restartCheck(*restartRuns==1,"The handed-out work is the requested one");}
                 }
             }
         }
         need(!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Hidden benchmark window became visible");need(host.stats().frames==0&&!host.stats().timerArmed,"Hidden benchmark scheduled native frame work");
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
-        Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog->variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
+        Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening with (.20,.72,.22,1); the close plays it reversed on the ease-in, ending with the source exit clip (HUDMotion.closingFade); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog->variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
             {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"hostIntegrationChecks",int(hostChecks)},{"displayAdaptation",displayAdaptation},{"scrollArrow",scrollArrow},
             {"idCardConnected",bool(idCard)},{"idCardApplies",idCard?std::int64_t(idCard->stats().applies):std::int64_t{0}},{"idCardSettingsChanges",idCard?std::int64_t(idCard->stats().settingsChanges):std::int64_t{0}},
             {"settingsLinkRequests",std::int64_t(linkRequests)},{"archiveIncluded",bool(archive)},{"storageIncluded",bool(storage)},{"activityIncluded",bool(activity)},{"readerIncluded",bool(reader)},{"calendarIncluded",bool(calendar)},{"calendarUsesSyntheticNotifications",bool(calendarFixture)},{"mapIncluded",bool(map)},{"minigameIncluded",bool(game)},{"storageUsesSyntheticProviders",bool(storageFixture)},{"storageCapacityReads",storageFixture?int(storageFixture->capacityReads.load()):0},{"storageDetailScans",storageFixture?int(storageFixture->detailScans.load()):0},{"storageSettingsRequests",storageFixture?int(storageFixture->settingsRequests):0},{"appSharedMediaProvider",bool(mediaBroker)},{"limitations",Json::Array{args.moduleCoverage?"Module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
@@ -2634,7 +3770,7 @@ int Application::Impl::runHiddenVerification(){
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
             areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
         for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
-        report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        if(!contrastReport.isNull())report["moduleContrast"]=std::move(contrastReport);report["recordingToggle"]=std::move(recordingToggle);report["pageVisibility"]=std::move(pageVisibility);report["actionTiming"]=std::move(actionTiming);report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
         if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
         // Teardown check: Projection's centre page (otherwise built only with

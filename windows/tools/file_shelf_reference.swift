@@ -2,10 +2,10 @@ import AppKit
 import QuartzCore
 import UniformTypeIdentifiers
 
-// Actual-source oracle of the redesigned File Shelf (Mac 1.3.0 Sources/FileShelfCanvas.swift with its real
+// Actual-source oracle of the redesigned File Shelf (Mac 1.3.1 Sources/FileShelfCanvas.swift with its real
 // FileShelfStore over synthetic files). The unchanged Mac canvas is built in scripted states (dark / Light,
 // English / Simplified Chinese, empty, the 4-column grid, hover, the properties card of a file and of a folder,
-// a multi-selection, a scrolled grid, the context menu, an unavailable reference, Recording mode, the drop
+// a multi-selection, a scrolled grid, the context menu, a tile's ⋯ (hover and its menu), an unavailable reference, Recording mode, the drop
 // target) and exported as its model layer tree with the design recorder (tools/hud_design_reference_support.swift),
 // its page controls and accessibility items, and the scenario's INPUT (the store's items, the selection, the
 // properties the card read), so the Windows suite rebuilds the same state. Also exported: the selection rules
@@ -102,6 +102,9 @@ private func pump() { RunLoop.main.run(until: Date().addingTimeInterval(0.25)) }
         let tile = canvas.page.controls.first { $0.id == "file:2" }!
         HUDControlHighlightLayer.update(in: canvas.root, point: centre(tile, in: canvas.root), pressed: false)
         rows.append(try row("hoverTile"))
+        let more = canvas.page.controls.first { $0.id == "file:2" + HUDTileMoreButton.suffix }!
+        HUDControlHighlightLayer.update(in: canvas.root, point: centre(more, in: canvas.root), pressed: false)
+        rows.append(try row("hoverMore"))
         HUDControlHighlightLayer.update(in: canvas.root, point: nil, pressed: false)
         // The properties card of a file, then of a folder (the reads arrive on the main queue).
         canvas.click(id(0)); pump()
@@ -115,6 +118,10 @@ private func pump() { RunLoop.main.run(until: Date().addingTimeInterval(0.25)) }
         _ = canvas.scroll(at: CGPoint(x: 200, y: 300), delta: CGPoint(x: 0, y: -1000))
         _ = canvas.rightPointerDown(at: CGPoint(x: 220, y: 81 + 5 + 60))
         rows.append(try row("contextMenu"))
+        canvas.closeMenu()
+        // The ⋯ opens the same menu without selecting the tile.
+        canvas.page.controls.first { $0.id == "file:2" + HUDTileMoreButton.suffix }!.activate()
+        rows.append(try row("moreMenu"))
         canvas.closeMenu()
         canvas.setDropTarget(true)
         rows.append(try row("dropTarget"))

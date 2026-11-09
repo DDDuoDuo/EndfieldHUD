@@ -58,13 +58,13 @@ enum HUDCalendarError: Error, LocalizedError {
     case invalidData, changedOnDisk, capacity, upcomingCapacity, invalidDate, missing, notifications
     var errorDescription: String? {
         switch self {
-        case .invalidData: return L10n.text("Calendar data could not be read. Your file was preserved.", "无法读取日历数据，原文件已保留。")
-        case .changedOnDisk: return L10n.text("Calendar changed outside this app. Restart before saving.", "日历文件已被其他程序修改，请重启后再保存。")
-        case .capacity: return L10n.text("The calendar can keep up to 256 events.", "日历最多可保存 256 个事项。")
-        case .upcomingCapacity: return L10n.text("Keep up to 30 upcoming events so every reminder can be scheduled.", "最多保留 30 个待办日期事项，以确保每条提醒都能安排。")
-        case .invalidDate: return L10n.text("Enter a valid date as YYYY-MM-DD.", "请输入有效日期，格式为 YYYY-MM-DD。")
-        case .missing: return L10n.text("This event is no longer available.", "此事项已不存在。")
-        case .notifications: return L10n.text("Reminders could not be scheduled. Try again.", "无法安排提醒，请重试。")
+        case .invalidData: return L10n.text("Calendar data could not be read. Your file was preserved", "无法读取日历数据，原文件已保留")
+        case .changedOnDisk: return L10n.text("Calendar changed outside this app. Restart before saving", "日历文件已被其他程序修改，请重启后再保存")
+        case .capacity: return L10n.text("The calendar can keep up to 256 events", "日历最多可保存 256 个事项")
+        case .upcomingCapacity: return L10n.text("Keep up to 30 upcoming events so every reminder can be scheduled", "最多保留 30 个待办日期事项，以确保每条提醒都能安排")
+        case .invalidDate: return L10n.text("Enter a valid date as YYYY-MM-DD", "请输入有效日期，格式为 YYYY-MM-DD")
+        case .missing: return L10n.text("This event is no longer available", "此事项已不存在")
+        case .notifications: return L10n.text("Reminders could not be scheduled. Try again", "无法安排提醒，请重试")
         }
     }
 }

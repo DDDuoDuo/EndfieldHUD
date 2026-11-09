@@ -137,11 +137,6 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& resou
     owner.pointer({app::PointerKind::up, app::PointerButton::left, at.x, at.y}, .03);
     check(settings.controller().committed().boolean("closeOnFocusLost") != before && !saved.empty(), "A click on the switch saves the preference");
     check(frame(core::Module::system, .05) > 0, "The switch's change composes");
-    // System > Modules: the list glyphs come from the packaged appearance templates.
-    check(settings.canvas(core::Module::system).performAccessibilityAction("modules", .06), "Modules opens");
-    const auto modulesEntries = frame(core::Module::system, .1);
-    report("System > Modules", modulesEntries);
-    check(modulesEntries > 0 && settings.canvas(core::Module::system).section() == "modules", "The Modules page composes its glyph rows");
     // --- Display: the Center logo chooser's artwork ---------------------------------------
     const auto displayEntries = frame(core::Module::display, .2);
     report("Display", displayEntries);
@@ -169,12 +164,21 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& resou
     owner.deadline(12.6); overlay.deadline(12.6);
     check(!settings.controller().scalePending() && !bar.isConfirming(), "Unanswered, the preview reverts and the bar closes");
     frame(core::Module::display, 12.7);
+    // Display > Modules: the list glyphs come from the packaged appearance templates.
+    check(display.performAccessibilityAction("modules", 12.76), "Modules opens from Display");
+    const auto modulesEntries = frame(core::Module::display, 12.8);
+    report("Display > Modules", modulesEntries);
+    check(modulesEntries > 0 && display.section() == "modules", "The Modules page composes its glyph rows");
     // --- Close: park and release ------------------------------------------------------------
     const auto resident = raster.stats().entries;
-    owner.setOverlayVisible(false, 13); overlay.setOverlayVisible(false, 13);
-    owner.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13);
-    check(settings.logoArtworks() == 0, "The concealed HUD keeps no decoded logo artwork");
-    frame(core::Module::system, 13.1);
+    // The host's close: overlayClosing, the close's frames (the page stays
+    // active and drawn, taking no input), then the hidden HUD.
+    owner.overlayClosing(13); overlay.overlayClosing(13);
+    check(frame(core::Module::display, 13.05) > 0 && display.isActive() && display.section() == "modules" && !owner.capturesPointer(),
+        "Through the close Display stays active and drawn on its Modules page, taking no input");
+    owner.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13.1); overlay.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13.1);
+    check(settings.logoArtworks() == 0 && !display.isActive(), "The concealed HUD leaves the page and keeps no decoded logo artwork");
+    frame(core::Module::system, 13.2);
     check(raster.stats().entries <= resident, "Closing parks what is not shown");
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);

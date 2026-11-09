@@ -19,6 +19,7 @@
 // shipped "Keep this UI scale?" countdown stays 12 s
 // (modules::SettingsController::confirmationDuration, LIB-6).
 #include "core/motion.hpp"
+#include "core/render_scale.hpp"
 #include "core/scene.hpp"
 #include <array>
 #include <cstdint>
@@ -76,8 +77,11 @@ Color hsbShifted(Color, double hueDegrees, double saturation, double brightness)
 struct AccentPalette {
     Hex accent{standardAccent};
     Color yellow, yellowHigh, yellowLow, yellowDeep;
-    // HUDColor.accentInk: yellow in dark; in Light yellowLow x .58 (darkened .42).
+    // HUDColor.accentInk: yellow in dark; in Light the plate ink.
     Color ink;
+    // HUDColor.plateInk: the accent as a thin line on the light module plates
+    // of the HUD's right-hand list in either theme: yellowLow x .58 (darkened .42).
+    Color plateInk;
     // The primary button gradient top to bottom: high, yellow, low (:231).
     std::array<Color, 3> primaryButton() const noexcept { return {yellowHigh, yellow, yellowLow}; }
     // The default FAD41F keeps its AUTHORED stops (never computed): FFFA00 /
@@ -168,6 +172,7 @@ public:
     Color yellowLow() const noexcept { return accent_.yellowLow; }
     Color yellowDeep() const noexcept { return accent_.yellowDeep; }
     Color accentInk() const noexcept { return accent_.ink; }
+    Color plateInk() const noexcept { return accent_.plateInk; }
     // HUDColor.tone: `hex` in dark, lightTone(hex) in Light, for greys drawn on
     // theme surfaces (plates, photos and fixed dark tags keep rgb()).
     Color tone(Hex, double alpha = 1) const noexcept;
@@ -267,16 +272,18 @@ inline constexpr core::CubicTiming easeIn = core::DesignEasing::easeIn;
 inline constexpr core::CubicTiming easeOut = core::DesignEasing::easeOut;
 inline constexpr core::CubicTiming easeInOut = core::DesignEasing::easeInOut;
 inline constexpr core::CubicTiming linear{0, 0, 1, 1};
+inline constexpr core::CubicTiming listSlide = core::DesignEasing::listSlide; // the right-hand list's tile slide
 }
 // Durations in seconds (HUDDuration, :351-388). toastOut is .25 as a token;
 // the toast's own hide uses .24 (HUDDesignOverlay.swift HUDToast.hide, LIB-65).
-// entrance, leave and the stagger constants alias core::DesignMotion (the one
+// entrance, leave, listSlide and the stagger constants alias core::DesignMotion (the one
 // definition, shared with the module switch).
 namespace duration {
 inline constexpr double hover = .22, press = .10, sheen = .70;
 inline constexpr double entrance = core::DesignMotion::entrance, staggerStep = core::DesignMotion::staggerStep;
 inline constexpr double staggerBase = core::DesignMotion::staggerBase, leave = core::DesignMotion::leave;
 inline constexpr int staggerCap = core::DesignMotion::staggerCap;
+inline constexpr double listSlide = core::DesignMotion::listSlide;
 inline constexpr double titleWipe = .45, ruleWipe = .42, ruleDelay = .05, menuWipe = .18, tabOn = .20;
 inline constexpr double knob = .18, toggleLabel = .14, caret = .16, accentBar = .14, thumb = .12, bubbleFade = .14, bubbleScale = .18;
 inline constexpr double bandIn = .30, bandOut = .18, confirmText = .30, confirmTextDelay = .12, pillDelay = .16, pillStep = .06;
@@ -302,8 +309,13 @@ constexpr Rect boxRect(double unit = baseUnit) noexcept {
 // LIB-97). boxScale: backing px per box px = clamp(windowScale x unit, 1, 8),
 // non-finite -> 2. Text leaves request min(4, ceil(clamp(s, 1, 4) x 1.35));
 // other layers clamp(s, 1, 4); cached artwork ceil(s) capped at 8.
+// `magnification` (HUDRenderScale.contentScale / glyphScale) is a layer
+// transform above the buffer that enlarges it on screen (a Display > HUD
+// elements size; non-finite or not above 0 reads as 1): every buffer grows
+// with it, text to min(4 m, ceil(clamp(s, 1, 4) x 1.35 x m)) so the cap stays
+// 4 pixels per on-screen point, other layers to clamp(s, 1, 4) x m.
 double boxScale(double windowScale, double unit) noexcept;
-double textContentsScale(double boxScale) noexcept;
-double layerContentsScale(double boxScale) noexcept;
+double textContentsScale(double boxScale, double magnification = 1) noexcept;
+double layerContentsScale(double boxScale, double magnification = 1) noexcept;
 double artworkScale(double boxScale) noexcept;
 } // namespace endfield::modules::design

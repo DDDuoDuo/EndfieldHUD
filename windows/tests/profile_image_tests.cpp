@@ -56,7 +56,7 @@ void run(){
     check(n::importProfileImage(wide,m::ProfileImageKind::background,images).ends_with(".png"),"Backgrounds have no portrait dimension limit");
     const auto huge=t.root/"huge.png";{std::ofstream(huge).put('x');}std::filesystem::resize_file(huge,128ull*1024*1024+1);
     check(failure([&]{n::importProfileImage(huge,m::ProfileImageKind::avatar,images);})==m::ProfileFailure::imageTooLarge,"128 MB source limit");
-    check(m::profileFailureMessage(m::ProfileFailure::imageTooLarge,endfield::core::Language::english)=="Choose an image smaller than 128 MB.","Source message");
+    check(m::profileFailureMessage(m::ProfileFailure::imageTooLarge,endfield::core::Language::english)=="Choose an image smaller than 128 MB","Source message");
     // Owner-thread service on the shared executor.
     endfield::app::UtilityExecutor executor([]{},4);std::vector<std::string>imported,decodedNames;std::vector<m::ProfileFailure>failures;
     n::ProfileImageService service(images,executor,{[&](m::ProfileImageKind,std::string v){imported.push_back(v);},[&](m::ProfileImageKind,m::ProfileFailure f,std::string){failures.push_back(f);},

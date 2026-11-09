@@ -43,6 +43,9 @@ public:
     virtual std::optional<std::string> error() const = 0;    // the localized failure
     virtual double currentTime() const = 0;                  // seconds
     virtual void togglePlayback() = 0;
+    // NotesMediaPresentation.pause (NotesMedia.swift:402-407): the play
+    // intent goes and a playing movie stops where it is, shown or not.
+    virtual void pause() = 0;
     virtual void seek(double seconds) = 0;
     // Set by the canvas: state changes (loaded, playing, failed) and progress.
     std::function<void()> onStateChange, onProgress;
@@ -152,6 +155,7 @@ public:
     bool handleKey(const design::KeyInput&) override;
     bool handleScroll(Point, Point) override;
     bool interceptPointerDown(Point, const design::PointerInput&) override;
+    bool handleRightPointerDown(Point) override;
     bool editingOtherText() const override;
     void endOtherEditing(bool commit) override;
     void willEndInteraction() override;
@@ -216,6 +220,7 @@ private:
     NotesFormatBar* formatBar_{};
     design::Layer *progressFill_{}, *preview_{};
     std::optional<std::string> presentationKey_;
+    bool presentationVideo_{};   // the presentation's reference is a video (presentation?.reference.kind == .video)
     // Locked page and the password pop-overs
     LockedPanel* lockedPanel_{};
     design::TextField* passwordField_{};
@@ -250,8 +255,12 @@ private:
     NotesFormatState formatState() const;
     void updateFormatBar();
     void applyFormat(const core::notes::FormatChange&);
+    std::vector<design::Menu::Item> categoryMenuItems(const std::optional<std::string>& current) const;
     void openCategoryMenu(const design::Control& anchor);
-    void confirmDelete();
+    // A gallery document: its tile's (and ⋯'s) label, and its Open / Move to… / Delete menu.
+    std::string documentLabel(const ArchiveSummary&) const;
+    void openDocumentMenu(const std::string& id, Rect anchorRect, const design::Control* anchor);
+    void confirmDelete(const std::string& id);
     void confirmDeclassify();
     void openClassify(const design::Control& anchor);
     struct PasswordForm { std::unique_ptr<design::Popover> popover; std::vector<design::Control*> controls; std::vector<design::TextField*> fields; };

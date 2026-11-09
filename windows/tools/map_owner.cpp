@@ -41,6 +41,10 @@ struct MapOwner::Impl {
     std::unique_ptr<gpu::NativeMapScene> scene;
     app::ClientMetrics metrics;
     bool alive{true}, ready{}, posed{}, rasterActive{}, overlay{true}, prewarming{}, releasePending{}, textureFactory{};
+    // The HUD's close began and its hide has not run yet: the canvas keeps
+    // drawing, the pins' pulse loop stops (the Mac's close strips map.pulse,
+    // decision L-D1).
+    bool closing{};
     double time{};
     std::uint64_t cameraRevision{}, gestureRevision{}, playerBytes{};
     modules::MapColor accent{};
@@ -76,6 +80,11 @@ struct MapOwner::Impl {
     // prewarm (Windows only) builds the page without starting the painter.
     void prepare() { if (prewarming) return; if (!rasterActive) { rasterActive = true; raster->setActive(true, time); } if (requestGeography) requestGeography(); }
     void releaseWorkingSet() { if (rasterActive) { rasterActive = false; raster->setActive(false, time); } }
+    // The scene's appearance: the close strips the pulse (its rings stay at
+    // their model opacity 0), it does not re-style the pins.
+    gpu::MapAppearance sceneAppearance() const { return {appearance.reducedMotion, appearance.ambient, closing}; }
+    // The hidden HUD or a reopen ends a close: the pulse may run again.
+    void endClose() { if (!closing) return; closing = false; (void)scene->setAppearance(sceneAppearance()); }
     // The raster's style: always dark, the palette's yellow for the centre
     // country (WorldMapCanvas.swift:59, 154), painted at the map's density.
     void configure() {
@@ -151,8 +160,8 @@ void MapOwner::setGeography(std::shared_ptr<const modules::MapGeography> g, doub
     if (!i.geography) return;
     auto& env = i.context.env();
     env.now = std::max(env.now, i.time);
-    if (i.geography->terrainFailed) i.canvas->reportError(core::localized("Terrain data could not be loaded.", "无法载入地形数据。", env.language));
-    if (i.geography->countriesFailed) i.canvas->reportError(core::localized("Country shapes could not be loaded.", "无法载入地图轮廓。", env.language));
+    if (i.geography->terrainFailed) i.canvas->reportError(core::localized("Terrain data could not be loaded", "无法载入地形数据", env.language));
+    if (i.geography->countriesFailed) i.canvas->reportError(core::localized("Country shapes could not be loaded", "无法载入地图轮廓", env.language));
 }
 bool MapOwner::utilityCompleted(double t) { auto& i = *impl_; i.clock(t); return i.raster->submitPending(i.time); }
 bool MapOwner::perform(std::string_view id, double t) {
@@ -181,7 +190,7 @@ void MapOwner::setAppearance(const app::ModuleAppearance& a, double t) {
     i.core->setAppearance(a, t);
     // The Mac stops the pin pulse with ambient motion off and in low-power visual mode.
     i.appearance = {a.reduceMotion, a.ambient && !a.lowPower};
-    (void)i.scene->setAppearance(i.appearance);
+    (void)i.scene->setAppearance(i.sceneAppearance());
     i.state.setReducedMotion(a.reduceMotion);
     if (a.reduceMotion) i.scene->settle();
     i.configure();
@@ -189,11 +198,23 @@ void MapOwner::setAppearance(const app::ModuleAppearance& a, double t) {
 void MapOwner::setOverlayVisible(bool v, double t) {
     auto& i = *impl_;
     i.clock(t);
+    i.endClose();
     i.overlay = v;
     i.core->setOverlayVisible(v, t);
     i.synchronize();
 }
-void MapOwner::overlayClosing(double t) { auto& i = *impl_; i.clock(t); i.core->overlayClosing(t); i.overlay = false; i.synchronize(); }
+// The close's start: input stops (the core) and the pin pulse stops on the
+// first closing frame. The Mac's close runs releaseRasterWorkingSet, which
+// releases only an inactive canvas (WorldMapCanvas.swift:82): closing on the
+// Map keeps its raster until the hide deactivates it (didDeactivate).
+void MapOwner::overlayClosing(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    i.core->overlayClosing(t);
+    if (!i.closing && i.overlay) { i.closing = true; (void)i.scene->setAppearance(i.sceneAppearance()); }
+    if (!i.canvas->isActive()) i.releaseWorkingSet();
+    i.synchronize();
+}
 void MapOwner::update(const app::ModuleFrame& f) {
     auto& i = *impl_;
     i.clock(f.time);
@@ -201,7 +222,7 @@ void MapOwner::update(const app::ModuleFrame& f) {
     i.synchronize();
     const auto pose = i.core->pose(core::Module::map);
     const auto& sample = f.presentation;
-    const bool shown = sample.current.module == core::Module::map || (sample.incoming && sample.incoming->module == core::Module::map);
+    const bool shown = sample.shows(core::Module::map);
     // Module input stopped on another module (releaseRasterWorkingSet: only
     // while the canvas is inactive).
     if (!shown && !i.canvas->isActive()) i.releaseWorkingSet();
@@ -323,6 +344,7 @@ bool MapOwner::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
     const bool changed = i.core->hostEvent(e, t);
+    if (e.kind == app::HostEvent::Kind::overlayConcealed || e.kind == app::HostEvent::Kind::overlayRetracted) { i.endClose(); i.overlay = false; i.synchronize(); }
     if (e.kind == app::HostEvent::Kind::overlayConcealed) {
         // The Mac 1.3.0 closed HUD keeps no map (OverlayController's closed-heap
         // cleanup after releasing the view): the decoded geography, the terrain

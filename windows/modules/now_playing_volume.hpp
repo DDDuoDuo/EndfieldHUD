@@ -1,4 +1,6 @@
 #pragma once
+#include "core/data/file_shelf_store.hpp"
+#include "modules/now_playing_model.hpp"
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -30,8 +32,29 @@ struct NowPlayingAudioRoute {
     // worker does not capture it. A window-title player (no media session)
     // takes its playing/paused state from this when present.
     std::optional<bool>rendering;
+    // The file identity of executablePath (the audio worker's lease); none
+    // when the row carries no identity (replays and fixtures).
+    std::optional<ehud::data::ShelfFileIdentity>executableIdentity;
+    // The app this process plays for when it is a helper (a browser's audio
+    // service, a launcher's web view): its executable and that file's
+    // identity; empty when the process is its own app.
+    std::string applicationPath;
+    std::optional<ehud::data::ShelfFileIdentity>applicationIdentity;
+    // The process's package family name; empty when it has no package.
+    std::string packageFamily;
     bool operator==(const NowPlayingAudioRoute&)const=default;
 };
+// The player a route is wanted for: the media session's AppUserModelID (or
+// Win32 executable) and, for an explicit AppUserModelID such as "Chrome",
+// the executable its Start shortcut launches when that was resolved.
+struct NowPlayingAudioSource {
+    std::string appUserModelID;
+    std::string executablePath;
+    std::optional<ehud::data::ShelfFileIdentity>executableIdentity;
+    bool operator==(const NowPlayingAudioSource&)const=default;
+};
+// The route picked for a player and how many routes belong to it.
+struct NowPlayingAudioMatch {std::optional<std::size_t>route;std::size_t matches{};bool operator==(const NowPlayingAudioMatch&)const=default;};
 // Narrow interface implemented by the production owner over the per-app audio
 // service. All calls happen on the owner thread and perform no blocking IO.
 struct NowPlayingAppVolume {
@@ -46,15 +69,22 @@ struct NowPlayingAppVolume {
     std::function<bool(const std::string&route,double gain)>setGain;
     std::function<bool(const std::string&route)>stop;
 };
-// GSMTC Win32 identity ("Player.exe", optionally with a directory) rather than
-// a packaged/explicit AppUserModelID.
-bool nowPlayingWin32Identity(std::string_view)noexcept;
-// Source rule: never adjust an unrelated process or guess among several.
-// Returns the single matching route, or none for zero or multiple matches.
-// Executable identities compare paths; packaged/explicit identities compare
-// the route's captured appUserModelID, else the resolver's answer.
-std::optional<std::size_t>nowPlayingAudioRouteFor(std::string_view sourceAppUserModelID,
-    std::span<const NowPlayingAudioRoute>,const std::function<std::optional<std::string>(const NowPlayingAudioRoute&)>&processAppUserModelID={});
+using NowPlayingProcessIdentity=std::function<std::optional<std::string>(const NowPlayingAudioRoute&)>;
+// Whether a route belongs to the player (source d09780d: the player's own
+// process or a helper inside its app):
+// - A Win32 identity ("Player.exe", or a full path) names the route's
+//   executable or the app it plays for.
+// - Any other identity matches the route's captured AppUserModelID, else the
+//   resolver's answer; a "Family!App" identity also takes a route without an
+//   AppUserModelID of its own in that package family; and a resolved launch
+//   target takes the route whose executable, or whose app, is that file.
+bool nowPlayingAudioRouteMatches(const NowPlayingAudioSource&,const NowPlayingAudioRoute&,const NowPlayingProcessIdentity&processAppUserModelID={});
+// Source rule (d09780d with a6f2d27): never adjust an unrelated process or
+// guess among several. Of the matching routes, the one with a working
+// route, else the one playing, else the one whose route failed, else the
+// only one; none when that rank holds several.
+NowPlayingAudioMatch nowPlayingAudioRouteFor(const NowPlayingAudioSource&,std::span<const NowPlayingAudioRoute>,
+    const NowPlayingProcessIdentity&processAppUserModelID={});
 struct NowPlayingVolumeFace {bool available{};std::optional<double>value;};
 // volumeAvailable and `currentSession?.gain ?? (available ? 1 : nil)`.
 NowPlayingVolumeFace nowPlayingVolumeFace(const NowPlayingAudioRoute*)noexcept;

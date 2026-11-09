@@ -69,10 +69,14 @@ struct State {
     struct Pending {std::optional<unsigned>index;bool reopen{};};
     std::mutex mutex;Handle event;Provider::Resolver resolver;Provider::Factory factory;NotesImageRoute route;
     std::vector<NotesImageRequest>visible,inspections;std::vector<Pending>pending;
+    // Parallel to visible: the generation each request was last shown in
+    // after being hidden or replaced. A decoder opened before that is closed
+    // even when the worker never saw the request leave (see the prune).
+    std::vector<std::uint64_t>shownSince;
     std::vector<Job>jobs;std::optional<Job>active;std::array<std::optional<NotesImageCompletion>,8>ready,inspectionReady;
     std::shared_ptr<Budget>budget=std::make_shared<Budget>();NotesImageDecoderStats stats;std::uint64_t generation{},inspectionGeneration{};std::size_t inspectionCompleted{},cursor{},inspectionCursor{};
     bool stopping{},noticePosted{},inspectionTurn{};
-    State(Provider::Resolver r,Provider::Factory f):resolver(std::move(r)),factory(std::move(f)){event.value=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event.value)throw std::runtime_error("Cannot create image worker event");visible.reserve(8);pending.reserve(8);jobs.reserve(8);inspections.reserve(8);}
+    State(Provider::Resolver r,Provider::Factory f):resolver(std::move(r)),factory(std::move(f)){event.value=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event.value)throw std::runtime_error("Cannot create image worker event");visible.reserve(8);shownSince.reserve(8);pending.reserve(8);jobs.reserve(8);inspections.reserve(8);}
     void clearReady(){for(auto&r:ready)r.reset();noticePosted=false;stats.completed=0;}
     void clearInspections(){for(auto&r:inspectionReady)r.reset();inspectionCompleted=0;}
     void notice(){if(!stopping&&route.owner&&!noticePosted&&(stats.completed||inspectionCompleted)){if(PostMessageW(route.owner,route.message,route.generation,0)){noticePosted=true;++stats.notices;}}}
@@ -95,7 +99,7 @@ struct State {
 };
 struct Decoder {
     NotesImageRequest request;std::unique_ptr<Provider::Sequence>sequence;std::shared_ptr<const NotesImageInfo>info;
-    std::uint64_t used{};
+    std::uint64_t used{},generation{}; // generation: of the job that opened it
     std::array<std::shared_ptr<const NotesImageFrame>,3>cache;std::array<std::uint64_t,3>ages{};std::uint64_t age{};
     std::shared_ptr<const NotesImageFrame>frame(unsigned index,const std::shared_ptr<Budget>&budget,bool&decoded){
         need(index<info->frameCount,"GIF frame index outside decoded sequence");for(std::size_t n=0;n<cache.size();++n)if(cache[n]&&cache[n]->index==index){ages[n]=++age;return cache[n];}
@@ -105,10 +109,15 @@ struct Decoder {
 unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argument(static_cast<std::shared_ptr<State>*>(raw));auto state=*argument;argument.reset();const auto apartment=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     try{if(FAILED(apartment))throw std::runtime_error("Image worker COM initialization failed");std::map<std::string,Decoder,std::less<>>decoders;std::uint64_t decoderUse{},observedGeneration=std::numeric_limits<std::uint64_t>::max();
         for(;;){if(WaitForSingleObject(state->event.value,INFINITE)!=WAIT_OBJECT_0)break;{std::lock_guard lock(state->mutex);++state->stats.wakeups;}
-            for(;;){std::optional<Job>job;std::vector<NotesImageRequest>visible;bool stop{},prune{};
-                {std::lock_guard lock(state->mutex);stop=state->stopping;if(observedGeneration!=state->generation){visible=state->visible;observedGeneration=state->generation;prune=true;}state->pump();if(!stop&&!state->jobs.empty()){job=std::move(state->jobs.front());state->jobs.erase(state->jobs.begin());state->active=job;state->stats.inFlight=true;}}
+            for(;;){std::optional<Job>job;std::vector<NotesImageRequest>visible;std::vector<std::uint64_t>since;bool stop{},prune{};
+                {std::lock_guard lock(state->mutex);stop=state->stopping;if(observedGeneration!=state->generation){visible=state->visible;since=state->shownSince;observedGeneration=state->generation;prune=true;}state->pump();if(!stop&&!state->jobs.empty()){job=std::move(state->jobs.front());state->jobs.erase(state->jobs.begin());state->active=job;state->stats.inFlight=true;}}
                 if(stop)break;
-                if(prune)for(auto it=decoders.begin();it!=decoders.end();){const auto match=std::find(visible.begin(),visible.end(),it->second.request);if(match==visible.end())it=decoders.erase(it);else ++it;}
+                // A hidden or replaced request's decoder closes. So does one
+                // opened before its request was last shown again: a hide and
+                // a new showing between two wakes reopen the file like any
+                // return (NotesMedia.swift:320-345: no decoder or bookmark
+                // survives a hide), never depending on when this worker ran.
+                if(prune)for(auto it=decoders.begin();it!=decoders.end();){const auto match=std::find(visible.begin(),visible.end(),it->second.request);if(match==visible.end()||it->second.generation<since[std::size_t(match-visible.begin())])it=decoders.erase(it);else ++it;}
                 {std::lock_guard lock(state->mutex);state->stats.decoders=decoders.size();state->stats.cachedFrames=0;for(const auto&[key,d]:decoders){(void)key;for(const auto&f:d.cache)if(f)++state->stats.cachedFrames;}}
                 if(!job)break;
                 NotesImageCompletion result;result.key=job->request.key;result.revision=job->request.revision;bool decoded{};
@@ -126,7 +135,7 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
                         // least-recently-used sequence may also be reopened later.
                         // Only its codec/cache is evicted, never owner playback state.
                         if(decoders.size()>=Provider::maximumCachedDecoders){const auto oldest=std::min_element(decoders.begin(),decoders.end(),[](const auto&a,const auto&b){return a.second.used<b.second.used;});decoders.erase(oldest);}
-                        Decoder d;d.request=job->request;auto access=state->resolver(job->request);need(!access.path.empty(),"Media access resolver returned no path");
+                        Decoder d;d.request=job->request;d.generation=job->generation;auto access=state->resolver(job->request);need(!access.path.empty(),"Media access resolver returned no path");
                         d.sequence=state->factory?state->factory(job->request,std::move(access)):(job->request.videoPoster?detail::makeNotesVideoPosterSequence(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access)));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());auto info=d.sequence->info();if(job->request.firstFrameOnly){info.kind=modules::NotesMediaKind::image;info.frameCount=1;info.frameDelays.clear();info.duration=0;}d.info=std::make_shared<const NotesImageInfo>(std::move(info));auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
                     }
                     it->second.used=++decoderUse;result.info=it->second.info;result.frame=it->second.frame(job->index,state->budget,decoded);result.result=S_OK;
@@ -146,7 +155,7 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
             {std::lock_guard lock(state->mutex);if(state->stopping)break;}
         }
     }catch(...){/* No codec exception crosses into a UI callback. */}
-    {std::lock_guard lock(state->mutex);state->route={};state->jobs.clear();state->pending.clear();state->inspections.clear();state->clearInspections();state->visible.clear();state->active.reset();state->clearReady();state->stats.inFlight=false;state->stats.decoders=0;state->stats.cachedFrames=0;state->stopping=true;}
+    {std::lock_guard lock(state->mutex);state->route={};state->jobs.clear();state->pending.clear();state->inspections.clear();state->clearInspections();state->visible.clear();state->shownSince.clear();state->active.reset();state->clearReady();state->stats.inFlight=false;state->stats.decoders=0;state->stats.cachedFrames=0;state->stopping=true;}
     state->factory={};state->resolver={};if(SUCCEEDED(apartment))CoUninitialize();{std::lock_guard lock(state->mutex);state->stats.stopped=true;}state.reset();workerGate().store(false,std::memory_order_release);return 0;
 }
 // Starts the one decoder worker with its shared state (the worker owns a copy).
@@ -164,13 +173,15 @@ NativeNotesImageDecoder::NativeNotesImageDecoder(Resolver resolver,NotesImageRou
 }
 NativeNotesImageDecoder::~NativeNotesImageDecoder(){stop();}
 bool NativeNotesImageDecoder::setVisible(std::span<const NotesImageRequest>requests,bool retry){auto&i=*impl_;i.onThread();std::unordered_set<std::string_view>identities;identities.reserve(requests.size());for(const auto&r:requests){valid(r);need(!r.allowVideoInspection,"Video metadata ticket cannot enter image playback");need(identities.insert(r.key).second,"Duplicate media identity");}
-    std::vector<NotesImageRequest>visible(requests.begin(),requests.end());std::vector<State::Pending>pending(requests.size());
+    std::vector<NotesImageRequest>visible(requests.begin(),requests.end());std::vector<State::Pending>pending(requests.size());std::vector<std::uint64_t>since(requests.size());
     std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");if(!retry&&visible==s.visible)return false;if(!visible.empty())i.start();need(s.generation<std::numeric_limits<std::uint64_t>::max(),"Image generation exhausted");
     std::unordered_map<std::string_view,std::size_t>previous;previous.reserve(s.visible.size());for(std::size_t n=0;n<s.visible.size();++n)previous.emplace(s.visible[n].key,n);
     // Preserve the requested frame and playback state when unrelated cards
     // change. Generation changes only cancel stale codec results, not clocks.
     for(std::size_t n=0;n<requests.size();++n){const auto&r=requests[n];const auto old=previous.find(r.key);auto&next=pending[n];
-        if(retry||old==previous.end()||s.visible[old->second]!=r)next={0,retry};
+        // Shown before and still the same request: its decoder stays (a retry reopens it through its job).
+        const bool kept=old!=previous.end()&&s.visible[old->second]==r;since[n]=kept?s.shownSince[old->second]:s.generation+1;
+        if(retry||!kept)next={0,retry};
         else{
             next=s.pending[old->second];if(next.index)continue;
             const auto queued=std::find_if(s.jobs.begin(),s.jobs.end(),[&](const auto&j){return !j.inspection&&j.request==r;});
@@ -179,7 +190,7 @@ bool NativeNotesImageDecoder::setVisible(std::span<const NotesImageRequest>reque
             else{const auto ready=std::find_if(s.ready.begin(),s.ready.end(),[&](const auto&value){return value&&value->key==r.key&&value->revision==r.revision;});if(ready!=s.ready.end())next={(*ready)->frame?(*ready)->frame->index:0,false};}
         }
     }
-    ++s.generation;s.visible=std::move(visible);s.pending=std::move(pending);s.cursor=0;std::erase_if(s.jobs,[](const auto&job){return !job.inspection;});s.clearReady();s.pump();s.notice();++s.stats.requests;SetEvent(s.event.value);return true;
+    ++s.generation;s.visible=std::move(visible);s.shownSince=std::move(since);s.pending=std::move(pending);s.cursor=0;std::erase_if(s.jobs,[](const auto&job){return !job.inspection;});s.clearReady();s.pump();s.notice();++s.stats.requests;SetEvent(s.event.value);return true;
 }
 bool NativeNotesImageDecoder::requestFrame(std::string_view key,unsigned index){auto&i=*impl_;i.onThread();need(index<maximumGIFFrames,"Image frame exceeds source bound");std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");const auto visible=std::find_if(s.visible.begin(),s.visible.end(),[&](const auto&r){return r.key==key;});if(visible==s.visible.end())return false;i.start();
     auto job=std::find_if(s.jobs.begin(),s.jobs.end(),[&](const auto&j){return !j.inspection&&j.request.key==key;});if(job!=s.jobs.end()){if(job->index==index)return false;job->index=index;}
@@ -193,7 +204,7 @@ std::vector<NotesImageCompletion>NativeNotesImageDecoder::drainInspections(UINT_
 void NativeNotesImageDecoder::hide(){(void)setVisible({});}
 void NativeNotesImageDecoder::setRoute(NotesImageRoute route){auto&i=*impl_;i.onThread();routeValid(route);std::lock_guard lock(i.state->mutex);need(!i.state->stopping,"Image decoder stopped");i.state->route=route;i.state->noticePosted=false;i.state->notice();}
 std::vector<NotesImageCompletion>NativeNotesImageDecoder::drain(UINT_PTR generation){auto&i=*impl_;i.onThread();std::vector<NotesImageCompletion>results;std::lock_guard lock(i.state->mutex);auto&s=*i.state;if(s.stopping||s.route.generation!=generation)return results;results.reserve(s.stats.completed);for(auto&r:s.ready)if(r){results.push_back(std::move(*r));r.reset();}s.stats.completed=0;s.noticePosted=false;s.pump();if(!s.jobs.empty())SetEvent(s.event.value);s.notice();return results;}
-void NativeNotesImageDecoder::stop()noexcept{if(!impl_||!impl_->state)return;auto&s=*impl_->state;{std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.jobs.clear();s.pending.clear();s.inspections.clear();s.clearInspections();s.visible.clear();s.clearReady();SetEvent(s.event.value);if(impl_->gate)s.stats.stopped=true;}
+void NativeNotesImageDecoder::stop()noexcept{if(!impl_||!impl_->state)return;auto&s=*impl_->state;{std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.jobs.clear();s.pending.clear();s.inspections.clear();s.clearInspections();s.visible.clear();s.shownSince.clear();s.clearReady();SetEvent(s.event.value);if(impl_->gate)s.stats.stopped=true;}
     if(impl_->gate){impl_->gate=false;workerGate().store(false,std::memory_order_release);}}
 NotesImageDecoderStats NativeNotesImageDecoder::stats()const{auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);auto result=i.state->stats;result.queued=i.state->jobs.size();result.inspectionCompleted=i.state->inspectionCompleted;result.pending=static_cast<std::size_t>(std::count_if(i.state->pending.begin(),i.state->pending.end(),[](const auto&p){return p.index.has_value();}))+i.state->inspections.size()-std::min(i.state->inspectionCursor,i.state->inspections.size());result.liveFrameBytes=i.state->budget->bytes.load();result.workerStarted=i.worker.value!=nullptr;return result;}
 HANDLE NativeNotesImageDecoder::duplicateWorkerHandle()const{impl_->onThread();if(!impl_->worker.value&&impl_->gate){std::lock_guard lock(impl_->state->mutex);if(!impl_->state->stopping)impl_->start();}HANDLE copy{};if(!DuplicateHandle(GetCurrentProcess(),impl_->worker.value,GetCurrentProcess(),&copy,SYNCHRONIZE,FALSE,0))throw std::runtime_error("Cannot duplicate image worker handle");return copy;}

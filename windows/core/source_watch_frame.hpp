@@ -1,6 +1,7 @@
 #pragma once
 #include "core/source_canvas.hpp"
 #include "core/source_image_geometry.hpp"
+#include "core/source_watch_layout.hpp"
 #include <memory>
 
 namespace endfield::core::source {
@@ -65,6 +66,8 @@ struct SourceWatchHit {
     SourceRect rect;
     Matrix4 world;
     std::vector<Mask> masks;
+    // Arrange on HUD: where a tile drawn away from its slot rests (nullopt: at `world`).
+    std::optional<Matrix4> restWorld;
 };
 struct SourceWatchFrame {
     std::span<const ResolvedNode> resolved;
@@ -73,6 +76,9 @@ struct SourceWatchFrame {
     std::vector<SourceWatchHit> hits;
     WatchLayout::Report layoutReport;
     std::vector<std::string> diagnostics;
+    // Arrange on HUD: the buttons drawn away from their slots, by this scene
+    // translation (SourceWatchFrameBuilder::setDesktopTilePlacements).
+    std::map<std::string,Vec3,std::less<>> tileTranslations;
     // Exact source near/far segment test, reverse draw order and mask stack.
     // Uses logical CPU projection*view (before the GPU-only Y conversion).
     std::optional<std::string_view> buttonAt(Point,const Matrix4& viewProjection,Rect viewport)const noexcept;
@@ -102,6 +108,20 @@ public:
     const SourceWatchFrame* buildSettledAmbient(const Pose& rotationOnly,std::uint64_t expectedRevision,
         const Matrix4& worldRoot,Vec2 canvasResolution,double scroll=1,
         const DesktopNavigationLayout* navigation=nullptr,const SourceFrameTints& selectableTints=emptyTints());
+    // Arrange on HUD (HUDSourceWatchFrameBuilder.desktopTilePlacements):
+    // right-hand buttons drawn away from their slots, in the plane of the
+    // list's scroll viewport. Applied after layout and slant on the complete
+    // and on the world-only (pointer) path, so a change keeps the layout and
+    // takes the world-only path; the cached layout keeps the resting resolve.
+    using TilePlacements=std::map<std::string,DesktopTilePlacement,std::less<>>;
+    void setDesktopTilePlacements(const TilePlacements&);
+    const TilePlacements& desktopTilePlacements()const noexcept;
+    // desktopRaisedButton: this button's subtree draws just after the last
+    // batch of the right-hand row pool (the slant roots' subtrees), over the
+    // other tiles only. Draw order is fixed per complete frame, so a change
+    // takes one.
+    void setDesktopRaisedButton(std::optional<std::string_view>);
+    std::optional<std::string_view> desktopRaisedButton()const noexcept;
     std::uint64_t presentationRevision()const noexcept;
     SourceWatchFrameStats stats()const noexcept;
     static const SourceFrameTints& emptyTints()noexcept;

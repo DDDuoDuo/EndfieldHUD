@@ -16,15 +16,15 @@ MapPlayerImages loadMapPlayerImages(const std::filesystem::path&explicitAbsolute
 // of the original Terrain.bin and Countries.bin.
 struct MapGeographyPins {
     std::string terrainSHA256{"5356727bab11c5f96d69a94658d4f884a2e56b01e89f837670d57660e66635dd"};
-    std::string countriesSHA256{"557e4e92f0fedb7e3f80e067cb0207655c9ecaedd9f5b29d730aa363842d0dd5"};
+    std::string countriesSHA256{"b4fd270f78e46f877126b41465da706d1f85d90a0ff82cdd777ac0c869aa64a7"};
 };
 // Source WorldMapTerrain.load() and WorldMapCountries.load(), each in its own
 // Result: Terrain.bin and Countries.bin are read (bounded), checked against
 // their pins and decoded independently. A dataset that is missing, differs
 // from its pin or fails to decode stays absent with its failure flag set; a
 // failure never throws, so the Map keeps its pins and shows the source
-// message ("Terrain data could not be loaded." / "Country shapes could not
-// be loaded."). An empty root fails both. File IO: run on the shared utility
+// message ("Terrain data could not be loaded" / "Country shapes could not
+// be loaded"). An empty root fails both. File IO: run on the shared utility
 // worker, never on a warm frame.
 modules::MapGeography loadMapGeography(const std::filesystem::path&explicitAbsoluteRoot,const MapGeographyPins& ={});
 }

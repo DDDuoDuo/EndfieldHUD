@@ -87,7 +87,9 @@ struct SystemOverlayEffect {
         shelfRetract,  // input off, the exit animation of drag `token`; the HUD stays open
         shelfHide,     // the retracted HUD hides for the rest of the drag, keeping its presentation
         shelfRestore,  // a cancelled drag: show the HUD again with the entrance of drag `token`
-        shelfClose     // finishConcealedShelfClose: the hidden HUD closes without a second animation
+        shelfClose,    // finishConcealedShelfClose: the hidden HUD closes without a second animation
+        rememberModule // HUDOverlayLayout.saveLastModule: save `module` as hudLastOpenedModule
+                       // (beside the record; the owner writes it only when the saved name differs)
     };
     Kind kind{};
     std::int64_t token{};
@@ -111,8 +113,9 @@ private:
 };
 
 // Port of the AppDelegate + OverlayController system-overlay policy:
-// toggle/summon guards, the Map-first initial module, last-module retention
-// across reopen, tray Settings/About/Work Mode requests, relaunch activation,
+// toggle/summon guards, the opening module (an explicit request, then Display
+// > Open on, then the module last opened; Map first), last-module retention
+// across reopen and relaunch, tray Settings/About/Work Mode requests, relaunch activation,
 // first-run onboarding, the confirmed red power button, forced close and the
 // Shelf drag-out presentation (shelfDragPresentation, closeAfterShelfDrag,
 // forceCloseAfterShelfDrag).
@@ -132,6 +135,16 @@ public:
     SystemOverlayEffects openSettingsModule(Module);   // tray Settings (system) / About (about)
     SystemOverlayEffects openWorkMode(double now);     // tray Work Mode
     SystemOverlayEffects reopen();                     // relaunch: applicationShouldHandleReopen
+    // OverlayController's return from Projection (Projection closed): the HUD
+    // reopens on moduleLayout.restorable(lastSystemModule), the module it
+    // left, as an explicit request, so a chosen Open on module cannot replace it.
+    // Every way out of Projection lands here, as every AppDelegate entry
+    // reaches toggleSystemOverlay -> returnFromProjection on the Mac: its
+    // Return button, the hotkey, tray Open, a relaunch, and tray Settings and
+    // About too, whose own request the return replaces. With workModeAt (tray
+    // Work Mode), Work Mode is then selected after the entrance as
+    // openWorkMode does.
+    SystemOverlayEffects returnFromProjection(std::optional<double> workModeAt = std::nullopt);
     // OverlayController entry points.
     SystemOverlayEffects close(bool interruptOpening = false); // closeSystemOverlay
     SystemOverlayEffects requestQuit();                // confirmed red power button
@@ -163,12 +176,23 @@ public:
     SystemOverlayEffects cancelTermination();
     void prepareForDocumentTermination() noexcept;
 
-    // Mac 1.3.0 OverlayController: the HUD reopens on
-    // configuration.moduleLayout.restorable(lastSystemModule): a module hidden
-    // in System > Modules is not restored, the first visible one stands in. An
-    // explicit initial module request (tray Settings/About/Work Mode) is not
-    // filtered. Without a rule the last module reopens unchanged.
+    // HUDOverlayLayout.initialModule: a new HUD opens on an explicit request
+    // (tray Settings/About/Work Mode, a failed app launch reopening on Add App,
+    // a notification, the return from Projection) as it is; otherwise on
+    // moduleLayout.restorable(openModule ?? lastSystemModule): the module
+    // chosen under Display > Open on, else the module last opened, and a module
+    // hidden in Display > Modules is replaced by the first visible one.
+    // Without a rule the module is not replaced; without a choice the last
+    // module opens ("Last opened").
     void setModuleRestore(std::function<Module(Module)> rule) { moduleRestore_ = std::move(rule); }
+    void setOpenModule(std::function<std::optional<Module>()> chosen) { openModule_ = std::move(chosen); }
+    // "Last opened" across relaunches (OverlayController.lastSystemModule,
+    // read with HUDOverlayLayout.lastModule): the saved module becomes the
+    // last module, and from then on every teardown asks the owner to save the
+    // module it leaves (rememberModule). Diagnostic and test runs never call
+    // this, so their last module starts at Map and is kept in memory only.
+    void restoreLastModule(Module saved) noexcept { lastSystemModule_ = saved; remembersLastModule_ = true; }
+    bool remembersLastModule() const noexcept { return remembersLastModule_; }
     void setSuspended(bool value) noexcept { suspended_ = value; }
     void setEditingPosition(bool value) noexcept { editingPosition_ = value; }
     void setAppLaunchInFlight(bool value) noexcept { appLaunchInFlight_ = value; }
@@ -209,13 +233,17 @@ private:
     std::size_t timerCount_{};
     std::uint64_t timerSerial_{};
     std::function<Module(Module)> moduleRestore_;
+    std::function<std::optional<Module>()> openModule_;
+    bool remembersLastModule_{};
 
+    Module restorable(Module) const;
     bool appToggle(SystemOverlayEffects&);
     bool overlayToggle(SystemOverlayEffects&);
     void perform(SystemOverlayAction, SystemOverlayEffects&);
     void closeOverlay(bool interruptOpening, SystemOverlayEffects&);
     void select(Module, SystemOverlayEffects&);
     void settingsModule(Module, SystemOverlayEffects&);
+    void scheduleWorkMode(double now);
     void tearDown(SystemOverlayEffects&);
     void performShelfDrag(ShelfDragPresentationState::Action, SystemOverlayEffects&);
     void finishConcealedShelfClose(SystemOverlayEffects&);

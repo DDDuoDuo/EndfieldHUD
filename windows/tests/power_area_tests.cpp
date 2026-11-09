@@ -24,6 +24,7 @@
 #include <iostream>
 #include <map>
 #include <typeinfo>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -276,13 +277,41 @@ void run(const fs::path& shader) {
         check(!service->editingPosition() && host.settingsUpdates == 0 && editing.back() == false, "Escape discards without saving");
         check(owner->message({window.h, notice, 0, 0}, 8.5) && host.opened == std::vector<c::Module>{c::Module::display},
               "The editor's end reopens Display on the next notice");
-        check(ownAlertWindow() && owner->nextWakeTime(8.5) == 18.5, "The ordered-out editor keeps its window and device until one release wake 10 s later");
+        // The strip's entrance asked for frames while the editor showed: one
+        // settle frame follows its end, then only the release wake remains.
+        (void)owner->deadline(8.52);
+        check(ownAlertWindow() && owner->nextWakeTime(8.52) == 18.5, "The ordered-out editor keeps its window and device until one release wake 10 s later");
+        // Return without a drag (onPositionEditFinished): the placement and the
+        // saved custom point stay as they were; Size is written, and a Length
+        // that reads as none (an unreadable value here) removes its key.
+        {
+            const auto original = host.configuration;
+            host.configuration.set("customScreenID", Json(std::int64_t{22}));
+            host.configuration.set("customPositionX", Json(0.25));
+            host.configuration.set("customPositionY", Json(0.75));
+            host.configuration.set("scale", Json(1.2));
+            host.configuration.set("chargeBarLength", Json("long"));
+            (void)owner->hostEvent({Kind::settingsChanged, 0}, 8.53);
+            check(service->editPosition(8.54) && owner->message({window.h, notice, 0, 0}, 8.54) && service->editingPosition(),
+                  "A concealed HUD edits the stored bar at once");
+            SendMessageW(ownAlertWindow(), WM_KEYDOWN, VK_RETURN, 0);
+            const auto& saved = std::as_const(host.configuration);
+            check(!service->editingPosition() && host.settingsUpdates == 1 && saved.string("placement") == "topCenter" &&
+                  saved.fields["customScreenID"] == Json(std::int64_t{22}) && saved.number("customPositionX") == 0.25 &&
+                  saved.number("customPositionY") == 0.75 && saved.number("scale") == 1.2 && !saved.fields.contains("chargeBarLength"),
+                  "Return without a drag keeps Top centre and the custom point, saves the Size and removes a Length of none");
+            check(owner->message({window.h, notice, 0, 0}, 8.55) && host.opened == std::vector<c::Module>{c::Module::display, c::Module::display},
+                  "The confirmed editor reopens Display on the next notice");
+            host.configuration = original;
+            host.settingsPending = false;
+            (void)owner->hostEvent({Kind::settingsChanged, 0}, 8.56);
+        }
         // An edit requested while the HUD is concealed starts at once; a summon over it cancels it.
         check(service->editPosition(8.6) && owner->message({window.h, notice, 0, 0}, 8.6) && service->editingPosition() && host.closes == 1,
               "A concealed HUD edits at once");
         host.visible = true;
         owner->setOverlayVisible(true, 8.7);
-        check(!service->editingPosition() && host.settingsUpdates == 0 && host.opened.size() == 1 && editing.back() == false && ownAlertWindow(),
+        check(!service->editingPosition() && host.settingsUpdates == 1 && host.opened.size() == 2 && editing.back() == false && ownAlertWindow(),
               "Summoning the HUD cancels the editor without a reopen; its window and device wait (no teardown during the opening)");
         frames(8.7, 9.4);
 
@@ -506,9 +535,10 @@ void run(const fs::path& shader) {
             frames(last, last + 5); // the next cycle's modules
             last += 5;
         }
-        // Two updates before the coverage, then per cycle: always + restore,
+        // Three updates before the coverage (the confirmed editor, always
+        // mode with CPU, its restore), then per cycle: always + restore,
         // Don't display + restore, the confirmed position + restore.
-        check(stepChecks > 60 && host.selected == c::Module::power && host.settingsUpdates == 14, "The coverage step repeats over the same host");
+        check(stepChecks > 60 && host.selected == c::Module::power && host.settingsUpdates == 15, "The coverage step repeats over the same host");
         check(host.configuration == ehud::data::Settings::defaults(), "Coverage restores the preference record");
 
         // Windows additions over the area: the GPU reading on the HUD badge,

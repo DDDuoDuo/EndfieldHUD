@@ -94,7 +94,8 @@ extension HUDSourceWatchView {
 '''
     (output/'HUDSourceWatchView.swift').write_text(view)
     timing={n:block(source,n) for n in ['private func animateSourceEntrance(','private func animateSourceExit(','private func animate(_ item:']}
-    for fragment in ['duration: 0.24, delay: 0.20','duration: 0.06, delay: 0.35','controlPoints: 0.20, 0.72, 0.22, 1']:
+    # The opening's canvas fade, the close's (HUDMotion.closingFade, 5b2a9d3) and the deployment curve.
+    for fragment in ['duration: Self.sourceRevealDuration, delay: Self.sourceRevealDelay','HUDMotion.closingFade(ending:','controlPoints: 0.20, 0.72, 0.22, 1']:
         assert any(fragment in s for s in timing.values()),fragment
     report={'sourceSHA256':PINS,'productionSourceModified':False,'SystemHUDViewConstructed':False,
             'extractedSlices':slices,'extractedMethods':methods,'sourceTiming':timing,

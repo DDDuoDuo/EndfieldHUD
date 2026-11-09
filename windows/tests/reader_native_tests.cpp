@@ -3,6 +3,7 @@
 #include "native/layer_raster.hpp"
 #include "core/data/file_io.hpp"
 #include "third_party/zlib/zlib.h"
+#include "tests/wic_rotated_photo.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <fstream>
@@ -35,8 +36,23 @@ void native(const LayerFontResources&fonts,const LayerFontResources&korean,const
      const auto emptyPath=fixture.path/L"untitled.pdf";write(emptyPath,bytes(pdf("<< /Title () /Author (x) >>")));provider.open(reference(emptyPath),{});check(provider.info().title=="untitled"&&!provider.info().pdfMetadataTitleAvailable,"An empty metadata title keeps the file name");}
     auto imported=reference(textPath);imported.platform=ReaderReferencePlatform::macOS;rejects([&]{provider.open(imported,{});},"Opaque Mac reference needs explicit relink");provider.release();
 }
+// An EPUB that opens on an EXIF-rotated photo: the first page appears at once
+// (1.3.0 decoded the photo again for each row it rotated: 14 s at 3000x2000,
+// longer for larger photos, holding the shared file worker) and stays upright.
+void rotatedImage(const LayerFontResources&fonts){
+    Temp fixture;const auto path=fixture.path/L"rotated photo.epub";const auto photo=endfield::tests::rotatedPhoto();
+    write(path,zip({{"mimetype",bytes("application/epub+zip")},{"META-INF/container.xml",bytes("<container><rootfile full-path='OPS/book.opf'/></container>")},{"OPS/book.opf",bytes("<package><title>Rotated</title><manifest><item id='p' href='photo.jpg' media-type='image/jpeg'/><item id='a' href='a.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='p'/><itemref idref='a'/></spine></package>")},{"OPS/photo.jpg",photo},{"OPS/a.xhtml",bytes("<html><body><p>After the photo.</p></body></html>")}}));
+    NativeReaderDocument provider(fonts);const auto prefs=ReaderPreferences::defaults("Noto Sans SC");provider.open(reference(path),{});
+    const auto start=std::chrono::steady_clock::now();const auto pages=provider.render({},{},prefs,{376,334},false,2,{});const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    std::cout<<"Reader rotated 3000x2000 photo first render s="<<elapsed<<'\n';
+    check(!pages.empty()&&pages[0].illustration&&provider.stats().imageDecodes==1,"The rotated photo is the first page, decoded once");
+    check(elapsed<5,"A rotated photo renders without decoding the image again per rotated row");
+    const auto&p=*pages[0].pixels;
+    check(endfield::tests::rotatedPhotoUpright(p.bytes.data(),p.width,p.height,2,0),"EXIF orientation 6 still turns the photo upright: its left (red) half on top, its right (blue) half below");
+    provider.release();
 }
-int main(int argc,char**argv){try{check(argc==3,"Arguments are bundledfont directory and original format oracle");hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struct End{~End(){CoUninitialize();}}end;LayerFontResources fonts,korean;{LayerRasterizer raster(fs::u8path(argv[1]));fonts=raster.retainedFontResources();check(raster.setDefaultFontLanguage(LayerFontLanguage::korean),"Native fixture changes only owned raster font configuration");korean=raster.retainedFontResources();}std::exception_ptr error;std::thread worker([&]{try{hr(CoInitializeEx(nullptr,COINIT_MULTITHREADED));End workerEnd;native(fonts,korean,fs::u8path(argv[2]));}catch(...){error=std::current_exception();}});worker.join();if(error)std::rethrow_exception(error);std::cout<<"Native Reader formats passed "<<checks<<" checks\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<" after "<<checks<<" checks\n";return 1;}}
+}
+int main(int argc,char**argv){try{check(argc==3,"Arguments are bundledfont directory and original format oracle");hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED));struct End{~End(){CoUninitialize();}}end;LayerFontResources fonts,korean;{LayerRasterizer raster(fs::u8path(argv[1]));fonts=raster.retainedFontResources();check(raster.setDefaultFontLanguage(LayerFontLanguage::korean),"Native fixture changes only owned raster font configuration");korean=raster.retainedFontResources();}std::exception_ptr error;std::thread worker([&]{try{hr(CoInitializeEx(nullptr,COINIT_MULTITHREADED));End workerEnd;native(fonts,korean,fs::u8path(argv[2]));rotatedImage(fonts);}catch(...){error=std::current_exception();}});worker.join();if(error)std::rethrow_exception(error);std::cout<<"Native Reader formats passed "<<checks<<" checks\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<" after "<<checks<<" checks\n";return 1;}}
 #else
 int main(){return 0;}
 #endif

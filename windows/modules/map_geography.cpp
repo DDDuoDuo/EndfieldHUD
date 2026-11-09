@@ -103,7 +103,11 @@ struct MapPathGeometry::Impl{
     std::vector<IndexedRing>rings;struct Level{double tolerance;std::vector<IndexedRing>rings;};std::vector<Level>levels;
     explicit Impl(const MapPath&path){std::size_t total{};need(path.size()<=40000,"Map path exceeds source ring capacity");for(const auto&source:path){need(total+source.points.size()<=150000,"Map path exceeds source vertex capacity");total+=source.points.size();for(auto p:source.points)need(std::isfinite(p.x)&&std::isfinite(p.y),"Nonfinite map geometry");if(source.points.size()<2)continue;auto copy=source;if(copy.closed&&copy.points.front()==copy.points.back())copy.points.pop_back();rings.emplace_back(std::move(copy));}levels.reserve(2);}
     const std::vector<IndexedRing>&simplified(double tolerance){if(tolerance<=0)return rings;for(std::size_t i=0;i<levels.size();++i)if(levels[i].tolerance==tolerance){if(i+1<levels.size())std::swap(levels[i],levels.back());return levels.back().rings;}
-        Level next{tolerance,{}};next.rings.reserve(rings.size());for(const auto&item:rings){const auto&r=item.ring;if(r.points.size()<=8){next.rings.push_back(item);continue;}std::vector<P>output;
+        Level next{tolerance,{}};next.rings.reserve(rings.size());for(const auto&item:rings){const auto&r=item.ring;
+            // A closed feature narrower than the tolerance covers under a third
+            // of a pixel at this level: skip it here; closer levels draw it.
+            if(r.closed&&std::max(r.bounds.width,r.bounds.height)<tolerance)continue;
+            if(r.points.size()<=8){next.rings.push_back(item);continue;}std::vector<P>output;
             if(r.closed){const auto origin=r.points.front();std::size_t split{};double furthest=-1;for(std::size_t i=0;i<r.points.size();++i){const auto x=r.points[i].x-origin.x,y=r.points[i].y-origin.y,d=x*x+y*y;if(d>furthest){furthest=d;split=i;}}
                 auto first=simplify(std::span(r.points).first(split+1),tolerance);std::vector<P>arc(r.points.begin()+split,r.points.end());arc.push_back(origin);auto second=simplify(arc,tolerance);first.pop_back();second.pop_back();output=std::move(first);output.insert(output.end(),second.begin(),second.end());
             }else output=simplify(r.points,tolerance);

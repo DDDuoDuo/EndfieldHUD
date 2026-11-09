@@ -12,7 +12,8 @@ using Region = h::AccountPresentation::RegionChoice;
 using Header = h::AccountPresentation::HeaderMode;
 namespace {
 constexpr std::array<Region, 2> regions{Region::china, Region::global};
-constexpr std::array<Header, 4> headerModes{Header::workMode, Header::endfield, Header::arknights, Header::hidden};
+// Hiding the gauge is Display > HUD elements > Show Sanity (1.3.1).
+constexpr std::array<Header, 3> headerModes{Header::workMode, Header::endfield, Header::arknights};
 int regionIndex(Region r) { return r == Region::global ? 1 : 0; }
 h::AccountAction action(h::AccountAction::Kind kind) { h::AccountAction a; a.kind = kind; return a; }
 }

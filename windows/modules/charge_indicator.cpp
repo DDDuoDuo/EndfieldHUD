@@ -244,19 +244,21 @@ ChargeMetricReading resolveChargeMetric(ChargeMetric metric, const BatteryReadin
     return {};
 }
 
-ChargeStageGeometry chargeStageGeometry(ChargeStage stage) noexcept {
+ChargeStageGeometry chargeStageGeometry(ChargeStage stage, double barWidth) noexcept {
+    // The classic canvas is 300 x 84 around (150, 42).
+    const double x = ChargeIndicatorMetrics::canvasWidthFor(barWidth) / 2, left = x - barWidth / 2;
     switch (stage) {
     case ChargeStage::hidden:
-    case ChargeStage::circle: return {{131, 23, 38, 38}, 19, {150, 42}, 23, 23, 11.5, 0.69};
-    case ChargeStage::supercharge: return {{30, 18, 240, 48}, 14, {107, 42}, 23, 23, 11.5, 0.70};
-    case ChargeStage::compact: return {{18, 23, 264, 38}, 19, {37, 42}, 17, 20, 3, 0.60};
+    case ChargeStage::circle: return {{x - 19, 23, 38, 38}, 19, {x, 42}, 23, 23, 11.5, 0.69};
+    case ChargeStage::supercharge: return {{x - 120, 18, 240, 48}, 14, {x - 43, 42}, 23, 23, 11.5, 0.70};
+    case ChargeStage::compact: return {{left, 23, barWidth, 38}, 19, {left + 19, 42}, 17, 20, 3, 0.60};
     }
     return {};
 }
 
 core::Rect ChargeIndicatorPose::bodyRect() const noexcept {
     const double width = bodyWidth * std::abs(bodyScale), height = bodyHeight * std::abs(bodyScale);
-    return {ChargeIndicatorMetrics::center.x - width / 2, ChargeIndicatorMetrics::center.y - height / 2, width, height};
+    return {center.x - width / 2, center.y - height / 2, width, height};
 }
 
 double ChargeTrack::value(double time) const noexcept {
@@ -325,7 +327,8 @@ void ChargeIndicatorTimeline::change(Property property, double target, double du
 }
 void ChargeIndicatorTimeline::apply(ChargeStage next, double duration, double time) noexcept {
     stage_ = next;
-    const auto g = chargeStageGeometry(next);
+    const auto g = chargeStageGeometry(next, barWidth_);
+    const double center = canvasWidth() / 2, barLeft = center - barWidth_ / 2, barRight = center + barWidth_ / 2;
     const bool hidden = next == ChargeStage::hidden, banner = next == ChargeStage::supercharge, compact = next == ChargeStage::compact;
     const double scale = hidden ? 0.001 : 1, opacity = hidden ? 0 : 1;
     change(bodyWidth, g.body.width, duration, time);
@@ -345,13 +348,16 @@ void ChargeIndicatorTimeline::apply(ChargeStage next, double duration, double ti
     change(boltScale, g.boltScale * scale, duration, time);
     change(boltOpacity, opacity, duration, time);
     // The text translates with the morph; it is never squashed with the body.
+    // The banner pair follows the canvas centre, the readings and the ring the
+    // compact bar's ends (emblem 19, reading 37, percentage 77, ring 19).
+    const std::array<double, 4> textX{center + (banner ? -24 : 0), center + (banner ? -26 : -1),
+                                      barLeft + 37 + (compact ? 0 : 28), barRight - 77 - (compact ? 0 : 13)};
     for (std::size_t i = 0; i < 4; ++i) {
         const bool visible = i < 2 ? banner : compact;
-        const auto& frame = ChargeIndicatorMetrics::textFrames[i];
-        change(static_cast<Property>(text0X + i), visible ? frame[0] : frame[1], duration, time);
+        change(static_cast<Property>(text0X + i), textX[i], duration, time);
         change(static_cast<Property>(text0Opacity + i), visible ? 1 : 0, std::min(duration, 0.20), time);
     }
-    change(ringX, compact ? 263 : 239, duration, time);
+    change(ringX, barRight - 19 - (compact ? 0 : 24), duration, time);
     change(ringOpacity, compact ? 1 : 0, duration, time);
     for (std::size_t i = 0; i < 3; ++i) {
         change(static_cast<Property>(ripple0X + i), g.emblemCenter.x - g.body.x, duration, time);
@@ -367,6 +373,12 @@ void ChargeIndicatorTimeline::startRipples(double time) noexcept {
         rippleOrder_[i] = ++order_;
     }
     ripplesStarted_ = true;
+}
+void ChargeIndicatorTimeline::setBarWidth(double width, double time) noexcept {
+    const double next = std::isfinite(width) ? std::max(ChargeIndicatorMetrics::minimumBarWidth, width) : ChargeIndicatorMetrics::classicBarWidth;
+    if (next == barWidth_) return;
+    barWidth_ = next;
+    apply(stage_, 0, time);
 }
 void ChargeIndicatorTimeline::cancel() noexcept {
     ++generation_;
@@ -490,6 +502,7 @@ ChargeIndicatorPose ChargeIndicatorTimeline::sample(double time) const noexcept 
     }
     pose.borderWidth = value(borderWidth, time);
     pose.borderColor = {value(borderRed, time), value(borderGreen, time), value(borderBlue, time), value(borderAlpha, time)};
+    pose.center = {canvasWidth() / 2, ChargeIndicatorMetrics::center.y};
     return pose;
 }
 
@@ -541,7 +554,7 @@ Json chargeTextDescriptor(const Json& textLayer) { return textLayer["text"]; }
 
 ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppearance& appearance, const BatteryReading& battery,
                                                      ChargeMetric metric, const std::optional<ChargeTelemetry>& telemetry,
-                                                     bool preview, const ChargeTextMeasure& measure) {
+                                                     bool preview, const ChargeTextMeasure& measure, double barWidth) {
     if (!measure) throw std::invalid_argument("Charge indicator fitting needs the native text measurement");
     if (appearance.language == core::Language::system) throw std::invalid_argument("Resolve charge language in the owner");
     ChargeIndicatorContent content;
@@ -565,15 +578,17 @@ ChargeIndicatorContent prepareChargeIndicatorContent(const ChargeIndicatorAppear
     }
     content.titleFontSize = titleSize;
     const auto muted = alpha(foreground, 0.47);
+    const double lineWidth = chargeCapacityWidth(std::isfinite(barWidth) ? std::max(ChargeIndicatorMetrics::minimumBarWidth, barWidth)
+                                                                         : ChargeIndicatorMetrics::classicBarWidth);
     auto metricLine = [&](double scale) {
         std::vector<Run> runs{{content.reading.primary, font("HarmonyOS_Sans_Bold", 12.5 * scale, 2), foreground, {}, true},
                               {content.reading.secondary, font("HarmonyOS_Sans_Medium", 9.5 * scale, 0), muted, {}, true}};
         if (!content.reading.unit.empty()) runs.push_back({" " + content.reading.unit, font("HarmonyOS_Sans_Medium", 7.5 * scale, 0), muted, {}});
-        return textLayer("charge/6", frames[2][3], frames[2][4], runs, "left");
+        return textLayer("charge/6", lineWidth, frames[2][4], runs, "left");
     };
     double scale = 1;
     content.texts[2] = metricLine(scale);
-    while (measure("charge/6", chargeTextDescriptor(content.texts[2])) > 143 && scale > 0.6) {
+    while (measure("charge/6", chargeTextDescriptor(content.texts[2])) > lineWidth && scale > 0.6) {
         scale -= 0.05;
         content.texts[2] = metricLine(scale);
     }
@@ -620,24 +635,5 @@ Json chargeRingLayer(bool progress) {
     return shape("charge/8/1", {0, 0, 28, 28}, std::move(path), std::nullopt, ChargeColor{1, 1, 1, 1}, 2, "butt");
 }
 Json chargeCapLayer() { return shape("charge/8/cap", {0, 0, 2, 2}, ellipse({0, 0, 2, 2}), ChargeColor{1, 1, 1, 1}, std::nullopt, 1); }
-Json chargePositionButtonCircleLayer() {
-    return shape("charge/button/circle", {0, 0, 28, 28}, ellipse({1, 1, 26, 26}), ChargeColor{1, 1, 1, 1}, std::nullopt, 1);
-}
-Json chargePositionButtonSymbolLayer(bool confirm) {
-    Json::Array path = confirm
-        ? Json::Array{command("move", {{8, 14}}), command("line", {{12, 18}}), command("line", {{20, 10}})}
-        : Json::Array{command("move", {{9, 9}}), command("line", {{19, 19}}), command("move", {{9, 19}}), command("line", {{19, 9}})};
-    return shape(confirm ? "charge/button/confirm" : "charge/button/cancel", {0, 0, 28, 28}, std::move(path), std::nullopt,
-                 ChargeColor{1, 1, 1, 1}, 1.7, "round", "round");
-}
-ChargePositionButtonColors chargePositionButtonColors(bool dark, bool highlighted) noexcept {
-    return {dark ? white(0.12, 0.97) : white(0.96, 0.98), alpha(dark ? white(1) : white(0), highlighted ? 0.5 : 0.85)};
-}
-std::string chargePositionButtonLabel(bool confirm, core::Language language) {
-    return confirm ? tr("Confirm position", "确认位置", language) : tr("Discard position", "取消位置更改", language);
-}
-std::string chargePositionButtonTooltip(bool confirm, core::Language language) {
-    return confirm ? tr("Confirm (Return)", "确认（回车）", language) : tr("Discard (Esc)", "取消（Esc）", language);
-}
 Json chargeRippleLayer() { return shape("charge/1/ripple", {0, 0, 320, 320}, ellipse({3, 3, 314, 314}), std::nullopt, ChargeColor{1, 1, 1, 1}, 5); }
 } // namespace endfield::modules

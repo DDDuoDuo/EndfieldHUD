@@ -10,8 +10,10 @@ constexpr auto status(std::uint32_t value){return std::bit_cast<std::int32_t>(va
 constexpr auto invalid=status(0x80070057),unavailable=status(0x80004001),failed=status(0x80004005),readback=status(0x800704D5),busy=status(0x800700AA);
 template<class F>std::int32_t invoke(F&&f)noexcept{try{return f();}catch(const std::bad_alloc&){return status(0x8007000E);}catch(...){return failed;}}
 bool validID(std::wstring_view id){if(id.empty()||id.size()>32767)return false;for(std::size_t n=0;n<id.size();++n){auto c=static_cast<std::uint32_t>(id[n]);if(!c)return false;if constexpr(sizeof(wchar_t)==2){if(c>=0xd800&&c<=0xdbff){if(++n==id.size())return false;const auto low=static_cast<std::uint32_t>(id[n]);if(low<0xdc00||low>0xdfff)return false;continue;}}if(c>0x10ffff||(c>=0xd800&&c<=0xdfff))return false;}return true;}
-constexpr std::array roles{AudioDefaultRole::console,AudioDefaultRole::multimedia};
+// Every role Windows Sound settings sets when a device is chosen there.
+constexpr std::array roles{AudioDefaultRole::console,AudioDefaultRole::multimedia,AudioDefaultRole::communications};
 }
+bool AudioDefaultDeviceResult::raced()const noexcept{return concurrentChange&&status==readback&&rollbackStatus>=0;}
 AudioDefaultDeviceSelector::AudioDefaultDeviceSelector(AudioDefaultDeviceAccess access):access_(std::move(access)){
     if(!access_.capability||!access_.validateEndpoint||!access_.current||!access_.select)throw std::invalid_argument("Default-device selector requires complete injected/native access");
 }
@@ -21,7 +23,7 @@ AudioDefaultDeviceResult AudioDefaultDeviceSelector::select(AudioDefaultFlow flo
     if((flow!=AudioDefaultFlow::output&&flow!=AudioDefaultFlow::input)||!validID(requested))return result_={invalid};
     const auto supported=capability();if(!supported.supported)return result_={supported.status<0?supported.status:unavailable};
     struct Guard{bool&flag;Guard(bool&v):flag(v){flag=true;}~Guard(){flag=false;}}guard(busy_);
-    AudioDefaultDeviceResult next;const std::wstring target(requested);std::array<std::wstring,2>originals;std::array<bool,2>attempted{};
+    AudioDefaultDeviceResult next;const std::wstring target(requested);std::array<std::wstring,roles.size()>originals;std::array<bool,roles.size()>attempted{};
     next.status=invoke([&]{return access_.validateEndpoint(target,flow);});if(next.status<0)return result_=next;
     for(std::size_t n=0;n<roles.size();++n){next.status=invoke([&]{return access_.current(flow,roles[n],originals[n]);});if(next.status<0)return result_=next;if(!validID(originals[n]))return result_={readback};}
     for(std::size_t n=0;n<roles.size();++n){
@@ -48,28 +50,7 @@ AudioDefaultDeviceResult AudioDefaultDeviceSelector::select(AudioDefaultFlow flo
 }
 } // namespace endfield::native
 
-#if defined(_WIN32)&&!defined(ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG)
-namespace endfield::native {
-// Platform gap (default build): Windows has no documented public API that
-// changes the default playback or recording endpoint (MMDevice API and
-// Windows.Media.Devices.MediaDevice only READ the defaults). The project rule
-// forbids shipping undocumented interfaces, so the native access reports an
-// unsupported capability and never creates a COM object, reads an endpoint or
-// changes routing. Volume's device chooser therefore stays disabled, exactly
-// like the source when kAudioHardwarePropertyDefaultOutputDevice is not
-// settable; Windows Settings > System > Sound remains the way to switch.
-AudioDefaultDeviceAccess nativeAudioDefaultDeviceAccess(){
-    constexpr auto unsupported=status(0x80004001); // E_NOTIMPL
-    AudioDefaultDeviceAccess access;
-    access.capability=[]{AudioDefaultDeviceCapability c;c.status=unsupported;return c;};
-    access.validateEndpoint=[](std::wstring_view,AudioDefaultFlow){return unsupported;};
-    access.current=[](AudioDefaultFlow,AudioDefaultRole,std::wstring&){return unsupported;};
-    access.select=[](std::wstring_view,AudioDefaultRole){return unsupported;};
-    return access;
-}
-}
-#elif defined(_WIN32)
-// Explicit opt-in research build only (never set by the project CMake files).
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -80,6 +61,13 @@ AudioDefaultDeviceAccess nativeAudioDefaultDeviceAccess(){
 
 namespace endfield::native {
 namespace {
+// Owner-approved exception to the project's no-undocumented-API rule, for this
+// ONE interface: Windows offers no public way to change the default playback or
+// recording device (the MMDevice API and Windows.Media.Devices only read the
+// defaults), and the Volume menus need it as the Mac has it. These are the same
+// declarations EarTrumpet ships. If a future Windows removes or changes the
+// interface, capability() or a write fails and the caller turns switching off
+// quietly; nothing else depends on it.
 // Interop declarations are adapted from EarTrumpet commit
 // 154980811087fb7c423d806e2d9816733db6a7a5:
 // EarTrumpet/Interop/MMDeviceAPI/{IPolicyConfig,PolicyConfigClient}.cs.
@@ -113,7 +101,11 @@ struct NativeAccess {
         if(!version||version(&os)<0){info.status=E_NOTIMPL;return info;}
         info.windowsMajor=os.dwMajorVersion;info.windowsMinor=os.dwMinorVersion;info.windowsBuild=os.dwBuildNumber;
         if(os.dwMajorVersion!=10||os.dwBuildNumber<14393){info.status=E_NOTIMPL;return info;}
-        auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);uninitialize=SUCCEEDED(hr);
+        // The audio worker's apartment (MTA). This reference keeps COM alive on
+        // the thread for as long as the interfaces below are held, even after
+        // the worker's endpoint backend releases its own. An STA caller keeps
+        // its apartment (RPC_E_CHANGED_MODE).
+        auto hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);uninitialize=SUCCEEDED(hr);
         if(FAILED(hr)&&hr!=RPC_E_CHANGED_MODE){info.status=hr;return info;}
         hr=CoCreateInstance(policyClass,nullptr,CLSCTX_INPROC_SERVER,__uuidof(PolicyConfig),reinterpret_cast<void**>(policy.GetAddressOf()));
         if(SUCCEEDED(hr))hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(enumerator.GetAddressOf()));

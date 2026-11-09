@@ -77,6 +77,7 @@
 #include "native/layer_scene.hpp"
 #include <functional>
 #include <map>
+#include <string_view>
 
 namespace endfield::native {
 // requiredSourceImage key -> {asset, sha256} (pinned) or {memoryImage...}.
@@ -112,8 +113,15 @@ core::Matrix4 designMatrix(const modules::design::Affine&) noexcept;
 // inverse is `inverseBox`), as the scene clips a part outside a group.
 // Nullopt when the mask shows nothing (a singular world or empty bounds).
 std::optional<PlaneMask> designPlaneMask(const modules::design::PoseMask&, const core::Matrix4& inverseBox) noexcept;
+// A design colour (sRGB, straight alpha) as the renderer's linear multiply
+// (DrawObject::linearTint), as the scene tints its surfaces.
+std::array<float, 4> designLinearTint(const modules::design::Color&) noexcept;
 class NativeDesignScene final {
 public:
+    // LayerRasterOptions::magnification: the tree is drawn under a transform
+    // that scales it on screen (the battery bar editor's strip at 0.7); the
+    // density syncContent takes is then layerContentsScale(s, magnification)
+    // and the TextServices carry the same magnification for text leaves.
     NativeDesignScene(LayerRasterizer&, LayerRasterOptions, std::string sourcePrefix, DesignImages = {});
     ~NativeDesignScene();
     NativeDesignScene(const NativeDesignScene&) = delete;
@@ -123,6 +131,11 @@ public:
     bool syncContent(const modules::design::Layer& root, const modules::design::TextServices&, std::uint64_t revision,
         double pixelsPerPoint, double now);
     void setImages(DesignImages);
+    // The tree's on-screen magnification changed (LayerRasterOptions::
+    // magnification, e.g. the facility tags at a Display > HUD elements size):
+    // the next syncContent re-rasterizes every part for it (its density is
+    // then layerContentsScale(s, magnification)).
+    void setMagnification(double);
     void updatePose(const NativeDesignScenePose&);
     // Uploads lazily painted surfaces and group targets (attaches the groups
     // of fades that start, updates their children); releases faded lazy
@@ -154,6 +167,8 @@ public:
     // released; the next syncContent rebuilds them (Clipboard's park). False
     // when nothing was released or a part is still composed. Never throws.
     bool park(Renderer&) noexcept;
+    // Something park() would release (a part's scene, a retired or kept part).
+    bool holdsArtwork() const noexcept;
     // An owner-drawn entry composed right after the part whose root is
     // `after` (its direct or group entry): media the rasterizer cannot paint
     // (Media Assembly's edited picture and playing video, between its stage
@@ -164,6 +179,12 @@ public:
     // Accessors for the owner core (cursor and UIA project through these).
     const core::Matrix4& boxWorld() const noexcept;
     NativeDesignSceneStats stats() const noexcept;
+    // A part whose scene draws a surface whose source ID contains `source` at
+    // a visible opacity is in this frame's entries: its own scene directly, or
+    // the group that draws it (its own or its host's, holding its target, its
+    // output visible). Hidden coverage and owner tests: through a fade a
+    // part's surfaces draw only into its group's target.
+    bool composes(std::string_view source) const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

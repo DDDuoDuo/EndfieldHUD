@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 
-PIN = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
+PIN = '79bc6651959977d3c6aa89c8faeedb155a15f20d'
 root = pathlib.Path(__file__).resolve().parents[2]
 if len(sys.argv) != 2:
     raise SystemExit(__doc__)

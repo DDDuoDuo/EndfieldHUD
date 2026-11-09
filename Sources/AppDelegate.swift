@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? "EndfieldCharge.Smoke.\(UUID().uuidString)" : nil
         let defaults = diagnosticDomain.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         store = ConfigurationStore(defaults: defaults)
+        // Once: a gauge hidden in 1.3.0's Account > Header display starts with Show Sanity off.
+        // Diagnostic runs never read the account cache, so they leave the migration for a normal launch.
+        if !OverlayController.isDiagnosticRun { store.migrateHiddenSanity { HypergryphAccountController.storedHeaderIsHidden(at: HypergryphAccountController.applicationFile()) } }
         super.init()
         overlay.eventRecorder.receiveConfiguration(store.configuration)
     }
@@ -154,12 +157,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             HUDSourceWatchDocument.prewarmDesktop()
             HUDSourceMetalRenderer.prewarmDesktopResources()
         }
-        overlay.onPositionEditFinished = { [weak self] position in
+        overlay.onPositionEditFinished = { [weak self] layout in
             guard let self = self else { return }
-            if let position = position {
+            if let layout = layout {
                 var configuration = self.store.configuration
-                configuration.customPosition = position
-                configuration.placement = .custom
+                if let position = layout.position {
+                    configuration.customPosition = position
+                    configuration.placement = .custom
+                }
+                configuration.scale = layout.scale
+                configuration.chargeBarLength = layout.length
                 self.store.update(configuration)
             }
             guard !self.suspended, !self.terminating else { return }
@@ -1290,7 +1297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.isVisible, "Editing must survive ordinary battery policy dismissal")
                 overlay.cancelPositionEditing()
                 precondition(cancelled && !overlay.isEditingPosition && !overlay.isVisible)
-                var committed: OverlayPosition?
+                var committed: ChargeBarLayout?
                 overlay.onPositionEditFinished = { committed = $0 }
                 overlay.beginPositionEditing(snapshot: demo, configuration: .defaults)
                 overlay.confirmEditedPosition()

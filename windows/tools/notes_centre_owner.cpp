@@ -145,7 +145,9 @@ void NotesCentreOwner::setOverlayVisible(bool value, double t) {
     if (!value) i.route->cancel();
     i.core->setOverlayVisible(value, t);
 }
-void NotesCentreOwner::overlayClosing(double t) { cancelInteraction(t); setOverlayVisible(false, t); }
+// The close's start stops input only (DesignOwnerCore::overlayClosing): the
+// note editor's press ends without a release; the hidden HUD leaves (hostEvent).
+void NotesCentreOwner::overlayClosing(double t) { auto& i = *impl_; i.clock(t); i.route->cancel(); i.core->overlayClosing(t); }
 void NotesCentreOwner::update(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
@@ -209,7 +211,12 @@ bool NotesCentreOwner::finishEditing(double t) { return impl_->core->finishEditi
 // The quit / session-end drain: the note's draft is handed (saveNote) with
 // the field commit; the host then waits for the writes (flushSaves).
 bool NotesCentreOwner::flush(double t) { auto& i = *impl_; i.enter(t); (void)i.core->finishEditing(t); i.canvas->willLeave(); return true; }
-bool NotesCentreOwner::hostEvent(const app::HostEvent& e, double t) { auto& i = *impl_; i.clock(t); return i.core->hostEvent(e, t); }
+bool NotesCentreOwner::hostEvent(const app::HostEvent& e, double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    if (e.kind == app::HostEvent::Kind::overlayConcealed || e.kind == app::HostEvent::Kind::overlayRetracted) { i.overlay = false; i.route->cancel(); }
+    return i.core->hostEvent(e, t);
+}
 std::optional<app::ModuleCursor> NotesCentreOwner::cursorAt(core::Point p) const {
     const auto& i = *impl_;
     if (i.route->textCursorAt(p, i.accepting() && !i.canvas->capturesPointer())) return app::ModuleCursor::text;

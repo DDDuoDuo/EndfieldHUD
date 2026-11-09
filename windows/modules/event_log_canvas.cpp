@@ -2,6 +2,7 @@
 #include "modules/charge_indicator.hpp"
 #include "modules/display_center_logo.hpp"
 #include "modules/work_mode_canvas.hpp"
+#include "core/data/data_store.hpp"
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -39,7 +40,7 @@ std::optional<std::string> playbackSourceTitle(std::string_view key) {
     return std::nullopt;
 }
 // HUDClockStyle.allCases order (Sources/HUDClockStyle.swift:5).
-constexpr std::array<std::string_view, 5> clockStyles{"digital", "split", "dial", "rail", "stacked"};
+constexpr auto& clockStyles = ehud::data::SettingsChoices::clockStyles;
 }
 
 // --- EventLogFilter (:7-34) ---------------------------------------------------------
@@ -265,6 +266,12 @@ std::optional<std::string> EventLogCanvas::status() const { return store_.snapsh
 double EventLogCanvas::listOffsetForTesting() const noexcept { return list_ ? list_->offset() : 0; }
 
 void EventLogCanvas::show(double now) {
+    // A return to the module starts the list at the top.
+    if (showsFromTop() && list_ && list_->offset() > 0) {
+        env().now = now;
+        listOffset_ = 0; list_ = nullptr; listPage_ = nullptr;
+        rerender();
+    }
     Canvas::show(now);
     refresh();
 }

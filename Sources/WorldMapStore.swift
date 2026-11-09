@@ -63,11 +63,11 @@ enum WorldMapStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidCoordinates: return "The map position is invalid."
-        case .pinLimit: return "The map can hold up to 128 pins. Remove a pin before adding another."
-        case .invalidRecord: return "The saved map could not be read. The original data has been preserved."
-        case .newerVersion: return "This map was saved by a newer version of EndfieldHUD."
-        case .changedOnDisk: return "The map changed outside this window. Reopen EndfieldHUD before editing it."
+        case .invalidCoordinates: return "The map position is invalid"
+        case .pinLimit: return "The map can hold up to 128 pins. Remove a pin before adding another"
+        case .invalidRecord: return "The saved map could not be read. The original data has been preserved"
+        case .newerVersion: return "This map was saved by a newer version of EndfieldHUD"
+        case .changedOnDisk: return "The map changed outside this window. Reopen EndfieldHUD before editing it"
         case .persistence(let detail): return "The map could not be saved or opened: " + detail
         }
     }

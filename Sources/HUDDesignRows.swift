@@ -56,7 +56,7 @@ final class HUDRowPlate: HUDControl {
     }
 
     func setTitle(_ text: String) { label = text; title.text = text; layoutContents() }
-    /// Room left of the label for a leading handle or glyph (System > Modules).
+    /// Room left of the label for a leading handle or glyph (Display > Modules).
     var titleInset: CGFloat = 0 { didSet { if titleInset != oldValue { layoutContents() } } }
     func setSublabel(_ text: String?) { sublabel.text = text ?? ""; sublabel.isHidden = text == nil; layoutContents() }
     /// The label's line box in row coordinates (for redaction or tests).

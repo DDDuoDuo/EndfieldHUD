@@ -134,10 +134,118 @@ void geometry(const Fixture& f) {
     const core::Rect work{0, 0, 2880, 1800};
     const auto top = chargeAnchor(ChargeAlertSettings{}, work, false, 2);
     check(top.x == 1440 && top.y == 60, "Top-center anchor at 200% keeps 30-point margin");
-    const auto layout = chargePanelLayout({1440, 60}, 1, true, 2);
-    check(layout.window.width == 600 && layout.indicator.height == 168 && layout.window.height == 200 &&
-          layout.cancel.x == 1440 - 68 && layout.confirm.x == 1452 && layout.cancel.y == layout.window.y + 132,
-          "Editor layout keeps the indicator centered with unscaled 28-point controls below it");
+    const auto layout = chargePanelLayout({1440, 60}, 1, ChargeIndicatorMetrics::classicBarWidth, work, 2);
+    check(layout.window == layout.indicator && layout.indicator.width == 600 && layout.indicator.height == 168 &&
+          layout.indicator.x == 1140 && layout.indicator.y == -24 && !layout.strip, "The classic bar's canvas is centred on the anchor");
+    // A full-length bar: its canvas adds the shadow margins past both edges;
+    // the panel is cut at the display's sides, the bar keeps its place.
+    const double full = chargeBarWidth(1, work, 1, 2);
+    const auto wide = chargePanelLayout({1440, 60}, 1, full, work, 2);
+    check(full == 1440 && wide.indicator.width == (1440 + 36) * 2 && wide.indicator.x == -36 && wide.window.x == 0 && wide.window.width == 2880 &&
+          wide.window.height == 168, "A full-length bar's panel is cut at the display's sides");
+    const core::Rect strip{1000, 200, 300, 80};
+    const auto both = chargePanelLayout({1440, 60}, 1, ChargeIndicatorMetrics::classicBarWidth, work, 2, strip);
+    check(both.strip == strip && both.window.x == 1000 && both.window.y == -24 && both.window.width == 740 && both.window.height == 304,
+          "While editing the panel holds the bar's canvas and the strip");
+}
+
+// OverlayGeometry at 1.3.1: the bar's Length, its canvas, the clamp by the
+// bar's own width and the bar editor (source bottom-left points, flipped).
+std::optional<double> optionalNumber(const Json& value) {
+    if (value.isNull()) return std::nullopt;
+    return number(value);
+}
+void barGeometry(const Fixture& f) {
+    const auto& bar = f.root["bar"];
+    check(number(bar["classicBarWidth"]) == ChargeIndicatorMetrics::classicBarWidth && number(bar["minimumBarWidth"]) == ChargeIndicatorMetrics::minimumBarWidth &&
+          number(bar["barMargin"]) == ChargeIndicatorMetrics::barMargin && numbers(bar["scaleRange"]) == std::vector<double>{ChargeIndicatorMetrics::minimumScale, ChargeIndicatorMetrics::maximumScale} &&
+          number(bar["editorStripScale"]) == chargeEditorStripScale, "Bar constants: 264, 200, 18, Size 65 to 160 %, strip at 70 %");
+    std::map<std::string, unsigned> compared;
+    for (const auto& row : bar["rows"].array()) {
+        const auto kind = row["kind"].string();
+        const auto label = kind + " " + row.encode().substr(0, 160);
+        auto settings = [&] {
+            ChargeAlertSettings s;
+            s.scale = number(row["scale"]);
+            s.length = optionalNumber(row["length"]);
+            if (row.contains("placement")) {
+                s.customPlacement = row["placement"].string() == "custom";
+                const auto position = numbers(row["position"]);
+                s.customX = position[0]; s.customY = position[1];
+                s.customScreenID = 7;
+            }
+            return s;
+        };
+        if (kind == "width") {
+            const auto screen = flipped(numbers(row["screen"]));
+            const auto s = settings();
+            const double width = chargeBarWidth(s.length, screen, s.scale, 1);
+            near(width, number(row["barWidth"]), 1e-9, label + " bar width");
+            near(ChargeIndicatorMetrics::canvasWidthFor(width), number(row["canvasWidth"]), 1e-9, label + " canvas width");
+            const auto range = chargeLengthRange(screen, s.scale, 1);
+            const auto expected = numbers(row["lengthRange"]);
+            near(range.minimum, expected[0], 1e-12, label + " length range minimum");
+            near(range.maximum, expected[1], 0, label + " length range maximum");
+            near(chargeLength(s, screen, 1), number(row["lengthOf"]), 1e-12, label + " length of the bar");
+            const auto normalized = s.normalized().length;
+            check(normalized.has_value() == !row["normalizedLength"].isNull() && (!normalized || *normalized == number(row["normalizedLength"])),
+                  label + " normalized length");
+        } else if (kind == "clamp") {
+            const auto screen = flipped(numbers(row["screen"]));
+            const auto p = numbers(row["point"]);
+            const auto a = chargeClampedAnchor({p[0], -p[1]}, settings(), screen, row["editing"].boolean(), 1);
+            const auto expected = numbers(row["anchor"]);
+            near(a.x, expected[0], 1e-9, label + " clamped x");
+            near(-a.y, expected[1], 1e-9, label + " clamped y");
+        } else if (kind == "editorAnchor") {
+            const auto screen = flipped(numbers(row["screen"]));
+            const auto draft = numbers(row["draft"]);
+            const auto a = chargeEditorAnchor({draft[0], -draft[1]}, row["moved"].boolean(), settings(), screen, 1);
+            const auto expected = numbers(row["anchor"]), reach = numbers(row["reach"]);
+            near(a.x, expected[0], 1e-9, label + " editor anchor x");
+            near(-a.y, expected[1], 1e-9, label + " editor anchor y");
+            const auto mine = chargeEditorReach(a, screen, 1);
+            near(-mine.maximum, reach[0], 1e-9, label + " editor reach low");
+            near(-mine.minimum, reach[1], 1e-9, label + " editor reach high");
+        } else if (kind == "reach") {
+            const auto screen = flipped(numbers(row["screen"]));
+            const auto p = numbers(row["anchor"]);
+            const auto mine = chargeEditorReach({p[0], -p[1]}, screen, 1);
+            const auto reach = numbers(row["reach"]);
+            near(-mine.maximum, reach[0], 1e-9, label + " reach low");
+            near(-mine.minimum, reach[1], 1e-9, label + " reach high");
+        } else if (kind == "panel") {
+            const auto frame = chargePanelFrame(flipped(numbers(row["bar"])), flipped(numbers(row["screen"])));
+            const auto expected = flipped(numbers(row["frame"]));
+            check(frame == expected, label + " panel frame");
+        } else if (kind == "draftLength") {
+            const auto draft = chargeDraftLength(number(row["reported"]), optionalNumber(row["shown"]));
+            check(draft.has_value() == !row["draft"].isNull() && (!draft || std::abs(*draft - number(row["draft"])) < 1e-15), label + " draft length");
+        } else if (kind == "stripSize") {
+            const auto size = numbers(row["size"]), room = numbers(row["room"]);
+            const auto mine = chargeEditorStripSize({size[0], size[1]}, 1);
+            near(mine.width, room[0], 1e-9, label + " strip room width");
+            near(mine.height, room[1], 1e-9, label + " strip room height");
+        } else check(false, "Unknown bar geometry row " + kind);
+        ++compared[kind];
+    }
+    check(compared["width"] == 5 * 11 * 7 && compared["clamp"] == 4 * 6 * 3 * 3 * 2 && compared["editorAnchor"] == 4 * 2 * 3 * 3 * 2 * 2 &&
+          compared["reach"] == 12 && compared["panel"] == 4 && compared["draftLength"] == 4 && compared["stripSize"] == 2,
+          "Every source bar geometry case compared");
+    // Pixel density: the bar's points scale by the monitor's pixels per point.
+    const core::Rect work{0, 0, 2880, 1800};
+    check(chargeBarWidth(0.5, work, 1, 2) == 720 && chargeBarWidth(0.05, work, 1.6, 2) == 200 && chargeBarWidth(std::nullopt, work, 1, 2) == 264,
+          "Length is a share of the display in points (200-point minimum, classic without a length)");
+    const auto range = chargeLengthRange(work, 1.6, 2);
+    check(std::abs(range.minimum - 200 * 1.6 / 1440) < 1e-12 && range.maximum == 1, "The 200-point minimum at Size 160 % is 320 screen points");
+    const auto room = chargeEditorStripSize({554, 112}, 2);
+    check(std::abs(room.width - 554 * 0.7 * 2) < 1e-9 && std::abs(room.height - 120 * 0.7 * 2) < 1e-9, "The 0.7 strip and its bubble room in pixels");
+    const auto stripFrame = chargeEditorStripFrame({1440, 60}, 1, 264, room, work, 2);
+    // The reach covers the anchor the largest Size's 30-point margin clamps to (96 px).
+    check(std::abs(stripFrame.y - (96 + 19 * 1.6 * 2 + 20)) < 1e-9 && std::abs(stripFrame.x - (1440 - room.width / 2)) < 1e-9,
+          "The strip sits 10 points below the reach of the largest Size, centred on the bar");
+    const auto low = chargeEditorStripFrame({1440, 1760}, 1, 264, room, work, 2);
+    check(std::abs(low.y + low.height - (1704 - 19 * 1.6 * 2 - 20)) < 1e-9, "Near the bottom edge the strip flips above the bar");
 }
 
 void normalization(const Fixture& f) {
@@ -163,8 +271,12 @@ void normalization(const Fixture& f) {
     Json fields = Json::Object{{"displayMode", "always"}, {"displayDuration", 120}, {"accentHex", "#3fa9f5"}, {"theme", "light"},
                                {"scale", 0.1}, {"placement", "custom"}, {"customScreenID", 42}, {"customPositionX", 2},
                                {"customPositionY", 0.25}, {"alertMetric", "network"}, {"batteryAlertsEnabled", false},
-                               {"devicePopupEnabled", false}, {"reduceMotion", true}, {"lowPowerVisualMode", true}};
+                               {"devicePopupEnabled", false}, {"reduceMotion", true}, {"lowPowerVisualMode", true}, {"chargeBarLength", 1.5}};
     const auto s = ChargeAlertSettings::fromSettings(fields);
+    check(s.length == 1.0 && !ChargeAlertSettings::fromSettings(Json::Object{}).length &&
+          !ChargeAlertSettings::fromSettings(Json::Object{{"chargeBarLength", 0}}).length &&
+          !ChargeAlertSettings::fromSettings(Json::Object{{"chargeBarLength", "long"}}).length &&
+          ChargeAlertSettings::fromSettings(Json::Object{{"chargeBarLength", 0.37}}).length == 0.37, "chargeBarLength: absent is classic, else normalized");
     check(s.alwaysMode && s.displayDuration == 60 && s.accentHex == "3FA9F5" && s.theme == ChargeTheme::light && s.scale == 0.65 &&
           s.customPlacement && s.customScreenID == 42u && s.customX == 1 && s.customY == 0.25 && s.metric == ChargeMetric::network &&
           !s.alertsEnabled && !s.devicePopupEnabled && s.reduceMotion && s.lowPowerVisualMode, "Saved alert settings round trip");
@@ -383,9 +495,7 @@ void tray() {
               chargeModeTitle(battery, language) != chargeModeTitle(battery, english) &&
               chargePowerState(charging, language) != chargePowerState(charging, english) &&
               chargePowerState(plugged, language) != chargePowerState(plugged, english) &&
-              chargePowerState(battery, language) != chargePowerState(battery, english) &&
-              chargePositionButtonLabel(true, language) != chargePositionButtonLabel(true, english) &&
-              chargePositionButtonLabel(false, language) != chargePositionButtonLabel(false, english),
+              chargePowerState(battery, language) != chargePowerState(battery, english),
               "Five-language Power strings never fall back to English");
     }
     const auto demo = chargeDemoReading();
@@ -557,24 +667,90 @@ void editing() {
     s.hide(true, 2);
     s.show(false, 3, true, 2);
     check(s.editingPosition() && s.windowVisible() && !s.nextDeadline(), "Alerts cannot interrupt position editing");
-    s.beginDrag({720, 880});
-    check(s.drag({3500, 500}) && s.selectedScreen()->id == 22, "Dragging onto another monitor retargets the draft");
-    const auto draft = *s.draftAnchor();
-    check(draft.x == 3500 && draft.y == 500, "Draft follows the pointer offset");
-    s.drag({4790, 1030});
-    check(s.draftAnchor()->x == 4800 - 150 && s.draftAnchor()->y == 1040 - 58, "Clamped by the editing margins of the target screen");
-    s.endDrag();
-    const auto confirmed = s.confirmPosition(3);
-    check(confirmed && confirmed->screenID == 22u && std::abs(confirmed->x - (4650.0 - 2880) / 1920) < 1e-12 &&
-          std::abs(confirmed->y - 58.0 / 1040) < 1e-12, "Confirm returns normalized fractions of the target work area");
-    check(!s.editingPosition() && !s.windowVisible() && !s.visible(), "Confirm closes the editor without animation");
-    check(s.beginPositionEditing(demo, 4), "Editing restarts");
-    s.beginDrag(*s.draftAnchor());
-    s.drag({100, 100});
-    s.discardPosition(5);
+    // The drafts start from the saved bar; the Length slider shows the classic
+    // bar's share from the rounded-up share of the 200-point minimum.
+    check(*s.draftAnchor() == anchor && !s.draftMoved() && s.barSettings().scale == 1 && !s.barSettings().length,
+          "The editor starts where the bar is, with the saved Size and Length");
+    check(*s.lengthSlider() == ChargeLengthSlider{14, 18}, "Length 14 to 100 % on a 1440-point display, showing the classic 18 %");
+    // The strip: below the bar, spaced for the largest Size.
+    check(s.layout() && !s.layout()->strip, "No strip until the panel installs one");
+    s.setEditorStrip(design::Size{554, 112});
+    const auto first = *s.layout();
+    check(first.strip && std::abs(first.strip->y - (anchor.y + 19 * 1.6 * 2 + 20)) < 1e-9 && first.window.y == first.indicator.y &&
+          first.window.y + first.window.height == first.strip->y + first.strip->height, "The strip sits below the bar inside the panel");
+    s.setDraftScale(1.6);
+    const auto larger = *s.layout();
+    check(s.barSettings().scale == 1.6 && larger.strip->y == first.strip->y && larger.indicator.width == 300 * 1.6 * 2,
+          "A Size change never moves the strip vertically");
+    check(*s.lengthSlider() == ChargeLengthSlider{23, 29}, "The Length range follows the Size (320 screen points at 160 %)");
+    s.setDraftScale(0.65);
+    check(s.layout()->indicator.width == 300 * 0.65 * 2 && s.layout()->strip == first.strip, "Size changes resize the bar beside a still strip");
+    // A press or release on Length without movement keeps the classic bar.
+    check(!s.setDraftLength(s.lengthSlider()->value) && !s.barSettings().length, "Length unchanged keeps the classic bar");
+    check(s.setDraftLength(50) && s.barSettings().length == 0.5 && s.place(2)->barWidth == 1440 * 0.5 / 0.65,
+          "Length is a share of the display at the draft Size");
+    // A configuration pushed while editing does not overwrite the drafts.
+    auto pushed = settings;
+    pushed.scale = 1.2; pushed.length = 1.0;
+    s.setSettings(pushed);
+    check(s.barSettings().scale == 0.65 && s.barSettings().length == 0.5, "Drafts survive a pushed configuration");
+    // Confirm without a drag keeps the placement and saves Size and Length.
+    const auto kept = s.confirmPosition(3);
+    check(kept && !kept->position && kept->scale == 0.65 && kept->length == 0.5, "Confirm without a drag keeps the placement");
+    check(!s.editingPosition() && !s.windowVisible() && !s.visible() && s.barSettings().scale == 1.2, "Confirm closes the editor without animation");
+    // A drag onto another monitor retargets the draft (clamped for the drafts).
+    check(s.beginPositionEditing(demo, 4) && s.barSettings().scale == 1.2 && s.barSettings().length == 1.0, "Editing restarts from the saved bar");
+    const auto revision = s.contentRevision();
+    check(s.moveDraft({3500, 500}, {3500, 500}) && s.selectedScreen()->id == 22 && s.draftMoved(), "Dragging onto another monitor retargets the draft");
+    check(s.contentRevision() != revision, "A new display refits the bar's content for its width and density");
+    check(s.draftAnchor()->x == 2880 + 960 && s.draftAnchor()->y == 500, "A full-length bar is pinned to the display's centre");
+    check(*s.lengthSlider() == ChargeLengthSlider{13, 100}, "The Length range follows the new display");
+    const auto sameDisplay = s.contentRevision();
+    check(!s.moveDraft({4790, 1030}, {4790, 1030}) && s.contentRevision() == sameDisplay, "A drag on the same display keeps the Length range and content");
+    check(s.draftAnchor()->y == 1040 - 36, "Clamped by the bar's margins of the target screen (no room reserved below)");
+    const auto confirmed = s.confirmPosition(5);
+    check(confirmed && confirmed->position && confirmed->position->screenID == 22u && std::abs(confirmed->position->x - 0.5) < 1e-12 &&
+          std::abs(confirmed->position->y - 36.0 / 1040) < 1e-12 && confirmed->scale == 1.2 && confirmed->length == 1.0,
+          "Confirm after a drag returns the normalized position with Size and Length");
+    check(s.beginPositionEditing(demo, 6), "Editing restarts");
+    s.moveDraft({100, 100}, {100, 100});
+    s.discardPosition(7);
     check(!s.editingPosition() && !s.windowVisible(), "Discard closes without a position");
     s.setSystemOverlayActive(true);
-    check(!s.beginPositionEditing(demo, 6) && !s.editingPosition(), "The HUD must close before editing");
+    check(!s.beginPositionEditing(demo, 8) && !s.editingPosition(), "The HUD must close before editing");
+    // Held still while a strip slider has the pointer, then settles: a bar at
+    // the left edge moves right as Size grows, and the strip follows on release.
+    {
+        ChargeOverlayState t;
+        auto left = settings;
+        left.customX = 0; left.customScreenID = 11;
+        t.setSettings(left);
+        t.setScreens(screens, 0);
+        check(t.beginPositionEditing(demo, 1), "Editing at the left edge");
+        t.setEditorStrip(design::Size{554, 112});
+        const auto before = *t.layout()->strip;
+        t.setStripAdjusting(true);
+        t.setDraftScale(1.6);
+        check(t.stripAdjusting() && *t.layout()->strip == before && t.layout()->indicator.x == 0, "The strip holds still while its slider is dragged");
+        t.setStripAdjusting(false);
+        check(t.layout()->strip->x > before.x && t.layout()->strip->y == before.y, "On release the strip settles beside the bar");
+    }
+    // OverlayController.show: reposition() before the entrance, so a saved
+    // Length is the bar's width before the circle starts to grow.
+    {
+        ChargeOverlayState t;
+        ChargeAlertSettings stretched;
+        stretched.length = 0.5;
+        t.setSettings(stretched);
+        const std::vector<ChargeWorkArea> single{{11, {0, 0, 1440, 900}, 1}};
+        t.setScreens(single, 0);
+        t.show(false, 3, false, 10);
+        // The panel places the window on its first frame.
+        check(t.place(10.01)->barWidth == 720, "The bar is as long as the saved Length on a 1440-point display");
+        const auto growing = t.sample(10 + ChargeIndicatorMetrics::entranceCircle / 2);
+        check(growing.bodyScale > 0.01 && growing.bodyScale < 0.99, "The first alert with a saved Length plays the circle's grow");
+        check(growing.center.x == ChargeIndicatorMetrics::canvasWidthFor(720) / 2, "The entrance plays at the saved Length's width");
+    }
 }
 } // namespace
 
@@ -588,6 +764,7 @@ int main(int argc, char** argv) {
         check(fixture.root["liveServices"].boolean() == false, "Detached oracle");
         policy(fixture);
         geometry(fixture);
+        barGeometry(fixture);
         normalization(fixture);
         recorder(fixture);
         devices(fixture);

@@ -21,9 +21,11 @@
 // The Mac oracle drives its swap with a real run loop; here time is the
 // explicit clock (Context::advance). Q4 builds the next page when a swap
 // starts, so build COUNTS differ from the Mac's; rebuild DECISIONS are compared.
+#include "core/module_presentation.hpp"
 #include "modules/hud_design_page.hpp"
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -246,6 +248,15 @@ Point pillCentre(d::CenterOverlay& o, std::size_t index) {
 void overlayTraces(RecordedMeasurer& measurer, const J& overlay) {
     const auto completions = [](World& w) { w.advance(.25); };   // the .18 s collapse / .24 s fade (CA completion blocks)
     const auto scheduled = [](World& w) { w.advance(1.6); };     // the 120 ms callback and the 1.5 s toast timer
+    {   // HUDCenterOverlay.suspendInput, the HUD's close (48584b5).
+        World w(measurer); w.appearance(Language::english);
+        Trace t(w, overlay["trace.suspendKeepsBar"], "suspendKeepsBar");
+        t.o.confirm(twinRequest(), [&] { t.events.push_back("confirm"); }, [&] { t.events.push_back("cancel"); }); t.step("confirm");
+        t.o.suspendInput(); t.step("suspended");
+        scheduled(w); completions(w); t.step("timersRan");
+        t.o.reset(); t.step("reset");
+        t.finish();
+    }
     {
         World w(measurer); w.appearance(Language::english);
         Trace t(w, overlay["trace.returnConfirms"], "returnConfirms");
@@ -464,6 +475,165 @@ void confirmBars(RecordedMeasurer& measurer, const J& overlay) {
 }
 
 // ---------------------------------------------------------------------------
+// The place-and-confirm strip (overlay.placement: HUDPlacementEditor)
+// ---------------------------------------------------------------------------
+bool sameColors(const d::Layer& layer, const J& mac) {
+    if (!layer.content() || !mac.isArray()) return false;
+    const auto& mine = (*layer.content())["gradient"]["colors"].array();
+    if (mine.size() != mac.array().size()) return false;
+    for (std::size_t i = 0; i < mine.size(); ++i)
+        for (std::size_t c = 0; c < 4; ++c)
+            if (!near(mine[i]["sRGB"].array()[c].number(), mac.array()[i].array()[c].number(), 1e-4)) return false;
+    return true;
+}
+void placementStrip(RecordedMeasurer& measurer, const J& overlay) {
+    const auto& placement = overlay["placement"];
+    check(d::PlacementEditor::bubbleClearance == placement["bubbleClearance"].number() && d::PlacementEditor::rowPitch == placement["rowPitch"].number() &&
+          d::PlacementEditor::sliderWidth == placement["sliderWidth"].number(), "Strip constants: bubble clearance 8, row pitch 49, slider width 236");
+    unsigned strips{};
+    for (const auto& row : placement["strips"].array()) {
+        const auto language = languageNamed(row["language"].string());
+        World w(measurer);
+        w.appearance(language, "FAD41F", row["light"].boolean());
+        std::vector<d::PlacementEditor::SliderSpec> specs{
+            {"chargeBar.size", endfield::core::localized("Size", "大小", language), 100, {65, 160, 1, {}}, d::ValueFormat::percent},
+            {"chargeBar.length", endfield::core::localized("Length", "长度", language), 37, {14, 100, 1, {}}, d::ValueFormat::percent},
+            {"extra", "A considerably longer title", 1, {.5, 2, .01, {}}, d::ValueFormat::scale}};
+        specs.resize(std::size_t(row["rows"].number()));
+        d::PlacementEditor editor(w.context.env(), "chargeBar", specs);
+        const std::string where = "Strip " + row["language"].string() + (row["light"].boolean() ? " light " : " dark ") + std::to_string(specs.size()) + " rows";
+        const Rect size{0, 0, row["size"].array()[0].number(), row["size"].array()[1].number()};
+        check(near(Rect{0, 0, editor.size().width, editor.size().height}, size), where + ": size " + str({0, 0, editor.size().width, editor.size().height}));
+        const auto* band = findLayer(editor.layer(), "placement.band");
+        const auto* marker = findLayer(editor.layer(), "placement.marker");
+        check(band && marker && near(band->frame(), rect(row["band"])) && near(marker->frame(), rect(row["marker"])), where + ": band and marker frames");
+        check(sameColors(*band, row["bandColors"]) && sameColors(*marker, row["markerColors"]), where + ": band and marker colours");
+        for (std::size_t i = 0; i < 2; ++i) {
+            const auto* hairline = findLayer(editor.layer(), "placement.hairline." + std::to_string(i));
+            check(hairline && near(hairline->frame(), rect(row["hairlines"].array()[i])) && sameColors(*hairline, row["hairlineColors"].array()[i]),
+                  where + ": hairline " + std::to_string(i));
+        }
+        const auto& titles = row["titles"].array();
+        check(titles.size() == specs.size(), where + ": one title per row");
+        for (std::size_t i = 0; i < titles.size(); ++i) {
+            const auto* title = findLayer(editor.layer(), "placement.title." + std::to_string(i));
+            check(title && d::textOf(*title).text() == titles[i]["text"].string() && near(d::textOf(*title).lineFrame, rect(titles[i]["lineFrame"])),
+                  where + ": title " + titles[i]["text"].string() + " line box " + (title ? str(d::textOf(*title).lineFrame) : std::string()));
+        }
+        const auto& sliders = row["sliders"].array();
+        check(sliders.size() == editor.sliders().size(), where + ": one slider per row");
+        for (std::size_t i = 0; i < sliders.size(); ++i) {
+            const auto* slider = editor.sliders()[i];
+            check(slider->id() == "placement." + sliders[i]["id"].string() || slider->id() == sliders[i]["id"].string(), where + ": slider id");
+            check(slider->label == sliders[i]["label"].string() && near(slider->value(), sliders[i]["value"].number()) &&
+                  near(slider->layer().frame(), rect(sliders[i]["frame"])), where + ": slider " + sliders[i]["id"].string() + " " + str(slider->layer().frame()));
+        }
+        const auto& pills = row["pills"].array();
+        for (std::size_t i = 0; i < 2; ++i) {
+            const d::Pill& pill = i == 0 ? editor.cancel() : editor.confirm();
+            check(pill.id() == pills[i]["id"].string() && pill.label == pills[i]["label"].string() && near(pill.layer().frame(), rect(pills[i]["frame"])),
+                  where + ": pill " + pills[i]["id"].string() + " " + str(pill.layer().frame()) + " vs " + str(rect(pills[i]["frame"])));
+        }
+        std::vector<std::string> controls, expectedControls;
+        for (const auto* c : editor.controls()) controls.push_back(c->id());
+        for (const auto& id : row["controls"].array()) expectedControls.push_back(id.string());
+        check(controls == expectedControls, where + ": routed controls (sliders, Cancel, Confirm)");
+        std::vector<d::AccessibilityItem> items;
+        editor.accessibilityItems(editor.layer(), items);
+        const auto& mac = row["accessibility"].array();
+        check(items.size() == mac.size(), where + ": accessibility items");
+        for (std::size_t i = 0; i < items.size(); ++i)
+            check(items[i].id == mac[i]["id"].string() && items[i].label == mac[i]["label"].string() && near(items[i].rect, rect(mac[i]["rect"])) &&
+                  (items[i].role == d::AccessibilityRole::slider) == (mac[i]["role"].string() == "slider"), where + ": accessibility item " + items[i].id);
+        ++strips;
+    }
+    check(strips == 8, "Every Mac strip compared (five languages, light, no rows and three rows)");
+    // Keys: Esc and Return / keypad Enter are taken (only the first decides), other keys are left to the host.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "keys", {});
+        std::vector<std::string> decisions;
+        editor.onDecision = [&](d::ConfirmState::Decision decision) { decisions.push_back(decision == d::ConfirmState::Decision::confirm ? "confirm" : "cancel"); };
+        const auto& keys = overlay["placementKeys"];
+        for (std::size_t i = 0; i < keys["keys"].array().size(); ++i)
+            check(editor.key(macKey(int(keys["keys"].array()[i].number()))) == keys["handled"].array()[i].boolean(), "Strip key " + std::to_string(i));
+        std::vector<std::string> expected;
+        for (const auto& d : keys["decisions"].array()) expected.push_back(d.string());
+        check(decisions == expected && !editor.isOpen(), "Esc decides once; Return afterwards decides nothing");
+    }
+    // Where the strip goes beside its target (y down).
+    for (const auto& row : placement["frames"].array()) {
+        const auto frame = d::PlacementEditor::frame({row["size"].array()[0].number(), row["size"].array()[1].number()}, rect(row["target"]),
+                                                     rect(row["bounds"]), row["gap"].number());
+        check(near(frame, rect(row["frame"])), "Strip frame beside " + row["target"].encode() + " in " + row["bounds"].encode() + ": " + str(frame));
+    }
+    // Pointer: a press on the strip goes to its controls, any other press drags from the anchor.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "chargeBar", {{"chargeBar.size", "Size", 100, {65, 160, 1, {}}, d::ValueFormat::percent}});
+        std::vector<std::pair<std::string, bool>> changes;
+        editor.onChange = [&](const std::string& id, double, bool final) { changes.emplace_back(id, final); };
+        const Rect track = d::convert(Rect{0, 0, 10, 30}, editor.sliders()[0]->layer(), editor.layer());
+        editor.pointerDown({track.x + 60, track.y + 15}, editor.layer(), {500, 500}, {300, 40});
+        check(editor.adjusting() && !editor.dragging() && changes.size() == 1 && !changes[0].second, "A press on a slider adjusts it (not final)");
+        check(!editor.pointerDragged({track.x + 80, track.y + 15}, editor.layer(), {520, 500}), "Dragging a slider moves no anchor");
+        editor.pointerUp({track.x + 80, track.y + 15}, editor.layer());
+        check(!editor.adjusting() && !changes.empty() && changes.back().second, "Release commits the slider");
+        editor.pointerDown({-50, -50}, editor.layer(), {500, 500}, {300, 40});
+        const auto anchor = editor.pointerDragged({-40, -30}, editor.layer(), {510, 520});
+        check(editor.dragging() && anchor && near(anchor->x, 310) && near(anchor->y, 60), "A press outside the strip drags the anchor with the pointer");
+        editor.pointerUp({-40, -30}, editor.layer());
+        check(!editor.dragging() && !editor.pointerDragged({0, 0}, editor.layer(), {0, 0}), "Release ends the drag");
+        editor.adjust("placement.chargeBar.size", 120);
+        editor.adjust("chargeBar.size", 120);
+        check(near(*editor.value("chargeBar.size"), 120) && changes.back() == std::pair<std::string, bool>{"chargeBar.size", true},
+              "An accessibility adjustment sets the slider and reports it as final");
+        editor.setRange({100, 160, 1, {}}, 90, "chargeBar.size");
+        check(near(*editor.value("chargeBar.size"), 100) && editor.sliders()[0]->range().minimum == 100, "setRange clamps the value into the new range");
+        bool decided{};
+        editor.onDecision = [&](d::ConfirmState::Decision decision) { decided = decision == d::ConfirmState::Decision::confirm; };
+        editor.perform("chargeBar:confirm");
+        check(decided && !editor.isOpen(), "An accessibility press on Confirm confirms");
+        editor.pointerDown({-50, -50}, editor.layer(), {0, 0}, {0, 0});
+        check(!editor.dragging(), "A decided strip starts no drag");
+    }
+    // show(): the confirm bar's entrance. The band wipes from its centre over
+    // bandIn (snap); the marker and each row (title and slider) enter from
+    // (-12, 0) after confirmTextDelay + row x pillStep; Cancel and Confirm
+    // enter from (+12, 0) after pillDelay + index x pillStep.
+    {
+        World w(measurer); w.appearance(Language::english);
+        d::PlacementEditor editor(w.context.env(), "chargeBar", {
+            {"chargeBar.size", "Size", 100, {65, 160, 1, {}}, d::ValueFormat::percent},
+            {"chargeBar.length", "Length", 37, {14, 100, 1, {}}, d::ValueFormat::percent}});
+        const double t0 = w.now;
+        editor.show(w.context.env().clock());
+        namespace t = d::duration;
+        const auto* band = findLayer(editor.layer(), "placement.band");
+        check(band && near(band->presented(d::Channel::wipe, t0), 0) && near(band->presented(d::Channel::wipe, t0 + t::bandIn), 1) &&
+              near(band->presented(d::Channel::wipe, t0 + t::bandIn / 2), d::easing::snap.value(.5)), "Strip entrance: the band wipes in over bandIn (snap)");
+        // A layer entering from `dx` after `delay`: still at its offset and
+        // transparent just before, moving just after, settled at the end.
+        const auto enters = [&](const d::Layer* layer, double dx, double delay, const std::string& what) {
+            const double start = t0 + delay, eps = 1e-4;
+            const double moving = layer ? layer->presented(d::Channel::translateX, start + t::confirmText / 2) : 0;
+            check(layer && near(layer->presented(d::Channel::translateX, start - eps), dx) && near(layer->presented(d::Channel::opacity, start - eps), 0) &&
+                  std::abs(moving) > 0 && std::abs(moving) < std::abs(dx) && (moving > 0) == (dx > 0) &&
+                  near(layer->presented(d::Channel::translateX, start + t::confirmText + eps), 0) &&
+                  near(layer->presented(d::Channel::opacity, start + t::confirmText + eps), 1), "Strip entrance: " + what);
+        };
+        enters(findLayer(editor.layer(), "placement.marker"), -12, t::confirmTextDelay, "the marker from the left after confirmTextDelay");
+        for (std::size_t i = 0; i < 2; ++i) {
+            const double delay = t::confirmTextDelay + double(i) * t::pillStep;
+            enters(findLayer(editor.layer(), "placement.title." + std::to_string(i)), -12, delay, "title " + std::to_string(i) + " from the left, staggered by pillStep");
+            enters(&editor.sliders()[i]->layer(), -12, delay, "slider " + std::to_string(i) + " from the left with its title");
+        }
+        enters(&editor.cancel().layer(), 12, t::pillDelay, "Cancel from the right after pillDelay");
+        enters(&editor.confirm().layer(), 12, t::pillDelay + t::pillStep, "Confirm from the right one pillStep later");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The fake module canvas (the oracle's FakeCanvas, line for line)
 // ---------------------------------------------------------------------------
 class FakeCanvas final : public d::Canvas {
@@ -524,6 +694,9 @@ public:
     void didActivate() override { events.push_back("didActivate"); }
     void didDeactivate() override { events.push_back("didDeactivate"); }
     void willLeave() override { events.push_back("willLeave"); }
+    // The page part of every entrance, played or carried (not an oracle event).
+    int pageEntrances{};
+    void playPageEntrance(Point offset, double delay) override { ++pageEntrances; Canvas::playPageEntrance(offset, delay); }
 };
 Point centre(const d::Control& c, const d::Layer& root) { const Rect r = c.rect(root); return {r.x + r.width / 2, r.y + r.height / 2}; }
 const char* roleName(d::AccessibilityRole r) {
@@ -584,6 +757,10 @@ struct CanvasRun {
         }
         std::vector<d::AccessibilityItem> items;
         c.accessibilityItems(items);
+        // Back-map (5c8a905): the Mac's concealed settle installs the next page
+        // and lists its controls; here the next page lands when the module
+        // shows again, and the concealed page lists nothing until then.
+        if (label == "prepareToLeaveConcealed") { check(items.empty(), where + ": a concealed settle lists no control"); return m; }
         const auto& expectedItems = m["accessibility"].array();
         std::string got; for (const auto& item : items) got += item.id + " ";
         check(items.size() == expectedItems.size(), where + ": accessibility items " + got);
@@ -726,14 +903,47 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
     canvas.settleSwap();
     run.step(canvas, "backSettled");
     canvas.depth = 1; canvas.navigate(1);
+    const double navigated = w.now;
+    w.advance(.05);
     canvas.prepareToLeave(w.now);
     {
         run.step(canvas, "prepareToLeaveConcealed");
-        check(!d::isVisible(canvas.page().layer(), root) || canvas.page().layer().presented(d::Channel::opacity, w.now) == 0, "A settled page stays concealed while the module leaves");
+        // 5c8a905 (B5-2): the old page and header stay in the tree finishing
+        // their leave, models transparent; the next page waits out of the tree.
+        auto& old = canvas.page().layer();
+        auto& header = canvas.header().layer();
+        const auto leave = endfield::core::DesignMotion::leaveAt(w.now - navigated, {});
+        check(old.parent() == &root && header.parent() == &root && old.value(d::Channel::opacity) == 0 && header.value(d::Channel::opacity) == 0,
+            "The leaving page and header stay drawn, their models transparent");
+        check(std::abs(old.presented(d::Channel::opacity, w.now) - leave.opacity) < 1e-9 && std::abs(header.presented(d::Channel::opacity, w.now) - leave.opacity) < 1e-9
+            && old.presented(d::Channel::opacity, w.now + .2) == 0, "They finish the leave they are in");
+        check(canvas.header().crumbTexts().size() != 5 && !canvas.transitioning(), "The next page (and its header) are not in the tree; no swap remains");
+        std::set<std::string> ids; bool unique = true;
+        std::function<void(const d::Layer&)> walk = [&](const d::Layer& l) { unique &= ids.insert(l.id()).second; for (const auto* c : l.children()) walk(*c); };
+        walk(root);
+        check(unique, "No layer id is in the tree twice");
     }
     canvas.show(w.now);
     run.step(canvas, "revealedByMakeContent");
     check(canvas.page().layer().presented(d::Channel::opacity, w.now) == 1, "Showing the module reveals the settled page");
+    {
+        auto& header = canvas.header().layer();
+        check(header.presented(d::Channel::opacity, w.now) == 1 && header.value(d::Channel::opacity) == 1 && !header.tracks().slots[std::size_t(d::MotionSlot::hold)][0].present()
+            && canvas.header().crumbTexts().size() == 5, "The next page and its header land, opaque, with no hold (2def26e)");
+    }
+    {   // Popups leave with their module (2e08932): the menu closed by the leave
+        // stays in the top layer until the next showing (the Mac's counts, as deltas).
+        const auto top = [&] { return double(canvas.top().children().size()); };
+        canvas.pointerDown(centre(*canvas.dropdown, root), press, w.now); canvas.pointerUp(centre(*canvas.dropdown, root), w.now);
+        const J& opened = run.step(canvas, "menuOpenedBeforeLeave");
+        const double windowsOpen = top(), macOpen = opened["topCount"].number();
+        canvas.prepareToLeave(w.now);
+        const J& left = run.step(canvas, "menuLeavesWithModule");
+        check(top() - windowsOpen == left["topCount"].number() - macOpen, "The closed menu stays drawn in the top layer while the module leaves");
+        canvas.show(w.now);
+        const J& removed = run.step(canvas, "menuRemovedByMakeContent");
+        check(top() - windowsOpen == removed["topCount"].number() - macOpen, "The next showing removes it");
+    }
     canvas.depth = 0;
     w.appearance(Language::english, "FAD41F", false, true);
     canvas.navigate(-1);
@@ -837,6 +1047,240 @@ void recordingModeWork(RecordedMeasurer& measurer) {
     hidden.show(w.now);
     check(hidden.builds == builds + 1 && hidden.renderedLanguage() == Language::japanese, "A waiting Recording mode change and a language change rebuild once when shown");
     check(!hidden.deferredBuild, "A language rebuild is not a late Recording mode build (the Mac rebuilds it when shown too)");
+}
+
+// Lists start at the top on return and on Back (HUDDesignScreen showsFromTop):
+// a Back starts at the top like a forward sub-page; a module that was left
+// builds its page from the top when next shown, once and only when a list was
+// left scrolled; in-place re-renders while it is shown keep the scroll.
+void listsFromTop(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas c(endfield::core::Module::clipboard, w.context);
+    const auto offset = [&] { return c.page().scrollAreas()[0]->offset(); };
+    const auto scroll = [&] { c.page().scrollAreas()[0]->setOffset(120); check(near(offset(), 120), "The fake list scrolls to 120"); };
+    const auto leave = [&] { c.prepareToLeave(w.now); c.setActive(false, w.now); };   // the owner's leave
+    const auto enter = [&] { c.show(w.now); c.setActive(true, w.now); };
+    enter();
+    check(!c.showsFromTop(), "A module shown for the first time has nothing to reset");
+    scroll();
+    c.rerender();
+    check(near(offset(), 120), "An in-place re-render while active keeps the list's scroll");
+    c.depth = 1; c.navigate(1); c.settleSwap();
+    check(near(offset(), 0), "A forward sub-page starts at the top");
+    scroll();
+    c.depth = 0; c.navigate(-1); c.settleSwap();
+    check(near(offset(), 0), "Back starts the list at the top too (no offsets kept for going back)");
+    scroll();
+    leave();
+    check(c.showsFromTop(), "Leaving the module marks its next showing to start at the top");
+    c.rerender();
+    check(near(offset(), 0) && c.showsFromTop(), "A re-render between prepareToLeave and show builds the list at the top");
+    auto pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages && near(offset(), 0) && !c.showsFromTop(), "Shown again with its list already at the top, the module builds nothing");
+    scroll();
+    leave();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages + 1 && near(offset(), 0) && !c.showsFromTop(), "Shown again with its list left scrolled, the module builds its page once, at the top");
+    leave();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages, "Shown again unscrolled, the module builds nothing");
+    scroll();
+    leave();
+    c.keepsScrollOnNextShow();
+    pages = w.context.pagesBuilt();
+    enter();
+    check(w.context.pagesBuilt() == pages && near(offset(), 120), "keepsScrollOnNextShow keeps the scroll it set for the next showing");
+    leave();
+    c.setActive(true, w.now);                                // a cancelled module swap: active again without show
+    check(!c.showsFromTop() && near(offset(), 120), "setActive(true) without show clears the flag and keeps the page");
+    pages = w.context.pagesBuilt();
+    c.show(w.now);
+    check(w.context.pagesBuilt() == pages && near(offset(), 120), "A later show of that module keeps its scroll");
+}
+
+// The entrance as the HUD opens into the module (Mac a5d58f1,
+// HUDDirectionalContent.playEntrance(from:delay:)): every staggered row and
+// the header wipe and rule grow start `delay` later; the two-argument form
+// (module swaps, sub-pages) is the same as a zero delay.
+void delayedEntrance(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    const auto offset = d::entranceOffset(std::nullopt, endfield::core::Module::clipboard);
+    const auto enterSlot = [](const d::Layer& l, std::size_t i) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][i]; };
+    const auto starts = [&](FakeCanvas& c) {
+        std::vector<double> out;
+        for (const auto* layer : c.page().staggered()) out.push_back(enterSlot(*layer, 0).start - w.now);
+        return out;
+    };
+    const auto must = [](const d::Layer& root, std::string_view suffix) -> const d::Layer& {
+        const std::function<const d::Layer*(const d::Layer&)> find = [&](const d::Layer& l) -> const d::Layer* {
+            if (std::string_view(l.id()).ends_with(suffix)) return &l;
+            for (const auto* child : l.children()) if (const auto* hit = find(*child)) return hit;
+            return nullptr;
+        };
+        const auto* hit = find(root);
+        if (!hit) throw std::runtime_error("No layer ending in " + std::string(suffix) + " under " + root.id());
+        return *hit;
+    };
+    FakeCanvas plain(endfield::core::Module::clipboard, w.context), opening(endfield::core::Module::clipboard, w.context);
+    for (auto* c : {&plain, &opening}) { c->show(w.now); c->setActive(true, w.now); }
+    plain.playEntrance(offset, w.now);
+    opening.playEntrance(offset, w.now, .2);
+    const auto at = starts(plain), delayed = starts(opening);
+    check(!at.empty() && at.size() == delayed.size(), "Both canvases stagger the same rows");
+    for (std::size_t i = 0; i < at.size(); ++i) {
+        check(near(at[i], d::staggerDelay(int(i))) && near(delayed[i], .2 + d::staggerDelay(int(i))), "Row " + std::to_string(i) + " starts .2 s later with the delay");
+        const auto& row = *opening.page().staggered()[i];
+        check(row.animating(w.now + .19) && near(row.presented(d::Channel::opacity, w.now + .2 + d::staggerDelay(int(i)) - .001), 0)
+            && near(row.presented(d::Channel::translateY, w.now + .2 + d::staggerDelay(int(i)) - .001), row.value(d::Channel::translateY) + offset.y),
+            "Row " + std::to_string(i) + " holds its start pose until its delayed start");
+        check(!row.animating(w.now + .2 + d::staggerDelay(int(i)) + d::duration::entrance + .001) && near(row.presented(d::Channel::opacity, w.now + .2 + d::staggerDelay(int(i)) + d::duration::entrance + .001), row.value(d::Channel::opacity)),
+            "Row " + std::to_string(i) + " settles .2 s later");
+    }
+    const auto slot = [](const d::Layer& l, d::MotionSlot s) -> const auto& { return l.tracks().slots[std::size_t(s)][0]; };
+    const auto& plainTitle = must(plain.header().layer(), "header.title"), &openingTitle = must(opening.header().layer(), "header.title");
+    const auto& plainRule = must(plain.header().layer(), "header.rule"), &openingRule = must(opening.header().layer(), "header.rule");
+    check(near(slot(plainTitle, d::MotionSlot::wipe).start - w.now, 0) && near(slot(openingTitle, d::MotionSlot::wipe).start - w.now, .2)
+        && near(slot(openingTitle, d::MotionSlot::fade).start - w.now, .2), "The header's title wipe and fade start .2 s later");
+    check(near(slot(plainRule, d::MotionSlot::grow).start - w.now, d::duration::ruleDelay) && near(slot(openingRule, d::MotionSlot::grow).start - w.now, d::duration::ruleDelay + .2),
+        "The rule grows after .05 + .2 s");
+    // Reduce Motion: no entrance with or without a delay.
+    w.appearance(Language::english, "FAD41F", false, true);
+    FakeCanvas reduced(endfield::core::Module::clipboard, w.context);
+    reduced.show(w.now); reduced.setActive(true, w.now); reduced.playEntrance(offset, w.now, .2);
+    check(!reduced.page().staggered().empty(), "The reduced canvas staggers rows too");
+    for (const auto* layer : reduced.page().staggered()) check(!layer->animating(w.now), "Reduce Motion plays no delayed entrance");
+}
+
+// A page re-rendered in place while the module entrance plays carries it on
+// in phase (Mac d03d5b9, HUDDesignCanvas.rerender with the recorded
+// entrance): rows already shown stay shown, the rest still enter; past the
+// entrance, after a leave, under Reduce Motion and during a sub-page swap
+// nothing is carried.
+void carriedEntrance(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    const d::Point offset{0, 24};
+    const auto enterSlot = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][0]; };
+    const auto noEnter = [&](FakeCanvas& c) {
+        for (const auto* layer : c.page().staggered()) if (layer->animating(w.now)) return false;
+        return true;
+    };
+    const auto rebuild = [&](FakeCanvas& c) {
+        const auto before = w.context.pagesBuilt();
+        c.rows += 1;                                     // a structural change: one more row
+        c.rerender();
+        check(w.context.pagesBuilt() == before + 1, "One page is built per re-render");
+    };
+    {
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        const double t0 = w.now;
+        c.playEntrance(offset, t0);
+        w.advance(.2);
+        const auto& oldFirst = *c.page().staggered()[0];
+        const double opacity = oldFirst.presented(d::Channel::opacity, w.now), moved = oldFirst.presented(d::Channel::translateY, w.now);
+        rebuild(c);
+        const auto rows = c.page().staggered();
+        check(rows.size() > 3, "The rebuilt page staggers its rows");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (t0 + d::staggerDelay(int(i)))) < 1e-9 && enterSlot(*rows[i]).fillBackwards == (enterSlot(*rows[i]).start > w.now),
+                "Row " + std::to_string(i) + " of the rebuilt page enters at the entrance's start + its stagger (a row not yet started holds its start pose)");
+        check(near(rows[0]->presented(d::Channel::opacity, w.now), opacity) && near(rows[0]->presented(d::Channel::translateY, w.now), moved),
+            "The first row shows what the replaced page showed");
+        check(near(rows.back()->presented(d::Channel::opacity, w.now), 0), "The last row is still at its start pose");
+        // Past the entrance (its last row's start plus the title wipe): nothing is carried.
+        w.advance(1.02 - .2);
+        rebuild(c);
+        check(noEnter(c), "A re-render after the entrance carries nothing");
+        w.advance(.01);
+        rebuild(c);
+        check(noEnter(c), "Nor does a later one");
+    }
+    {
+        // The HUD's open delays the entrance .2 s: a rebuild at +.1 still waits for it.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        const double t0 = w.now;
+        c.playEntrance(offset, t0, .2);
+        w.advance(.1);
+        rebuild(c);
+        const auto rows = c.page().staggered();
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (t0 + .2 + d::staggerDelay(int(i)))) < 1e-9 && enterSlot(*rows[i]).fillBackwards,
+                "Row " + std::to_string(i) + " waits for the delayed entrance");
+        check(near(rows[0]->presented(d::Channel::opacity, w.now), 0), "The first row is still hidden before the delayed start");
+    }
+    {
+        // Left (prepareToLeave while still active, as the owner leaves a
+        // shown module, then shown again) or deactivated: no carry.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        c.prepareToLeave(w.now);
+        check(c.isActive(), "Still active while it leaves");
+        rebuild(c);
+        check(noEnter(c), "A module leaving carries no entrance");
+        c.show(w.now);
+        rebuild(c);
+        check(noEnter(c), "A module that left carries no entrance");
+        c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        c.setActive(false, w.now);
+        rebuild(c);
+        check(noEnter(c), "A deactivated module carries no entrance");
+    }
+    {
+        // A sub-page swap under way: the rebuilt page waits for the landing, which plays its own entrance.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.05);
+        c.depth = 1; c.navigate(1);
+        const double landing = w.now + d::duration::leave;
+        w.advance(.05);
+        const int entrances = c.pageEntrances;
+        rebuild(c);
+        check(c.transitioning() && c.pageEntrances == entrances, "A rebuild during the swap starts no entrance before the landing");
+        w.advance(landing - w.now);
+        check(!c.transitioning(), "The swap landed");
+        check(c.pageEntrances == entrances + 1, "The landing plays the new page's entrance once");
+        const auto rows = c.page().staggered();
+        const auto swap = d::subpageOffset(1);
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(std::abs(enterSlot(*rows[i]).start - (landing + d::staggerDelay(int(i)))) < 1e-9, "Row " + std::to_string(i) + " enters with the landing");
+        check(near(rows.back()->presented(d::Channel::translateX, landing), rows.back()->value(d::Channel::translateX) + swap.x), "From the swap's offset");
+        // The new header's breadcrumb, code, tail, Back and actions fade in with its title (Mac 7d57641).
+        const auto extras = c.header().extras();
+        check(extras.size() == 5 && extras[3] == &c.header().back()->layer(), "The sub-page's header shows Back among its extras");
+        for (const auto* extra : extras)
+            check(extra->presented(d::Channel::opacity, landing + .03) < 1 && near(extra->presented(d::Channel::opacity, landing + .7), 1), "A header extra fades in after the swap: " + extra->id());
+    }
+    {
+        // Reduce Motion: no entrance is recorded, and one recorded before is dropped.
+        FakeCanvas c(endfield::core::Module::clipboard, w.context);
+        c.show(w.now); c.setActive(true, w.now);
+        c.playEntrance(offset, w.now);
+        w.advance(.1);
+        w.appearance(Language::english, "FAD41F", false, true);
+        rebuild(c);
+        check(noEnter(c), "Reduce Motion carries nothing");
+        w.appearance(Language::english);
+        rebuild(c);
+        check(noEnter(c), "The entrance dropped under Reduce Motion stays dropped");
+        // An entrance played under Reduce Motion is not recorded: with motion
+        // back on, a rebuild inside its length still carries nothing.
+        w.appearance(Language::english, "FAD41F", false, true);
+        c.playEntrance(offset, w.now);
+        w.appearance(Language::english);
+        w.advance(.1);
+        const int entrances = c.pageEntrances;
+        rebuild(c);
+        check(noEnter(c) && c.pageEntrances == entrances, "An entrance played under Reduce Motion is not carried");
+    }
 }
 
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
@@ -992,6 +1436,13 @@ void focusMoves(RecordedMeasurer& measurer) {
     FieldHost host; w.context.setEditorHost(&host);
     FieldCanvas a(endfield::core::Module::system, w.context), b(endfield::core::Module::profile, w.context);
     for (auto* c : {&a, &b}) { c->show(w.now); c->setActive(true, w.now); }
+    // HUDDesignCanvas.refreshRouter: a registered field that the page also
+    // lists keeps its page place and is routed (and spoken) once.
+    {
+        std::vector<d::AccessibilityItem> items; a.accessibilityItems(items);
+        check(std::count_if(items.begin(), items.end(), [](const d::AccessibilityItem& i) { return i.id == "field.name"; }) == 1,
+            "A field in the page controls is listed once");
+    }
     w.context.editorFocusMoved();
     check(host.ends == 0 && a.commits.empty(), "Nothing editing: a focus move changes nothing");
     a.field->beginEditing();
@@ -1019,7 +1470,268 @@ void focusMoves(RecordedMeasurer& measurer) {
     check(a.bodyFocused && !b.bodyFocused && b.bodyEnds == 1 && a.bodyEnds == 0, "A press another canvas took ends this canvas's body editor, saving");
     w.context.editorFocusMoved();
     check(!a.bodyFocused && a.bodyEnds == 1 && b.bodyEnds == 1, "A press no canvas took ends every focused body editor once");
+    // SystemHUDView.beginOverlayPlacement: an open design menu closes; a
+    // pop-over is left alone.
+    d::Menu::Item item; item.id = "one"; item.title = "One";
+    a.openMenu("field.menu", {item}, Rect{20, 120, 260, 34}, nullptr, std::nullopt, [](const d::Menu::Item&) {});
+    b.openPopover(std::make_unique<d::Popover>(b.env(), "Pen", std::nullopt, 270, 60), nullptr, Rect{20, 120, 260, 34}, {});
+    check(a.menuOpen() && b.popoverOpen(), "A menu and a pop-over are open");
+    w.context.closeMenus();
+    check(!a.menuOpen() && b.popoverOpen(), "Context::closeMenus closes every canvas's menu and leaves pop-overs");
+    b.closePopover();
     w.context.setEditorHost(nullptr);
+}
+
+// A concealed sub-page settle (5c8a905, 2def26e): navigate, rerender,
+// setActive and resetSession each end it once, with the old page out of the
+// tree and the header opaque again.
+void concealedSettles(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto settle = [&] { canvas.depth = 1; canvas.navigate(1); w.advance(.05); canvas.prepareToLeave(w.now); return &canvas.page().layer(); };
+    const auto settled = [&](const d::Layer* old, const std::string& what) {
+        check(old != &canvas.page().layer() && !old->parent() && canvas.page().layer().parent() == &canvas.root() && !canvas.transitioning(), what + ": the old page left the tree");
+        check(canvas.header().layer().value(d::Channel::opacity) == 1 && canvas.header().layer().parent() == &canvas.root(), what + ": the header is opaque again");
+    };
+    // A second navigate without show(): the old page goes first; the module is detached, so it installs at once.
+    auto* old = settle();
+    const int builds = canvas.builds;
+    canvas.depth = 0; canvas.navigate(-1);
+    settled(old, "A navigate after a concealed settle");
+    check(canvas.builds == builds + 1 && canvas.header().crumbTexts().size() == 3, "It builds the page asked for, not the one that waited (" + std::to_string(canvas.builds - builds) + " builds, " + std::to_string(canvas.header().crumbTexts().size()) + " crumbs)");
+    // A rerender while it waits rebuilds only the waiting page.
+    canvas.show(w.now);
+    old = settle();
+    const int before = canvas.builds;
+    canvas.rerender();
+    check(canvas.builds == before + 1 && &canvas.page().layer() == old && old->parent() == &canvas.root(), "A rerender rebuilds the waiting page, out of the tree");
+    canvas.setActive(false, w.now); canvas.setActive(true, w.now);
+    settled(old, "setActive(true)");
+    check(canvas.header().crumbTexts().size() == 5 && canvas.page().layer().presented(d::Channel::opacity, w.now) == 1, "The waiting page lands, with its header");
+    // resetSession (a new HUD session) drops it too.
+    canvas.show(w.now);
+    canvas.depth = 0; canvas.navigate(-1); w.advance(.2);
+    old = settle();
+    check(old->parent() == &canvas.root(), "A concealed settle waits");
+    canvas.setActive(false, w.now);
+    canvas.resetSession();
+    settled(old, "resetSession");
+    // Input waits for the landing: no press, control or accessibility item.
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    canvas.depth = 0; canvas.navigate(-1); w.advance(.05);
+    canvas.settleSwap(true);
+    std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+    d::PointerInput press;
+    check(items.empty() && !canvas.control({300, 300}) && !canvas.pointerDown({300, 300}, press, w.now), "A concealed settle takes no input until it lands");
+    canvas.show(w.now);
+    canvas.accessibilityItems(items);
+    check(!items.empty(), "Shown again, it lists its controls");
+}
+
+// Popups leave with their module (2e08932): a menu or pop-over open when the
+// module leaves or deactivates closes (no input, no routed control) but stays
+// drawn under top() until the next showing; every other close removes it.
+void popupsLeaveWithModule(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    d::PointerInput press;
+    const Point drop = centre(*canvas.dropdown, canvas.root());
+    const auto openMenu = [&] { canvas.pointerDown(drop, press, w.now); canvas.pointerUp(drop, w.now); check(canvas.menuOpen(), "The menu opens"); return &canvas.top().children().back()->id(); };
+    const auto drawn = [&](const std::string& id) { for (const auto* c : canvas.top().children()) if (c->id() == id) return true; return false; };
+    const auto routedMenu = [&] { std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+        return std::any_of(items.begin(), items.end(), [](const auto& i) { return i.role == d::AccessibilityRole::menuItem; }); };
+    // prepareToLeave keeps it drawn; show() removes it.
+    std::string menu = *openMenu();
+    canvas.prepareToLeave(w.now);
+    check(!canvas.menuOpen() && !canvas.capturesPointer() && drawn(menu) && !canvas.dropdown->isOpen() && !routedMenu(), "A menu open at the leave closes but stays drawn, with no routed row");
+    w.advance(1);
+    check(drawn(menu), "It is still drawn after the graveyard's turn");
+    canvas.show(w.now);
+    check(!drawn(menu), "The next showing removes it");
+    // setActive(false) keeps it; setActive(true) removes it.
+    menu = *openMenu();
+    canvas.setActive(false, w.now);
+    check(!canvas.menuOpen() && drawn(menu), "A menu open at deactivation stays drawn");
+    canvas.setActive(true, w.now);
+    check(!drawn(menu) && !routedMenu(), "Reactivation removes it");
+    // A pop-over too; a new session removes it as well.
+    canvas.openPopover(std::make_unique<d::Popover>(canvas.env(), "Pen", std::nullopt, 270, 60), canvas.dropdown, std::nullopt, {});
+    const std::string popover = canvas.top().children().back()->id();
+    canvas.setActive(false, w.now);
+    check(!canvas.popoverOpen() && drawn(popover), "A pop-over open at deactivation stays drawn");
+    canvas.resetSession();
+    check(!drawn(popover), "A new session removes it");
+    // Every other close removes at once: an outside press, a sub-page change.
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    menu = *openMenu();
+    canvas.pointerDown({560, 480}, press, w.now);
+    check(!drawn(menu), "An outside press removes the menu at once");
+    menu = *openMenu();
+    canvas.navigate(1);
+    check(!drawn(menu), "A sub-page change removes it at once");
+}
+
+// HUDCenterOverlay.suspendInput (:505-511, the HUD's close): the bar stays
+// drawn and dimmed but decides nothing; no handler runs, not even after its
+// timers; reset() at the hidden HUD takes it away.
+void suspendedBar(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    auto& o = w.context.overlay();
+    std::vector<std::string> events;
+    o.confirm(twinRequest(), [&] { events.push_back("confirm"); }, [&] { events.push_back("cancel"); });
+    const Point pill = pillCentre(o, 0);
+    o.suspendInput();
+    check(o.isConfirming() && !o.confirmBar().layer().hidden() && o.dimmed() && o.router().controls().empty(), "The suspended bar stays shown and dimmed with no control");
+    check(!o.pointerDown(pill) || events.empty(), "A press on a pill decides nothing");
+    o.pointerUp(pill);
+    w.advance(2);
+    check(events.empty() && !o.confirmBar().layer().hidden(), "No handler runs; the bar is still drawn after the timers");
+    o.reset();
+    check(!o.isConfirming() && !o.capturesInput() && o.confirmBar().layer().hidden() && !o.dimmed() && events.empty(), "reset() at the hidden HUD takes it away without a decision");
+}
+
+// HUDDesignCanvas.suspendInput (:556, the HUD's close): an editing field
+// commits and a slider drag ends without its final value, while the page,
+// an open menu or pop-over and a running sub-page swap stay as they are.
+void suspendsInput(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    FieldCanvas edited(endfield::core::Module::system, w.context);
+    edited.show(w.now); edited.setActive(true, w.now);
+    edited.field->beginEditing(); host.typed = "Perlica";
+    edited.suspendInput();
+    check(!edited.field->editing() && edited.commits == std::vector<std::string>{"Perlica"} && edited.isActive(), "An editing field commits; the canvas stays active");
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const Rect sr = canvas.slider->rect(canvas.root());
+    d::PointerInput press;
+    canvas.pointerDown({sr.x + 20, sr.y + sr.height / 2}, press, w.now);
+    canvas.pointerDragged({sr.x + 200, sr.y + sr.height / 2}, w.now);
+    check(canvas.dragging(), "A slider drag is under way");
+    canvas.events.clear();
+    canvas.suspendInput();
+    check(!canvas.dragging() && std::none_of(canvas.events.begin(), canvas.events.end(), [](const std::string& e) { return e.ends_with(" true"); }),
+        "The drag ends without a final value");
+    const Point drop = centre(*canvas.dropdown, canvas.root());
+    canvas.pointerDown(drop, press, w.now); canvas.pointerUp(drop, w.now);
+    check(canvas.menuOpen(), "A menu is open");
+    canvas.suspendInput();
+    check(canvas.menuOpen() && canvas.capturesPointer(), "The menu stays open (it leaves with the module)");
+    canvas.closeMenu();
+    canvas.openPopover(std::make_unique<d::Popover>(canvas.env(), "Pen", std::nullopt, 270, 60), canvas.dropdown, std::nullopt, {});
+    canvas.suspendInput();
+    check(canvas.popoverOpen(), "A pop-over stays open");
+    canvas.closePopover();
+    canvas.depth = 1; canvas.navigate(1);
+    canvas.suspendInput();
+    check(canvas.transitioning() && canvas.page().layer().animating(w.now + .05), "A running sub-page swap keeps its leave and deadline");
+    w.advance(.2);
+    check(!canvas.transitioning(), "The swap lands on time");
+    w.context.setEditorHost(nullptr);
+}
+
+// The HUD close's module settle against the Mac's HUDModuleContent
+// (hud_design_reference.swift "moduleClose": settle(concealed:), leaveForClose,
+// cancel on a switch caught at +.05, reversed, after its swap, and with no
+// switch). Mapped onto core::ModulePresentation: a hidden screen is one not
+// attached; a wrapper carrying module.leave is a surface on a leave (its
+// opacity falling); the departing wrapper is ModulePresentationSample::departing.
+// The Mac keeps the departing wrapper (transparent) until the next change;
+// Windows drops it once its .13 s leave ended, after these steps.
+// Each module.leave's values come from the Mac too: the recorded group's
+// duration, timing curve and opacity from / to give the opacity at +.08, +.12
+// and +.131 of its start (the switch for a leave a switch began, the close for
+// one leaveForClose added), and the additive translation's progress between
+// +.08 and +.12 (the plane's units differ from the wrapper's px; the axes
+// that move and the horizontal direction are the Mac's).
+void moduleLeaveValues(const J& leave, const endfield::core::ModulePresentation& at, double start, const std::string& where) {
+    using endfield::core::CubicTiming;
+    const auto& curve = leave["timing"].array();
+    const CubicTiming timing{curve[0].number(), curve[1].number(), curve[2].number(), curve[3].number()};
+    const double duration = leave["duration"].number();
+    const bool departing = leave["role"].string() == "departing";
+    check(std::abs(duration - .13) < 1e-9, where + ": the module leave lasts .13 s");
+    const auto surface = [&](double e) -> std::optional<endfield::core::ModulePresentationSurface> {
+        auto copy = at;
+        const auto s = copy.sample(start + e).presentation;
+        if (departing) return s.departing;
+        return s.current;
+    };
+    for (const auto& a : leave["animations"].array()) {
+        const std::string key = a["keyPath"].string();
+        const double from = a["from"].number(), to = a["to"].number();
+        if (key == "opacity") {
+            for (const double e : {.08, .12}) {
+                const auto s = surface(e);
+                const double want = from + (to - from) * timing.value(e / duration);
+                check(s && std::abs(s->opacity - want) < 1e-4, where + ": the leave's opacity at +" + std::to_string(e) + " is the Mac's");
+            }
+            const auto end = surface(.131);
+            check(departing ? (!end || end->opacity == 0) : (end && std::abs(end->opacity - to) < 1e-9), where + ": the leave has ended at +.131");
+        } else {
+            const bool horizontal = key == "transform.translation.x";
+            check(horizontal || key == "transform.translation.y", where + ": the leave moves along one axis per animation");
+            check(a["additive"].boolean() && from == 0 && to != 0, where + ": the leave's move is additive from 0");
+            const auto s8 = surface(.08), s12 = surface(.12);
+            check(s8 && s12, where + ": the leaving surface is sampled");
+            const double p8 = horizontal ? s8->planeOffset.x : s8->planeOffset.y, p12 = horizontal ? s12->planeOffset.x : s12->planeOffset.y;
+            check(p12 != 0 && std::abs(p8 / p12 - timing.value(.08 / duration) / timing.value(.12 / duration)) < 1e-4, where + ": the leave's move follows the Mac's curve");
+            if (horizontal) check((p12 > 0) == (to > 0), where + ": the leave moves the Mac's way");
+        }
+    }
+    // An axis the Mac does not move stays still.
+    for (const bool horizontal : {true, false}) {
+        bool moves = false;
+        for (const auto& a : leave["animations"].array()) moves |= a["keyPath"].string() == (horizontal ? "transform.translation.x" : "transform.translation.y");
+        const auto s = surface(.08);
+        if (!moves && s) check((horizontal ? s->planeOffset.x : s->planeOffset.y) == 0, where + ": an axis the Mac leaves still does not move");
+    }
+}
+void moduleCloseOracle(const J& cases) {
+    using endfield::core::Module;
+    using endfield::core::ModulePresentation;
+    check(cases.array().size() == 4, "The oracle records four module close cases");
+    for (const auto& c : cases.array()) {
+        const std::string name = c["case"].string();
+        ModulePresentation p(Module::clipboard);
+        p.setDesignScreen(Module::clipboard, true); p.setDesignScreen(Module::eventLog, true);
+        double t = 10;
+        (void)p.sample(t);
+        if (name == "forward") { p.select(Module::eventLog, t); t += .05; }
+        else if (name == "reversed") { p.select(Module::eventLog, t); p.select(Module::clipboard, t + .02); t += .05; }
+        else if (name == "landed") { p.select(Module::eventLog, t); t += .16; (void)p.sample(t); }
+        const double selectedAt = 10;
+        std::vector<std::string> switchLeaves;   // the roles on a leave the switch began
+        // A surface on a leave fades: the sample a moment later shows it below 1.
+        const auto leaving = [](const endfield::core::ModulePresentationSurface& s) { return s.attached && s.opacity < 1 - 1e-9; };
+        for (const auto& m : c["steps"].array()) {
+            const std::string step = m["step"].string(), where = "Module close " + name + "/" + step;
+            endfield::core::ModulePresentationSample s;
+            if (step == "settled") s = p.settleForClose(t).presentation;
+            else if (step == "leaveForClose") s = p.leaveForClose(t).presentation;
+            else s = p.cancel(t).presentation;
+            if (m.contains("leaves")) {
+                const auto& leaves = m["leaves"].array();
+                check(int(leaves.size()) == int(m["leaving"].number()), where + ": one recorded leave per leaving wrapper");
+                for (const auto& leave : leaves) {
+                    const std::string role = leave["role"].string();
+                    if (step == "settled") switchLeaves.push_back(role);
+                    const bool fromSwitch = std::find(switchLeaves.begin(), switchLeaves.end(), role) != switchLeaves.end();
+                    moduleLeaveValues(leave, p, fromSwitch ? selectedAt : t, where + " (" + role + ")");
+                }
+            } else check(false, where + ": the oracle records each leave's values");
+            const auto later = p.sample(t + .01).presentation;   // a moment later, inside every leave
+            check(std::string(endfield::core::moduleIdentifier(s.selected)) == m["selected"].string() && s.transitioning == m["transitioning"].boolean(), where + ": committed module");
+            check(!s.current.attached == m["currentHidden"].boolean(), where + ": landed screen hidden");
+            check(leaving(later.current) == m["currentLeaving"].boolean(), where + ": current screen on a leave");
+            check(later.departing.has_value() == m["departing"].boolean(), where + ": departing screen");
+            const int onLeave = int(leaving(later.current)) + int(later.departing && later.departing->opacity < 1 - 1e-9);
+            check(onLeave == int(m["leaving"].number()), where + ": surfaces on a leave");
+            t += .01;
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -1036,11 +1748,21 @@ int main(int argc, char** argv) {
         const J canvas = J::parse(parts.at("canvas"), 64 * 1024 * 1024);
         overlayTraces(measurer, overlay);
         confirmBars(measurer, overlay);
+        placementStrip(measurer, overlay);
         canvasScript(measurer, canvas);
+        if (!parts.contains("moduleClose")) throw std::runtime_error("Oracle section missing: moduleClose");
+        moduleCloseOracle(J::parse(parts.at("moduleClose"), 1024 * 1024));
         lifetimes(measurer);
         recordingModeWork(measurer);
         keptIds(measurer);
+        listsFromTop(measurer);
+        delayedEntrance(measurer);
+        carriedEntrance(measurer);
         focusMoves(measurer);
+        suspendsInput(measurer);
+        suspendedBar(measurer);
+        concealedSettles(measurer);
+        popupsLeaveWithModule(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {

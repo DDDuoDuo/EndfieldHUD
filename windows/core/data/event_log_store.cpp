@@ -65,9 +65,9 @@ EventLogStore::EventLogStore(std::optional<std::filesystem::path>root,std::size_
 }
 std::optional<std::string_view>EventLogStore::statusMessage()const noexcept{
     if(!failure_)return {};switch(*failure_){
-    case Failure::load:return "Saved log could not be read; the original file is preserved.";
-    case Failure::version:return "This log uses a newer format; the original file is preserved.";
-    case Failure::save:return "The log could not be saved. New events are kept in this session.";
+    case Failure::load:return "Saved log could not be read; the original file is preserved";
+    case Failure::version:return "This log uses a newer format; the original file is preserved";
+    case Failure::save:return "The log could not be saved. New events are kept in this session";
     }return {};
 }
 // The owner clock only orders the debounced save. Hosts sample it at the start

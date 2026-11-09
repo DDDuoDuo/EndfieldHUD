@@ -11,6 +11,7 @@
 //           until it lands), argv[2] Sources/HUDDesignIcons.swift.
 #include "modules/hud_design_format.hpp"
 #include "modules/hud_design_icons.hpp"
+#include "core/source_desktop_chrome.hpp"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -63,7 +64,10 @@ void palette() {
         same(dark.yellow, dark.accent, name + " yellow is the accent");
         same(dark.yellowHigh, v.high, name + " high"); same(dark.yellowLow, v.low, name + " low"); same(dark.yellowDeep, v.deep, name + " deep");
         same(light.ink, v.ink, name + " Light ink"); check(dark.ink == dark.yellow, name + " dark ink");
+        // HUDColor.plateInk: the Light ink in both themes (the Arrange on HUD marks on the light module plates).
+        same(dark.plateInk, v.ink, name + " plate ink in Dark"); check(light.plateInk == light.ink, name + " plate ink is the Light ink");
     }
+    same(standard.plateInk, 0x87780A, "Default plate ink reads in Dark too");
     // The formula on FAD41F itself (what a port must NOT show) differs from the authored stops.
     const auto formula = d::hsbShifted(d::rgb(0xFAD41F), -6.08, .923, .914);
     check(near(formula.r * 255, 228.5, 1e-9) && near(formula.g * 255, 177.720704576, 1e-6) && hex(formula) != 0xE9CF12, "The HSB shift of FAD41F (E4/E5 B2 2C) is not the authored E9CF12: the default is special-cased (inventory LIB-1)");
@@ -175,6 +179,32 @@ void typeScale() {
     const auto bezier = [](c::CubicTiming t, double a, double b, double x, double y) { return t.x1 == a && t.y1 == b && t.x2 == x && t.y2 == y; };
     check(bezier(d::easing::standard, .2, .8, .2, 1) && bezier(d::easing::snap, .2, .9, .1, 1) && bezier(d::easing::ease, .25, .1, .25, 1), "E, SNAP, ease");
     check(bezier(d::easing::easeIn, .42, 0, 1, 1) && bezier(d::easing::easeOut, 0, 0, .58, 1) && bezier(d::easing::easeInOut, .42, 0, .58, 1) && bezier(d::easing::linear, 0, 0, 1, 1), "easeIn/Out/InOut, linear");
+    check(bezier(d::easing::listSlide, .20, .75, .30, 1) && d::duration::listSlide == .18, "The list slide: .18 s on (.20, .75, .30, 1) (HUDEasing.listSlide, HUDDuration.listSlide)");
+    // The slide curve through CubicTiming::value (HUDSourceScalarCurve.ease's
+    // bezier solve): reference values from an independent Newton solve of the
+    // cubic's x clock.
+    {
+        const std::pair<double, double> samples[]{{.1, .3505137793865967}, {.25, .6974474911149158}, {.5, .9199657698817058}, {.75, .9860301694232948}, {.9, .9981171292189267}};
+        for (const auto& [time, eased] : samples)
+            check(std::abs(d::easing::listSlide.value(time) - eased) < 1e-9, "The list slide's curve at t = " + std::to_string(time));
+        check(d::easing::listSlide.value(0) == 0 && d::easing::listSlide.value(1) == 1 && d::easing::listSlide.value(-1) == 0 && d::easing::listSlide.value(2) == 1, "The list slide's curve starts at 0 and ends at 1");
+    }
+    // HUDMotion.closingFade (HUDDesignMotion.swift): the close's fade lasts
+    // the opening's reveal (DesktopChromeTiming::openingDuration, the twin of
+    // SystemHUDView.sourceRevealDuration), the whole close when shorter, and
+    // ends with the close; a non-finite or negative input counts as 0.
+    {
+        const auto fade = [](double length, double reveal, double delay, double duration) {
+            const auto f = c::DesignMotion::closingFade(length, reveal);
+            return near(f.delay, delay) && near(f.duration, duration);
+        };
+        const double reveal = c::source::DesktopChromeTiming::openingDuration;
+        check(reveal == .24 && fade(.3333, reveal, .0933, .24), "The Watch exit's .3333 s close fades over the last .24 s");
+        check(fade(.1, reveal, 0, .1) && fade(.24, reveal, 0, .24) && fade(0, reveal, 0, 0), "A close shorter than the reveal fades over all of it");
+        check(fade(-1, reveal, 0, 0) && fade(std::nan(""), reveal, 0, 0) && fade(.5, -1, .5, 0) && fade(.5, std::nan(""), .5, 0)
+            && fade(.3333, std::numeric_limits<double>::infinity(), .3333, 0) && fade(std::numeric_limits<double>::infinity(), reveal, 0, 0),
+            "A non-finite or negative length or reveal counts as 0");
+    }
     // HUDDuration (:351-388).
     namespace t = d::duration;
     const double durations[]{t::hover, t::press, t::sheen, t::entrance, t::staggerStep, t::staggerBase, t::leave, t::titleWipe, t::ruleWipe, t::ruleDelay, t::menuWipe, t::tabOn,
@@ -194,6 +224,19 @@ void typeScale() {
     check(d::boxScale(std::numeric_limits<double>::infinity(), 1) == 2 && d::boxScale(NAN, 1) == 2, "Non-finite render scale -> 2");
     check(d::textContentsScale(1.3315) == 2 && d::textContentsScale(2) == 3 && d::textContentsScale(3.5) == 4 && d::textContentsScale(.5) == 2, "Text: min(4, ceil(clamp(s,1,4) x 1.35))");
     check(d::layerContentsScale(9) == 4 && d::layerContentsScale(.2) == 1 && d::layerContentsScale(2.5) == 2.5 && d::layerContentsScale(NAN) == 2, "Layers: clamp(s, 1, 4)");
+    // HUDRenderScale.glyphScale / contentScale with a magnification (Mac
+    // a9971ec): a layer transform enlarges the buffer, so the cap is 4 pixels
+    // per on-screen point. Magnification 1 is the rule above, bit for bit.
+    for (const double s : {.5, 1., 1.3315, 2., 2.3, 3.5, 9., double(NAN), std::numeric_limits<double>::infinity()})
+        check(d::textContentsScale(s, 1) == d::textContentsScale(s) && d::layerContentsScale(s, 1) == d::layerContentsScale(s), "Magnification 1 changes nothing");
+    check(d::textContentsScale(2, 2) == 6 && d::textContentsScale(3, 2) == 8 && d::textContentsScale(4, 1.5) == 6 && d::textContentsScale(1, 2) == 3,
+          "Text at a magnification: min(4 m, ceil(clamp(s, 1, 4) x 1.35 x m))");
+    check(d::textContentsScale(2, .5) == 2 && d::textContentsScale(2, .25) == 1 && d::textContentsScale(9, 4) == 16, "Below 1 the buffer shrinks with it; the cap scales too");
+    check(d::layerContentsScale(2, 2) == 4 && d::layerContentsScale(3, 2) == 6 && d::layerContentsScale(4, 1.5) == 6 && d::layerContentsScale(2, .5) == 1 && d::layerContentsScale(9, 2) == 8,
+          "Layers at a magnification: clamp(s, 1, 4) x m");
+    for (const double m : {double(NAN), std::numeric_limits<double>::infinity(), 0., -2.})
+        check(d::textContentsScale(2, m) == 3 && d::layerContentsScale(2, m) == 2, "A non-finite or non-positive magnification reads as 1");
+    check(endfield::core::maximumRenderScale == 4 && endfield::core::renderMagnification(2) == 2 && endfield::core::renderMagnification(NAN) == 1, "HUDRenderScale.maximum and factor");
     check(d::artworkScale(2.1) == 3 && d::artworkScale(9) == 8 && d::artworkScale(.3) == 1 && d::artworkScale(NAN) == 2, "Artwork: clamp(ceil(s), 1, 8)");
 }
 
@@ -293,6 +336,14 @@ void text() {
     const auto& tx = node["text"];
     check(node["kind"].string() == "text" && node["id"].string() == "t" && node["position"] == J(J::Array{5., 6.}) && node["bounds"] == J(J::Array{0., 0., 70., 12.}), "The node's bounds are the CSS line box");
     check(node["anchorPoint"] == J(J::Array{0., 0.}) && node["contentsScale"].number() == 3, "Anchor (0,0); contentsScale = textContentsScale(boxScale 2)");
+    {
+        // A tree drawn under a 0.7 transform (the battery bar editor's strip):
+        // its text leaves carry textContentsScale(boxScale, 0.7).
+        auto shrunk = s;
+        shrunk.magnification = .7;
+        check(d::textNode("t", mixed, shrunk)["contentsScale"].number() == d::textContentsScale(2, .7) && d::textContentsScale(2, .7) == 2 &&
+              d::textNode("t", mixed, s)["contentsScale"].number() == 3, "Text leaves follow the TextServices' magnification");
+    }
     check(tx["string"].string() == "HI \xE6\x97\xA5\xF0\x9F\x98\x80", "string = displayed runs, empty runs dropped");
     const auto& runs = tx["runs"].array();
     check(runs.size() == 2 && runs[0]["utf16Range"] == J(J::Array{std::int64_t(0), std::int64_t(3)}) && runs[1]["utf16Range"] == J(J::Array{std::int64_t(3), std::int64_t(3)}), "UTF-16 ranges (BMP 1 unit, astral 2)");
@@ -573,6 +624,52 @@ void oracle(const char* path) {
             const auto name = "Oracle palette " + v["accent"].string();
             check(close(p.yellow, color(v["yellow"])) && close(p.yellowHigh, color(v["yellowHigh"])) && close(p.yellowLow, color(v["yellowLow"])) && close(p.yellowDeep, color(v["yellowDeep"])) && close(p.ink, color(v["ink"])), name);
         }
+    // HUDEasing and HUDDuration as the oracle exports them (rounded to 1e-6).
+    if (tokens["easings"].isObject()) {
+        const std::pair<const char*, c::CubicTiming> easings[]{{"standard", d::easing::standard}, {"snap", d::easing::snap}, {"ease", d::easing::ease}, {"easeIn", d::easing::easeIn},
+            {"easeOut", d::easing::easeOut}, {"easeInOut", d::easing::easeInOut}, {"linear", d::easing::linear}, {"listSlide", d::easing::listSlide}};
+        for (const auto& [name, e] : easings) {
+            const auto& v = tokens["easings"][name];
+            check(v.isArray() && v.array().size() == 4 && near(v.array()[0].number(), e.x1, 1e-6) && near(v.array()[1].number(), e.y1, 1e-6)
+                && near(v.array()[2].number(), e.x2, 1e-6) && near(v.array()[3].number(), e.y2, 1e-6), std::string("Oracle easing ") + name);
+        }
+    }
+    if (tokens["durations"].isObject()) {
+        namespace t = d::duration;
+        const std::pair<const char*, double> durations[]{{"hover", t::hover}, {"press", t::press}, {"sheen", t::sheen}, {"entrance", t::entrance}, {"staggerStep", t::staggerStep},
+            {"staggerBase", t::staggerBase}, {"staggerCap", double(t::staggerCap)}, {"leave", t::leave}, {"listSlide", t::listSlide}, {"titleWipe", t::titleWipe}, {"ruleWipe", t::ruleWipe},
+            {"ruleDelay", t::ruleDelay}, {"menuWipe", t::menuWipe}, {"tabOn", t::tabOn}, {"knob", t::knob}, {"toggleLabel", t::toggleLabel}, {"caret", t::caret},
+            {"accentBar", t::accentBar}, {"thumb", t::thumb}, {"bubbleFade", t::bubbleFade}, {"bubbleScale", t::bubbleScale}, {"bandIn", t::bandIn}, {"bandOut", t::bandOut},
+            {"confirmText", t::confirmText}, {"confirmTextDelay", t::confirmTextDelay}, {"pillDelay", t::pillDelay}, {"pillStep", t::pillStep},
+            {"confirmCallback", t::confirmCallback}, {"dim", t::dim}, {"dimFilter", t::dimFilter}, {"toastVisible", t::toastVisible}, {"toastOut", t::toastOut},
+            {"pop", t::pop}, {"taskFlip", t::taskFlip}};
+        for (const auto& [name, value] : durations)
+            check(tokens["durations"][name].isNumber() && near(tokens["durations"][name].number(), value, 1e-9), std::string("Oracle duration ") + name);
+    }
+    // HUDMotion.closingFade and SystemHUDView.sourceRevealDuration as the
+    // oracle exports them.
+    {
+        const auto number = [](const J& v) {
+            if (v.isNumber()) return v.number();
+            return v.string() == "inf" ? std::numeric_limits<double>::infinity() : std::nan("");
+        };
+        check(tokens["closingFade"].isArray() && !tokens["closingFade"].array().empty(), "Oracle closing fade cases");
+        for (const auto& v : tokens["closingFade"].array()) {
+            const auto f = c::DesignMotion::closingFade(number(v["length"]), number(v["reveal"]));
+            check(near(f.delay, v["delay"].number(), 1e-9) && near(f.duration, v["duration"].number(), 1e-9), "Oracle closing fade " + v.encode());
+        }
+        check(tokens["sourceRevealDuration"].isNumber() && near(tokens["sourceRevealDuration"].number(), c::source::DesktopChromeTiming::openingDuration, 1e-12),
+            "Oracle source reveal duration is DesktopChromeTiming::openingDuration");
+    }
+    // HUDRenderScale.contentScale for HUDLayer, HUDTextLayer and CATextLayer
+    // as the Mac exports them: magnification 1 is the Mac table, both overloads.
+    check(tokens["renderScale"].isArray() && !tokens["renderScale"].array().empty(), "Oracle render scale rows");
+    for (const auto& v : tokens["renderScale"].array()) {
+        const double base = v["base"].isString() && v["base"].string() == "inf" ? std::numeric_limits<double>::infinity() : v["base"].number();
+        const auto name = "Oracle render scale at " + (v["base"].isString() ? v["base"].string() : std::to_string(base));
+        check(d::layerContentsScale(base, 1) == v["layer"].number() && d::layerContentsScale(base) == v["layer"].number(), name + ": layer");
+        check(d::textContentsScale(base, 1) == v["designText"].number() && d::textContentsScale(base) == v["designText"].number() && v["caText"].number() == v["designText"].number(), name + ": text");
+    }
     if (tokens["styles"].isObject()) {
         d::Palette p;
         const std::pair<const char*, d::TextStyle> styles[]{{"moduleTitle", d::type::moduleTitle(p)}, {"rowLabel", d::type::rowLabel()}, {"numeral", d::type::numeral(p)}, {"microTag", d::type::microTag()},

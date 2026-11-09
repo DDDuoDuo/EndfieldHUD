@@ -193,14 +193,14 @@
 | 도구 | 할 수 있는 일 |
 | --- | --- |
 | [**지도**](docs/map.md) | 오프라인 지형 지도를 둘러보고 핀을 추가하거나 꾸며요 |
-| [**클로저의 미니게임**](docs/orbipom-runtime.md) | '합체! 오르비폼!'을 즐겨보세요 |
+| [**클로저의 미니게임**](docs/orbipom-runtime.md) | '융합! 버블!'을 즐겨보세요 |
 | [**이벤트 로그**](docs/event-log.md) | 진짜 관리자처럼 이벤트 로그를 확인해보세요 |
 | [**개인 프로필**](docs/personal-profile.md) | 나만의 카드를 꾸며요. 프로필 정보를 자유롭게 편집할 수 있어요 |
 | [**계정 연동**](docs/account-linking.md) | HYPERGRYPH 게임 계정을 연동해 프로필 정보와 이성 회복까지 남은 시간을 확인해요 |
 
 <sub>※ 계정 연동은 선택 사항이에요</sub>
 
-![합체! 오르비폼! 플레이](docs/media/readme/minigame.gif)
+![융합! 버블! 플레이](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

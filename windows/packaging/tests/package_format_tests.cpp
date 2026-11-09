@@ -3,6 +3,7 @@
 #include "packaging/package_format.hpp"
 #include "packaging/setup_arguments.hpp"
 #include "packaging/setup_text.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -298,6 +299,10 @@ void text() {
             }
             for (const auto& v : values) check(rendered.find(v) != std::string::npos, "Every placeholder renders in every language");
             check(rendered.find('{') == std::string::npos, "No placeholder is left");
+            // Installer texts drop the final full stop, also before a paragraph break (Mac 0b94c8e, fd6ad78).
+            check(endfield::tests::followsInterfaceTextRules(raw), "Installer texts have no final full stop and no dot separator");
+            for (const std::string_view stop : {".\n\n", "\u3002\n\n", "\uFF0E\n\n"})
+                check(raw.find(stop) == std::string::npos, "No installer paragraph ends in a full stop");
             if (language != core::Language::english) check(raw != p::setupText(id, core::Language::english) || id == p::SetupText::details,
                                                             "Translations differ from English");
         }

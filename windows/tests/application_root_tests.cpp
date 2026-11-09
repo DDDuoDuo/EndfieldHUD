@@ -137,6 +137,68 @@ void root() {
 #endif
 }
 
+// The footprint an earlier version's Mac import left when it was killed
+// between its two renames: v1 moved to its backup, the staged root still in
+// the work folder (synthetic folders only).
+void interruptedImport() {
+    Temporary temp;
+    const auto base = temp.root / "EndfieldHUD";
+    fs::create_directories(base);
+    write(base / "root.json", R"({"data":"v1","format":"EndfieldHUD.Windows.DataRoot","schema":1})");
+    const std::string token = "1F2E3D4C-5B6A-4798-8A9B-0C1D2E3F4A5B";
+    const auto backup = base / "v1.backup-20251009T000000Z-CCCCCCCC";
+    const auto folder = base / ("v1.import-" + token);
+    fs::create_directories(backup / "Notes");
+    write(backup / "settings.json", R"({"launchAtLogin":false})");
+    write(backup / "Notes" / "previous.txt", "previous data");
+    fs::create_directories(folder / "root" / "Migration");
+    write(folder / "root" / "Migration" / "import.json", "{}");
+    const std::string marker = R"({"createdAt":1760000000.5,"format":"EndfieldHUD.macImportWork","root":"v1","token":")" + token + R"(","version":1})";
+    const std::string journal = R"({"backup":"v1.backup-20251009T000000Z-CCCCCCCC","format":"EndfieldHUD.macImportActivation","root":"v1","version":1})";
+    write(folder / "import-work.json", marker);
+    write(folder / "activation.json", journal);
+
+    // Footprints that are not exactly the importer's are left alone.
+    const auto refused = [&](const char* why) {
+        check(!data::restoreInterruptedImportRoot(base) && fs::exists(backup / "settings.json") && !fs::exists(base / "v1"), why);
+    };
+    write(folder / "activation.json", R"({"backup":"v1.backup-20251009T000000Z-CCCCCCCC","format":"EndfieldHUD.macImportActivation","root":"v2","version":1})");
+    refused("A journal of another root is not ours");
+    write(folder / "activation.json", R"({"backup":"..\v1.backup-a","format":"EndfieldHUD.macImportActivation","root":"v1","version":1})");
+    refused("A journal naming anything but a sibling backup is refused");
+    write(folder / "activation.json", R"({"backup":null,"format":"EndfieldHUD.macImportActivation","root":"v1","version":1})");
+    refused("A journal without a backup has nothing to restore");
+    write(folder / "activation.json", journal);
+    write(folder / "import-work.json", R"({"createdAt":1,"format":"EndfieldHUD.macImportWork","root":"v1","token":"OTHER","version":1})");
+    refused("A marker of another work folder is not ours");
+    write(folder / "import-work.json", marker);
+    write(folder / "user.txt", "kept");
+    refused("A work folder holding anything else is not ours");
+    fs::remove(folder / "user.txt");
+    fs::rename(folder / "root", folder / "staged");
+    fs::create_directories(folder / "source");
+    fs::rename(folder / "staged", folder / "source" / "staged");
+    refused("Without the staged root the switch was not interrupted");
+    fs::rename(folder / "source" / "staged", folder / "root");
+    fs::remove(folder / "source");
+
+    // A root already exists: nothing moves.
+    fs::create_directories(base / "v1");
+    check(!data::restoreInterruptedImportRoot(base) && fs::exists(backup / "settings.json") && fs::is_empty(base / "v1"), "Never replaces an existing root");
+    fs::remove(base / "v1");
+
+    // The root is absent: the previous data comes back and loads.
+    check(data::restoreInterruptedImportRoot(base), "An interrupted switch is rolled back");
+    check(!fs::exists(backup) && read(base / "v1" / "Notes" / "previous.txt") == "previous data" && fs::exists(folder / "import-work.json") &&
+          fs::exists(folder / "root" / "Migration" / "import.json"), "The backup is the root again; the work folder stays");
+    const auto opened = data::openApplicationRoot(base);
+    check(!opened.created && opened.data == base / "v1" && read(opened.data / "settings.json") == R"({"launchAtLogin":false})",
+          "The restored root opens with its saved files");
+    check(!data::restoreInterruptedImportRoot(base) && read(base / "v1" / "Notes" / "previous.txt") == "previous data", "The roll-back is idempotent");
+    check(!data::restoreInterruptedImportRoot(temp.root / "absent") && !fs::exists(temp.root / "absent"), "A missing base is never created");
+    check(!data::restoreInterruptedImportRoot(fs::path("relative")), "Only an explicit absolute base");
+}
+
 void launchMarker() {
     Temporary temp;
     const auto root = data::openApplicationRoot(temp.root / "EndfieldHUD").data;
@@ -236,6 +298,7 @@ void isolatedInstanceNames() {
 int main() {
     try {
         root();
+        interruptedImport();
         launchMarker();
         arguments();
 #ifdef _WIN32

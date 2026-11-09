@@ -26,9 +26,9 @@ bool approvedOff(HKEY root, const std::wstring& key, const std::wstring& name) {
 // login" terms.
 constexpr core::TranslationEntry registrationFailed{"Startup registration could not be changed", "无法更改登录时启动设置", "無法變更登入時啟動設定",
     "ログイン時に起動の設定を変更できませんでした", "로그인 시 실행 설정을 변경할 수 없습니다"};
-constexpr core::TranslationEntry turnedOffInSettings{"Turned off in Windows Settings → Apps → Startup.", "已在 Windows 设置 → 应用 → 启动 中关闭。",
-    "已在 Windows 設定 → 應用程式 → 啟動 中關閉。", "Windows の設定 → アプリ → スタートアップ でオフになっています。",
-    "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다."};
+constexpr core::TranslationEntry turnedOffInSettings{"Turned off in Windows Settings → Apps → Startup", "已在 Windows 设置 → 应用 → 启动 中关闭",
+    "已在 Windows 設定 → 應用程式 → 啟動 中關閉", "Windows の設定 → アプリ → スタートアップ でオフになっています",
+    "Windows 설정 → 앱 → 시작 프로그램에서 꺼져 있습니다"};
 std::string failure(core::Language language) { return std::string(core::translated(registrationFailed, language)); }
 }
 

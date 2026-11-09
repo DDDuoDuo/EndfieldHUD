@@ -15,7 +15,9 @@ struct PerAppAudioSession: Identifiable, Equatable {
     var icon: NSImage? = nil
 }
 
-enum PerAppAudioRouteEvent { case active; case failed(String); case stopped(String?) }
+/// `stopping` announces a quiet teardown (another output took over) before
+/// its HAL calls, which can block; `stopped` follows when they return.
+enum PerAppAudioRouteEvent { case active; case stopping; case failed(String); case stopped(String?) }
 
 protocol PerAppAudioRoute: AnyObject {
     var isStopped: Bool { get }
@@ -41,7 +43,7 @@ final class PerAppAudioController {
     private(set) var statusMessage: String?
     var isSupported: Bool { factory.isSupported }
     var capabilityMessage: String? {
-        isSupported ? nil : L10n.text("Experimental app volume requires macOS 14.2 or later.", "实验性应用音量需要 macOS 14.2 或更新版本。")
+        isSupported ? nil : L10n.text("Experimental app volume requires macOS 14.2 or later", "实验性应用音量需要 macOS 14.2 或更新版本")
     }
     private struct OwnedRoute { let generation: UUID; let route: PerAppAudioRoute }
     private var routes: [UInt32: OwnedRoute] = [:]
@@ -55,34 +57,69 @@ final class PerAppAudioController {
     }
     func removeObserver(_ token: UUID) { requireMain(); observers.removeValue(forKey: token) }
 
+    /// Wired, wireless and display outputs a route can play through. AirPlay,
+    /// aggregate, virtual and unknown outputs stay unsupported.
+    static let supportedTransports: Set<UInt32> = [kAudioDeviceTransportTypeBuiltIn, kAudioDeviceTransportTypeUSB,
+        kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE, kAudioDeviceTransportTypeHDMI,
+        kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeThunderbolt, kAudioDeviceTransportTypeFireWire,
+        kAudioDeviceTransportTypePCI]
+
+    /// Why an output cannot carry app volume, or nil. The device list passes
+    /// its snapshot; the engine passes live values and its own language. A
+    /// device with a microphone (most Bluetooth headsets) is accepted: the
+    /// route keeps its input streams switched off and never opens it.
+    static func outputSupport(transport: UInt32?, outputChannels: Int, language: AppLanguage? = nil) -> String? {
+        if outputChannels != 2 || transport.map({ !supportedTransports.contains($0) }) == true {
+            return L10n.text("This output device does not support app volume routing", "此输出设备暂不支持应用音量路由", language: language)
+        }
+        return nil
+    }
+
+    /// Why no app can be routed through this output, or nil.
+    func outputAvailability(_ output: AudioDeviceInfo) -> String? {
+        if !isSupported { return capabilityMessage }
+        return Self.outputSupport(transport: output.transportType, outputChannels: output.outputChannels)
+    }
+
     func availability(application: AudioApplicationInfo, output: AudioDeviceInfo) -> String? {
         if !isSupported { return capabilityMessage }
         if (!application.isRunningOutput && application.outputDeviceIDs.isEmpty) || application.pid <= 0 || application.pid == ProcessInfo.processInfo.processIdentifier {
-            return L10n.text("Choose another process with active audio output.", "请选择正在输出音频的其他进程。")
+            return L10n.text("Choose another process with active audio output", "请选择正在输出音频的其他进程")
         }
-        if output.isBluetooth || output.outputChannels != 2 || output.inputChannels != 0 {
-            return L10n.text("This experimental route supports stereo output-only built-in or USB devices. Bluetooth and devices with input channels are not supported.", "此实验性路由支持仅具备双声道输出的内建或 USB 设备，暂不支持蓝牙或带输入声道的设备。")
-        }
-        if let transport = output.transportType, transport != kAudioDeviceTransportTypeBuiltIn && transport != kAudioDeviceTransportTypeUSB {
-            return L10n.text("This output device does not support app volume routing.", "此输出设备暂不支持应用音量路由。")
-        }
-        if !application.outputDeviceIDs.isEmpty && Set(application.outputDeviceIDs) != Set([output.id]) {
-            return L10n.text("This app uses a different output route.", "此应用使用其他输出路由。")
+        if let refusal = outputAvailability(output) { return refusal }
+        // The engine's rule: a process playing to no device right now is
+        // accepted whatever it played to before (a paused app whose output
+        // has since changed); one playing elsewhere or to several is not.
+        if !application.outputDevicesRemembered, !application.outputDeviceIDs.isEmpty,
+           Set(application.outputDeviceIDs) != Set([output.id]) {
+            return L10n.text("This app uses a different output route", "此应用使用其他输出路由")
         }
         return nil
+    }
+
+    /// The processes a route can be offered for: those with a known output
+    /// route (else every active one), plus each route's own process even
+    /// while it is silent and gone from the process list.
+    func candidates(in snapshot: AudioDeviceSnapshot) -> [AudioApplicationInfo] {
+        var apps = snapshot.availableApplications.isEmpty ? snapshot.activeApplications : snapshot.availableApplications
+        for session in sessions where !apps.contains(where: { $0.id == session.processID }) {
+            apps.append(AudioApplicationInfo(id: session.processID, pid: session.pid, name: session.name,
+                isRunningOutput: false, applicationURL: session.applicationURL, icon: session.icon))
+        }
+        return apps
     }
 
     @discardableResult func start(application: AudioApplicationInfo, output: AudioDeviceInfo, initialGain: Double = 1) -> Bool {
         requireMain()
         guard initialGain.isFinite else {
-            statusMessage = L10n.text("Choose a finite app volume between 0% and 100%.", "请选择 0% 至 100% 之间的有效应用音量。")
+            statusMessage = L10n.text("Choose a finite app volume between 0% and 100%", "请选择 0% 至 100% 之间的有效应用音量")
             notify(); return false
         }
         let gain = min(1, max(0, initialGain))
         if let unavailable = availability(application: application, output: output) { statusMessage = unavailable; notify(); return false }
         guard routes[application.id] == nil,
               !sessions.contains(where: { $0.pid == application.pid && routes[$0.processID] != nil }) else {
-            statusMessage = L10n.text("Stop the existing route before starting another for this process.", "请先停止此进程的现有路由，再重新开始。")
+            statusMessage = L10n.text("Stop the existing route before starting another for this process", "请先停止此进程的现有路由，再重新开始")
             notify(); return false
         }
         let generation = UUID()
@@ -95,7 +132,7 @@ final class PerAppAudioController {
             sessions.append(PerAppAudioSession(processID: application.id, pid: application.pid, name: application.name,
                 gain: gain, state: .preparing, error: nil, applicationURL: application.applicationURL, icon: application.icon))
             route.setGain(gain)
-            statusMessage = L10n.text("Allow System Audio Recording if asked, then play audio in the selected app to activate.", "如有提示，请允许系统音频录制，然后在所选应用中播放音频以激活。")
+            statusMessage = L10n.text("Allow System Audio Recording if asked, then play audio in the selected app to activate", "如有提示，请允许系统音频录制，然后在所选应用中播放音频以激活")
             notify()
             try route.begin()
             return true
@@ -155,7 +192,7 @@ final class PerAppAudioController {
         notify()
     }
 
-    func stopAll(reason: String? = nil) {
+    func stopAll() {
         requireMain()
         var errors: [String] = []
         for id in Array(routes.keys) {
@@ -168,7 +205,7 @@ final class PerAppAudioController {
             sessions[index].state = routes[sessions[index].processID]?.route.isStopping == true ? .stopping : .failed
             sessions[index].error = errors.first
         }
-        statusMessage = errors.first ?? reason
+        statusMessage = errors.first
         notify()
     }
 
@@ -183,11 +220,13 @@ final class PerAppAudioController {
             guard !owned.route.isStopping else { return }
             owned.route.setGain(sessions[index].gain)
             sessions[index].state = .active; statusMessage = nil
+        case .stopping:
+            sessions[index].state = .stopping
         case .failed(let message):
             let cleanup = owned.route.stop()
             if owned.route.isStopped { routes.removeValue(forKey: processID) }
             sessions[index].state = owned.route.isStopping ? .stopping : .failed
-            sessions[index].error = cleanup.map { message + " " + $0 } ?? message
+            sessions[index].error = L10n.sentences(message, cleanup)
             statusMessage = sessions[index].error
         case .stopped(let error):
             if owned.route.isStopped {

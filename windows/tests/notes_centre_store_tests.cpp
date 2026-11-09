@@ -23,6 +23,8 @@ struct Temporary {
 };
 void write(const fs::path& file,std::string_view bytes){fs::create_directories(file.parent_path());std::ofstream out(file,std::ios::binary);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));check(bool(out),"Write a synthetic file");}
 std::string read(const fs::path& file){std::ifstream in(file,std::ios::binary);return {std::istreambuf_iterator<char>(in),{}};}
+// What the store keeps on load: decodable AND valid (else it is set aside).
+NotesCentreDocument validatedNotesCentre(std::string_view bytes){auto d=decodeNotesCentre(bytes);if(!d.valid())throw StoreError(StoreErrorCode::invalid,"Invalid centre notes");return d;}
 bool rejected(std::string_view bytes){try{(void)validatedNotesCentre(bytes);}catch(const StoreError& e){return e.code()==StoreErrorCode::invalid;}return false;}
 // A Mac 1.3.0 centre.json: lowercase task UUIDs (UUID(uuidString:) accepts
 // them), a done task that keeps its dot, a dot for a task that no longer

@@ -36,27 +36,6 @@ struct Panel {
         return count/256.;
     }
 };
-double linear(double c){return c<=.04045?c/12.92:std::pow((c+.055)/1.055,2.4);}
-// Straight 8-bit sRGB to linear light, computed once.
-const std::array<double,256>&linearTable(){static const auto table=[]{std::array<double,256>t{};for(unsigned i=0;i<256;++i)t[i]=linear(i/255.);return t;}();return table;}
-// Premultiplied 8-bit (alpha, value) to premultiplied linear light, computed
-// once with the exact per-sample expression, so lookups are bit-identical to
-// evaluating it (a portrait crop of a premultiplied working copy otherwise
-// spends almost all of its time in std::pow).
-const std::vector<double>&premultipliedLinearTable(){
-    static const auto table=[]{std::vector<double>t(256*256);
-        for(unsigned alpha=0;alpha<256;++alpha)for(unsigned value=0;value<256;++value){
-            const double a=alpha/255.,v=value/255.;t[std::size_t(alpha)*256+value]=a>0?linear(std::min(1.,v/a))*a:0;}
-        return t;}();
-    return table;
-}
-double encoded(double l){l=std::clamp(l,0.,1.);return l<=.0031308?l*12.92:1.055*std::pow(l,1/2.4)-.055;}
-// Measured against Core Image: a three-lobe window when reducing and a
-// two-lobe window when enlarging an axis.
-double lanczos(double x,double a){
-    constexpr double pi=3.14159265358979323846;x=std::abs(x);
-    if(x<1e-12)return 1;if(x>=a)return 0;const double px=pi*x;return a*std::sin(px)*std::sin(px/a)/(px*px);
-}
 }
 ProfileImage profileSpriteFromMip(std::span<const std::uint8_t>bgra,unsigned tw,unsigned th,core::Rect sprite){
     need(tw>0&&tw<=16384&&th>0&&th<=16384,"Invalid profile source texture");
@@ -135,7 +114,6 @@ void idCardMaskHover(ProfileImage&hover,const ProfileImage&background){
     need(hover.width==background.width&&hover.height==background.height&&hover.rgba.size()==background.rgba.size(),"Profile hover and background must share texel mapping");
     for(std::size_t a=3;a<hover.rgba.size();a+=4)hover.rgba[a]=static_cast<std::uint8_t>((unsigned(hover.rgba[a])*background.rgba[a]+127)/255);
 }
-namespace {ProfileImage resample(const ProfileImage&,int,core::Rect,unsigned,unsigned);}
 ProfileImage profileRenderedImage(const ProfileImage&input,int orientation,core::Point target,double zoom,core::Point offset,double contentsScale){
     bounded(input.width,input.height);need(input.rgba.size()==std::size_t(input.width)*input.height*4,"Profile portrait size");
     need(std::isfinite(target.x)&&std::isfinite(target.y)&&target.x>0&&target.y>0,"Profile portrait target");
@@ -152,68 +130,7 @@ ProfileImage profileRenderedImage(const ProfileImage&input,int orientation,core:
     const core::Rect region{selection.x*width,selection.y*height,selection.width*width,selection.height*height};
     const double scale=std::isfinite(contentsScale)?std::clamp(contentsScale,1.,8.):2;
     const unsigned outW=std::max(1u,std::min(1024u,static_cast<unsigned>(std::ceil(target.x*scale*1.35)))),outH=std::max(1u,std::min(1024u,static_cast<unsigned>(std::ceil(target.y*scale*1.35))));
-    return resample(source,orientation,region,outW,outH);
-}
-namespace {
-ProfileImage resample(const ProfileImage&source,int orientation,core::Rect region,unsigned outW,unsigned outH){
-    const bool premultipliedSource=source.premultiplied;const bool swap=orientation>=5;
-    const double width=swap?source.height:source.width,height=swap?source.width:source.height;
-    const auto stored=[&](unsigned x,unsigned y)->std::size_t{
-        const unsigned W=source.width,H=source.height;unsigned sx{},sy{};
-        switch(orientation){case 1:sx=x;sy=y;break;case 2:sx=W-1-x;sy=y;break;case 3:sx=W-1-x;sy=H-1-y;break;case 4:sx=x;sy=H-1-y;break;
-            case 5:sx=y;sy=x;break;case 6:sx=y;sy=H-1-x;break;case 7:sx=W-1-y;sy=H-1-x;break;default:sx=W-1-y;sy=x;break;}
-        return (std::size_t(sy)*W+sx)*4;
-    };
-    const double sx=outW/region.width,sy=outH/region.height;
-    // Core Image order: crop the oriented source to the fractional region, translate
-    // it to the origin (a bilinear resample of the source at region + k + 0.5),
-    // then a separable Lanczos-3 over that grid, in premultiplied linear light.
-    // Grid samples whose centers fall outside the crop are clear, so edges fade.
-    // Only the crop's bilinear support is linearized: a 128-megapixel avatar
-    // never becomes a full-size floating-point copy.
-    const auto&lut=linearTable();const double*premultipliedLUT=premultipliedSource?premultipliedLinearTable().data():nullptr;
-    const auto pixel=[&](unsigned x,unsigned y,std::array<double,4>&out){
-        const auto s=stored(x,y);const double a=source.rgba[s+3]/255.;
-        if(premultipliedLUT){const auto*alphaRow=premultipliedLUT+std::size_t(source.rgba[s+3])*256;for(unsigned c=0;c<3;++c)out[c]=alphaRow[source.rgba[s+c]];}
-        else for(unsigned c=0;c<3;++c)out[c]=lut[source.rgba[s+c]]*a;
-        out[3]=a;
-    };
-    const unsigned gw=static_cast<unsigned>(std::max(0.,std::floor(region.width-.5)+1)),gh=static_cast<unsigned>(std::max(0.,std::floor(region.height-.5)+1));
-    need(gw&&gh&&gw<=65536&&gh<=65536,"Profile portrait crop is empty or unbounded");
-    const auto axis=[](double position,unsigned count,unsigned&a,unsigned&b,double&t){
-        const double x=std::clamp(position-.5,0.,double(count-1));a=static_cast<unsigned>(std::floor(x));b=std::min(a+1,count-1);t=x-a;};
-    const auto taps=[&](double center,double factor,double lobes,unsigned count){
-        std::vector<std::pair<unsigned,double>>out;const double support=lobes*factor;double total{};
-        const long first=static_cast<long>(std::floor(center-support)),last=static_cast<long>(std::ceil(center+support));
-        for(long k=first;k<=last;++k){const double w=lanczos((k+.5-center)/factor,lobes);if(w==0)continue;total+=w;if(k<0||k>=static_cast<long>(count))continue;out.push_back({static_cast<unsigned>(k),w});}
-        if(total!=0)for(auto&v:out)v.second/=total;
-        return out;
-    };
-    const double fx=std::max(1.,1/sx),fy=std::max(1.,1/sy),lx=sx<1?3:2,ly=sy<1?3:2;
-    std::vector<std::vector<std::pair<unsigned,double>>>horizontal(outW),vertical(outH);std::size_t window{1};
-    for(unsigned i=0;i<outW;++i)horizontal[i]=taps((i+.5)/sx,fx,lx,gw);
-    for(unsigned j=0;j<outH;++j){vertical[j]=taps((j+.5)/sy,fy,ly,gh);if(!vertical[j].empty())window=std::max<std::size_t>(window,vertical[j].back().first-vertical[j].front().first+1);}
-    // Sliding window of horizontally filtered grid rows: memory is bounded by
-    // the vertical support, never by the source or crop size.
-    std::vector<double>row(std::size_t(gw)*4),ring(window*outW*4);std::vector<long>held(window,-1);std::array<double,4>p00{},p10{},p01{},p11{};
-    const auto filtered=[&](unsigned l)->const double*{
-        auto*slot=&ring[(l%window)*outW*4];if(held[l%window]==long(l))return slot;
-        unsigned y0,y1;double ty;axis(region.y+l+.5,unsigned(height),y0,y1,ty);
-        for(unsigned k=0;k<gw;++k){unsigned x0,x1;double tx;axis(region.x+k+.5,unsigned(width),x0,x1,tx);
-            pixel(x0,y0,p00);pixel(x1,y0,p10);pixel(x0,y1,p01);pixel(x1,y1,p11);auto*d=&row[std::size_t(k)*4];
-            for(unsigned c=0;c<4;++c)d[c]=(p00[c]*(1-tx)+p10[c]*tx)*(1-ty)+(p01[c]*(1-tx)+p11[c]*tx)*ty;}
-        for(unsigned i=0;i<outW;++i){auto*d=&slot[std::size_t(i)*4];d[0]=d[1]=d[2]=d[3]=0;for(const auto&[k,w]:horizontal[i]){const auto*g=&row[std::size_t(k)*4];for(unsigned c=0;c<4;++c)d[c]+=g[c]*w;}}
-        held[l%window]=l;return slot;
-    };
-    ProfileImage out{outW,outH,std::vector<std::uint8_t>(std::size_t(outW)*outH*4),true};
-    for(unsigned j=0;j<outH;++j)for(unsigned i=0;i<outW;++i){
-        std::array<double,4>v{};for(const auto&[k,w]:vertical[j]){const auto*s=filtered(k)+std::size_t(i)*4;for(unsigned c=0;c<4;++c)v[c]+=s[c]*w;}
-        const double a=std::clamp(v[3],0.,1.);auto*d=&out.rgba[(std::size_t(j)*outW+i)*4];
-        for(unsigned c=0;c<3;++c)d[c]=static_cast<std::uint8_t>(std::lround(a>0?encoded(std::clamp(v[c]/a,0.,1.))*a*255:0));
-        d[3]=static_cast<std::uint8_t>(std::lround(a*255));
-    }
-    return out;
-}
+    return artworkResampled(source,orientation,region,outW,outH);
 }
 ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientation,double side,double zoom,double contentsScale){
     bounded(source.width,source.height);need(source.rgba.size()==std::size_t(source.width)*source.height*4,"Profile portrait size");
@@ -226,23 +143,18 @@ ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientatio
     const double magnification=std::isfinite(zoom)?std::clamp(zoom,1.,20.):1;
     const double longSide=std::min(2048.,side*std::max(fillWidth,fillHeight)*magnification*scale*1.35);
     const double factor=std::min(1.,longSide/std::max(width,height));
-    const unsigned w=std::max(1u,static_cast<unsigned>(std::lround(width*factor))),h=std::max(1u,static_cast<unsigned>(std::lround(height*factor)));
-    return {resample(source,orientation,{0,0,width,height},w,h),fillWidth,fillHeight};
+    // HUDPortraitArtwork.scaledImage: one factor on both axes, max(1, round(side x factor)) per side.
+    return {artworkScaled(source,orientation,{0,0,width,height},factor),fillWidth,fillHeight};
 }
 ProfileImage profileResampled(const ProfileImage&image,unsigned width,unsigned height){
     bounded(image.width,image.height);bounded(width,height);need(image.rgba.size()==std::size_t(image.width)*image.height*4,"Profile image size");
-    return resample(image,1,{0,0,double(image.width),double(image.height)},width,height);
+    return artworkResampled(image,1,{0,0,double(image.width),double(image.height)},width,height);
 }
 ProfileImage profileWorkingCopy(const ProfileImage&image,unsigned maximum){
     need(maximum>0,"Profile working copy bound");const unsigned largest=std::max(image.width,image.height);
     if(largest<=maximum)return image;
     const double s=double(maximum)/largest;
     return profileResampled(image,std::max(1u,static_cast<unsigned>(std::lround(image.width*s))),std::max(1u,static_cast<unsigned>(std::lround(image.height*s))));
-}
-ProfileImage profileStraight(const ProfileImage&image){
-    if(!image.premultiplied)return image;ProfileImage out=image;out.premultiplied=false;
-    for(std::size_t i=0;i<out.rgba.size();i+=4){const unsigned a=out.rgba[i+3];for(unsigned c=0;c<3;++c)out.rgba[i+c]=a==0?0:static_cast<std::uint8_t>(std::min(255u,(out.rgba[i+c]*255u+a/2)/a));}
-    return out;
 }
 ProfileSourceArtwork loadProfileSourceArtwork(const std::filesystem::path&directory){
     const auto catalogBytes=ehud::data::detail::readFile(directory/"catalog.json",1024*1024);need(catalogBytes.has_value(),"Missing profile resource catalog");

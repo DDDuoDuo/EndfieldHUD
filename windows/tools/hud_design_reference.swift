@@ -169,16 +169,25 @@ private final class FakeCanvas: HUDDesignCanvas {
         }
         let easings: [String: [Double]] = ["standard": timingJSON(HUDEasing.standard), "snap": timingJSON(HUDEasing.snap),
             "ease": timingJSON(HUDEasing.ease), "easeIn": timingJSON(HUDEasing.easeIn), "easeOut": timingJSON(HUDEasing.easeOut),
-            "easeInOut": timingJSON(HUDEasing.easeInOut), "linear": timingJSON(HUDEasing.linear)]
+            "easeInOut": timingJSON(HUDEasing.easeInOut), "linear": timingJSON(HUDEasing.linear), "listSlide": timingJSON(HUDEasing.listSlide)]
         let d = HUDDuration.self
         let durations: [String: Double] = ["hover": d.hover, "press": d.press, "sheen": d.sheen, "entrance": d.entrance,
-            "staggerStep": d.staggerStep, "staggerBase": d.staggerBase, "staggerCap": Double(d.staggerCap), "leave": d.leave,
+            "staggerStep": d.staggerStep, "staggerBase": d.staggerBase, "staggerCap": Double(d.staggerCap), "leave": d.leave, "listSlide": d.listSlide,
             "titleWipe": d.titleWipe, "ruleWipe": d.ruleWipe, "ruleDelay": d.ruleDelay, "menuWipe": d.menuWipe, "tabOn": d.tabOn,
             "knob": d.knob, "toggleLabel": d.toggleLabel, "caret": d.caret, "accentBar": d.accentBar, "thumb": d.thumb,
             "bubbleFade": d.bubbleFade, "bubbleScale": d.bubbleScale, "bandIn": d.bandIn, "bandOut": d.bandOut,
             "confirmText": d.confirmText, "confirmTextDelay": d.confirmTextDelay, "pillDelay": d.pillDelay, "pillStep": d.pillStep,
             "confirmCallback": d.confirmCallback, "dim": d.dim, "dimFilter": d.dimFilter, "toastVisible": d.toastVisible,
             "toastOut": d.toastOut, "pop": d.pop, "taskFlip": d.taskFlip, "perspective": d.perspective, "scaleConfirmation": d.scaleConfirmation]
+        // The HUD close's fade (HUDMotion.closingFade) and the source canvas
+        // fade-in it plays reversed (SystemHUDView.sourceRevealDuration).
+        let closingFade = [(0.3333, 0.24), (0.1, 0.24), (0.24, 0.24), (0, 0.24), (-1, 0.24), (0.5, -1), (Double.nan, 0.24), (0.3333, Double.infinity)]
+            .map { length, reveal -> [String: Any] in
+                let fade = HUDMotion.closingFade(ending: length, reveal: reveal)
+                return ["length": length.isFinite ? length as Any : (length.isNaN ? "nan" : "inf"),
+                        "reveal": reveal.isFinite ? reveal as Any : (reveal.isNaN ? "nan" : "inf"),
+                        "delay": fade.delay, "duration": fade.duration]
+            }
         let scaleProbe = (HUDLayer.plain(), HUDTextLayer(), CATextLayer())
         let renderScale = [0.5, 1, 1.25, 1.5, 2, 2.5, 3, 3.3, 4, 5, 8, Double.infinity].map { base -> [String: Any] in
             ["base": base.isFinite ? base as Any : "inf", "layer": HUDRenderScale.contentScale(for: scaleProbe.0, baseScale: CGFloat(base)),
@@ -187,6 +196,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         }
         payload["tokens"] = ["palettes": palettes, "themes": themesByMode, "styles": stylesByMode, "accentNormalisation": normalisation, "lightTone": lightTones,
             "easings": easings, "durations": durations,
+            "closingFade": closingFade, "sourceRevealDuration": SystemHUDView.sourceRevealDuration,
             "metric": ["box": [HUDMetric.box.width, HUDMetric.box.height], "headerHeight": HUDMetric.headerHeight, "bodyHeight": HUDMetric.bodyHeight,
                        "rowHeight": HUDMetric.rowHeight, "compactRowHeight": HUDMetric.compactRowHeight, "rowGap": HUDMetric.rowGap,
                        "rowChamfer": HUDMetric.rowChamfer, "buttonChamfer": HUDMetric.buttonChamfer, "sliderLabelColumn": HUDMetric.sliderLabelColumn],
@@ -654,7 +664,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         var bars: [[String: Any]] = []
         func requests() -> [(String, HUDConfirmRequest)] {
             [("standard", HUDConfirmRequest(id: "restore", title: L10n.text("Restore default settings?", "恢复默认设置？"),
-                                            message: L10n.text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。"),
+                                            message: L10n.text("Notes, files and shortcuts are kept", "保留便笺、文件与应用快捷方式"),
                                             confirmTitle: L10n.text("Restore", "恢复"), icon: .reset)),
              ("danger", HUDConfirmRequest(id: "clipboard.clear", title: L10n.text("Clear clipboard history?", "清空剪贴板记录？"),
                                           message: L10n.text("\(12) entries", "\(12) 条记录"), confirmTitle: L10n.text("Clear", "清空"), danger: true, icon: .trash)),
@@ -714,6 +724,68 @@ private final class FakeCanvas: HUDDesignCanvas {
         }
         setLanguage(.english)
         overlayRows["bars"] = bars
+
+        // The place-and-confirm strip (HUDPlacementEditor) with the battery bar editor's Size and Length rows (every
+        // language), plus English strips with no rows and with a third, longer row; then its key rule and frame rule.
+        var strips: [[String: Any]] = []
+        for language in languages {
+            setLanguage(language)
+            for light in [false, true] where language == .english || !light {
+                try themed("FAD41F", light: light) {
+                    for rows in [2, 0, 3] where (language == .english && !light) || rows == 2 {
+                        let specs = [
+                            HUDPlacementEditor.Slider(id: "chargeBar.size", title: L10n.text("Size", "大小"), value: 100,
+                                                      range: HUDSlider.Range(minimum: 65, maximum: 160, step: 1), format: .percent),
+                            HUDPlacementEditor.Slider(id: "chargeBar.length", title: L10n.text("Length", "长度"), value: 37,
+                                                      range: HUDSlider.Range(minimum: 14, maximum: 100, step: 1), format: .percent),
+                            HUDPlacementEditor.Slider(id: "extra", title: "A considerably longer title", value: 1,
+                                                      range: HUDSlider.Range(minimum: 0.5, maximum: 2, step: 0.01), format: .scale)]
+                        let editor = HUDPlacementEditor(id: "chargeBar", sliders: Array(specs.prefix(rows)), env: env)
+                        _ = host(editor.layer, paused: true)
+                        let band = editor.layer.sublayers!.first { $0.name == "confirm.band" } as! CAGradientLayer
+                        let marker = editor.layer.sublayers!.first { $0.name == "confirm.marker" } as! CAGradientLayer
+                        let titles = editor.layer.sublayers!.compactMap { $0 as? HUDTextLayer }
+                        strips.append(["language": languageName(language), "light": light, "rows": rows,
+                                       "size": [Double(editor.size.width), Double(editor.size.height)],
+                                       "band": rect(band.frame), "bandColors": (try recorder.tree(band, id: "band")["gradient"] as? [String: Any])?["colors"] ?? NSNull(),
+                                       "hairlines": band.sublayers!.map { rect($0.frame) },
+                                       "hairlineColors": try band.sublayers!.map { (try recorder.tree($0, id: "hairline")["gradient"] as? [String: Any])?["colors"] ?? NSNull() },
+                                       "marker": rect(marker.frame), "markerColors": (try recorder.tree(marker, id: "marker")["gradient"] as? [String: Any])?["colors"] ?? NSNull(),
+                                       "titles": titles.map { ["text": $0.text, "lineFrame": rect($0.lineFrame)] },
+                                       "sliders": editor.sliders.map { ["id": $0.id, "label": $0.label, "frame": rect($0.layer.frame), "value": $0.value] },
+                                       "pills": [editor.cancel, editor.confirm].map { ["id": $0.id, "label": $0.label, "frame": rect($0.layer.frame), "kind": "\($0.kind)"] },
+                                       "controls": editor.controls.map(\.id),
+                                       "accessibility": accessibility(editor.accessibilityItems(in: editor.layer)),
+                                       "tree": try recorder.tree(editor.layer, id: "placement")])
+                    }
+                }
+            }
+        }
+        setLanguage(.english)
+        do {
+            let editor = HUDPlacementEditor(id: "keys", sliders: [], env: env)
+            var decisions: [String] = []
+            editor.onDecision = { decisions.append("\($0)") }
+            let keys: [UInt16] = [0, 53, 36, 76]
+            let handled = keys.map { editor.key($0) }
+            overlayRows["placementKeys"] = ["keys": keys.map(Int.init), "handled": handled, "decisions": decisions]
+        }
+        var stripFrames: [[String: Any]] = []
+        let stripSize = CGSize(width: 520, height: 112)
+        for (target, bounds) in [(CGRect(x: 600, y: 20, width: 264, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 600, y: 840, width: 264, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 0, y: 400, width: 300, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 1300, y: 400, width: 300, height: 38), CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                                 (CGRect(x: 100, y: 40, width: 200, height: 38), CGRect(x: 50, y: 0, width: 400, height: 200)),
+                                 (CGRect(x: -1500, y: 300, width: 1400, height: 60), CGRect(x: -1920, y: -200, width: 1920, height: 1055))] {
+            for gap in [CGFloat(10), 0] {
+                let frame = HUDPlacementEditor.frame(size: stripSize, beside: target, within: bounds, gap: gap)
+                stripFrames.append(["size": [Double(stripSize.width), Double(stripSize.height)], "target": rect(target), "bounds": rect(bounds),
+                                    "gap": Double(gap), "frame": rect(frame)])
+            }
+        }
+        overlayRows["placement"] = ["strips": strips, "frames": stripFrames, "bubbleClearance": Double(HUDPlacementEditor.bubbleClearance),
+                                    "rowPitch": Double(HUDPlacementEditor.rowPitch), "sliderWidth": Double(HUDPlacementEditor.sliderWidth)]
 
         // Decision traces (LIB-59..67). Each step records the overlay state after it.
         func trace(_ name: String, reduced: Bool = false, _ script: (HUDCenterOverlay, (String) -> Void, Log) throws -> Void) throws {
@@ -819,6 +891,14 @@ private final class FakeCanvas: HUDDesignCanvas {
             o.showToast(HUDToastRequest(icon: .check, title: "x", caption: "")); step("toastDropped")
             o.reset(); step("reset")
             o.setCountdown(1); step("countdownAfterReset")
+        }
+        // The HUD's close (48584b5): the bar stays drawn and dimmed, deciding
+        // nothing (no handler, no control), until reset() at the hidden HUD.
+        try trace("suspendKeepsBar") { o, step, events in
+            o.confirm(twin, onConfirm: { events.append("confirm") }, onCancel: { events.append("cancel") }); step("confirm")
+            o.suspendInput(); step("suspended")
+            runScheduled(); completions(); step("timersRan")
+            o.reset(); step("reset")
         }
         // HUDConfirmState as pure state.
         var state = HUDConfirmState()
@@ -930,7 +1010,7 @@ private final class FakeCanvas: HUDDesignCanvas {
         try record("keyPrecedence", extra: ["results": keyResults])
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))   // the Q/E sub-navigations land
         try record("afterTabSwaps")
-        // Navigation: forward with a scrolled list, retarget, back restores offsets.
+        // Navigation: forward with a scrolled list, retarget, back (every sub-page starts at the top).
         canvas.page.scrollAreas[0].area.setOffset(120)
         canvas.depth = 1
         canvas.navigate(dx: 1)
@@ -951,6 +1031,15 @@ private final class FakeCanvas: HUDDesignCanvas {
         try record("prepareToLeaveConcealed")
         _ = canvas.makeContent(for: .clipboard, style: HUDModuleContentStyle(dark: true, accent: .yellow, contentsScale: 2))
         try record("revealedByMakeContent")
+        // Popups leave with their module (2e08932): a menu open when the module
+        // leaves closes but stays drawn in the top layer until makeContent.
+        let topCount = { (canvas.top.sublayers ?? []).count }
+        _ = canvas.pointerDown(at: dropPoint); canvas.pointerUp(at: dropPoint)
+        try record("menuOpenedBeforeLeave", extra: ["topCount": topCount()])
+        canvas.prepareToLeave()
+        try record("menuLeavesWithModule", extra: ["topCount": topCount()])
+        _ = canvas.makeContent(for: .clipboard, style: HUDModuleContentStyle(dark: true, accent: .yellow, contentsScale: 2))
+        try record("menuRemovedByMakeContent", extra: ["topCount": topCount()])
         canvas.depth = 0
         reduce = true; canvas.navigate(dx: -1); reduce = false
         try record("navigateReduceMotion")
@@ -995,6 +1084,57 @@ private final class FakeCanvas: HUDDesignCanvas {
         canvas.navigate(dx: 1); canvas.settleSwap(); canvas.navigate(dx: -1); canvas.settleSwap()
         try record("offsetsForgottenAfterDeactivate")
         payload["canvas"] = canvasRows
+
+        // MARK: The HUD close's module settle (HUDModuleContent.settle(concealed:), leaveForClose)
+        // A switch Clipboard -> Event Log caught by the close at +.05 (forward), reversed back to
+        // Clipboard (+.02, closed at +.05), or after its swap (+.16): which screen is committed,
+        // hidden or departing, and which wrappers carry the module leave, before and after
+        // leaveForClose. Real run-loop time (the swap is a DispatchWorkItem after .13 s).
+        var closeRows: [[String: Any]] = []
+        let closeContext = HUDDesignContext(env: env, overlay: HUDCenterOverlay(env: env, schedule: { _, _ in }))
+        func closeCase(_ name: String, _ script: (HUDModuleContent) -> Void) {
+            let content = HUDModuleContent(initialModule: .clipboard, reduceMotion: { false })
+            content.register(FakeCanvas(module: .clipboard, context: closeContext), for: .clipboard)
+            content.register(FakeCanvas(module: .eventLog, context: closeContext), for: .eventLog)
+            content.select(module: .clipboard, animated: false)
+            script(content)
+            func state(_ step: String) -> [String: Any] {
+                let wrappers = content.layer.sublayers ?? []
+                let current = content.activeContentLayer?.superlayer
+                let leaving = wrappers.filter { $0.animation(forKey: "module.leave") != nil }
+                // Each module.leave as HUDMotion.leave added it: the group's duration and
+                // timing curve, and its opacity and additive translation from / to values.
+                let leaves: [[String: Any]] = leaving.map { wrapper in
+                    let group = wrapper.animation(forKey: "module.leave") as? CAAnimationGroup
+                    var first: [Float] = [0, 0], second: [Float] = [0, 0]
+                    group?.timingFunction?.getControlPoint(at: 1, values: &first)
+                    group?.timingFunction?.getControlPoint(at: 2, values: &second)
+                    let parts: [[String: Any]] = (group?.animations ?? []).compactMap { $0 as? CABasicAnimation }.map {
+                        ["keyPath": $0.keyPath ?? "", "from": ($0.fromValue as? NSNumber)?.doubleValue ?? 0,
+                         "to": ($0.toValue as? NSNumber)?.doubleValue ?? 0, "additive": $0.isAdditive]
+                    }
+                    return ["role": wrapper === current ? "current" : "departing", "duration": group?.duration ?? 0,
+                            "timing": [first[0], first[1], second[0], second[1]].map { Double($0) }, "animations": parts]
+                }
+                return ["step": step, "selected": content.selectedModule.rawValue, "transitioning": content.isTransitioning,
+                        "contentLayers": content.contentLayerCount, "wrappers": wrappers.count,
+                        "currentHidden": current?.isHidden ?? true, "currentLeaving": current?.animation(forKey: "module.leave") != nil,
+                        "departing": wrappers.count > content.contentLayerCount, "leaving": leaving.count, "leaves": leaves]
+            }
+            var rows: [[String: Any]] = []
+            content.settle(concealed: true); rows.append(state("settled"))
+            content.leaveForClose(); rows.append(state("leaveForClose"))
+            content.cancel(); rows.append(state("cancelled"))
+            closeRows.append(["case": name, "steps": rows])
+        }
+        closeCase("forward") { c in c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05)) }
+        closeCase("reversed") { c in
+            c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+            c.select(module: .clipboard, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+        }
+        closeCase("landed") { c in c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.16)) }
+        closeCase("settledNoSwitch") { _ in }
+        payload["moduleClose"] = closeRows
 
         // MARK: Text measurements and provenance
         for language in HUDTextLanguage.regions { for (_, style) in typeStyles { _ = recorder.lineMetrics(style(), language: language) } }

@@ -193,14 +193,14 @@
 | ツール | できること |
 | --- | --- |
 | [**マップ**](docs/map.md) | オフラインの地形図を見て、ピンを置いたりカスタマイズしたりできます |
-| [**クロージャのミニゲーム**](docs/orbipom-runtime.md) | Merge! OrbiPom! で遊べます |
+| [**クロージャのミニゲーム**](docs/orbipom-runtime.md) | 「バブル、合体！」で遊べます |
 | [**イベントログ**](docs/event-log.md) | 管理人になった気分で、イベントログをチェックできます |
 | [**個人 ID**](docs/personal-profile.md) | 自分のカードをカスタマイズできます。プロフィール情報は自由に編集できます |
 | [**アカウント連携**](docs/account-linking.md) | HYPERGRYPH のゲームアカウントを連携すると、プロフィール情報や理性の回復カウントダウンを表示できます |
 
 <sub>※ アカウント連携は任意です</sub>
 
-![Merge! OrbiPom! のプレイ映像](docs/media/readme/minigame.gif)
+![「バブル、合体！」のプレイ映像](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/panels/divider.png" alt="" width="100%">
 

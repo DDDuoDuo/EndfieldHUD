@@ -18,11 +18,12 @@
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
 #include "app/hud_button_automation.hpp"
+#include "app/hud_elements_editor.hpp"
+#include "core/hud_overlay_geometry.hpp"
 #include "app/presentation_priority.hpp"
 #include "app/summon_hotkey.hpp"
 // Host-side contracts of module areas (headers only; no area library link).
 #include "app/areas/app_shortcut_navigation.hpp"
-#include "app/areas/mac_import_handoff.hpp"
 #include "app/areas/power_module.hpp"
 #include "app/areas/update_service.hpp"
 #include "native/id_card_presenter.hpp"
@@ -31,6 +32,7 @@
 #include "native/event_log_time.hpp"
 #include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
+#include "modules/charge_badge.hpp"
 #include "core/application_event_recorder.hpp"
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
@@ -123,6 +125,9 @@ std::string utf8(const fs::path&);
 fs::path utf8Path(std::string_view); // UTF-8 text -> path (replaces the deprecated u8path)
 std::string narrow(std::wstring_view);
 core::Language settingsLanguage(const ehud::data::Settings&);
+// Swift String.prefix(n) for the HUD elements text (OverlayLayout::cleanText):
+// grapheme clusters through ICU, as the profile owner cuts its text.
+extern const ehud::data::CharacterPrefix graphemes;
 double now();
 std::string ownedReaderPDF();
 using Clock = std::chrono::steady_clock;
@@ -203,7 +208,7 @@ private:
 // bounded stage rows and, in the hidden run, one row per module visit.
 class MemoryTrace final {
 public:
-    static constexpr std::size_t rowLimit = 40, visitLimit = 64;
+    static constexpr std::size_t rowLimit = 48, visitLimit = 64;
     explicit MemoryTrace(fs::path path) : path_(std::move(path)) {}
     bool accepts() const noexcept { return rows_.size() < rowLimit; }
     void add(Json row) { if (accepts()) rows_.push_back(std::move(row)); }
@@ -211,7 +216,10 @@ public:
     const fs::path& path() const noexcept { return path_; }
     const Json::Array& rows() const noexcept { return rows_; }
     const Json::Array& visits() const noexcept { return visits_; }
-    unsigned openings{}, closings{};
+    // Lifecycle rows (production; the idle trace checks them in memory):
+    // openings and closings finished, close requests as they reach the
+    // presentation, transition deadlines that expired, quits.
+    unsigned openings{}, closings{}, closes{}, deadlines{}, quits{};
 private:
     fs::path path_;
     Json::Array rows_, visits_;
@@ -281,6 +289,9 @@ struct Application::Impl {
         void setDesignScreen(core::Module) override;
         const ehud::data::ModuleLayout* moduleLayout() const noexcept override;
         std::uint64_t moduleLayoutRevision() const noexcept override;
+        const ehud::data::OverlayLayout* overlayLayout() const noexcept override;
+        std::uint64_t overlayLayoutRevision() const noexcept override;
+        bool allowsInputBesidePlacement() const noexcept override;
         bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
         void cancelFileChoice() override;
         std::uint32_t registerMessage() override;
@@ -314,6 +325,7 @@ struct Application::Impl {
     int runVisible();
     void shutdownVisible();
     int runHiddenVerification();
+    bool composedOnTopLayer(std::span<const gpu::LayerCompositionEntry>); // hidden checks of the top layer's order
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
     int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
     int runIdleTrace();         // hidden --idle-trace: closed and open idle on the real clock (wake-ups, frames, CPU)
@@ -350,6 +362,17 @@ struct Application::Impl {
     void prepareGraphics(bool anticipated);
     static constexpr double preparedGraphicsLifetime = 15;
     std::optional<double> preparedGraphicsUntil;
+    // OverlayController.transitionDeadline: an opening or a close the frames
+    // never finished is finished by the host's deadline wake. Armed only while
+    // a transition runs (no wake while idle or hidden): at an opening for
+    // HUDSourceWatchView.backdropPreparationTimeout (3 s) +
+    // SystemHUDView.entranceDuration + 0.2 s, and where a close starts its
+    // animation for SystemHUDView.exitDuration (HUDChargeBadge.exitDuration)
+    // + 0.2 s. Cleared when the transition finishes or is forced.
+    static constexpr double openingTransitionBound=3+core::SystemOverlayLifecycle::entranceDuration+.2;
+    static constexpr double closingTransitionBound=modules::ChargeBadgeState::exitDuration+.2;
+    std::optional<double> transitionDeadline;
+    void transitionDeadlineExpired(double time);
     // Frame scheduling runs on the live clock: visible modes and the hidden
     // idle trace (owner deadlines, content refreshes).
     // The hidden idle and animation traces run on the real clock through the production scheduling.
@@ -363,6 +386,9 @@ struct Application::Impl {
     // --- lifecycle --------------------------------------------------------------
     bool visibleMode() const noexcept { return args.mode != ApplicationMode::hiddenBenchmark; }
     bool production() const noexcept { return args.mode == ApplicationMode::production; }
+    // OverlayController.isDiagnosticRun: development previews and hidden
+    // verification never write the launch marker or the module last opened.
+    bool diagnosticRun() const noexcept { return !args.persistLaunchMarker; }
     void perform(const core::SystemOverlayEffects&, double time);
     void openPresentation(core::Module initial, double time);
     void targetDisplay();
@@ -372,7 +398,15 @@ struct Application::Impl {
     std::wstring trayTooltip;
     void selectModule(core::Module, double time);
     void open(double time);
+    void showOpening(double time); // open, its first frame, then the window
     void close(double time);
+    // OverlayController.finishSystemOpening / finishSystemClosing: the end of
+    // an opening (the session visible) and of a close (the session concealed),
+    // reached by a frame, by a close that concealed the session at once
+    // (Reduce Motion) or by the transition deadline.
+    void finishOpening(double time);
+    // inRequest: Reduce Motion finished the close inside close() itself.
+    void finishConcealment(double time, bool inRequest = false);
     void finishQuit(double time);
     void forceConceal(double time);
     // The Shelf drag-out (application_events.cpp): the drag loop with the
@@ -381,7 +415,10 @@ struct Application::Impl {
     void shelfDragEffect(const core::SystemOverlayEffect&, double time);
     bool shelfDragFrame(double time, bool settled);
     void reopenAfterSaveFailure(core::Module, double time);
-    void trayAction(gpu::TrayAction, bool hotkey, double time);
+    // fromProjection: the action was deferred until Projection's dismissal
+    // finished (ProjectionHandoff's external action), so its opening is the
+    // return to the module the HUD left (lifecycle.returnFromProjection).
+    void trayAction(gpu::TrayAction, bool hotkey, double time, bool fromProjection = false);
     void forwardedActivation(std::span<const std::string>);
     void updateTrayMenu();
     void sessionEnding(SessionEnd, std::uint32_t reason);
@@ -401,6 +438,7 @@ struct Application::Impl {
     void scheduleDeadline();
     void refresh(double time);
     bool present(double time, bool submit);
+    std::optional<bool> presentFrame(double time);
     double replayDesignDensity(double start, bool exit, double fraction = 1); // the design density stepped through (part of) the retract or deploy
     void retractDesignDensity(); // a retract settled hidden: where the next deploy starts
     void deriveDesignDensity(); // the settled density for the next opening (heldDesignDensity)
@@ -441,12 +479,43 @@ struct Application::Impl {
     UpdateService* updates() const noexcept;   // windowsUpdates area (app/areas/update_service.hpp)
     void refreshUpdateStatus();
     AppShortcutNavigation* appNavigation() const noexcept;
-    void bindNavigation(double time);
-    // System > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
+    // `animated`: tiles slide to new places, only while arranging (Mac
+    // refreshAppNavigation: setDesktopNavigation(animated && arrangingModules)).
+    void bindNavigation(double time, bool animated = true);
+    // Display > Modules (HUDDesktopWatchNavigation.entries(shortcuts:layout:),
     // HUDModuleLayout.restorable): the right-hand source actions in the
     // layout's visible order without the hidden ones, and the module the HUD
     // reopens on (application_navigation.cpp).
     std::vector<std::uint64_t> layoutRightActions(std::span<const std::uint64_t> right) const;
+    // Display > Modules > Arrange on HUD (SystemHUDView "Module arrangement",
+    // application_navigation.cpp). While it is on, the right-hand module tiles
+    // are dragged to reorder instead of opening; saved apps and Add App do
+    // nothing. A press past DragGripMotion::liftDistance lifts the tile, which
+    // follows the pointer (SourceWatchSession::setArrangeDrag); over another
+    // module it takes that place, over an app or Add App it goes after the
+    // last visible module (ModuleLayout::arranging); the others slide and the
+    // Modules page rows follow. The release saves the order once, if it
+    // changed. Esc, arranging turning off and losing the capture cancel (the
+    // rest of that press does nothing); closing the HUD snaps.
+    void setModuleArrangement(bool on, double time);
+    // The order the right-hand list shows: a lifted drag's preview, else the applied one.
+    const ehud::data::ModuleLayout& arrangedLayout() const noexcept;
+    // rightRowTarget(atView:): the right-hand tile under a client point while
+    // arranging, below pointer captures (menus, the confirm bar, modal cards)
+    // and the owners covering the point (pinned notes, the charge capsule):
+    // a module name, "addApp", or empty for a saved app.
+    std::optional<std::string_view> rightRowTarget(core::Point);
+    // arrangeableModule(atView:): the module tile under the point (it can be dragged).
+    std::optional<std::string_view> arrangeableModule(core::Point);
+    // The navigation entry bound to a right-hand action, and the action of a module's entry.
+    const gpu::WatchAppearanceEntry* navigationEntry(std::uint64_t action) const noexcept;
+    std::optional<std::uint64_t> moduleAction(std::string_view module) const noexcept;
+    bool arrangePointer(const PointerEvent&, core::Point, double time);
+    bool arrangeKey(const KeyEvent&, double time);
+    void dragArrangedModule(core::Point, bool edgeScroll, double time);
+    void moveArrangedTile(core::Point, double time);
+    void followArrangeScroll(double time);
+    void endModuleArrangeDrag(bool save, bool animated, double time);
     core::Module restorableModule(core::Module) const;
     void syncActivityTelemetry(double time);
     void setProjectionActive(bool active, double time);
@@ -460,10 +529,7 @@ struct Application::Impl {
     void refreshAutomation();
     HudAutomationSource automationSource();
     std::optional<std::intptr_t> automationObject(const NativeMessage&);
-    // DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss.
-    bool requestRestart(std::function<void()> work, std::function<void()> declined);
-    void declineRestart();
-    void runRestartDeclined();
+    // GPU device loss.
     bool recoverDevice(const std::exception&, double time);
     bool restartDisplay(const std::string& reason, double time);
     void checkAdapter(double time);
@@ -491,8 +557,13 @@ struct Application::Impl {
     void chooseThemeColor();
     void deactivateDisplayPanels();
     std::optional<core::Point> clockPoint(core::Point client) const;
+    // SystemHUDView.allowsModuleInput for the chrome controls and the HUD
+    // elements editor; clockAcceptsInput is allowsInputBesidePlacement (Mac
+    // fe3f046: the clock's controls and input wait while placing).
+    bool moduleInputAllowed() const;
     bool clockAcceptsInput() const;
     void setClockHovered(bool);
+    void clearControlHighlights(double time);
     void clockHover(const PointerEvent&);
     bool clockPress(const PointerEvent&, double time);
     bool clockWheel(const WheelEvent&, double time);
@@ -524,6 +595,28 @@ struct Application::Impl {
     std::optional<SummonChord> lastHookChord;
     std::uintptr_t summonHookGeneration{};
     std::optional<double> lastHookSummon;
+    // --- Display > HUD elements (app/hud_elements_editor.hpp) ----------------------
+    // SystemHUDView.applyOverlayLayout / shownOverlayLayout: the applied
+    // record's layout (normalized, its text cut by the grapheme rule) and the
+    // editor's draft while placing; the revision moves whenever the shown
+    // layout changes (ApplicationHost::overlayLayout for the account and
+    // facility areas).
+    ehud::data::OverlayLayout appliedOverlayLayout;
+    std::uint64_t overlayLayoutRevision{};
+    const ehud::data::OverlayLayout& shownOverlayLayout() const noexcept;
+    bool placingOverlay() const noexcept;
+    // SystemHUDView.allowsInputBesidePlacement: module input and no placing.
+    bool allowsInputBesidePlacement() const;
+    // settings.onEditOverlay -> beginOverlayPlacement (only while module input
+    // is allowed, nothing is placed and the confirm bar is down).
+    void beginOverlayPlacement(double time);
+    void overlayLayoutChanged();   // the shown layout moved: revision, title, frame
+    void applyOverlayTitle();      // the chrome's title from the shown layout
+    // overlayNatural: an element's size at 100 % in core-plane points.
+    core::OverlaySize overlayNatural(core::OverlayGeometry::Element, const ehud::data::OverlayLayout&);
+    struct TitleNatural { std::string title, subtitle; double size{}; core::Language language{}; core::OverlaySize natural; };
+    std::optional<TitleNatural> titleNatural; // the last measured title (content events only)
+    void constructHudElements();
     // --- Source navigation UI Automation (app/application_navigation.cpp) ----------
     void constructNavigationAutomation();
     void navigationPeers(std::vector<HudButtonPeer>&);
@@ -556,6 +649,10 @@ struct Application::Impl {
     ModuleCursor cursorAt(core::Point);   // the owners' answer in pointer routing order
     void onFocus(bool);
     void onApplicationActive(bool);
+    // Close when focus lost (Windows: another application took the
+    // foreground, e.g. Start after the Windows key): closes the HUD unless
+    // an exemption holds; true when the close was asked.
+    bool closeForFocusLoss(double time);
     void onDisplayChanged();
     void onCloseRequested();
     void onDeadline(double time);
@@ -616,6 +713,40 @@ struct Application::Impl {
     void constructVolume();
     gpu::VolumeQueuedIconProvider* constructVolumeIcons(gpu::VolumeQueuedIconProvider::Extractor);
     void constructSettings();
+    // --- module self-repair (1.3.1) -------------------------------------------------
+    // A module owner the registry disabled (it threw) is rebuilt when its
+    // module is next opened (selected, or the HUD reopened on it), through the
+    // same owner construction and the same drop as startup and cleanup, at most
+    // moduleRepairLimit times per run; then it stays off as before. The data
+    // services (Activity readings, Storage reads, the Event Log store, the
+    // clipboard history, the audio runtime) stay: only the owner, its canvas
+    // and what it holds (artwork, routes, icon queues) go and come back. Each
+    // rebuild and the stop at the cap leave a module-failures.txt record.
+    // Modules whose owner holds editors, documents or text input (Notes,
+    // Settings, Reader, Map, Calendar, Archive, Shelf, Projection, the areas)
+    // are not rebuilt.
+    static constexpr unsigned moduleRepairLimit = 2;
+    struct ModuleRepair {
+        core::Module module; std::unique_ptr<ModuleOwner> Impl::*owner;
+        void (Impl::*drop)(); void (Impl::*build)();
+        unsigned rebuilds{}; bool capped{};
+    };
+    std::vector<ModuleRepair> moduleRepairs;
+    std::optional<core::Module> pendingRepair; // asked inside an owner call: the next frame repairs
+    void listModuleRepairs();
+    bool repairModule(core::Module, double time);
+    void recordModuleRepair(const ModuleRepair&, std::string_view result) noexcept;
+    // The owner halves of the constructions above (built at startup and by a repair).
+    void constructActivityOwner();
+    void constructStorageOwner();
+    void constructEventLogOwner();
+    // Their drops (cleanup's order and a repair).
+    void dropActivityOwner();
+    void dropStorageOwner();
+    void dropEventLogOwner();
+    void dropClipboardOwner();
+    void dropBatteryOwner();
+    void dropVolumeOwner();
     void createSettings(const ehud::data::Settings& loaded);
     void ensureGame(double time);
     void constructGame(double time);
@@ -661,6 +792,8 @@ struct Application::Impl {
     std::unique_ptr<gpu::NativeWatchAppearance> nativeAppearance;
     gpu::WatchAppearance watchAppearance;
     std::unique_ptr<gpu::WatchLabelPresentation> labels;
+    std::unique_ptr<gpu::WatchArrangeMarks> arrangeMarks; // drawn after `layers` (its `after` draws)
+    std::vector<std::array<core::Rect,gpu::WatchArrangeMarks::rectangles>> arrangeMarkRects; // per mark, this frame
     std::vector<gpu::WatchButtonAvailability> available;
     std::unique_ptr<source::DesktopChromeProjectionPlan> chromePlan;
     std::optional<source::DesktopChromeBindings> chromeBindings; // the exact centre/status source nodes
@@ -760,6 +893,7 @@ struct Application::Impl {
     struct ProjectionDropInbox {HWND hwnd{};bool enabled{};double scale{1};core::Point point;std::vector<std::string>paths;};
     std::shared_ptr<ProjectionDropInbox> projectionDrop{std::make_shared<ProjectionDropInbox>()};
     bool projectionActionsQueued{}, projectionPainting{}, projectionDisplayPending{};
+    bool framePresenting{}; // inside presentFrame: a summon a frame's nested dispatch runs draws no frame of its own
     std::optional<ClientMetrics> projectionResizePending;
     std::deque<tools::ProjectionPreviewAction> projectionActions;
     std::optional<gpu::TrayAction> projectionTrayAction;
@@ -771,8 +905,7 @@ struct Application::Impl {
     tools::ArchiveOwner* archive{};   // archiveModuleOwner's owner (Archive on the design library)
     std::optional<modules::ArchiveMediaRequest> pendingArchiveRequest; // the canvas's picker / Shelf request (archiveMediaMessage)
     gpu::ApplicationIcon applicationIcon;
-    struct TrayIconArt {std::string id,file,sha256;bool templateArt{};};
-    std::vector<TrayIconArt> trayIcons;
+    std::vector<gpu::TrayIconArt> trayIcons;
     std::string trayIconKey;
     std::unique_ptr<gpu::TrayController> tray;
     bool quitRequested{};
@@ -786,6 +919,8 @@ struct Application::Impl {
     // The design library's shared overlay (confirm bar, toast, content dim) and
     // its Context; outlives every design owner (they borrow the Context).
     std::unique_ptr<tools::DesignOverlayOwner> designOverlay;
+    // Display > HUD elements > Edit position and size (borrows the Context).
+    std::unique_ptr<HudElementsEditor> hudElements;
     // holdDesignDensity: the density the last retract left (where the next
     // deploy starts), the held density and the layout it was derived for.
     std::optional<double> designDensityStart, heldDesignDensity;
@@ -804,11 +939,14 @@ struct Application::Impl {
     bool designDensityRetracted{}; // a shelf drag's settled retract already derived the next start
     std::optional<double> designDensityFrameTime; // the opening's last frame (close(): where a cut deploy got to)
     std::function<void()> placementForTest;
+    std::function<void()> openingFrameForTest; // the hidden idle trace: once an opening's first frame is drawn, before its window shows
+    // The hidden trace's stand-in for the displays Projection's hand-off finds (projectionDisplay).
+    std::function<std::optional<gpu::DisplayDescriptor>(std::uintptr_t)> projectionDisplayForTest;
     std::shared_ptr<gpu::NotesClipboard> designClipboard; // the design text fields' one clipboard
     std::unique_ptr<ModuleContrast> moduleContrast;      // the centre's contrast backdrop (SHELL-27)
     bool quitPromptOpen{};                               // the quit request is on the confirm bar
     std::uint32_t registeredMessages{};                  // registerMessage(): areas and design owners
-    // The applied record's System > Modules layout (ApplicationHost::moduleLayout).
+    // The applied record's Display > Modules layout (ApplicationHost::moduleLayout).
     ehud::data::ModuleLayout moduleLayout;
     std::uint64_t moduleLayoutRevision{};
     // SystemHUDView.animateEntrance: the first module of a session enters from
@@ -844,27 +982,21 @@ struct Application::Impl {
     // Source navigation with saved app shortcuts (app_shortcut_navigation.hpp).
     WatchSessionNavigation baseNavigation;
     bool navigationDirty{};
+    // Display > Modules > Arrange on HUD (never saved): on, the module
+    // pressed (where, whether it has lifted, the order it previews), and a
+    // press Esc or arranging turning off dropped (its drags and release do nothing).
+    bool arrangingModules{};
+    struct ArrangeDrag {std::string module;core::Point start;bool lifted{};ehud::data::ModuleLayout preview;};
+    std::optional<ArrangeDrag> arrangeDrag;
+    bool swallowsArrangePress{};
     // Bottom-left ID card (native/id_card_presenter.hpp): caption leaves and
     // the desktop baseline are copied before the setup JSON is released.
     std::optional<gpu::IdCardCaptionLeaves> idCardLeaves;
     std::optional<source::SourceDesktopFrameSettings> idCardBaseline;
     std::unique_ptr<gpu::IdCardPresenter> idCard;
     bool idCardQueued{}; // an idCardMessage is posted (a feed change while concealed)
-    // DataRootRestart: the accepted-quit teardown, then a fresh run (main.cpp).
-    class Restart final : public DataRootRestart {
-    public:
-        explicit Restart(Impl& impl) noexcept : impl_(impl) {}
-        bool restartWith(std::function<void()> work, std::function<void()> declined) override { return impl_.requestRestart(std::move(work), std::move(declined)); }
-    private:
-        Impl& impl_;
-    };
-    Restart restart{*this};
-    std::function<void()> restartWork, restartDeclined;
-    bool restartPending{}, restartAccepted{}, restartDeclinePosted{};
-    bool restartVerification{}; // hidden coverage only: the restart checks may request it
-    std::function<void()> takeRestartWork();
-    // GPU device loss ends this run like an accepted restart (main.cpp builds
-    // a fresh owner with a new device); the HUD reopens on its last module.
+    // GPU device loss ends this run (main.cpp builds a fresh owner with a new
+    // device); the HUD reopens on its last module.
     bool deviceLost{};
     std::optional<core::Module> deviceLostModule;
     // Explicit long area jobs (Media Assembly exports) on their own executor.
@@ -893,7 +1025,7 @@ struct Application::Impl {
     // once a client asked for the root, and re-lists when it changed.
     struct AutomationInputs {
         core::Module requested{}, current{};
-        std::optional<core::Module> incoming;
+        std::optional<core::Module> incoming, departing;
         bool transitioning{}, moduleInput{}, hudInput{}, modal{};
         const ModuleOwner* active{};
         bool operator==(const AutomationInputs&) const = default;
@@ -904,6 +1036,7 @@ struct Application::Impl {
     std::optional<std::string> pendingLink;
     std::uint64_t linkRequests{}; // hidden runs: links that would have opened (never opened)
     bool pendingStorageSettings{};
+    bool afterCloseQueued{}; // afterCloseMessage posted (finishConcealment inside a request)
     // Activity telemetry for the Power charge metric (OverlayController.reconcileChargeMetricTelemetry).
     std::unique_ptr<modules::ActivityTelemetryLink> activityTelemetry;
     // System animation preference (SPI_GETCLIENTAREAANIMATION), folded into
@@ -1005,8 +1138,8 @@ struct Application::Impl {
         if (owner && registry.contains(*owner)) { (void)registry.guard(*owner, std::forward<F>(f), operation); return; }
         f();
     }
-    // Services published by a module area (Power, updates, app shortcuts,
-    // Mac import) run under that area owner's isolation; a disabled area's
+    // Services published by a module area (Power, updates, app shortcuts)
+    // run under that area owner's isolation; a disabled area's
     // service is skipped (false).
     ModuleOwner* serviceOwner(std::string_view key) const noexcept;
     template <class F> bool isolateService(std::string_view key, const char* operation, F&& f) {
@@ -1039,6 +1172,11 @@ struct Application::Impl {
     void projectionFailed();
     LiveProbe probe;
     std::unique_ptr<MemoryTrace> memoryTrace;
+    // ENDFIELDHUD_MEMORY_TRACE's lifecycle rows (opened, close request,
+    // closed, transition deadline, quit): production, or the hidden idle
+    // trace, which keeps them in memory (never written) to check them.
+    bool memoryTraceRows{};
+    bool lifecycleTraced() const noexcept { return memoryTrace && (production() || memoryTraceRows); }
     std::unique_ptr<ModuleFailureLog> failureLog; // ApplicationOptions::moduleFailureLog
     void recordModuleFailure(const ModuleFailure&) noexcept;
     void startFailed(std::string_view name, const std::exception&) noexcept; // a production start site's catch
@@ -1047,10 +1185,10 @@ struct Application::Impl {
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,archiveMediaMessage=WM_APP+221,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
-        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
+        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,afterCloseMessage=WM_APP+241,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
     // ApplicationHost::registerMessage range for module areas.
     static constexpr UINT areaMessageFirst=WM_APP+0x1000,areaMessageLimit=0x3000;
     static constexpr UINT_PTR serviceGeneration=1;

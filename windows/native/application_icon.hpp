@@ -3,7 +3,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
+#include "core/data/json.hpp"
 namespace endfield::native {
 enum class IconInk { original,blackTemplate,whiteTemplate };
 // A caller-owned HICON, never installed globally. The tray/window borrows its
@@ -21,5 +24,14 @@ public:
     void*handle()const noexcept{return handle_;}
 private:explicit ApplicationIcon(void* value):handle_(value){}void*handle_{};
 };
+// HUDApplicationIcon.menuBarImage per offered icon of the rendered roster
+// (resources/application-icons/manifest.json): the tray art, drawn as a
+// template (tinted for the taskbar theme) except Perlica.
+struct TrayIconArt {std::string id,file,sha256;bool templateArt{};};
+std::vector<TrayIconArt> trayIconRoster(const ehud::data::Json&manifest);
+// The tray art for a chosen icon id (Settings::applicationIcon(), which reads
+// a saved "battery" as the watch); an unknown id draws Endfield. The roster
+// must hold Endfield.
+const TrayIconArt&trayIconFor(std::span<const TrayIconArt>roster,std::string_view chosen);
 }
 #endif

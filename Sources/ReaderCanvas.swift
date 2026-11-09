@@ -111,8 +111,12 @@ final class ReaderCanvas: HUDDesignCanvas {
         closePanel()
         panStart = nil; detailWork?.cancel(); detailWork = nil
         settleTurn()
-        controller.setActive(false)
+        // The page leaves as drawn: the controller empties its rendered
+        // column here, which must not recycle the neighbouring pages first.
+        deactivating = true; controller.setActive(false); deactivating = false
     }
+
+    private var deactivating = false
 
     override func willLeave() { closePanel() }
 
@@ -136,7 +140,7 @@ final class ReaderCanvas: HUDDesignCanvas {
         if let awaiting = awaitingBook, controller.book?.id == awaiting, controller.current != nil || controller.error != nil { awaitingBook = nil }
         // The library loaded after this canvas was made: reopen the book that was being read.
         if !tabSettled, controller.book != nil { if controller.isReading { tab = .reading }; tabSettled = true }
-        guard renderedLanguage != nil, !isTransitioning else { return }
+        guard renderedLanguage != nil, !isTransitioning, !deactivating else { return }
         if structure != renderedStructure { rerender() } else { binders.forEach { $0() } }
         header.setCounter(counter)
     }
@@ -277,7 +281,7 @@ final class ReaderCanvas: HUDDesignCanvas {
             tile.onActivate = { [weak self] in self?.openBook(book) }
             tile.more.onActivate = { [weak self, weak tile] in
                 guard let self, let tile else { return }
-                if self.isMenuOpen { self.closeMenu() } else { self.openBookMenu(book, anchor: tile.more) }
+                if self.isMenuOpen { self.closeMenu() } else { self.openBookMenu(book, anchorRect: tile.more.rect(in: self.root), anchor: tile.more) }
             }
             HUDMotion.perform {
                 tile.layer.frame.origin = CGPoint(x: 4 + CGFloat(index % 4) * (tileWidth + 12), y: 4 + CGFloat(index / 4) * (tileHeight + 12))
@@ -451,6 +455,11 @@ final class ReaderCanvas: HUDDesignCanvas {
         let zoomed = current.isIllustration && imageView.zoom > 1
         if preferences.vertical, !zoomed {
             pendingTurn = nil
+            // Reopening the book shown (the module shown again) empties the
+            // rendered column until its render returns: the drawn pages and
+            // the scroll stay as they are until then.
+            if controller.pages.isEmpty, controller.error == nil, columnLocation == current.location,
+               pageLayers[current.location] != nil { return }
             if columnLocation != current.location { columnLocation = current.location; scrollOffset = 0 }
             clampOffset()
             guard let current = controller.current else { return }
@@ -466,13 +475,17 @@ final class ReaderCanvas: HUDDesignCanvas {
                 pageClip?.frame = Self.pageViewport.insetBy(dx: 0, dy: columnInset)
                 pageColumn?.frame = pageClip?.bounds ?? .zero
             }
+            // A neighbour rendered after the column is on screen fades in.
+            let shown = isActive && pageColumn?.isVisible(in: root) == true
             for (page, top) in placed {
+                let arriving = shown && page.location != current.location && pageLayers[page.location] == nil
                 let layer = pageLayer(page)
                 HUDMotion.perform {
                     if layer.contents as! CGImage? !== page.image { layer.contents = page.image }
                     layer.contentsRect = columnCrop(page)
                     layer.frame = CGRect(x: 0, y: top, width: viewportSize.width, height: columnHeight(page))
                 }
+                if arriving { HUDMotion.enter(layer, from: .zero, env: env) }
             }
             return
         }
@@ -655,11 +668,12 @@ final class ReaderCanvas: HUDDesignCanvas {
         navigate(dx: 1)
     }
 
-    private func openBookMenu(_ book: ReaderBook, anchor: HUDControl) {
+    /// A Library book's menu, from its ⋯ (`anchor`) or a right-click at a point.
+    private func openBookMenu(_ book: ReaderBook, anchorRect: CGRect, anchor: HUDControl?) {
         let items = [HUDMenu.Item(id: "open", title: L10n.text("Open", "打开")),
                      HUDMenu.Item(id: "relink", title: L10n.text("Relink…", "重新链接…")),
                      HUDMenu.Item(id: "remove", title: L10n.text("Remove from library", "从书库移除"), danger: true, separatorBefore: true)]
-        openMenu(id: "bookMenu", items: items, anchor: anchor, minimumWidth: 170) { [weak self] item in
+        openMenu(id: "bookMenu", items: items, anchorRect: anchorRect, anchor: anchor, minimumWidth: 170) { [weak self] item in
             guard let self else { return }
             switch item.id {
             case "open": self.openBook(book)
@@ -671,7 +685,7 @@ final class ReaderCanvas: HUDDesignCanvas {
 
     private func confirmRemove(_ book: ReaderBook) {
         confirm(HUDConfirmRequest(id: "readerRemove", title: L10n.text("Remove \(book.title) from the library?", "从书库移除 \(book.title)？"),
-                                  message: L10n.text("The file itself stays on disk.", "文件本身仍保留在磁盘上。"),
+                                  message: L10n.text("The file itself stays on disk", "文件本身仍保留在磁盘上"),
                                   confirmTitle: L10n.text("Remove", "移除"), danger: true, icon: .trash)) { [weak self] in
             self?.pendingRemoval = true
             self?.controller.removeBook(book.id)
@@ -972,6 +986,16 @@ final class ReaderCanvas: HUDDesignCanvas {
 
     override func handlePointerUp(at point: CGPoint) { panStart = nil }
 
+    /// A right-click on a Library book opens the menu its ⋯ opens.
+    override func handleRightPointerDown(at point: CGPoint) -> Bool {
+        guard tab == .library, !isTransitioning, let control = control(atBox: point) else { return false }
+        let id = HUDTileMoreButton.tileID(control.id)
+        guard id.hasPrefix("book:"), let uuid = UUID(uuidString: String(id.dropFirst(5))),
+              let book = controller.books.first(where: { $0.id == uuid }) else { return false }
+        openBookMenu(book, anchorRect: CGRect(x: point.x, y: point.y, width: 1, height: 1), anchor: nil)
+        return true
+    }
+
     // MARK: Keys
 
     /// Esc first resets a zoomed page.
@@ -1017,16 +1041,7 @@ final class ReaderCanvas: HUDDesignCanvas {
 /// code bar and label strip with a rotated cover, the format tag, a progress
 /// bar, the MISSING overlay and the ⋯ button; the open book has the brackets.
 final class ReaderBookTile: HUDControl {
-    final class More: HUDControl {
-        fileprivate let plate = HUDLayer.plain("book.more")
-        override func hoverChanged() {
-            HUDMotion.animate(plate, "backgroundColor", to: isHovered && isEnabled ? HUDColor.rgb(0x141414, 0.95) : HUDColor.rgb(0x141414, 0.8),
-                              duration: HUDDuration.hover, timing: HUDEasing.ease, env: env)
-            HUDMotion.animate(layer, "transform.scale", to: isHovered && isEnabled ? 1.08 : 1, duration: HUDDuration.hover, env: env)
-        }
-    }
-
-    let more: More
+    let more: HUDTileMoreButton
     private let well = HUDLayer.plain("book.well")
     private let wellBrighten = HUDLayer.plain()
     private let strip = HUDLayer.plain("book.label")
@@ -1037,7 +1052,7 @@ final class ReaderBookTile: HUDControl {
 
     init(id: String, number: Int, book: ReaderBook, cover color: CGColor, missing: Bool, width: CGFloat, env: HUDDesignEnvironment) {
         labelText = HUDTextLayer(book.title, style: HUDTextStyle(size: 11.5, weight: .medium, color: HUDColor.nearBlack), alignment: .center)
-        more = More(id: id + ":more", label: L10n.text("More", "更多") + ", " + book.title, env: env)
+        more = HUDTileMoreButton(id: id + HUDTileMoreButton.suffix, label: HUDTileMoreButton.label(for: book.title), env: env)
         super.init(id: id, label: book.title, env: env)
         let wellHeight = Self.wellHeight
         let bounds = CGRect(x: 0, y: 0, width: width, height: wellHeight + 24)
@@ -1081,16 +1096,11 @@ final class ReaderBookTile: HUDControl {
             strip.frame = CGRect(x: 0, y: wellHeight, width: width, height: 24)
             labelText.lineFrame = CGRect(x: 6, y: 6.25, width: width - 12, height: 11.5)
             strip.addSublayer(labelText)
-            more.layer.frame = CGRect(x: width - 4 - 22, y: 8, width: 22, height: 22); more.layer.zPosition = 2
-            more.plate.frame = more.layer.bounds; more.plate.cornerRadius = 11; more.plate.backgroundColor = HUDColor.rgb(0x141414, 0.8)
-            let dots = HUDTextLayer("⋯", style: HUDTextStyle(size: 12, weight: .black, color: HUDColor.white(1)), alignment: .center)
-            dots.lineFrame = CGRect(x: 0, y: 5, width: 22, height: 12)
-            more.layer.addSublayer(more.plate); more.layer.addSublayer(dots)
             brackets.frame = bounds; brackets.fillColor = HUDColor.yellow; brackets.opacity = 0
             brackets.path = HUDArchiveTile.bracketPath(bounds, inset: -5)
-            [well, strip, more.layer, brackets].forEach(layer.addSublayer)
+            [well, strip, brackets].forEach(layer.addSublayer)
         }
-        more.setTarget(more.layer.bounds, path: CGPath(ellipseIn: more.layer.bounds, transform: nil))
+        more.attach(to: layer, width: width, below: brackets)
         renderSelection(animated: false)
         setTarget(bounds)
         env.applyScale(to: layer)

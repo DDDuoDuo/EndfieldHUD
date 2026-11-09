@@ -175,7 +175,7 @@ void lifecycle() {
     // Restart while playing asks; cancel keeps the stack, confirm restarts in place (:207-223).
     control(canvas, "restart")->activate();
     const auto& confirm = w.context.overlay().confirmState();
-    check(confirm.isOpen() && confirm.request()->id == "minigameRestart" && confirm.request()->title == "Restart the game?" && confirm.request()->message == "The current score is lost."
+    check(confirm.isOpen() && confirm.request()->id == "minigameRestart" && confirm.request()->title == "Restart the game?" && confirm.request()->message == "The current score is lost"
         && confirm.request()->confirmTitle == "Restart" && !canvas.hasFrameTimer() && canvas.restartConfirmation(), "Restart asks while playing and holds play");
     check(textOf(canvas.root(), "orbipom.overlay.text") == "[ PAUSED ]" && !control(canvas, "pause")->enabled() && !control(canvas, "clear")->enabled(), "The board says PAUSED; pause and skills are off");
     w.context.overlay().decide(d::ConfirmState::Decision::cancel);

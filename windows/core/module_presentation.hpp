@@ -24,9 +24,14 @@ struct ModulePresentationRegistration {
 // (content px, ShellPosition) starting at `start`; the host only says when.
 // Present from the swap (or beginEntrance) until the next swap or settle; the
 // page decides when its own entrance has ended. Never under Reduce Motion.
+// `delay` (s after `start`) holds the whole entrance back: the HUD's open
+// starts it as the centre starts to show (SystemHUDView
+// playOpeningModuleEntrance, DesktopChromeTiming::openingDelay); swaps and
+// the boot log's entrance carry none. `elapsed` counts from `start`.
 struct ModuleEntrance {
     MotionPoint offset{};
     double start{},elapsed{};
+    double delay{};
 };
 struct ModulePresentationSurface {
     std::uint64_t identity{};
@@ -65,11 +70,20 @@ struct ModulePresentationSample {
     std::uint64_t generation{};
     ModulePresentationSurface current;
     std::optional<ModulePresentationSurface> incoming; // Draw after current.
+    // HUDModuleContent.departing (5c8a905): the old screen of a switch the
+    // HUD's close caught leaving, finishing that leave (settleForClose). Drawn
+    // BELOW current, never hit or activated, gone once its leave ended.
+    std::optional<ModulePresentationSurface> departing;
     bool transitioning{};
     bool directional{}; // The running swap is a directional leave, not the shutter.
     // The outer HUD owns visibility and input activation; this gate only
     // reflects the source module host's exclusion during a mechanical swap.
     bool acceptsModuleInput{true};
+    // The module's surface in this sample: current, incoming or departing,
+    // drawn or only prepared (attached false); null when it has none. Owners
+    // ask this (not current / incoming by hand) whether their module shows.
+    const ModulePresentationSurface* surface(Module) const noexcept;
+    bool shows(Module module) const noexcept {return surface(module)!=nullptr;}
 };
 struct ModulePresentationChange {
     Module from{},to{};
@@ -115,7 +129,9 @@ public:
     std::optional<Module> pending() const noexcept {return state_.pending();}
     std::uint64_t generation() const noexcept {return state_.generation();}
     bool isTransitioning() const noexcept {return state_.isTransitioning();}
-    bool requiresFrames() const noexcept {return isTransitioning();}
+    // While a switch runs, or the close keeps a leave going (a departing
+    // screen, or a leave on the current one until reveal / cancel).
+    bool requiresFrames() const noexcept {return isTransitioning()||departing_.has_value()||leave_.has_value();}
     bool isPresenting(Module module) const noexcept;
     // Theme repaint changes the neutral seam color without restarting tracks
     // or replacing either live wrapper. Content repaint is caller-owned.
@@ -129,8 +145,9 @@ public:
     // from the disc centre (ShellPosition::entranceOffset(nullopt, module)).
     // Only a settled, attached design screen and never under Reduce Motion.
     // `offset` replaces the disc-centre offset (finishBootLog: from below,
-    // ShellPosition::subpageOffset(0, 1)).
-    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false,std::optional<MotionPoint> offset={});
+    // ShellPosition::subpageOffset(0, 1)). `delay` is kept with the entrance
+    // (ModuleEntrance::delay): the open's wait for the centre to show.
+    ModulePresentationUpdate beginEntrance(double time,bool reduceMotion=false,std::optional<MotionPoint> offset={},double delay=0);
     // SystemHUDView.playsBootLogOnOpen (moduleContent.layer.opacity 0): every
     // sampled surface is transparent until revealed; nothing else changes.
     void setConcealed(bool concealed) noexcept {concealed_=concealed;}
@@ -143,8 +160,30 @@ public:
     ModulePresentationUpdate complete(std::uint64_t generation,double time);
     ModulePresentationUpdate settle(double time);
     ModulePresentationUpdate cancel(double time);
+    // HUDModuleContent.settle(concealed: true) (5c8a905, 839d3b8, 79bc665), the
+    // HUD's close: a swap already due lands first; then the most recent request
+    // is committed. A switch caught in flight lands its new screen hidden (in
+    // the sample, not attached: built, never drawn, hit or activated) for the
+    // next open, and its old screen, if it was still leaving, finishes that
+    // leave as `departing`. A switch reversed back to the screen still leaving
+    // keeps it committed, finishing its switch leave (not hidden). No completion
+    // runs. The change is reported from the last destination reported to the
+    // one committed, animated (the Mac view's own setPresentation(...,
+    // animated: forRetraction) at the close).
+    ModulePresentationUpdate settleForClose(double time);
+    // HUDModuleContent.leaveForClose (48584b5): the shown design screen leaves
+    // back toward the side its opening entrance came from (the entrance
+    // reversed, .13 s): an attached screen that is not hidden, with no leave
+    // running, never under Reduce Motion. No selection or swap changes.
+    ModulePresentationUpdate leaveForClose(double time,bool reduceMotion=false);
+    // The next open (or a reopen mid-close) shows the committed screen again:
+    // no hidden screen, departing screen or close leave remain.
+    void reveal() noexcept {endClose();}
 private:
-    struct Screen {Module module;std::uint64_t identity;bool attached{true};};
+    struct Screen {Module module;std::uint64_t identity;bool attached{true};bool hidden{};};
+    // A leave in progress: its start and the vector it leaves along (content
+    // px; the sample moves -0.6 x it, as DesignMotion::leaveAt).
+    struct Leave {double start{};MotionPoint offset{};};
     ModuleSelection state_;
     Screen current_;
     std::optional<Screen> incoming_;
@@ -155,6 +194,9 @@ private:
     bool directional_{};
     MotionPoint leaveOffset_{}; // Content px (ShellPosition), the entrance's offset too.
     std::optional<ModuleEntrance> entrance_; // Of current_.
+    std::optional<Leave> leave_;              // On current_: a reversed switch's leave the close keeps, or leaveForClose.
+    std::optional<std::pair<Screen,Leave>> departing_;
+    Module notified_;                         // The destination of the last reported change.
     std::array<bool,24> design_{};
     std::uint64_t nextIdentity_{1};
     bool dark_{true},concealed_{};
@@ -166,5 +208,8 @@ private:
     ModulePresentationUpdate run(double time);
     ModulePresentationUpdate settleOn(Module,double time);
     void attachCompletion(ModulePresentationUpdate&);
+    void endClose() noexcept {leave_.reset();departing_.reset();current_.hidden=false;}
+    void reported(const std::optional<ModulePresentationChange>&change) noexcept {if(change)notified_=change->to;}
+    static DesignMotionSample leaveSample(const Leave&,double time) noexcept;
 };
 } // namespace endfield::core

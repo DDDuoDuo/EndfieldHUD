@@ -11,8 +11,8 @@
 #include <sstream>
 #include <stdexcept>
 
-// Source: bash windows/tools/audio_reference.sh (unchanged Mac sources at
-// ca04f142; SystemEventRecorder, AudioVolumeMath, localizedStandardCompare).
+// Source: bash windows/tools/audio_reference.sh (Mac sources at the PIN in that
+// script; SystemEventRecorder, AudioVolumeMath, localizedStandardCompare).
 namespace {
 namespace n=endfield::native;using Json=ehud::data::Json;
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
@@ -89,6 +89,15 @@ void topology(const Json&root){
     check(list&&list->size()==3&&(*list)[0].id==L"{0.0.0}.{a}"&&(*list)[1].name==L"Speakers"&&(*list)[2].id==L"{0.0.1}.{a}","Topology unions render and capture endpoints, trimmed, by identity");
     auto incomplete=outputs;incomplete[0].name=L"  ";check(!n::audioTopology(incomplete,inputs),"An empty label makes the whole read incomplete (no false disconnect)");
     auto duplicate=inputs;duplicate[0].id=outputs[0].id;check(!n::audioTopology(outputs,duplicate),"A repeated identity makes the read incomplete");
+    // Each name is the label its Volume row shows, chosen on the same raw
+    // name: one past 4096 UTF-8 bytes only with its trailing spaces, or one
+    // that is not well-formed UTF-16, is its endpoint ID here too, so the
+    // Event Log and the audio probe's recorder name it as Volume does.
+    const std::vector<n::AudioEndpoint>odd{{L"{0.0.0}.{p}",std::wstring(4095,L'a')+L"  "},{L"{0.0.0}.{u}",L"USB "+std::wstring(1,static_cast<wchar_t>(0xD800))}};
+    const auto oddList=n::audioTopology(odd,{});
+    check(oddList&&oddList->size()==2&&(*oddList)[0].name==L"{0.0.0}.{p}"&&(*oddList)[1].name==L"{0.0.0}.{u}","A name Volume shows as its endpoint ID (4096 UTF-8 bytes passed before trimming, or ill-formed) is listed by that ID");
+    n::AudioTopologyRecorder probe;(void)probe.receive({});const auto arrived=probe.receive(*oddList);
+    check(arrived.size()==2&&arrived[0].device=="{0.0.0}.{p}"&&arrived[1].device=="{0.0.0}.{u}","The recorder reports both arrivals by those IDs, none omitted");
     n::AudioTopologyRecorder fresh;check(fresh.receive(*list).empty()&&fresh.receive(*list).empty(),"Baseline and unchanged lists log nothing");
     fresh.reset();check(!fresh.hasBaseline()&&fresh.receive({}).empty(),"Reset restores the baseline rule");
 }
@@ -109,7 +118,7 @@ void bounds(){
 int main(int argc,char**argv){
     try{
         check(argc==2,"Usage: audio_endpoint_model_tests <audio-endpoint-source.json>");
-        const auto root=fixture(argv[1]);check(root["schemaVersion"].integer()==1&&root["sourceAuthority"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Pinned source oracle");
+        const auto root=fixture(argv[1]);check(root["schemaVersion"].integer()==1&&root["sourceAuthority"].string()=="79bc6651959977d3c6aa89c8faeedb155a15f20d","Pinned source oracle");
         classification();controls(root);ordering(root);topology(root);text();bounds();
         std::cout<<"PASS "<<checks<<" audio endpoint model checks against the Mac oracle (no native audio accessed)\n";return 0;
     }catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}

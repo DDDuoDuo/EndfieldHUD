@@ -28,6 +28,7 @@
 //    no colour, border from CALayer's default black); every other component
 //    renders its initial state without animation, as the Mac does.
 #include "modules/hud_design_controls.hpp"
+#include "modules/hud_design_scroll.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -645,7 +646,7 @@ bool DragGrip::pointerDown(Point p) {
 void DragGrip::pointerDragged(Point p) {
     if (!pressPoint_) return;
     if (!dragging_) {
-        if (std::hypot(p.x - pressPoint_->x, p.y - pressPoint_->y) <= 3) return;
+        if (std::hypot(p.x - pressPoint_->x, p.y - pressPoint_->y) <= liftDistance) return;
         dragging_ = true;
         if (onDrag) onDrag(Phase::began, *pressPoint_);
     }
@@ -663,6 +664,75 @@ void DragGrip::clearInteractionState() {
 }
 std::optional<AccessibilityRole> DragGrip::accessibilityRole() const {
     return label.empty() ? std::nullopt : std::optional<AccessibilityRole>(AccessibilityRole::button);
+}
+bool DragGrip::underPointer(Point rootPoint, const Layer& root) const noexcept {
+    if (!isVisible(layer(), root) || !isUnclipped(layer(), rootPoint, root)) return false;
+    const auto local = convert(rootPoint, root, layer());
+    return local && contains(*local);
+}
+std::optional<Cursor> DragGrip::cursor(bool lifted, std::span<DragGrip* const> grips, std::optional<Point> rootPoint, const Layer& root) {
+    if (lifted) return Cursor::closedHand;
+    if (!rootPoint) return std::nullopt;
+    const bool over = std::any_of(grips.begin(), grips.end(), [&](const DragGrip* grip) { return grip && grip->underPointer(*rootPoint, root); });
+    return over ? std::optional<Cursor>(Cursor::openHand) : std::nullopt;
+}
+
+// ---------------------------------------------------------------------------
+// HUDListReorder (HUDDesignButtons.swift, Mac 3c7088a)
+// ---------------------------------------------------------------------------
+std::optional<ListReorder> ListReorder::lift(const std::string& id, std::vector<std::string> order, Layer& layer, double grabY,
+    double top, double pitch, const motion::Clock& clock) {
+    const auto found = std::find(order.begin(), order.end(), id);
+    if (found == order.end()) return std::nullopt;
+    const int slot = int(found - order.begin());
+    ListReorder lifted(id, std::move(order), slot, grabY - (top + double(slot) * pitch), top, pitch);
+    layer.setZPosition(10);
+    motion::animate(layer, Channel::scaleX, 1.015, duration::hover, clock);
+    motion::animate(layer, Channel::scaleY, 1.015, duration::hover, clock);
+    return lifted;
+}
+void ListReorder::move(Point rootPoint, ScrollArea& list, const Layer& root, const Rows& rows, const motion::Clock& clock) {
+    const auto local = convert(rootPoint, root, list.content());
+    Layer* lifted = rows(id_);
+    if (!local || !lifted) return;
+    // Past the list's edges the list scrolls under the row.
+    const double visible = list.layer().bounds().height;
+    const auto edgePoint = convert(rootPoint, root, list.layer());
+    const double edge = edgePoint ? edgePoint->y : 0;
+    if (edge < 0) { list.setOffset(std::max(0.0, list.offset() + edge * .5)); list.noteScroll(); }
+    else if (edge > visible) { list.setOffset(std::min(list.maximumOffset(), list.offset() + (edge - visible) * .5)); list.noteScroll(); }
+    const int last = int(order_.size()) - 1;
+    const double y = std::clamp(local->y - grab_, slotY(0), slotY(last));
+    lifted->setValue(Channel::translateY, y - lifted->frame().y);
+    const int target = std::clamp(int(std::round((y - top_) / pitch_)), 0, last);
+    if (target == index_) return;
+    order_.erase(order_.begin() + index_);
+    order_.insert(order_.begin() + target, id_);
+    index_ = target;
+    for (std::size_t slot = 0; slot < order_.size(); ++slot) {
+        if (order_[slot] == id_) continue;
+        if (Layer* other = rows(order_[slot])) motion::animate(*other, Channel::translateY, slotY(int(slot)) - other->frame().y, glide, clock);
+    }
+}
+void ListReorder::drop(Layer* layer, const motion::Clock& clock) const {
+    if (!layer) return;
+    motion::animate(*layer, Channel::translateY, slotY(index_) - layer->frame().y, glide, clock);
+    motion::animate(*layer, Channel::scaleX, 1, glide, clock);
+    motion::animate(*layer, Channel::scaleY, 1, glide, clock);
+    layer->setZPosition(0);
+}
+void ListReorder::cancel(std::span<const std::string> saved, const Rows& rows) const {
+    for (std::size_t slot = 0; slot < saved.size(); ++slot) {
+        Layer* layer = rows(saved[slot]);
+        if (!layer) continue;
+        layer->setValue(Channel::translateY, slotY(int(slot)) - layer->frame().y);
+        layer->setValue(Channel::scaleX, 1); layer->setValue(Channel::scaleY, 1);
+        layer->setZPosition(0);
+    }
+}
+void ListReorder::simulate(Point start, int slots, double pitch, const std::function<void(DragGrip::Phase, Point)>& drag) {
+    const Point end{start.x, start.y + double(slots) * pitch};
+    drag(DragGrip::Phase::began, start); drag(DragGrip::Phase::moved, end); drag(DragGrip::Phase::ended, end);
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +786,14 @@ Slider::Slider(Builder& b, std::string id, std::string text, double value, Range
 Slider::~Slider() = default;
 bool Slider::contains(Point p) const { return inRect({-4.5, 0, trackWidth_ + 9, height}, p); }
 void Slider::setValue(double v) { const double next = range_.clamp(v); if (next != value_) { value_ = next; render(); } }
+// setRange (HUDDesignSlider.swift): the zero mark follows the new range.
+void Slider::setRange(Range next, double v) {
+    const double clamped = next.clamp(v);
+    if (next == range_ && clamped == value_) return;
+    range_ = next; value_ = clamped;
+    zero_->setHidden(!range_.zero);
+    render();
+}
 void Slider::nudge(double direction) {
     const double next = range_.clamp(value_ + direction * range_.step);
     if (next == value_) return;
@@ -853,11 +931,7 @@ Dropdown::Dropdown(Builder& b, std::string id, std::string text, std::string val
     setBackground(*bar_, p.accentInk());
     bar_->setValue(Channel::scaleY, 0);
     text_ = &makeText(b, sub(this->id(), "dropdown.value"), "", style, {});
-    caret_ = &b.layer(sub(this->id(), "dropdown.caret"));
-    caret_->setAnimatable();
-    caret_->setBounds({9, 6});
-    caret_->setPosition({fieldWidth - 10 - 4.5, h / 2});
-    setPath(*caret_, triangleDown(9, 6), p.accentInk());
+    caret_ = &caretLayer(b, sub(this->id(), "dropdown.caret"), {9, 6}, {fieldWidth - 10 - 4.5, h / 2});
     l.add(*bar_); l.add(*text_); l.add(*caret_);
     setValue(std::move(value), valueLanguage);
     setTarget(localBounds(l));
@@ -882,15 +956,27 @@ void Dropdown::setArtwork(std::optional<ImageSource> source, Size imageSize, dou
     text_->setHidden(source.has_value());
 }
 void Dropdown::setOpen(bool open) { if (open != open_) { open_ = open; renderState(); } }
-// renderState (:88-95). The caret's transform is R(open ? pi : 0) then a 2 px
-// move toward the field's bottom while hovered (T(0, -2) in the rotated frame
-// when open is the same +2 px in the field): rotation and translateY channels.
+// renderState (:88-95).
 void Dropdown::renderState() {
     const bool hover = hovered() && enabled(), engaged = open_ || hover;
     const auto c = clock();
     motion::animate(*bar_, Channel::scaleY, engaged ? 1 : 0, duration::accentBar, c);
-    motion::animate(*caret_, Channel::rotation, open_ ? pi : 0, duration::caret, c);
-    motion::animate(*caret_, Channel::translateY, hover ? 2 : 0, duration::caret, c);
+    renderCaret(*caret_, open_, hover, c);
+}
+Layer& Dropdown::caretLayer(Builder& b, std::string_view id, Size size, Point position) {
+    Layer& caret = b.layer(id);
+    caret.setAnimatable();
+    caret.setBounds(size);
+    caret.setPosition(position);
+    setPath(caret, triangleDown(size.width, size.height), b.env.palette.accentInk());
+    return caret;
+}
+// The caret's transform is R(open ? pi : 0) then a 2 px move toward the
+// field's bottom while hovered (T(0, -2) in the rotated frame when open is
+// the same +2 px in the field): rotation and translateY channels.
+void Dropdown::renderCaret(Layer& caret, bool open, bool hovered, const motion::Clock& c) {
+    motion::animate(caret, Channel::rotation, open ? pi : 0, duration::caret, c);
+    motion::animate(caret, Channel::translateY, hovered ? 2 : 0, duration::caret, c);
 }
 void Dropdown::hoverChanged() { renderState(); }
 void Dropdown::enabledChanged() { layer().setValue(Channel::opacity, enabled() ? 1 : .35); }

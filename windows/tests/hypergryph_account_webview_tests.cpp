@@ -20,6 +20,7 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -314,6 +315,7 @@ void run() {
         HWND login=loginWindow();
         check(presenter.isPresenting()&&login&&!IsWindowVisible(login)&&GetWindow(login,GW_OWNER)==owner.hwnd,"Consent window is owned by the HUD (hidden in verification)");
         check(panelSize(login,owner.hwnd,860,650,680,540),"The login panel has the Mac content size 860x650 and minimum frame 680x540");
+        {wchar_t caption[64]{};GetWindowTextW(login,caption,64);check(std::wstring_view(caption)==L"EndfieldHUD / \u68EE\u7A7A\u5C9B","The login panel's caption names the region with a slash (Mac 29e895f)");}
         const RECT screen=workAreaOf(owner.hwnd);
         check(panelChrome(login)&&centredOn(login,screen,screen),"The login panel is a closable, resizable, zoomable topmost panel without minimize, centred in the HUD monitor's work area");
         check(w.environments==0&&!presenter.nextDeadline(),"No browser, profile or deadline before explicit consent");

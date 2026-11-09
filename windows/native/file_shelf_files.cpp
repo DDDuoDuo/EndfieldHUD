@@ -237,6 +237,12 @@ NativeFileShelfFiles::NativeFileShelfFiles(FileShelfFileLabels labels,FileShelfF
     configuration_=std::make_shared<const Configuration>(Configuration{std::move(labels),options});
 }
 ShelfFileAccess NativeFileShelfFiles::acquire(std::string_view path)const{return acquirePath(path,*configuration_);}
+std::optional<NativeRegularFile>nativeRegularFile(std::string_view path)noexcept{
+    try{NativeFileShelfFiles files;auto lease=files.acquire(path);const auto&metadata=lease.metadata();
+        if(metadata.kind!=ehud::data::ShelfFileKind::regular||metadata.isDirectory)return {};
+        return NativeRegularFile{metadata.windowsPath,metadata.identity};
+    }catch(...){return {};}
+}
 ShelfFileAccess NativeFileShelfFiles::resolve(const ShelfRecord& record)const{return resolvePath(record,*configuration_);}
 FileShelfStore::Platform NativeFileShelfFiles::platform()const{
     return {[configuration=configuration_](std::string_view path){return acquirePath(path,*configuration);},

@@ -125,15 +125,15 @@ struct SummonShortcut: Codable, Equatable {
 
     var validationError: String? {
         guard modifiers.rawValue & ~Modifiers.supported.rawValue == 0 else {
-            return L10n.text("That modifier is not supported.", "不支持该修饰键。")
+            return L10n.text("That modifier is not supported", "不支持该修饰键")
         }
         guard (1...2).contains(modifiers.rawValue.nonzeroBitCount) else {
-            return L10n.text("Use one key with one or two modifiers (up to three keys).",
-                             "请使用一个普通键加一至两个修饰键（最多三个键）。")
+            return L10n.text("Use one key with one or two modifiers (up to three keys)",
+                             "请使用一个普通键加一至两个修饰键（最多三个键）")
         }
         guard Self.keyNames[keyCode] != nil else {
-            return L10n.text("Choose a letter, number, punctuation, arrow, or function key.",
-                             "请选择字母、数字、标点、方向键或功能键。")
+            return L10n.text("Choose a letter, number, punctuation, arrow, or function key",
+                             "请选择字母、数字、标点、方向键或功能键")
         }
         // Protect common editor/application commands, even if their frontmost
         // app has not registered a global hotkey. OS-customized bindings are
@@ -142,8 +142,8 @@ struct SummonShortcut: Codable, Equatable {
         let shiftedCommandKeys: Set<UInt16> = [1, 5, 6, 13, 17, 35, 45, 48, 50]
         if (modifiers == [.command] && standardCommandKeys.contains(keyCode)) ||
             (modifiers == [.command, .shift] && shiftedCommandKeys.contains(keyCode)) {
-            return L10n.text("That combination is reserved for common macOS or editing commands.",
-                             "该组合用于常见的 macOS 或编辑命令，请选择其他快捷键。")
+            return L10n.text("That combination is reserved for common macOS or editing commands",
+                             "该组合用于常见的 macOS 或编辑命令，请选择其他快捷键")
         }
         return nil
     }

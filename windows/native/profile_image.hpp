@@ -34,6 +34,13 @@ std::string importProfileImageBytes(std::span<const std::uint8_t>encoded,modules
 // reduced to at most maximumDimension px for the crop renderer; backgrounds
 // are oriented and at most 2048 px. Throws ProfileError(image | imageDimensions).
 ProfileDecodedImage decodeProfileImage(const std::filesystem::path& managed,modules::ProfileImageKind,unsigned maximumDimension=4096);
+// The same decode of encoded bytes in memory (at most 128 MB; the codec is
+// chosen from content).
+ProfileDecodedImage decodeProfileImageBytes(std::span<const std::uint8_t>encoded,modules::ProfileImageKind,unsigned maximumDimension=4096);
+// An avatar decode reduced to its crop working copy, as ProfileImageService
+// delivers it: the Windows account's login picture (issue #17), kept in
+// memory only.
+ProfileDecodedImage decodeProfileAvatarWorking(std::span<const std::uint8_t>encoded);
 
 struct ProfileImageCallbacks {
     std::function<void(modules::ProfileImageKind,std::string filename)>imported;

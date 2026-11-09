@@ -4,10 +4,16 @@ import Darwin
 /// POD storage shared with the HAL callback. Only the callback writes currentGain;
 /// cross-thread fields live in separately allocated public atomic primitives.
 /// OSAtomic remains public on 14.2; Swift Synchronization requires macOS 15.
+/// The input run is fixed before AudioDeviceStart and never changes while the
+/// callback runs: a count of 0 reads the whole input list, as an output without
+/// inputs always does; otherwise only the tap's buffers are read, the others
+/// belonging to the output device's own (disabled) input streams.
 struct PerAppAudioRenderState {
     let atomic: UnsafeMutablePointer<Int32>
     var currentGain: Float32
     var hasRenderedEnabled: Bool
+    var inputFirstBuffer: Int32 = 0
+    var inputBufferCount: Int32 = 0
 }
 
 enum PerAppAudioPCM {
@@ -43,25 +49,29 @@ enum PerAppAudioPCM {
     /// here. Aggregate input/output frame counts must already agree.
     @discardableResult static func render(input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>,
                                           state: UnsafeMutablePointer<PerAppAudioRenderState>) -> Bool {
-        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let destination = UnsafeMutableAudioBufferListPointer(output)
         for buffer in destination {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
+        let first = Int(state.pointee.inputFirstBuffer)
+        let count = state.pointee.inputBufferCount == 0 ? inputs.count - first : Int(state.pointee.inputBufferCount)
+        guard first >= 0, count >= 0, first + count <= inputs.count else { store(state, faultSlot, 1); return false }
+        let source = inputs[first..<(first + count)]
         guard (source.count == 1 || source.count == 2), (destination.count == 1 || destination.count == 2),
-              validStereo(source), validStereo(destination) else { store(state, faultSlot, 1); return false }
-        let frames = Int(source[0].mDataByteSize / (source[0].mNumberChannels * 4))
+              validStereo(source), validStereo(destination[...]) else { store(state, faultSlot, 1); return false }
+        let frames = Int(source[first].mDataByteSize / (source[first].mNumberChannels * 4))
         guard frames > 0, frames <= 16_384,
               Int(destination[0].mDataByteSize / (destination[0].mNumberChannels * 4)) == frames,
-              (source.count == 1 || source[1].mDataByteSize == source[0].mDataByteSize),
+              (source.count == 1 || source[first + 1].mDataByteSize == source[first].mDataByteSize),
               (destination.count == 1 || destination[1].mDataByteSize == destination[0].mDataByteSize) else {
             store(state, faultSlot, 1); return false
         }
-        guard let inputFirst = source[0].mData?.assumingMemoryBound(to: Float32.self),
+        guard let inputFirst = source[first].mData?.assumingMemoryBound(to: Float32.self),
               let outputFirst = destination[0].mData?.assumingMemoryBound(to: Float32.self) else {
             store(state, faultSlot, 1); return false
         }
-        let inputSecond = source.count == 2 ? source[1].mData?.assumingMemoryBound(to: Float32.self) : inputFirst
+        let inputSecond = source.count == 2 ? source[first + 1].mData?.assumingMemoryBound(to: Float32.self) : inputFirst
         let outputSecond = destination.count == 2 ? destination[1].mData?.assumingMemoryBound(to: Float32.self) : outputFirst
         guard let inputSecond, let outputSecond else { store(state, faultSlot, 1); return false }
         let inputStride = source.count == 1 ? 2 : 1
@@ -97,10 +107,11 @@ enum PerAppAudioPCM {
         _ = OSAtomicAdd32Barrier(1, state.pointee.atomic.advanced(by: tickSlot))
         return true
     }
-    private static func validStereo(_ buffers: UnsafeMutableAudioBufferListPointer) -> Bool {
-        if buffers.count == 1 { return buffers[0].mNumberChannels == 2 && buffers[0].mDataByteSize % 8 == 0 }
-        return buffers.count == 2 && buffers[0].mNumberChannels == 1 && buffers[1].mNumberChannels == 1
-            && buffers[0].mDataByteSize % 4 == 0 && buffers[1].mDataByteSize % 4 == 0
+    private static func validStereo(_ buffers: Slice<UnsafeMutableAudioBufferListPointer>) -> Bool {
+        let first = buffers.startIndex
+        if buffers.count == 1 { return buffers[first].mNumberChannels == 2 && buffers[first].mDataByteSize % 8 == 0 }
+        return buffers.count == 2 && buffers[first].mNumberChannels == 1 && buffers[first + 1].mNumberChannels == 1
+            && buffers[first].mDataByteSize % 4 == 0 && buffers[first + 1].mDataByteSize % 4 == 0
     }
 }
 

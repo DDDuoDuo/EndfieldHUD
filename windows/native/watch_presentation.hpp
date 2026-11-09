@@ -37,7 +37,10 @@ private:
     const SourceBatchTemplate& prototype(const core::source::SourceWatchBatch&)const;
     static void writeState(SourceBatchState&,const core::source::SourceWatchBatch&,const SourceFrameParameters&);
 };
-struct WatchButtonAvailability {std::string_view buttonID;bool enabled{true},expandFileShelfCaption{};};
+// arrangeMark / liftedMark / raised: Display > Modules > Arrange on HUD
+// (core::source::NativeLabelButtonState): the tile's corner marks, widened
+// while it is dragged, and the tile drawn above the others.
+struct WatchButtonAvailability {std::string_view buttonID;bool enabled{true},expandFileShelfCaption{},arrangeMark{},liftedMark{},raised{};};
 // Local text/icon surfaces stay rasterized. This bridge updates their source
 // homographies and exact tilted clipping planes using the same frame as hits.
 // Content revisions (language, text, glyphs or caption bounds) remain explicit
@@ -50,6 +53,8 @@ public:
     void present(Renderer&);
     std::span<const std::size_t> contentBoundsChanged()const noexcept{return changedBounds_;}
     std::span<const core::source::NativeLabelPlacement> placements()const noexcept{return plan_->placements();}
+    // The Arrange on HUD marks of the last update (WatchArrangeMarks draws them).
+    std::span<const core::source::NativeArrangeMark> marks()const noexcept{return plan_->marks();}
 private:
     core::source::NativeLabelPlan* plan_;
     LayerScene* layers_;
@@ -61,5 +66,27 @@ private:
     std::vector<std::size_t> changedBounds_;
     std::uint64_t sceneRevision_{};
     bool initialized_{};
+};
+// Display > Modules > Arrange on HUD: the corner marks of the right-hand
+// tiles (HUDArchiveTile.applyArrangeMark: six filled rectangles each, in the
+// plate ink), drawn right after the watch labels (the label scene's `after`
+// draws) in their tile's projected box and its button's masks. One retained
+// unit quad mesh and a fixed pool of draws (stable IDs, count fixed at
+// construction); a mark set that is not shown is drawn at opacity 0.
+class WatchArrangeMarks final {
+public:
+    static constexpr std::size_t rectangles=6;
+    explicit WatchArrangeMarks(std::size_t maximumMarks);
+    // `rects`: per mark, its rectangles in the mark's box (points);
+    // `linearTint`: the plate ink, linear straight RGBA. True when a draw changed.
+    bool update(std::span<const core::source::NativeArrangeMark>,std::span<const std::array<core::Rect,rectangles>> rects,std::array<float,4> linearTint);
+    bool upload(Renderer&);
+    bool releaseResources(Renderer&); // false while the mesh is published
+    std::span<const DrawObject> draws()const noexcept{return draws_;}
+    std::size_t shown()const noexcept{return shown_;}
+private:
+    std::vector<DrawObject> draws_;
+    Renderer* resourceOwner_{};
+    std::size_t shown_{};
 };
 } // namespace endfield::native

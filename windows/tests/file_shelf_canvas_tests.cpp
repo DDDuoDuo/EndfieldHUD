@@ -226,6 +226,28 @@ void canvasRules() {
     check(canvas.handleRightPointerDown(centre(*control(canvas, "file:1"), canvas.root())) && canvas.menuOpen() && canvas.selectedIDs().empty(), "Right-click opens the tile menu without selecting");
     canvas.closeMenu();
     check(!canvas.handleRightPointerDown({560, 480}), "Right-click off the tiles opens nothing");
+    // The tile's ⋯ (46b5d26): the same menu; its press never selects or drags the tile.
+    const auto menuRows = [&] {
+        std::vector<std::string> rows; std::vector<d::AccessibilityItem> list; canvas.accessibilityItems(list);
+        for (const auto& item : list) if (item.id.starts_with("shelf.menu:")) rows.push_back(item.id);
+        return rows;
+    };
+    const std::vector<std::string> shelfMenu{"shelf.menu:open", "shelf.menu:reveal", "shelf.menu:remove"};
+    auto* more = control(canvas, "file:1:more");
+    check(more && more->label == "More, " + store.items[0].name, "The ⋯ is named More and the file");
+    {
+        const auto p = centre(*more, canvas.root());
+        const auto drags = store.drags.size();
+        check(canvas.pointerDown(p, {p}, w.now), "The ⋯ takes the press over its tile");
+        canvas.pointerUp(p, w.now);
+        check(canvas.menuOpen() && canvas.selectedIDs().empty() && store.drags.size() == drags && menuRows() == shelfMenu,
+            "The ⋯ opens the right-click menu without selecting or dragging its tile");
+        more->activate();
+        check(!canvas.menuOpen(), "The ⋯ closes an open menu");
+    }
+    check(canvas.perform("shelf:" + store.items[0].id + ":menu") && canvas.menuOpen() && menuRows() == shelfMenu && canvas.selectedIDs().empty(),
+        "shelf:<id>:menu opens the same menu");
+    canvas.closeMenu();
     // Imports (:466-484): no selection change, the names recorded, the grid at its bottom.
     canvas.click("id1");
     const std::vector<std::string> paths{"C:\\Users\\Op\\Desktop\\Added.png", store.items[0].lastKnownPath};
@@ -249,7 +271,7 @@ void canvasRules() {
     // Clear (:544-578) under Reduce Motion: confirm, then empty at once.
     canvas.confirmClear();
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->title == "Remove 6 files from the shelf?" && request->message == "Original files stay where they are." && request->confirmTitle == "Remove all" && request->danger,
+    check(request && request->title == "Remove 6 files from the shelf?" && request->message == "Original files stay where they are" && request->confirmTitle == "Remove all" && request->danger,
         "Clear asks through the confirm bar");
     w.context.overlay().decide(d::ConfirmState::Decision::confirm); w.advance(.2);
     check(store.items.empty() && store.cleared == std::vector<std::size_t>{6} && w.toast() == "Shelf cleared|", "Confirming clears the references and toasts");
@@ -281,6 +303,56 @@ void clearMotion() {
     check(!canvas.clearingForTesting() && store.items.empty() && store.cleared.size() == 2, "Leaving finishes the clear");
 }
 
+// The entrance as the HUD opens into the shelf (Mac a5d58f1): the properties
+// card enters from 24 px to the right over .3 s, held back by the delay as
+// the rows are; without a delay (a module switch) it starts at once.
+void cardEntrance() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Store store;
+    for (int n = 1; n <= 3; ++n) store.items.push_back(Store::file("id" + std::to_string(n), "F" + std::to_string(n) + ".txt"));
+    m::FileShelfCanvas canvas(w.context, store.services());
+    w.show(canvas);
+    canvas.click("id2");
+    const auto* card = findLayer(canvas.root(), "shelf.props");
+    check(canvas.hasPropertiesCardForTesting() && card, "A selection shows the properties card");
+    const auto& enter = [&]() -> const auto& { return card->tracks().slots[std::size_t(d::MotionSlot::enter)]; };
+    canvas.playEntrance({0, 24}, w.now);
+    check(enter()[0].start == w.now && enter()[0].duration == .3 && enter()[1].offset == 24, "Without a delay the card enters at once from 24 px to the right over .3 s");
+    canvas.playEntrance({0, 24}, w.now, .2);
+    check(std::abs(enter()[0].start - (w.now + .2)) < 1e-12 && enter()[0].duration == .3 && enter()[1].offset == 24 && std::abs(enter()[1].start - (w.now + .2)) < 1e-12,
+        "With the open's delay the card enters .2 s later");
+    check(std::abs(card->presented(d::Channel::translateX, w.now + .19) - (card->value(d::Channel::translateX) + 24)) < 1e-9, "Until then it holds its start pose");
+    // Mac 9052222: a file picked mid-entrance rebuilds the page; its card keeps
+    // its own selection slide instead of the entrance's in-phase replay.
+    {
+        m::FileShelfCanvas picked(w.context, store.services());
+        w.show(picked);
+        const double t0 = w.now;
+        picked.playEntrance({0, 24}, t0);
+        w.advance(.15);
+        const auto built = w.context.pagesBuilt();
+        picked.click("id3");
+        const auto* slid = findLayer(picked.root(), "shelf.props");
+        check(w.context.pagesBuilt() > built && slid, "Picking a file mid-entrance rebuilds the page with its card");
+        const auto& slide = slid->tracks().slots[std::size_t(d::MotionSlot::enter)];
+        check(std::abs(slide[0].start - (t0 + .15)) < 1e-9 && slide[0].duration == .3 && slide[1].offset == 24, "The new card slides in from the pick over .3 s");
+        check(std::abs(picked.page().staggered()[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(0))) < 1e-9,
+            "The rows carry the entrance on in phase");
+        // A store change that keeps the selection rebuilds the same card: it carries the entrance on.
+        const double t1 = w.now;
+        picked.playEntrance({0, 24}, t1);
+        w.advance(.1);
+        store.items.push_back(Store::file("id4", "F4.txt"));
+        const auto rebuilt = w.context.pagesBuilt();
+        picked.storeChanged();
+        const auto* kept = findLayer(picked.root(), "shelf.props");
+        check(w.context.pagesBuilt() > rebuilt && kept, "A new file rebuilds the page and its card");
+        const auto& carried = kept->tracks().slots[std::size_t(d::MotionSlot::enter)];
+        check(std::abs(carried[0].start - t1) < 1e-9 && carried[0].duration == .3 && carried[1].offset == 24, "The kept card's slide carries on in phase with the entrance");
+    }
+}
+
 void relinkAndRecording() {
     FakeMeasurer measurer;
     World w(measurer); w.appearance(Language::english);
@@ -301,6 +373,7 @@ void relinkAndRecording() {
     w.appearance(Language::english, false, true, true);
     canvas.click("kept");
     check(control(canvas, "file:1")->label == "Redacted, TXT file, 1 KB", "Tiles speak Redacted");
+    check(control(canvas, "file:1:more")->label == "More, Redacted", "The ⋯ never speaks the file name while recording (46b5d26)");
     check(findLayer(canvas.root(), "props.name.redacted.redaction.bar") && findLayer(canvas.root(), "props.row2.redacted.redaction.bar"), "The card name and WHERE are redaction bars");
     canvas.open("kept");
     check(w.toast() == "Opened|", "Recording mode: the toast has no detail");
@@ -316,11 +389,21 @@ void virtualisation() {
     check(canvas.builtTileCountForTesting() == 5 * 4, "Only the visible rows and one beyond are built (:217-221)");
     check(canvas.scroll({200, 300}, {0, 136 * 6}, w.now) && canvas.builtTileCountForTesting() == 7 * 4 && control(canvas, "file:41") && !control(canvas, "file:1"),
         "Scrolling builds entering tiles and drops leaving ones from the router");
+    check(control(canvas, "file:41:more") && !control(canvas, "file:1:more"), "A tile's ⋯ enters and leaves with it");
     canvas.scroll({200, 300}, {0, -136 * 6}, w.now);
     check(control(canvas, "file:1") && canvas.builtTileCountForTesting() == 5 * 4, "Tiles return when scrolled back");
     check(!canvas.scroll({300, 60}, {0, 50}, w.now) && canvas.scrollOffset() == 0, "The wheel scrolls the grid only over it (:256-260)");
     canvas.keyDown(keyOf(d::key::end), w.now);
     check(canvas.scrollOffset() > 0 && control(canvas, "file:60"), "End scrolls to the bottom");
+    // Left scrolled, the shelf starts at the top when shown again (HUDDesignScreen showsFromTop)...
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    w.show(canvas);
+    check(canvas.scrollOffset() == 0 && control(canvas, "file:1"), "Shown again after it was left, the grid starts at the top");
+    // ...but files added while it was hidden still show at the bottom when it opens (keepsScrollOnNextShow).
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(canvas.importPaths(std::vector<std::string>{"C:\\Users\\Op\\Desktop\\Dropped.png"}) && store.items.size() == 61, "A file is added while the shelf is hidden");
+    w.show(canvas);
+    check(canvas.scrollOffset() > 0 && control(canvas, "file:61"), "A file added while the shelf was hidden still shows at the bottom when it opens");
 }
 
 // The other layout's tiles (Windows: the scene rasterizes them ahead). After
@@ -361,7 +444,8 @@ void alternateLayout() {
     check(canvas.columnsForTesting() == 4 && added.size() <= 4, "Closing it does the same (new:" + describe(added) + ")");
     check(canvas.page().controls().size() == controls && !control(canvas, "tile:3:id2"), "Those tiles are no controls");
     std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
-    check(std::count_if(items.begin(), items.end(), [](const auto& item) { return item.id.starts_with("file:"); }) == 20, "Accessibility lists only the shown tiles");
+    check(std::count_if(items.begin(), items.end(), [](const auto& item) { return item.id.starts_with("file:") && !item.id.ends_with(":more"); }) == 20
+        && std::count_if(items.begin(), items.end(), [](const auto& item) { return item.id.ends_with(":more"); }) == 20, "Accessibility lists only the shown tiles and their ⋯");
     // One, another, Ctrl another, one from many, none; every tile of the other
     // layout lies inside the grid's clip (the scene rasterizes scroll rows there).
     check(canvas.alternatesInsideGridForTesting(), "The 4-column tiles lie inside the 3-column grid");
@@ -497,10 +581,12 @@ void shelfOracle(Oracle& o) {
     oracleScene(o, "cardVideo", "en", true);
     oracleScene(o, "empty", "zh-Hans", false);
     oracleScene(o, "hoverTile", "en", false, [](m::FileShelfCanvas& c, World& w) { c.pointerMoved(centre(*control(c, "file:2"), c.root()), false, w.now); });
+    oracleScene(o, "hoverMore", "en", false, [](m::FileShelfCanvas& c, World& w) { c.pointerMoved(centre(*control(c, "file:2:more"), c.root()), false, w.now); });
     // The Mac scrolled down and back before these two (its bar still shows).
     const auto scrolledBack = [](m::FileShelfCanvas& c, World& w) { c.scroll({200, 300}, {0, 260}, w.now); c.scroll({200, 300}, {0, -1000}, w.now); };
     o.menuByTitle = true;
     oracleScene(o, "contextMenu", "en", false, [&](m::FileShelfCanvas& c, World& w) { scrolledBack(c, w); c.rightPointerDown({220, 81 + 5 + 60}, w.now); });
+    oracleScene(o, "moreMenu", "en", false, [&](m::FileShelfCanvas& c, World& w) { scrolledBack(c, w); control(c, "file:2:more")->activate(); });
     o.menuByTitle = false;
     oracleScene(o, "dropTarget", "en", false, [&](m::FileShelfCanvas& c, World& w) { scrolledBack(c, w); c.setDropTarget(true); });
     // The selection rules, step by step, on the oracle's items.
@@ -556,7 +642,7 @@ void shelfOracle(Oracle& o) {
 
 int main(int argc, char** argv) {
     try {
-        formats(); canvasRules(); clearMotion(); relinkAndRecording(); virtualisation(); alternateLayout();
+        formats(); canvasRules(); clearMotion(); cardEntrance(); relinkAndRecording(); virtualisation(); alternateLayout();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"shelf"}, {"text", "layerDefaults", "rules", "formats", "kinds", "home"})) {
             Oracle oracle(*data);
             shelfOracle(oracle);

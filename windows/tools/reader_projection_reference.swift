@@ -2,12 +2,12 @@ import AppKit
 import CoreText
 import QuartzCore
 
-// Actual-source oracle of the redesigned E-Reader and Projection pages (Mac 1.3.0 Sources/ReaderCanvas.swift with the
+// Actual-source oracle of the redesigned E-Reader and Projection pages (Mac 1.3.1 Sources/ReaderCanvas.swift with the
 // real ReaderController / ReaderStore / ReaderDocument, and Sources/ProjectionCanvas.swift with ProjectionSettings and a
 // session ProjectionModel). A synthetic library (three TXT books and a three-page PDF made here, one TXT deleted after its
 // bookmark was made so it is MISSING) is written as library.json into a temporary CFFIXED_USER_HOME with fixed book UUIDs
 // and read by an unchanged ReaderStore; the canvas is built by the unchanged Mac code in scripted states (empty library,
-// Open / Library / Reading / Marks, the book menu and remove confirmation, the column and paged reading, the settings
+// Open / Library / Reading / Marks, the book menu, remove confirmation and a right-click's book menu, the column and paged reading, the settings
 // pop-over, bookmarks, the PDF, dark / Light, English / Simplified Chinese) and exported as its model layer tree with the
 // design recorder (tools/hud_design_reference_support.swift), its controls, accessibility items, the toast / confirm it
 // raised, its page layers and the scenario's INPUT (the books, the missing set, every page the controller rendered, the
@@ -215,6 +215,10 @@ private func makePDF(_ url: URL, pages: Int) {
             for code: UInt16 in [125, 125, 125, 36] { _ = canvas.keyDown(key(code)) }
             try capture(canvas, context, controller, library: "books", state: "removeConfirm")
             context.overlay.dismissConfirm(); context.overlay.reset()
+            // A right-click on a book opens its menu at the pointer.
+            _ = canvas.rightPointerDown(at: centre(tile(2), in: canvas.root))
+            try capture(canvas, context, controller, library: "books", state: "bookRightClick")
+            canvas.closeMenu()
             // Opening a book: the column (top to bottom is the default direction).
             tile(1).activate()
             spin { controller.current != nil && controller.book?.id == bookID(1) && canvas.page.controls.contains { $0.id == "bookmark" } }

@@ -1,10 +1,10 @@
-// App shortcuts' rows of the offline Mac import ledger
-// (modules/app_shortcut_relink, Migration/relink.json). Synthetic records and
+// App shortcuts' rows of the relink ledger that an earlier Import from Mac
+// wrote (modules/app_shortcut_relink, Migration/relink.json). Synthetic records and
 // ledgers in NEW temporary app roots only; nothing is launched, inspected or
 // looked up by path or name.
 #include "modules/app_shortcut_relink.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -37,8 +37,8 @@ J executable(std::string path) { return J::Object{{"kind", "executable"}, {"appl
 J shellLink(std::string path) { return J::Object{{"kind", "shellLink"}, {"applicationKey", "path:synthetic-link"}, {"path", std::move(path)}}; }
 J packaged(std::string aumid) { return J::Object{{"kind", "packagedApp"}, {"applicationKey", "package:" + aumid}, {"appUserModelID", std::move(aumid)}}; }
 
-// One ledger row as the import writes it (core/migration/mac_import_native
-// validateStagedShortcuts): the record, its name and opaque Mac locator.
+// One ledger row as an earlier Mac import wrote it: the record, its name and
+// opaque Mac locator.
 mig::MacRelinkItem row(std::string_view store, std::string recordID, std::string name) {
     mig::MacRelinkItem item;
     item.id = ehud::data::makeUUID();item.store = std::string(store);item.recordID = std::move(recordID);

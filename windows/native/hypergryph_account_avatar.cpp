@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include "native/wic_orientation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -20,26 +21,18 @@ struct ComScope {
     ComScope() {const auto hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);owned=hr==S_OK||hr==S_FALSE;if(FAILED(hr)&&hr!=RPC_E_CHANGED_MODE) throw std::runtime_error("COM is unavailable for avatar decoding");}
     ~ComScope() {if(owned) CoUninitialize();}
 };
-WICBitmapTransformOptions orientation(IWICBitmapFrameDecode* frame) {
-    ComPtr<IWICMetadataQueryReader> reader;if(FAILED(frame->GetMetadataQueryReader(reader.GetAddressOf()))) return WICBitmapTransformRotate0;
+// The EXIF orientation 1...8 of the frame (1 when it has none).
+unsigned orientation(IWICBitmapFrameDecode* frame) {
+    ComPtr<IWICMetadataQueryReader> reader;if(FAILED(frame->GetMetadataQueryReader(reader.GetAddressOf()))) return 1;
     for(const wchar_t* query:{L"/app1/ifd/{ushort=274}",L"/ifd/{ushort=274}"}) {
         PROPVARIANT value;PropVariantInit(&value);
         if(SUCCEEDED(reader->GetMetadataByName(query,&value))) {
-            unsigned short o=value.vt==VT_UI2?value.uiVal:0;PropVariantClear(&value);
-            switch(o) {
-                case 2: return WICBitmapTransformFlipHorizontal;
-                case 3: return WICBitmapTransformRotate180;
-                case 4: return WICBitmapTransformFlipVertical;
-                case 5: return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90|WICBitmapTransformFlipHorizontal);
-                case 6: return WICBitmapTransformRotate90;
-                case 7: return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270|WICBitmapTransformFlipHorizontal);
-                case 8: return WICBitmapTransformRotate270;
-                default: return WICBitmapTransformRotate0;
-            }
+            const unsigned short o=value.vt==VT_UI2?value.uiVal:0;PropVariantClear(&value);
+            return o>=1&&o<=8?o:1;
         }
         PropVariantClear(&value);
     }
-    return WICBitmapTransformRotate0;
+    return 1;
 }
 }
 std::vector<std::uint8_t> downsampleAvatar(std::span<const std::uint8_t> encoded) {
@@ -60,11 +53,7 @@ std::vector<std::uint8_t> downsampleAvatar(std::span<const std::uint8_t> encoded
         ComPtr<IWICBitmapScaler> scaler;checked(wic->CreateBitmapScaler(scaler.GetAddressOf()),"Avatar scaler");
         checked(scaler->Initialize(frame.Get(),w,hgt,WICBitmapInterpolationModeHighQualityCubic),"Avatar downsample");source=scaler;
     }
-    const auto transform=orientation(frame.Get());
-    if(transform!=WICBitmapTransformRotate0) {
-        ComPtr<IWICBitmapFlipRotator> rotator;checked(wic->CreateBitmapFlipRotator(rotator.GetAddressOf()),"Avatar orientation");
-        checked(rotator->Initialize(source.Get(),transform),"Avatar orientation transform");source=rotator;
-    }
+    {ComPtr<IWICBitmapSource> upright;checked(orientWICSource(wic.Get(),source.Get(),orientation(frame.Get()),upright.GetAddressOf()),"Avatar orientation");source=upright;}
     ComPtr<IWICFormatConverter> converter;checked(wic->CreateFormatConverter(converter.GetAddressOf()),"Avatar conversion");
     checked(converter->Initialize(source.Get(),GUID_WICPixelFormat32bppBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),"Avatar pixel conversion");
     ComPtr<IStream> memory;checked(CreateStreamOnHGlobal(nullptr,TRUE,memory.GetAddressOf()),"Avatar output");

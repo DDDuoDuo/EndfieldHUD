@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <iostream>
@@ -62,6 +63,24 @@ struct Clipboard final : gpu::NotesClipboard {
     bool writeText(const gpu::NotesClipboardText& v) override { value = v; return true; }
 };
 std::string utf8(const std::filesystem::path& p) { const auto b = p.u8string(); return std::string(reinterpret_cast<const char*>(b.data()), b.size()); }
+// An injected movie engine (no decode, no sound): the real worker still of
+// the synthetic movie is the poster; play, pause and seek are recorded.
+struct MovieProbe { gpu::NativeNotesVideoPlayback::Notify notify; double position{}; bool playing{}, fresh{}; unsigned plays{}, seeks{}; };
+class MovieEngine final : public gpu::NativeNotesVideoPlayback::Engine {
+    std::shared_ptr<MovieProbe> p_;
+public:
+    explicit MovieEngine(std::shared_ptr<MovieProbe> p) : p_(std::move(p)) {}
+    ~MovieEngine() override { stop(); }
+    HRESULT open(const gpu::NotesVideoRequest&) override { p_->notify(gpu::NativeNotesVideoPlayback::ready | gpu::NativeNotesVideoPlayback::firstFrame, S_OK); return S_OK; }
+    HRESULT metadata(gpu::NotesVideoMetadata& out) override { out = {64, 64, 1.2}; return S_OK; }
+    HRESULT play() override { p_->playing = true; p_->fresh = true; ++p_->plays; return S_OK; }
+    HRESULT pause() override { p_->playing = false; return S_OK; }
+    HRESULT seek(double t) override { p_->position = t; ++p_->seeks; p_->fresh = true; p_->notify(gpu::NativeNotesVideoPlayback::seeked, S_OK); return S_OK; }
+    double currentTime() const override { return p_->position; }
+    HRESULT tick(std::int64_t& pts) override { pts = static_cast<std::int64_t>(p_->position * 10000000); if (!p_->fresh) return S_FALSE; p_->fresh = false; return S_OK; }
+    HRESULT transfer(void*, unsigned, unsigned) override { return S_OK; }
+    void stop() noexcept override { p_->playing = false; }
+};
 
 struct Harness {
     Window window;
@@ -72,8 +91,13 @@ struct Harness {
     gpu::LayerImageSource images{gpu::LayerImageSourceLimits{30, 48, 12 * 1024 * 1024}};
     app::UtilityExecutor utility{[] {}};
     std::unique_ptr<app::ArchiveService> service;
+    // failStills: the decoder cannot open a file (stills fail; an injected movie engine still opens).
+    std::atomic<bool> failStills{false};
+    std::atomic<unsigned> stillFailures{};
     std::unique_ptr<gpu::NativeNotesImageDecoder> decoder;
     std::unique_ptr<gpu::NativeNotesImagePlayback> playback;
+    std::vector<std::shared_ptr<MovieProbe>> probes;           // one per movie engine, in order
+    std::unique_ptr<gpu::NativeNotesVideoPlayback> video;      // movies: injected engines only
     std::unique_ptr<gpu::NativeMediaRequestBroker> broker;
     gpu::NativeMediaRequestBroker::Client client{};
     std::unique_ptr<tools::DesignOverlayOwner> overlay;
@@ -86,15 +110,24 @@ struct Harness {
     bool approve{true}, asked{};
     double time{};
     // nativeAuthentication: the host's setup (the Windows Hello / credential
-    // proof is built, never asked: no recovery runs here).
-    explicit Harness(const std::filesystem::path& shader, const std::filesystem::path& notesFormat, bool nativeAuthentication = false) {
-        renderer.initialize(window.hwnd, 1280, 800, {gpu::Driver::warpForTests, shader, gpu::RenderTarget::offscreenForTests});
+    // proof is built, never asked: no recovery runs here). movies: the broker
+    // gets video playback over injected engines (MovieEngine).
+    explicit Harness(const std::filesystem::path& shader, const std::filesystem::path& notesFormat, bool nativeAuthentication = false, bool movies = false) {
+        renderer.initialize(window.hwnd, 1280, 800, {gpu::Driver::warpForTests, shader, gpu::RenderTarget::offscreenForTests, movies});
         renderer.setCamera(gpu::layerViewportProjection(1280, 800));
         service = std::make_unique<app::ArchiveService>(temporary.root / "Archive", utility, gpu::nativeArchiveTextRules(), [] {}, std::make_shared<m::ArchiveMemoryPasswordVault>());
         const gpu::NotesImageRoute route{window.hwnd, mediaMessage, 1};
-        decoder = std::make_unique<gpu::NativeNotesImageDecoder>([](const gpu::NotesImageRequest& r) { return gpu::NotesImageAccess{std::filesystem::u8path(r.path), r.accessLease}; }, route);
+        decoder = std::make_unique<gpu::NativeNotesImageDecoder>([this](const gpu::NotesImageRequest& r) {
+            if (failStills) { ++stillFailures; throw std::runtime_error("Synthetic still failure"); }
+            return gpu::NotesImageAccess{std::filesystem::u8path(r.path), r.accessLease}; }, route);
         playback = std::make_unique<gpu::NativeNotesImagePlayback>(*decoder);
         broker = std::make_unique<gpu::NativeMediaRequestBroker>(*decoder, *playback, route);
+        if (movies) {
+            video = std::make_unique<gpu::NativeNotesVideoPlayback>(renderer, gpu::NotesVideoRoute{window.hwnd, mediaMessage, 1},
+                [this](std::shared_ptr<void>, gpu::NativeNotesVideoPlayback::Notify notify) -> std::unique_ptr<gpu::NativeNotesVideoPlayback::Engine> {
+                    auto p = std::make_shared<MovieProbe>(); p->notify = std::move(notify); probes.push_back(p); return std::make_unique<MovieEngine>(p); });
+            broker->connectVideoPlayback(*video);
+        }
         client = broker->attachClient();
         tools::DesignOverlayOptions oo; oo.raster.pixelsPerPoint = 2; oo.window = window.hwnd;
         overlay = std::make_unique<tools::DesignOverlayOwner>(raster, oo);
@@ -270,9 +303,19 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
         panel->setValue(d::Channel::opacity, 1); h.frame();
         check(h.owner->entries(core::Module::archive).size() == rest && h.owner->core().sceneStats(core::Module::archive)->groups == 0, "At rest the panel's parts draw directly");
     }
-    // The HUD session ends: the canvas discards its document and the media go.
-    h.owner->setOverlayVisible(false, h.time); h.settle(5);
-    h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(5);
+    // The HUD closes in the host's order (overlayClosing, frames, then the
+    // hidden HUD): through the close the page stays active and drawn with no
+    // input and its media stay; the hidden HUD ends the session, the canvas
+    // discards its document and the media go.
+    {
+        const auto posters = h.owner->media().posters();
+        h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(5);
+        check(canvas.isActive() && canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && !h.owner->capturesPointer()
+            && !h.owner->entries(core::Module::archive).empty() && h.owner->media().posters() == posters,
+            "Through the close the page stays active and drawn with its media, taking no input");
+    }
+    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(5);
+    check(!canvas.isActive(), "The hidden HUD leaves the page");
     check(!canvas.bodyArea() && h.owner->media().posters() == 0, "The closed HUD keeps no document editor or posters");
     std::printf("Archive owner: first showing %.1f ms | idle %.3f ms/frame | switch away %.1f ms, back %.1f ms (slowest frames) | %zu raster entries\n",
         first, idle / 60, away, back, h.raster.stats().entries);
@@ -284,28 +327,98 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
 // proof the host builds.
 void unseen(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
     Harness h(shader, notesFormat, true);
-    const auto closeHUD = [&] {
+    // overlayClosing, the close's frames, then the hidden HUD (no
+    // setOverlayVisible(false): the host never sends it on a close).
+    const auto closeHUD = [&](bool shown) {
         h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(30);
-        h.owner->setOverlayVisible(false, h.time); h.overlay->setOverlayVisible(false, h.time);
-        (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
+        if (shown) check(h.owner->canvas().isActive() && h.owner->canvas().bodyArea() && h.owner->state().active() && !h.owner->capturesPointer(),
+            "Through the close the shown Archive stays active with its document, taking no input");
+        (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
     };
     h.settle(20);
-    closeHUD();
+    closeHUD(false);
     check(!h.owner->canvas().bodyArea() && !h.owner->state().active(), "Closing before Archive was shown touches nothing");
     h.owner->setOverlayVisible(true, h.time); h.overlay->setOverlayVisible(true, h.time);
     h.modules.select(core::Module::archive, h.time); h.settle(40);
     check(h.owner->canvas().displayedPage().kind == m::ArchiveCanvas::PageKind::list, "A later opening shows the list");
     check(h.owner->canvas().performAccessibilityAction("new", h.time), "New after an unseen session");
     h.settle(20);
-    closeHUD();
-    check(!h.owner->canvas().bodyArea(), "The close after showing discards the document");
+    closeHUD(true);
+    check(!h.owner->canvas().bodyArea() && !h.owner->canvas().isActive(), "The hidden HUD after showing discards the document");
+}
+// Mac 815b343 with db7c5c0's media half: a movie playing when Archive is
+// switched away comes back paused where it was left, its frame seeked there
+// and no new play; a new HUD opening starts it again at zero, paused.
+void movieReturn(const std::filesystem::path& shader, const std::filesystem::path& notesFormat, const std::filesystem::path& movieFile) {
+    Harness h(shader, notesFormat, false, true);
+    auto& canvas = h.owner->canvas();
+    auto& media = h.owner->media();
+    const auto texture = [&](std::string_view part) { const auto f = media.frame(); return f && f->texture.find(part) != std::string::npos; };
+    const auto label = [&] { std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items); for (const auto& i : items) if (i.id == "mediaPlay") return i.label; return std::string{}; };
+    const auto away = [&] { h.modules.select(core::Module::power, h.time); h.settle(60); };
+    const auto back = [&] { h.modules.select(core::Module::archive, h.time); h.settle(10); };
+    h.modules.select(core::Module::archive, h.time); h.settle();
+    check(canvas.performAccessibilityAction("new", h.time), "New");
+    h.await("the created document", [&] { return canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::editor; });
+    const auto movie = h.temporary.root / "movie.mp4";
+    std::filesystem::copy_file(movieFile, movie);
+    const auto request = h.owner->dropRequest(h.time);
+    check(request.has_value(), "A drop on the open document is accepted");
+    const std::array files{tools::ArchiveMediaImportFile{utf8(movie), "movie.mp4", {}}};
+    check(h.owner->importFiles(*request, files, h.time), "The movie's import inspection starts");
+    h.await("the imported movie", [&] { return h.owner->state().selected()->media.size() == 1; });
+    check(h.owner->state().selected()->media[0]["kind"] == m::ArchiveJson("video"), "The import is a video");
+    h.await("the movie's still", [&] { return h.probes.size() == 1 && texture(".poster"); });
+    check(!media.playing() && h.probes[0]->plays == 0, "The movie opens paused");
+    check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play is an accessible control");
+    h.await("the playing movie", [&] { return media.playing() && h.probes[0]->playing; });
+    h.probes[0]->position = .6; h.settle(5);
+    away();
+    check(!canvas.isActive() && !media.playing() && !h.probes[0]->playing, "Switched away, the movie is paused and its engine stopped");
+    check(!media.frame(), "A second after the leave the movie's poster and the binding's copy of its still are released");
+    back();
+    h.await("the returned movie's seek", [&] { return h.probes.size() == 2 && h.probes[1]->seeks == 1; });
+    h.await("the seeked frame", [&] { return texture(".live"); });
+    h.settle(10);
+    check(canvas.isActive() && !media.playing() && !h.probes[1]->playing && h.probes[1]->plays == 0 && std::abs(h.probes[1]->position - .6) < 1e-9
+        && std::abs(media.currentTime() - .6) < 1e-9 && label() == "Play", "Back, the movie shows its frame where it was left, paused, with Play");
+    // The HUD closes and opens again: a new presentation at zero, paused.
+    h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(10);
+    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
+    const auto engines = h.probes.size();
+    h.owner->setOverlayVisible(true, h.time); h.overlay->setOverlayVisible(true, h.time);
+    away(); back();
+    h.await("the next opening's Archive", [&] { return canvas.isActive() && h.owner->state().active() && canvas.displayedPage().kind != m::ArchiveCanvas::PageKind::locked; });
+    h.settle(30);
+    // The stored selection may open the document at once; from the list its tile does.
+    if (canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::list)
+        check(canvas.performAccessibilityAction("doc:" + h.owner->state().entries().front().id, h.time), "The tile opens its document again");
+    h.await("the reopened movie's still", [&] { return canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::editor && h.probes.size() == engines + 1 && texture(".poster"); });
+    h.settle(10);
+    check(!media.playing() && h.probes.back()->seeks == 0 && h.probes.back()->plays == 0 && media.currentTime() == 0, "A new HUD opening shows the movie at zero, paused");
+    // A still that fails on the return while the movie itself is fine does not
+    // block the movie (NotesMedia.swift:370-371).
+    check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play the reopened movie");
+    h.await("the reopened movie playing", [&] { return media.playing() && h.probes.back()->playing; });
+    h.probes.back()->position = .6; h.settle(5);
+    away();
+    h.failStills = true;
+    back();
+    h.await("the movie's return without its still", [&] { return h.probes.size() == engines + 2 && h.probes.back()->seeks == 1; });
+    h.settle(10);
+    check(h.stillFailures > 0 && !texture(".poster"), "The returned movie's still fails");
+    check(!media.playing() && h.probes.back()->plays == 0, "The movie whose still failed comes back paused where it was left");
+    check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play is pressed");
+    h.await("the movie playing without its still", [&] { return media.playing() && h.probes.back()->playing && h.probes.back()->plays == 1; });
+    h.failStills = false;
 }
 int wmain(int argc, wchar_t** argv) {
     const auto hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
-        check(SUCCEEDED(hr) && argc == 3, "Pass the shader and resources/notes-format");
+        check(SUCCEEDED(hr) && argc == 4, "Pass the shader, resources/notes-format and the synthetic movie");
         run(argv[1], argv[2]);
         unseen(argv[1], argv[2]);
+        movieReturn(argv[1], argv[2], argv[3]);
         CoUninitialize();
         std::cout << "PASS " << checks << " Archive owner checks\n";
         return 0;

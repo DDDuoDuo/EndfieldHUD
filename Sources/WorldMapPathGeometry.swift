@@ -106,7 +106,10 @@ final class WorldMapPathGeometry {
         if let index = levels.firstIndex(where: { $0.0 == tolerance }) {
             let hit = levels.remove(at: index); levels.append(hit); return hit.1
         }
-        let simplified = rings.map { ring -> Ring in
+        let simplified = rings.compactMap { ring -> Ring? in
+            // A closed feature narrower than the tolerance covers under a third
+            // of a pixel at this level: skip it here; closer levels draw it.
+            if ring.closed && max(ring.bounds.width, ring.bounds.height) < tolerance { return nil }
             guard ring.points.count > 8 else { return ring }
             let result: [CGPoint]
             if ring.closed {

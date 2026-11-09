@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-// Actual-source oracle of the redesigned App Shortcuts screen (Mac 1.3.0 Sources/AppShortcutCanvas.swift,
+// Actual-source oracle of the redesigned App Shortcuts screen (Mac 1.3.1 Sources/AppShortcutCanvas.swift,
 // AppShortcutArtwork.swift and HUDSourceDesktopNavigationLayout.swift's HUDSourceDesktopIconLayout) with the
 // real AppShortcutStore over synthetic application bundles in the temporary home. Exported:
 //  - "presets": every preset's tile artwork exactly as AppShortcutCanvas.artwork places it (the trimmed raster
@@ -10,8 +10,9 @@ import QuartzCore
 //    resources/app-shortcut set) with its pixel size, frame and localized titles;
 //  - "glyphFrames": HUDSourceDesktopIconLayout.glyphFrame samples; "trim": HUDSourceDesktopIconLayout.image of
 //    synthetic icons and AppShortcutCanvas.averageColor of a deterministic 96 x 96 icon;
-//  - "states": the canvas (empty, list, hover, icon menu, drop target, Light, zh-Hans, unavailable store, an
-//    added app revealing the end of a long list) as its model layer tree, controls, accessibility items,
+//  - "states": the canvas (empty, list, hover, icon menu, the grip's item menu, drop target, Light, zh-Hans,
+//    unavailable store, an added app revealing the end of a long list, a Move down from the item menu) as its
+//    model layer tree, controls, accessibility items,
 //    header, toast and confirm request, with the scenario INPUT (records, presets, icon presence and the
 //    tile colours the Mac computed from the system icons, which the Windows suite injects).
 // Isolation: temporary CFFIXED_USER_HOME; synthetic .app bundles there (never launched; LaunchServices is
@@ -190,6 +191,10 @@ private func application(_ root: URL, _ name: String, identifier: String) throws
         menuTile.onActivate?()
         try record(canvas, reloaded, context, state: "iconMenu", extra: ["menuFor": saved[1].id.uuidString])
         canvas.closeMenu()
+        // The grip's item menu (Change icon / Move up / Move down / Remove).
+        canvas.gripForTesting(saved[1].id)?.onActivate?()
+        try record(canvas, reloaded, context, state: "itemMenu", extra: ["menuFor": saved[1].id.uuidString])
+        canvas.closeMenu()
         canvas.setDropTarget(true)
         try record(canvas, reloaded, context, state: "dropTarget")
         canvas.setDropTarget(false)
@@ -221,6 +226,15 @@ private func application(_ root: URL, _ name: String, identifier: String) throws
         _ = canvas.importURLs([added, apps.appendingPathComponent("Alpha.app")])
         try record(canvas, reloaded, context, state: "twoApps")
         context.overlay.clearToast()
+        // Move down from the item menu of the long list's second-last row: one store move, then the
+        // list, the right-hand order (onReordered) and the moved row in view.
+        var reordered = 0
+        canvas.onReordered = { reordered += 1 }
+        let moving = canvas.items[canvas.items.count - 2].id
+        canvas.gripForTesting(moving)?.onActivate?()
+        let down = canvas.accessibilityItems.first { $0.label == L10n.text("Move down", "下移") }!
+        canvas.performAccessibilityAction(down.id)
+        try record(canvas, reloaded, context, state: "movedDown", extra: ["moved": moving.uuidString, "reordered": reordered])
         canvas.setActive(false)
         payload["states"] = states
         payload["text"] = ["widths": Array(recorder.widths.values), "metrics": Array(recorder.metrics.values)]

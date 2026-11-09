@@ -55,6 +55,8 @@ std::pair<std::size_t,std::size_t>boundary(std::string_view s,std::size_t maximu
     while(count<maximum){const auto next=ubrk_next(b.p);if(next==UBRK_DONE)return {count,s.size()};end=next;++count;}
     return {count,static_cast<std::size_t>(end)};
 }
+// CharacterSet.controlCharacters: General Categories Cc and Cf.
+bool control(UChar32 c){const auto t=u_charType(c);return t==U_CONTROL_CHAR||t==U_FORMAT_CHAR;}
 bool anyScalar(std::u16string_view v,bool(*test)(UChar32)){
     for(int32_t n=0;n<static_cast<int32_t>(v.size());){UChar32 c{};U16_NEXT(reinterpret_cast<const UChar*>(v.data()),n,static_cast<int32_t>(v.size()),c);if(test(c))return true;}
     return false;
@@ -73,8 +75,12 @@ modules::ProfileTextRules nativeProfileTextRules(){
         return utf8(std::u16string_view(v).substr(begin,end-begin));
     };
     rules.removeNewlines=[](std::string_view s){auto v=utf16(s);v.erase(std::remove_if(v.begin(),v.end(),newline),v.end());return utf8(v);};
-    // CharacterSet.controlCharacters: General Categories Cc and Cf.
-    rules.hasControl=[](std::string_view s){return anyScalar(utf16(s),[](UChar32 c){const auto t=u_charType(c);return t==U_CONTROL_CHAR||t==U_FORMAT_CHAR;});};
+    rules.hasControl=[](std::string_view s){return anyScalar(utf16(s),control);};
+    rules.removeControl=[](std::string_view s){
+        const auto v=utf16(s);std::u16string out;out.reserve(v.size());
+        for(int32_t n=0;n<static_cast<int32_t>(v.size());){const auto start=n;UChar32 c{};U16_NEXT(reinterpret_cast<const UChar*>(v.data()),n,static_cast<int32_t>(v.size()),c);if(!control(c))out.append(v.substr(start,n-start));}
+        return utf8(out);
+    };
     rules.hasWhitespace=[](std::string_view s){const auto v=utf16(s);return std::any_of(v.begin(),v.end(),[](char16_t c){return whitespace(c)||newline(c);});};
     // String.uppercased(): locale-independent full case mapping.
     rules.uppercase=[](std::string_view s){

@@ -209,7 +209,7 @@ final class ProjectionCanvas: HUDDesignCanvas {
 
     private func confirmClear() {
         confirm(HUDConfirmRequest(id: "projectionClear", title: L10n.text("Clear the projection canvas?", "清空投影画布？"),
-                                  message: L10n.text("Source files stay intact.", "源文件保持不变。"),
+                                  message: L10n.text("Source files stay intact", "源文件保持不变"),
                                   confirmTitle: L10n.text("Clear all", "全部清除"), danger: true, icon: .trash)) { [weak self] in
             guard let self else { return }
             self.settings.clearDrawing()

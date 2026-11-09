@@ -11,6 +11,7 @@
 #include "packaging/update_check.hpp"
 #include "packaging/update_fixture.hpp"
 #include "packaging/updater.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -392,18 +393,26 @@ void texts() {
             u::Detail d{k, {}, "1.2.1 (19)", 28835840};
             const auto text = u::detailText(d, l);
             check(!text.empty() && text.find('{') == std::string::npos, "Detail texts in every language");
+            check(endfield::tests::followsInterfaceTextRules(text), "Detail texts have no final full stop and no dot separator");
             if (k == K::downloadPrompt) check(text.find("1.2.1 (19)") != std::string::npos && text.find("27.5 MB") != std::string::npos, "Download prompt names version and size");
         }
         check(!u::automaticChecksTitle(l).empty(), "Daily-check label in every language");
+        for (auto p = 0; p <= static_cast<int>(u::Phase::failed); ++p)
+            check(endfield::tests::followsInterfaceTextRules(u::phaseTitle(static_cast<u::Phase>(p), l)), "Phase titles have no final full stop and no dot separator");
+        for (auto e = 0; e <= static_cast<int>(u::CheckErrorKind::cancelled); ++e) {
+            const u::Detail d{K::checkError, {static_cast<u::CheckErrorKind>(e), 503, 1.9e9}, {}, 0};
+            check(endfield::tests::followsInterfaceTextRules(u::detailText(d, l)), "Check errors have no final full stop and no dot separator");
+        }
+        check(endfield::tests::followsInterfaceTextRules(u::automaticChecksTitle(l)), "The daily-check label has no final full stop and no dot separator");
     }
     check(u::detailText({}, Language::english).empty(), "No detail");
     // Mac HUDUpdateState/HUDUpdateController texts (catalog entries).
     check(u::phaseTitle(u::Phase::idle, Language::english) == "Not checked yet" && u::phaseTitle(u::Phase::failed, Language::simplifiedChinese) == "检查失败，请重试" &&
           u::phaseTitle(u::Phase::ready, Language::japanese) == "更新準備完了", "Mac phase titles");
     u::Detail error{K::checkError, {u::CheckErrorKind::rateLimited, 0, {}}, {}, 0};
-    check(u::detailText(error, Language::english) == "GitHub is limiting requests. Try again later.", "Mac rate-limit text");
+    check(u::detailText(error, Language::english) == "GitHub is limiting requests. Try again later", "Mac rate-limit text");
     error.error.kind = u::CheckErrorKind::httpStatus;
-    check(u::detailText(error, Language::english) == "Could not check GitHub. Check your connection and retry.", "Mac generic check error");
+    check(u::detailText(error, Language::english) == "Could not check GitHub. Check your connection and retry", "Mac generic check error");
     u::UpdateState s;
     check(u::trayTitle(s, Language::english) == "Check for Updates…", "Tray title idle");
     s.phase = u::Phase::checking;
@@ -556,7 +565,7 @@ void controller() {
         // The upgraded run (Setup restarted EndfieldHUD 1.2.1 (19)).
         auto next = started(h, {1, 2, 1, 19});
         check(next->state().phase == u::Phase::current && next->state().detail.kind == u::Detail::Kind::updated && next->state().detail.value == "1.2.1 (19)" &&
-              u::detailText(next->state().detail, Language::english) == "Updated to 1.2.1 (19).", "The next run reports the update");
+              u::detailText(next->state().detail, Language::english) == "Updated to 1.2.1 (19)", "The next run reports the update");
         h.settle(*next);
         check(h.state()["handoff"].isNull() && !fs::exists(h.folder / setupName), "The resolved hand-off leaves nothing behind");
     }

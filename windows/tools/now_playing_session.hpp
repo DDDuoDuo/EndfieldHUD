@@ -8,8 +8,8 @@
 namespace endfield::tools {
 struct NowPlayingSessionOptions {
     // A fixed-size decoder (tests, the acceptance probe), or `decodeAt`, which
-    // decodes at the size the canvas draws the cover (production:
-    // native::decodeNowPlayingCover; setArtworkPixels names the size).
+    // decodes for the slot the canvas draws the cover in (production:
+    // native::decodeNowPlayingCover; setArtworkPixels names the slot).
     native::NativeNowPlayingArtwork::Decoder decode{native::decodeNowPlayingImage};
     native::NativeNowPlayingArtwork::SizedDecoder decodeAt;
     // Public LRCLIB/NetEase lookups and catalog covers. Null mirrors the source's
@@ -64,6 +64,8 @@ public:
     const modules::NowPlayingViewInput&input()const noexcept;
     std::uint64_t inputRevision()const noexcept;
     std::shared_ptr<const native::NotesImageFrame>artwork()const noexcept;
+    // The presented cover with the backdrop of a small one (the canvas's art).
+    modules::NowPlayingCoverArt coverArt()const noexcept;
     native::NativeNowPlayingArtwork::Stats artworkStats()const;
     bool optimisticSeek()const noexcept;
     // Route currently driving the volume submenu (empty when unavailable).
@@ -71,10 +73,12 @@ public:
     const modules::NowPlayingLyricsSources&lyricsSources()const noexcept;
     NowPlayingSessionMemory memory()const;
     // controller.artworkPixelSize (MODS-332/353): the cover slot's drawn
-    // pixels. Decodes follow it (the shown cover stays until its re-decode is
-    // ready) and catalog downloads ask for nowPlayingCatalogCoverPixels of it.
-    void setArtworkPixels(unsigned);
-    unsigned artworkPixels()const noexcept;
+    // pixels (modules::NowPlayingCoverSlot: the layout size and the decode
+    // headroom). Decodes follow it (the shown cover stays until its re-decode
+    // is ready) and catalog downloads ask for nowPlayingCatalogCoverPixels of
+    // its decode size.
+    void setArtworkPixels(modules::NowPlayingCoverSlot);
+    modules::NowPlayingCoverSlot artworkPixels()const noexcept;
     // While inactive: keeps only the presented cover (its warm reopen) and
     // drops the other decoded thumbnails and the recent compressed covers
     // (the disk cache answers those). true when something was released.

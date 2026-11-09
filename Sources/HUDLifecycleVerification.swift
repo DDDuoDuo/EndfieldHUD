@@ -236,7 +236,7 @@ enum HUDLifecycleVerification {
             check(host.legacyArtworkLayerCountForVerification == 0,
                   "The source shell retains no hidden legacy mechanical artwork or texture variants")
             var appearanceChange = configuration
-            appearanceChange.applicationIcon = configuration.applicationIcon == .endfield ? .battery : .endfield
+            appearanceChange.applicationIcon = configuration.applicationIcon == .endfield ? .watch : .endfield
             host.set(snapshot: snapshot, configuration: appearanceChange)
             check(host.legacyProgressHiddenForVerification, "Changing the menu icon cannot reveal a retired native ring")
             host.set(snapshot: snapshot, configuration: configuration)

@@ -1,9 +1,9 @@
 #pragma once
 // Settings on the redesign: the port of Sources/HUDSettingsCanvas.swift
 // (HUDSettingsCanvas, HUDIconTile) over the shared design library
-// (modules/hud_design_page.hpp). Four canvases (System with its Modules page,
-// Display with its Battery alert and App icon pages, Hotkeys, About with its
-// Credits page) share one SettingsController (modules/settings.hpp), which
+// (modules/hud_design_page.hpp). Four canvases (System, Display with its
+// Modules, HUD elements, Battery alert and App icon pages, Hotkeys, About
+// with its Credits page) share one SettingsController (modules/settings.hpp), which
 // keeps the preference transactions; this canvas presents and edits them.
 //
 // What stays on the host side (tools/settings_preview.hpp): the platform
@@ -14,12 +14,11 @@
 // change notification out to the four canvases.
 //
 // Windows additions, restyled in the library's rows (no Mac counterpart):
-// System > "Import macOS data…" (the macImport area's nav row, shown while
-// its title hook returns one); the Display menu lists Windows monitors by
-// their persistent id (windowsDisplayID / windowsDisplayName instead of the
-// Mac's hudDisplayUUID / hudDisplayName); the About update row and toggle are
-// the windowsUpdates area's (SettingsUpdateStatus: its toggle title, whether a
-// check or the toggle is available). Shortcut keycaps name the Windows
+// the Display menu lists Windows monitors by their persistent id
+// (windowsDisplayID / windowsDisplayName instead of the Mac's hudDisplayUUID /
+// hudDisplayName); the About update row and toggle are the windowsUpdates
+// area's (SettingsUpdateStatus: its toggle title, whether a check or the
+// toggle is available). Shortcut keycaps name the Windows
 // modifiers (CTRL, ALT, SHIFT, WIN) in that order.
 //
 // Deliberately not here (Mac 1.3.0 removed them): the System "Battery alerts"
@@ -50,14 +49,19 @@ struct SettingsCanvasHooks {
     // HUDSettingsInteraction: the colour wheel (seeded with the current
     // accent), the logo import panel, and a preset pick that cancels an import.
     std::function<void()> chooseColor,chooseLogo,logoSelection;
+    // onEditOverlay: Display > HUD elements > Edit position and size places
+    // the HUD's title, Sanity gauge and alert tags on the HUD itself (the
+    // host's app/hud_elements_editor). Unset, the row does nothing.
+    std::function<void()> editOverlay;
+    // onArrangeModules: Display > Modules > Arrange on HUD turned on or off
+    // (only real changes): the HUD's right-hand module buttons are dragged to
+    // reorder while it is on.
+    std::function<void(bool)> arrangeModules;
     // The logo as the centre shows it, fitted into `fitting` (logoArtwork:
     // presets by id, "custom" with its revision); nullopt while it is not
     // decoded yet or unreadable (the tile stays empty, the field shows the
     // title). The host calls SettingsCanvas::artworkChanged when one arrives.
     std::function<std::optional<SettingsLogoImage>(std::string_view logo,std::string_view revision,design::Size fitting)> logoArtwork;
-    // Windows only: System > Import macOS data… (title in a language, or none).
-    std::function<std::optional<std::string>(core::Language)> macImportTitle;
-    std::function<void()> macImport;
     // The language the host applies with a record (its next appearance, the
     // overlay's Context first): a change of it re-renders the shown page once,
     // in that language, when it arrives, instead of first in the old one.
@@ -94,7 +98,14 @@ public:
     void showImportError(std::string);
     bool capturingShortcut()const noexcept;
     void cancelCapture();
-    std::string_view section()const noexcept;  // "main", "battery", "icons", "credits", "modules" (tests)
+    std::string_view section()const noexcept;  // "main", "overlay", "battery", "icons", "credits", "modules" (tests)
+    // Display > Modules > Arrange on HUD (isArrangingModules): never saved;
+    // it turns off on Back, on leaving the page or the HUD, and in buildPage
+    // whenever the section is not Modules.
+    bool arrangingModules()const noexcept{return arranging_;}
+    // previewModuleOrder: the rows follow a drag on the HUD (`order`) and
+    // return to the saved order with nullopt, when it drops or is cancelled.
+    void previewModuleOrder(std::optional<std::vector<std::string>> order);
     // Keycap labels: CTRL, ALT, SHIFT, WIN, then the key (HUDSettingsCanvas.keycaps).
     static std::vector<std::string> keycaps(SettingsShortcut);
 
@@ -102,6 +113,9 @@ public:
     void didActivate()override;
     void didDeactivate()override;
     void willLeave()override{didDeactivate();}
+    // makeContent (:108-112): a page left on a sub-page shows the page it
+    // returned to with the entrance (built before it plays).
+    void show(double now)override;
     // A new HUD session (the Mac's new HUDSettingsCanvas, :19): the main
     // page, also after Display > Battery alert (kept across module switches).
     void resetSession()override;
@@ -114,10 +128,14 @@ public:
     std::optional<double> nextWakeTime(double)const override;
     void wake(double)override;
 private:
-    enum class Section:std::uint8_t{main,battery,icons,credits,modules};
+    enum class Section:std::uint8_t{main,overlay,battery,icons,credits,modules};
     struct Structure {
         Section section;core::Language language;std::string languageSetting;std::vector<SettingsDisplay> displays;
-        bool capturing;std::string icon,accent;SettingsUpdatePhase updatePhase;std::string latest;
+        // About's update phase and latest version bind in place (the Mac keys
+        // them here; Windows checks as the HUD opens, so a result that lands
+        // during the entrance would rebuild the page): only whether the latest
+        // release has a link changes the page.
+        bool capturing;std::string icon,accent;bool releaseLink;
         bool operator==(const Structure&)const=default;
     };
     struct ModuleRow {design::RowPlate* plate;design::DragGrip* grip;design::Layer* glyph;design::Toggle* toggle;design::IconButton* up;design::IconButton* down;double top;};
@@ -138,17 +156,33 @@ private:
     std::map<std::string,ModuleRow,std::less<>> moduleRows_;
     design::ScrollArea* modulesScroll_{};
     std::optional<Drag> moduleDrag_;
+    bool arranging_{};design::Toggle* arrangeToggle_{};
+    // The order a drag on the HUD previews; the rows follow it until the drop.
+    std::optional<std::vector<std::string>> previewedModuleOrder_;
     const ehud::data::Settings& config()const noexcept{return controller_->configuration();}
     template<class F> void update(F&& mutation);
     Structure structure()const;
     std::optional<std::string> currentStatus()const;
     void updateLayoutPrompt();
     void go(Section,bool forward);
-    void buildSystem(design::Page&);void openDisplayMenu(const design::Control&);void confirmRestore();
+    void buildSystem(design::Page&);void openDisplayMenu(const design::Control&);
+    // restoreCopy / restoreRow / confirmRestore (:243-291): what a scoped
+    // Restore row is called, what its confirm says it resets and keeps, and
+    // the toast after it (the English / Simplified pair the toast localizes).
+    struct RestoreCopy {std::string id,title,question,message;std::string_view toastEnglish,toastChinese;};
+    RestoreCopy restoreCopy(ehud::data::SettingsScope)const;
+    design::RowPlate& restoreRow(ehud::data::SettingsScope,design::Page&);
+    void confirmRestore(ehud::data::SettingsScope);
     std::string modulesCount()const;
+    design::RowPlate& modulesRow(design::Page&);
+    void setArrangingModules(bool);
     void buildModules(design::Page&);void renderModuleStates();void layoutModuleRows(const std::vector<std::string>&order,bool animated);
     void moveModule(const std::string&,int offset);void dragModule(const std::string&,design::DragGrip::Phase,design::Point);void confirmModulesReset();
-    void buildDisplay(design::Page&);void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);
+    design::RowPlate& openModuleRow(design::Page&);std::string openModuleTitle(const std::optional<std::string>&)const;void openModuleMenu(const design::Control&);
+    void buildDisplay(design::Page&);
+    void buildOverlay(design::Page&);
+    design::RowPlate& overlayTextRow(const std::string& id,const std::string& title,std::string_view placeholder,std::string ehud::data::OverlayLayout::* member,design::Page&);
+    void confirmFacilityOff(std::function<void()> commit);void stagePosition(std::optional<double>x,std::optional<double>y,bool final);
     design::RowPlate& paletteRow(design::Page&);
     void buildBattery(design::Page&);std::string shownDisplayMode()const;
     design::RowPlate& logoRow(design::Page&);void openLogoMenu(const design::Dropdown&);
@@ -171,7 +205,9 @@ private:
     design::RowPlate& valueRow(const std::string& id,const std::string& title,const std::string& value,design::Page&);
     design::Readout& spokenValue(const std::string& id,design::RowPlate&,const std::string& value,design::Page&);
     design::Layer& readout(design::Page&,const std::string& id,const std::string& value);
+    void setReadout(design::Layer&,const std::string& value);
     design::IconButton& linkButton(design::Page&,const std::string& id,const std::string& label,const std::string& url);
+    void setLink(design::IconButton&,const std::string& url);
     std::string languageTitle(std::string_view)const;std::string themeTitle(std::string_view)const;std::string methodTitle(std::string_view)const;
     std::string placementTitle(std::string_view)const;std::string clockStyleTitle(std::string_view)const;std::string metricTitle(std::string_view)const;
     std::string logoTitle(std::string_view)const;std::string displaySelectionTitle()const;std::string iconTitle(std::string_view id,const std::string& english)const;

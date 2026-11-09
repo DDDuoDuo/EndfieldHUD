@@ -97,6 +97,10 @@ final class HUDHazardStripes {
 final class HUDFacilityBanner {
     static let size = CGSize(width: 540, height: 70)
     static let lifetime: TimeInterval = 5
+    /// The leave's track, and the drop and unfold of a banner still
+    /// arriving, which the HUD's close keeps so a banner already leaving
+    /// finishes inside it and one arriving does not snap open first.
+    static let leaveKeys: Set<String> = ["hud.leave", "hud.enter", "hud.unfold"]
 
     let layer = HUDLayer.plain("facility.banner")
     let env: HUDDesignEnvironment
@@ -268,7 +272,10 @@ final class HUDFacilityBanner {
     /// the next queued alert, or idle.
     private func leave(animated: Bool) {
         guard isShowing, !leaving else {
-            if leaving, !animated { finishLeaving() }
+            // A leave whose motion a cancel stripped ends now instead of
+            // showing the plate again until its removal. The HUD's close keeps
+            // the motion (leaveKeys), so a leave it catches finishes inside it.
+            if leaving, !animated || plate.animation(forKey: "hud.leave") == nil { finishLeaving() }
             return
         }
         leaving = true

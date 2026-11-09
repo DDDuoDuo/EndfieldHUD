@@ -78,15 +78,6 @@ final class HUDProjectedTextEditor: NSView {
         for name in [NSText.didChangeNotification, NSTextView.didChangeSelectionNotification] {
             observers.append(center.addObserver(forName: name, object: textView, queue: .main) { [weak self] _ in self?.invalidateArtwork() })
         }
-        // The caret shows only in the key window (as AppKit's does): it hides
-        // when the HUD loses focus or closes, and shows again when it returns.
-        if let window = host.window {
-            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-                observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    self?.refreshCaret(restartBlink: true)
-                })
-            }
-        }
         observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification,
             object: scrollView.contentView, queue: .main) { [weak self] _ in
                 self?.invalidateArtwork(); self?.refreshProjection(); self?.scrollBar.noteScroll()
@@ -94,15 +85,38 @@ final class HUDProjectedTextEditor: NSView {
         invalidateArtwork()
     }
     required init?(coder: NSCoder) { nil }
-    deinit { observers.forEach(NotificationCenter.default.removeObserver); artwork.removeFromSuperlayer() }
+    deinit {
+        (observers + windowObservers).forEach(NotificationCenter.default.removeObserver); artwork.removeFromSuperlayer()
+    }
+    /// The caret shows only in the key window (as AppKit's does): it hides
+    /// when the HUD loses focus or closes, and shows again when it returns.
+    /// An editor built before its HUD is in a window (the opening module)
+    /// starts watching once it reaches one.
+    private var windowObservers: [NSObjectProtocol] = []
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        windowObservers.forEach(NotificationCenter.default.removeObserver); windowObservers.removeAll()
+        guard !disposed, let window else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                self?.refreshCaret(restartBlink: true)
+            })
+        }
+        refreshCaret(restartBlink: true)
+    }
 
-    func dispose() {
+    /// `keepingArtwork`: the last drawn text stays on the plane (no caret) to
+    /// leave with its page; the owner removes `artwork` (deinit also does).
+    func dispose(keepingArtwork: Bool = false) {
         guard !disposed else { return }; disposed = true
-        observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
-        textView.projectionOwner = nil; glyphs.contents = nil; retainedPixelCount = 0
+        (observers + windowObservers).forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll(); windowObservers.removeAll()
+        textView.projectionOwner = nil
+        if !keepingArtwork { glyphs.contents = nil; retainedPixelCount = 0 }
         caret.removeAllAnimations(); caret.isHidden = true; scrollBar.reset()
         (scrollView as? HUDProjectedTextScrollView)?.projectedFrame = nil
-        artwork.removeFromSuperlayer(); scrollView.removeFromSuperview(); removeFromSuperview()
+        if !keepingArtwork { artwork.removeFromSuperlayer() }
+        scrollView.removeFromSuperview(); removeFromSuperview()
     }
     func setAppearance(background: NSColor, border: NSColor, radius: CGFloat = 3) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -336,7 +350,11 @@ class HUDProjectedTextView: NSTextView {
         }
         let glyph = manager.glyphIndexForCharacter(at: atEnd ? text.length - 1 : index)
         let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let x = atEnd ? manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).maxX
+        // At the end the caret follows the last glyph's advance (where the
+        // line's used rect ends), not its drawn bounds: in a line shorter than
+        // the face (the notes' fixed line height) TextKit widens those to the
+        // whole font box, about 2 em past a CJK glyph in Noto Sans.
+        let x = atEnd ? manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).maxX
             : line.minX + manager.location(forGlyphAt: glyph).x
         return CGRect(x: min(x, line.maxX - width) + origin.x, y: line.minY + origin.y, width: width, height: line.height)
     }

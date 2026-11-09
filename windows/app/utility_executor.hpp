@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace endfield::app {
 // One app-owned queue for short, bounded file work. No module owns a polling
@@ -61,4 +62,8 @@ public:
 private:
     struct Impl;std::shared_ptr<Impl>impl_;
 };
+// The host's second executor (area service directory, exact type
+// UtilityExecutor) for work that may wait long: Media Assembly exports and the
+// Windows account read. Absent: callers use the shared executor.
+inline constexpr std::string_view longWorkExecutorKey="app.longWorkExecutor";
 }

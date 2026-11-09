@@ -138,6 +138,9 @@ Profile decodeProfile(const Json& object) {
     profile.backgroundWidth=fallbackReal("backgroundWidth",600);profile.backgroundZoom=fallbackReal("backgroundZoom",1);
     profile.backgroundOffsetX=fallbackReal("backgroundOffsetX",0);profile.backgroundOffsetY=fallbackReal("backgroundOffsetY",0);
     profile.thumbnailZoom=fallbackReal("thumbnailZoom",1);profile.thumbnailOffsetX=fallbackReal("thumbnailOffsetX",0);profile.thumbnailOffsetY=fallbackReal("thumbnailOffsetY",0);
+    // Cards saved before issue #17 follow the account only while they still
+    // carry the default name (the name as stored); nothing is rewritten here.
+    profile.autoName=flag("autoName",profile.name==Profile::defaultName);profile.autoAvatar=flag("autoAvatar",true);
     return profile;
 }
 void validateProfile(const Profile& profile) {
@@ -172,11 +175,15 @@ Json encodeProfile(const Profile& profile) {
     number(object,"avatarZoom",profile.avatarZoom);number(object,"avatarOffsetX",profile.avatarOffsetX);number(object,"avatarOffsetY",profile.avatarOffsetY);
     number(object,"backgroundWidth",profile.backgroundWidth);number(object,"backgroundZoom",profile.backgroundZoom);number(object,"backgroundOffsetX",profile.backgroundOffsetX);number(object,"backgroundOffsetY",profile.backgroundOffsetY);
     number(object,"thumbnailZoom",profile.thumbnailZoom);number(object,"thumbnailOffsetX",profile.thumbnailOffsetX);number(object,"thumbnailOffsetY",profile.thumbnailOffsetY);
-    number(object,"accumulatedWorkSeconds",profile.accumulatedWorkSeconds);return object;
+    number(object,"accumulatedWorkSeconds",profile.accumulatedWorkSeconds);
+    object["autoName"]=profile.autoName;object["autoAvatar"]=profile.autoAvatar;return object;
 }
 void validateSettings(const Settings& value) {
     require(value.fields.isObject(),"Invalid settings object");const auto defaults=Settings::defaults();
     for(const auto& [key,expected]:defaults.fields.object()) {
+        // A 1.3.1 key is read by its typed accessor (a wrong type is its
+        // default), never rejected with the whole file.
+        if(key=="showsCloseHint") continue;
         const auto& actual=value.fields[key];
         require(expected.isNull() || (expected.isString()&&actual.isString()) || (expected.isNumber()&&actual.isNumber()) ||
             (expected.isBool()&&actual.isBool()) || (expected.isObject()&&actual.isObject()),"Invalid setting value type");
@@ -206,6 +213,29 @@ std::vector<std::string> strings(const Json& value) {
 }
 bool configurableModule(std::string_view name) {return std::find(ModuleLayout::configurable.begin(),ModuleLayout::configurable.end(),name)!=ModuleLayout::configurable.end();}
 bool contains(const std::vector<std::string>& list,std::string_view name) {return std::find(list.begin(),list.end(),name)!=list.end();}
+// AppConfiguration.normalized's chargeBarLength: finite and above 0 becomes
+// min(1, v); anything else (another JSON type too) is nil.
+std::optional<double> barLength(double length) {
+    if(!std::isfinite(length)||length<=0) return std::nullopt;
+    return std::min(1.,length);
+}
+std::optional<double> barLength(const Json& value) {return value.isNumber()?barLength(value.number()):std::nullopt;}
+// The record as Mac ConfigurationStore.update writes it, on every save of any
+// setting (never on load): chargeBarLength normalized, or removed when nil;
+// showsCloseHint as the Boolean read. Both the file and the store's value
+// hold the result.
+Settings saved(Settings value,const CharacterPrefix& characters) {
+    // ConfigurationStore.update writes applicationIcon's raw value, so a
+    // retired "battery" read as the watch is stored as "watch".
+    if(std::as_const(value.fields)["applicationIcon"]==Json("battery")) value.set("applicationIcon",value.applicationIcon());
+    if(value.fields.contains("chargeBarLength")) value.setChargeBarLength(value.chargeBarLength());
+    if(!std::as_const(value.fields)["showsCloseHint"].isBool()) value.set("showsCloseHint",value.showsCloseHint());
+    // HUDOverlayLayout.save: written normalized with its text cut to 24
+    // Characters, removed at the defaults (an undecodable layout read as the
+    // defaults, so it is removed too).
+    if(value.fields.contains(OverlayLayout::key)) value.setOverlayLayout(value.overlayLayout(characters),characters);
+    return value;
+}
 // D2 downgrade mirror: while the summon hotkey is off the record also carries
 // windowsSummonHotkeyDisabled: true, so Windows 1.2.0 keeps the same intent;
 // while it is on the legacy key is removed (absent = on for 1.2.0).
@@ -227,6 +257,15 @@ bool validUUID(std::string_view value) noexcept {
         else if(!((c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f'))) return false;
     }return true;
 }
+std::optional<std::string> canonicalUUID(std::string_view value) {
+    if(!validUUID(value)) return std::nullopt;
+    std::string out(value);for(auto& c:out) if(c>='a'&&c<='f') c=static_cast<char>(c-'a'+'A');
+    return out;
+}
+std::string_view knownOr(std::string_view value,std::span<const std::string_view> choices) noexcept {
+    const auto found=std::find(choices.begin(),choices.end(),value);
+    return found==choices.end()?choices.front():*found;
+}
 double foundationNow() {return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()-978307200.0;}
 // "displayMode" and "alertMetric" are open string choices (validateSettings
 // checks only their type): the Mac values, the Windows-only "never" (Don't
@@ -242,21 +281,80 @@ Settings Settings::defaults() {
         {"batteryAlertsEnabled",true},{"devicePopupEnabled",true},{"lowPowerVisualMode",false},{"applicationIcon","endfield"},
         {"clockFormat","twentyFourHour"},{"clockStyle","digital"},{"centerLogo","endfield"},{"centerLogoRevision",nullptr},{"alertMetric","battery"},
         {"summonShortcut",Json::Object{{"keyCode",50},{"modifiers",1}}},
-        {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true}
+        {"summonHotkeyEnabled",true},{"recordingMode",false},{"dailyBootLog",true},{"facilityAlerts",true},{"showsCloseHint",true}
     };return result;
-}
-Settings Settings::restoredDefaults(const Settings& current) {
-    auto result=defaults();
-    for(const auto key:{"orbipom.bestScore.v1","projection.settings.v1","dailyBootLogLastDay","storageVolume"}) if(current.fields.contains(key)) result.fields[key]=current.fields[key];
-    return result;
 }
 namespace {
 bool flag(const Json& fields,std::string_view key,bool fallback) {const auto& value=fields[key];return value.isBool()?value.boolean():fallback;}
+const Settings& defaultSettings() {static const auto value=Settings::defaults();return value;}
+bool resets(SettingsScope scope,std::optional<SettingsScope> owner) {
+    return owner&&(*owner==scope||(scope==SettingsScope::display&&*owner==SettingsScope::hudElements));
+}
+// One key's value as AppConfiguration holds it after its decoder and
+// normalized: an absent key is its default, a number its double, a Boolean
+// its reader's value, accentHex six uppercase digits (else the default), a
+// SettingsChoices key a known choice, a UUID canonical or nil, and the
+// display name nil without a valid display UUID (else trimmed, nil if empty).
+Json typedSetting(std::string_view key,const Settings& settings) {
+    const auto& defaults=defaultSettings().fields;
+    const auto& raw=settings.fields.contains(key)?settings.fields[key]:defaults[key];
+    const std::string text=raw.isString()?raw.string():std::string();
+    if(key=="accentHex") return normalizedThemeHex(text).value_or(defaults["accentHex"].string());
+    for(const auto& [name,choices]:{std::pair{"clockStyle",std::span<const std::string_view>(SettingsChoices::clockStyles)},
+            {"centerLogo",SettingsChoices::centerLogos},{"alertMetric",SettingsChoices::alertMetrics},{"displayMode",SettingsChoices::displayModes}})
+        if(key==name) return std::string(knownOr(text,choices));
+    if(key=="hudDisplayUUID"||key=="centerLogoRevision") {const auto id=raw.isString()?canonicalUUID(text):std::nullopt;return id?Json(*id):Json(nullptr);}
+    if(key=="hudDisplayName") {
+        if(!typedSetting("hudDisplayUUID",settings).isString()||!raw.isString()) return nullptr;
+        auto name=trimmed(text,[](char32_t c){return swiftWhitespace(c)||swiftNewline(c);});
+        return name.empty()?Json(nullptr):Json(std::move(name));
+    }
+    if(defaults[key].isBool()) return flag(settings.fields,key,defaults[key].boolean());
+    if(raw.isNumber()) return raw.number();
+    return raw;
+}
+// One key of two records compared by its typed value (AppConfiguration
+// equality after normalization).
+bool sameSetting(std::string_view key,const Settings& a,const Settings& b) {
+    if(key==OverlayLayout::key) return a.overlayLayout()==b.overlayLayout();
+    if(key=="hudModuleOrder"||key=="hudHiddenModules") return a.moduleLayout()==b.moduleLayout();
+    if(key=="chargeBarLength") return a.chargeBarLength()==b.chargeBarLength();
+    if(key=="applicationIcon") return a.applicationIcon()==b.applicationIcon();
+    return typedSetting(key,a)==typedSetting(key,b);
+}
+}
+Settings Settings::restoring(Scope scope) const {
+    auto result=*this;
+    for(const auto& [key,owner]:scopedSettings) {
+        if(!resets(scope,owner)) continue;
+        if(key==OverlayLayout::key&&scope==Scope::hudElements) {
+            OverlayLayout kept;kept.openModule=overlayLayout().openModule;result.setOverlayLayout(kept);continue;
+        }
+        if(defaultSettings().fields.contains(key)) result.fields[std::string(key)]=defaultSettings().fields[key];
+        else result.fields.erase(key);
+    }
+    return result;
+}
+bool Settings::isDefault(Scope scope) const {
+    const auto restored=restoring(scope);
+    return std::all_of(scopedSettings.begin(),scopedSettings.end(),[&](const ScopedSetting& setting){return !resets(scope,setting.scope)||sameSetting(setting.key,*this,restored);});
 }
 bool Settings::summonHotkeyEnabled() const {return flag(fields,"summonHotkeyEnabled",true);}
 bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);}
 bool Settings::dailyBootLog() const {return flag(fields,"dailyBootLog",true);}
 bool Settings::facilityAlerts() const {return flag(fields,"facilityAlerts",true);}
+bool Settings::showsCloseHint() const {return flag(fields,"showsCloseHint",true);}
+std::string Settings::applicationIcon() const {
+    const auto& value=fields["applicationIcon"];
+    if(!value.isString()) return "endfield";
+    return value.string()=="battery"?"watch":value.string();
+}
+std::optional<double> Settings::chargeBarLength() const {return barLength(fields["chargeBarLength"]);}
+void Settings::setChargeBarLength(std::optional<double> value) {
+    // An unchanged length keeps its saved token (the profile's number rule).
+    if(const auto length=value?barLength(*value):std::nullopt) data::number(fields,"chargeBarLength",*length);
+    else fields.erase("chargeBarLength");
+}
 std::optional<std::string> Settings::dailyBootLogLastDay() const {const auto& value=fields["dailyBootLogLastDay"];if(!value.isString()) return {};return value.string();}
 bool Settings::consumeDailyBootLog(std::string_view today) {
     if(dailyBootLogLastDay()==today) return false;
@@ -270,6 +368,8 @@ ModuleLayout ModuleLayout::normalized(std::vector<std::string> order,std::vector
     if(value.hidden.size()==configurable.size()) value.hidden.erase(value.hidden.begin());
     return value;
 }
+bool ModuleLayout::isOpenable(std::string_view module) noexcept {return std::find(openable.begin(),openable.end(),module)!=openable.end();}
+bool ModuleLayout::isModule(std::string_view module) noexcept {return module=="addApp"||isOpenable(module);}
 std::vector<std::string> ModuleLayout::visible() const {std::vector<std::string> out;for(const auto& name:order) if(!contains(hidden,name)) out.push_back(name);return out;}
 std::string ModuleLayout::restorable(std::string_view module) const {return isHidden(module)?visible().front():std::string(module);}
 bool ModuleLayout::isDefault() const {return hidden.empty()&&std::equal(order.begin(),order.end(),configurable.begin(),configurable.end());}
@@ -287,6 +387,15 @@ bool ModuleLayout::move(std::string_view module,std::ptrdiff_t index) {
     auto moved=std::move(*found);order.erase(found);order.insert(order.begin()+to,std::move(moved));
     std::vector<std::string> next;for(const auto& name:order) if(contains(hidden,name)) next.push_back(name);hidden=std::move(next);return true;
 }
+bool ModuleLayout::listsTarget(std::string_view target) noexcept {return target.empty()||target=="addApp"||configurableModule(target);}
+std::optional<ModuleLayout> ModuleLayout::arranging(std::string_view module,std::optional<std::string_view> target) const {
+    if(!configurableModule(module)||isHidden(module)||!target||!listsTarget(*target)) return std::nullopt;
+    // Over a saved app or Add App: after the last visible module.
+    std::string other;if(!target->empty()&&*target!="addApp") other=std::string(*target);else if(const auto shown=visible();!shown.empty()) other=shown.back();
+    if(other.empty()||other==module||isHidden(other)) return std::nullopt;
+    const auto index=std::find(order.begin(),order.end(),other);if(index==order.end()) return std::nullopt;
+    auto next=*this;if(!next.move(module,index-order.begin())) return std::nullopt;return next;
+}
 // HUDModuleLayout(defaults:): an absent order is the default order; a present
 // one is read as given (a non-array reads as empty, so the default order).
 ModuleLayout Settings::moduleLayout() const {
@@ -298,6 +407,83 @@ void Settings::setModuleLayout(const ModuleLayout& layout) {
     else {Json::Array names;for(const auto& name:value.order) names.emplace_back(name);fields["hudModuleOrder"]=std::move(names);}
     if(value.hidden.empty()) fields.erase("hudHiddenModules");
     else {Json::Array names;for(const auto& name:value.hidden) names.emplace_back(name);fields["hudHiddenModules"]=std::move(names);}
+}
+OverlayLayout::Placement OverlayLayout::Placement::normalized() const noexcept {
+    return {bound(x,-offsetLimit,offsetLimit,0),bound(y,-offsetLimit,offsetLimit,0),bound(size,minimumSize,maximumSize,1)};
+}
+OverlayLayout::Placement& OverlayLayout::operator[](Element element) noexcept {
+    return element==Element::title?title:element==Element::sanity?sanity:alerts;
+}
+const OverlayLayout::Placement& OverlayLayout::operator[](Element element) const noexcept {
+    return element==Element::title?title:element==Element::sanity?sanity:alerts;
+}
+// components(separatedBy: .newlines), each trimmed of .whitespaces, empty
+// lines dropped, joined by one space, then prefix(textLimit) Characters.
+std::string OverlayLayout::cleanText(std::string_view value,const CharacterPrefix& prefix) {
+    std::string line;std::size_t start=0;
+    const auto append=[&](std::size_t end) {
+        const auto part=trimmed(value.substr(start,end-start),[](char32_t c){return swiftWhitespace(c);});
+        if(part.empty()) return;
+        if(!line.empty()) line+=' ';
+        line+=part;
+    };
+    for(const auto& scalar:scalars(value)) if(swiftNewline(scalar.value)) {append(scalar.offset);start=scalar.offset+scalar.size;}
+    append(value.size());
+    return prefix?prefix(line,textLimit):line;
+}
+OverlayLayout OverlayLayout::normalized(const CharacterPrefix& prefix) const {
+    auto result=*this;
+    for(const auto element:{Element::title,Element::sanity,Element::alerts}) result[element]=(*this)[element].normalized();
+    result.titleText=cleanText(titleText,prefix);result.subtitleText=cleanText(subtitleText,prefix);
+    if(result.openModule&&!ModuleLayout::isOpenable(*result.openModule)) result.openModule.reset();
+    return result;
+}
+// JSONDecoder().decode(Stored.self): each field decodeIfPresent (absent or
+// null = missing), any other type mismatch throws for the whole layout.
+std::optional<OverlayLayout> OverlayLayout::decode(const Json& stored) {
+    if(!stored.isObject()) return std::nullopt;
+    const auto present=[](const Json& object,std::string_view name){return object.contains(name)&&!object[name].isNull();};
+    OverlayLayout value;
+    for(const auto& [name,element]:{std::pair{"title",Element::title},{"sanity",Element::sanity},{"alerts",Element::alerts}}) {
+        if(!present(stored,name)) continue;
+        const auto& object=stored[name];
+        if(!object.isObject()) return std::nullopt;
+        auto& placement=value[element];
+        for(const auto& [field,target]:{std::pair{"x",&placement.x},{"y",&placement.y},{"size",&placement.size}}) {
+            if(!present(object,field)) continue;
+            if(!object[field].isNumber()) return std::nullopt;
+            *target=object[field].number();
+        }
+    }
+    for(const auto& [name,target]:{std::pair{"showsTitle",&value.showsTitle},{"showsSanity",&value.showsSanity}}) {
+        if(!present(stored,name)) continue;
+        if(!stored[name].isBool()) return std::nullopt;
+        *target=stored[name].boolean();
+    }
+    for(const auto& [name,target]:{std::pair{"titleText",&value.titleText},{"subtitleText",&value.subtitleText}}) {
+        if(!present(stored,name)) continue;
+        if(!stored[name].isString()) return std::nullopt;
+        *target=stored[name].string();
+    }
+    if(present(stored,"openModule")) {
+        if(!stored["openModule"].isString()) return std::nullopt;
+        value.openModule=stored["openModule"].string();
+    }
+    return value;
+}
+Json OverlayLayout::encode() const {
+    const auto placement=[](const Placement& value){return Json(Json::Object{{"x",value.x},{"y",value.y},{"size",value.size}});};
+    Json::Object out{{"title",placement(title)},{"sanity",placement(sanity)},{"alerts",placement(alerts)},
+        {"showsTitle",showsTitle},{"showsSanity",showsSanity},{"titleText",titleText},{"subtitleText",subtitleText}};
+    if(openModule) out["openModule"]=*openModule;
+    return out;
+}
+OverlayLayout Settings::overlayLayout(const CharacterPrefix& prefix) const {
+    return OverlayLayout::decode(fields[OverlayLayout::key]).value_or(OverlayLayout{}).normalized(prefix);
+}
+void Settings::setOverlayLayout(const OverlayLayout& layout,const CharacterPrefix& prefix) {
+    const auto value=layout.normalized(prefix);
+    if(value.isDefault()) fields.erase(OverlayLayout::key);else fields[std::string(OverlayLayout::key)]=value.encode();
 }
 std::string Settings::batteryAlertMethod() const {
     if(!flag(fields,"batteryAlertsEnabled",true)) return "never";
@@ -330,7 +516,7 @@ std::string Settings::string(std::string_view key) const {return fields[key].str
 double Settings::number(std::string_view key) const {return fields[key].number();}
 bool Settings::boolean(std::string_view key) const {return fields[key].boolean();}
 void Settings::set(std::string key,Json value) {fields[std::move(key)]=std::move(value);}
-SettingsStore::SettingsStore(const std::filesystem::path& root) {
+SettingsStore::SettingsStore(const std::filesystem::path& root,CharacterPrefix characters):characters_(std::move(characters)) {
     detail::validateRoot(root);path_=root/"settings.json";value_=Settings::defaults();persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
         try {envelope_=parseRecord(*persisted_);version(envelope_);require(envelope_["settings"].isObject(),"Missing saved settings");
@@ -348,15 +534,48 @@ SettingsStore::SettingsStore(const std::filesystem::path& root) {
         } catch(const StoreError&) {throw;} catch(const std::exception&) {throw StoreError(StoreErrorCode::invalid,"Saved settings are invalid; the original was preserved");}
     }
 }
+void SettingsStore::write(Json envelope,const Settings& value) {
+    envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
+    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;
+}
+void SettingsStore::writeBeside(std::string_view key,Json value) {
+    auto envelope=envelope_;envelope[std::string(key)]=std::move(value);
+    if(!persisted_) {write(std::move(envelope),value_);return;}
+    const auto bytes=encodeRecord(envelope);
+    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;
+}
 bool SettingsStore::markLaunched() {
     if(launched_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value_);envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
-    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;launched_=true;return true;
+    writeBeside("hasLaunched",true);launched_=true;return true;
 }
-bool SettingsStore::update(const Settings& value) {
-    validateSettings(value);if(value==value_ && persisted_) return false;
-    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=persisted(value);const auto bytes=encodeRecord(envelope);
-    detail::replaceFile(path_,persisted_,bytes,jsonLimit);value_=value;envelope_=std::move(envelope);persisted_=bytes;return true;
+std::string SettingsStore::lastOpenedModule() const {
+    const auto& stored=envelope_["hudLastOpenedModule"];
+    return stored.isString()&&ModuleLayout::isModule(stored.string())?stored.string():std::string("map");
+}
+bool SettingsStore::saveLastOpenedModule(std::string_view module) {
+    require(ModuleLayout::isModule(module),"Unknown HUD module");
+    if(const auto& stored=std::as_const(envelope_)["hudLastOpenedModule"];stored.isString()&&stored.string()==module) return false;
+    writeBeside("hudLastOpenedModule",std::string(module));return true;
+}
+bool SettingsStore::sanityMigrated() const noexcept {
+    return envelope_.contains("hudOverlaySanityMigrated")&&!envelope_["hudOverlaySanityMigrated"].isNull();
+}
+bool SettingsStore::markSanityMigrated() {
+    if(sanityMigrated()) return false;
+    writeBeside("hudOverlaySanityMigrated",true);return true;
+}
+bool SettingsStore::migrateHiddenSanity(const std::function<bool()>& headerHidden) {
+    if(!markSanityMigrated()||!headerHidden||!headerHidden()) return false;
+    auto next=value_;auto layout=next.overlayLayout(characters_);layout.showsSanity=false;next.setOverlayLayout(layout,characters_);
+    return update(next);
+}
+bool SettingsStore::update(const Settings& next) {
+    // Unchanged compares as the Mac does (normalized against normalized), so a
+    // record loaded with values the next save rewrites is not written by an
+    // update that changes nothing.
+    const auto value=saved(next,characters_);
+    validateSettings(value);if(value==saved(value_,characters_) && persisted_) return false;
+    write(envelope_,value);value_=value;return true;
 }
 Profile Profile::defaults() {
     Profile value;value.awakeningDate=foundationNow();std::random_device random;
@@ -384,7 +603,21 @@ Profile normalizedEditableProfile(Profile value) {
     value.thumbnailZoom=bound(value.thumbnailZoom,1,20,1);value.thumbnailOffsetX=bound(value.thumbnailOffsetX,-1,1,0);value.thumbnailOffsetY=bound(value.thumbnailOffsetY,-1,1,0);
     return value;
 }
-std::string Profile::displayedUID() const {return playerIDOverride.value_or(gamePlayerID.value_or(uid));}
+std::string Profile::displayedName() const {
+    if(followsSystemName()&&systemAccount.value&&systemAccount.value->name) return *systemAccount.value->name;
+    return name;
+}
+std::optional<std::string> Profile::avatarKey() const {
+    if(avatarFilename) return avatarFilename;
+    if(autoAvatar&&systemAccount.value) return systemAccount.value->avatarKey;
+    return std::nullopt;
+}
+std::string Profile::displayedUID() const {
+    if(playerIDOverride) return *playerIDOverride;
+    if(gamePlayerID) return *gamePlayerID;
+    if(systemAccount.value&&systemAccount.value->uid) return *systemAccount.value->uid;
+    return uid;
+}
 ProfileStore::ProfileStore(const std::filesystem::path& root) {
     detail::validateRoot(root);path_=root/"Profile"/"profile.json";persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
@@ -411,7 +644,7 @@ bool ProfileStore::commit(const Profile& value,bool fromGame) {
     if(value==value_ && persisted_) return false;
     const auto fields=encodeProfile(value);auto envelope=envelope_;envelope["version"]=1;envelope["profile"]=fields;
     const auto bytes=encodeRecord(envelope);detail::replaceFile(path_,persisted_,bytes,jsonLimit);
-    value_=value;value_.originalFields=fields;envelope_=std::move(envelope);persisted_=bytes;return true;
+    value_=value;value_.originalFields=fields;value_.systemAccount={};envelope_=std::move(envelope);persisted_=bytes;return true;
 }
 std::filesystem::path ProfileStore::imagePath(std::string_view filename) const {
     require(imageName(filename),"Invalid managed profile image name");return path_.parent_path()/"Images"/std::string(filename);

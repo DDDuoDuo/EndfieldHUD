@@ -37,7 +37,7 @@ enum PersonalProfileField: String, CaseIterable {
     /// Inline editor limits (spec §3.20.3).
     var textLimit: Int? {
         switch self {
-        case .name: return 20
+        case .name: return UserProfile.nameLimit
         case .tag: return 11
         case .playerID: return 64
         case .introduction: return 150
@@ -253,13 +253,14 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
         guard let store else { return }
         let old = displayed
         profile = store.profile
-        if old.avatarFilename != profile.avatarFilename { images.avatar = nil }
+        // avatarKey also changes when the macOS login picture arrives or changes.
+        if old.avatarKey != profile.avatarKey { images.avatar = nil }
         if old.backgroundFilename != profile.backgroundFilename { images.background = nil }
         guard renderedLanguage != nil else { return }
         let next = displayed
         let changed = PersonalProfileField.shown.filter { Self.value($0, in: old) != Self.value($0, in: next) }
         let structural = !changed.isEmpty || old.showsBirthday != next.showsBirthday
-            || old.avatarFilename != next.avatarFilename || old.backgroundFilename != next.backgroundFilename
+            || old.avatarKey != next.avatarKey || old.backgroundFilename != next.backgroundFilename
         if structural {
             guard editing == nil else { needsRerender = true; return }
             rerender()
@@ -394,14 +395,14 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
         }
         // Name + #tag (max-width 300, padding 0 4).
         let name = editable(.name, in: main, controls: &controls)
-        let nameText = HUDTextLayer(p.name, style: Style.name), tagText = HUDTextLayer("#" + p.tag, style: Style.tag)
+        let nameText = HUDTextLayer(p.displayedName, style: Style.name), tagText = HUDTextLayer("#" + p.tag, style: Style.tag)
         let tagWidth = ceil(tagText.preferredWidth), nameWidth = min(ceil(nameText.preferredWidth), 292 - 2 - tagWidth)
         HUDMotion.perform {
             nameText.lineFrame = CGRect(x: 4, y: 0, width: nameWidth + 1, height: 30)
             tagText.lineFrame = CGRect(x: 4 + nameWidth + 2, y: 0, width: tagWidth + 1, height: 30)
             name.setFrame(CGRect(x: 132, y: 50, width: 4 + nameWidth + 2 + tagWidth + 4, height: 30), content: [nameText, tagText])
         }
-        name.label = L10n.text("Edit name", "修改名称") + ", " + p.name + " #" + p.tag
+        name.label = L10n.text("Edit name", "修改名称") + ", " + p.displayedName + " #" + p.tag
         refs.values[.tag] = name.layer
         // Registration mark.
         let mark = HUDLayer.shape("profile.registration"), bar = HUDLayer.plain("profile.registration.bar")
@@ -797,7 +798,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             !value.isEmpty && value.unicodeScalars.allSatisfy { (48...57).contains($0.value) } && Int(value).map(range.contains) == true
         }
         switch field {
-        case .name: return !value.isEmpty && value.count <= 20 && value.rangeOfCharacter(from: .controlCharacters) == nil
+        case .name: return !value.isEmpty && value.count <= UserProfile.nameLimit && value.rangeOfCharacter(from: .controlCharacters) == nil
         case .tag:
             let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
             return (1...10).contains(digits.count) && digits.unicodeScalars.allSatisfy { (48...57).contains($0.value) }
@@ -814,14 +815,14 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
 
     private func commit(_ field: PersonalProfileField, _ text: String) {
         guard canEdit(field) else { return }
-        guard let store else { showError(L10n.text("Profile storage is unavailable.", "个人名片存储不可用。")); return }
+        guard let store else { showError(L10n.text("Profile storage is unavailable", "个人名片存储不可用")); return }
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         errorMessage = nil
         do {
             try store.update { profile in
                 switch field {
                 case .playerID: profile.playerIDOverride = input
-                case .name: profile.name = input
+                case .name: profile.name = input; profile.autoName = false
                 case .tag: profile.tag = input.hasPrefix("#") ? String(input.dropFirst()) : input
                 case .introduction: profile.introduction = input
                 case .awakeningDate:
@@ -858,7 +859,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
 
     static func value(_ field: PersonalProfileField, in value: UserProfile) -> String {
         switch field {
-        case .name: return value.name
+        case .name: return value.displayedName
         case .tag: return value.tag
         case .playerID: return value.displayedUID
         case .introduction: return value.introduction
@@ -893,7 +894,9 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             HUDMenu.Item(id: "tag", title: L10n.text("Edit #", "修改 #"), enabled: canEdit(.tag)),
             HUDMenu.Item(id: "picture", title: L10n.text("Change profile picture", "更换头像"), enabled: store != nil),
             HUDMenu.Item(id: "portrait", title: L10n.text("Adjust portrait", "调整头像")),
-            HUDMenu.Item(id: "restore", title: L10n.text("Restore default picture", "恢复默认头像"), enabled: store != nil)
+            HUDMenu.Item(id: "restore", title: L10n.text("Restore default picture", "恢复默认头像"), enabled: store != nil),
+            HUDMenu.Item(id: "system", title: L10n.text("Use Mac account info", "使用 Mac 账户信息"), separatorBefore: true,
+                         enabled: canUseSystemAccount)
         ]
         openMenu(id: "profile.more", items: items, anchor: anchor) { [weak self, weak anchor] item in
             guard let self else { return }
@@ -902,9 +905,28 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
             case "tag": self.beginEdit(.tag)
             case "picture": self.chooseImage(.avatar)
             case "portrait": if let anchor { self.openPortraitPopover(anchor) }
+            case "system": self.useSystemAccount()
             default: self.restoreAvatar()
             }
         }
+    }
+
+    /// Something the macOS account can fill is showing a chosen value instead.
+    /// The default picture counts only when there is a login picture to show.
+    /// Off while Recording mode hides the account.
+    private var canUseSystemAccount: Bool {
+        guard store != nil, profile.systemAccount != nil else { return false }
+        return (canEdit(.name) && !profile.followsSystemName)
+            || (canEdit(.playerID) && profile.playerIDOverride != nil)
+            || profile.avatarFilename != nil || (!profile.autoAvatar && profile.systemAccount?.avatarKey != nil)
+    }
+
+    private func useSystemAccount() {
+        guard let store else { return }
+        do {
+            try store.useSystemAccount(name: canEdit(.name), playerID: canEdit(.playerID))
+            toast(icon: .reset, "Mac account info", "已使用 Mac 账户信息")
+        } catch { showError(error.localizedDescription) }
     }
 
     private func restoreAvatar() {
@@ -1101,7 +1123,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
     }
 
     private func importImage(from url: URL, kind: UserProfileImageKind) {
-        guard let store else { showError(L10n.text("Profile storage is unavailable.", "个人名片存储不可用。")); return }
+        guard let store else { showError(L10n.text("Profile storage is unavailable", "个人名片存储不可用")); return }
         do {
             try store.importImage(from: url, kind: kind)
             if kind == .avatar { toast(icon: .user, "Picture changed", "已更换头像") }
@@ -1183,7 +1205,7 @@ final class PersonalProfileCanvas: HUDDesignCanvas {
     }
 
     private func avatarImage() -> (image: CGImage, orientation: Int32)? {
-        guard let store, let name = profile.avatarFilename else { return nil }
+        guard let store, let name = profile.avatarKey else { return nil }
         if images.avatarName != name || images.avatar == nil {
             images.avatar = Self.cgImage(store.image(for: .avatar)).map { ($0, store.imageOrientation(for: .avatar)) }
             images.avatarName = name; images.portrait = nil; images.portraitKey = nil

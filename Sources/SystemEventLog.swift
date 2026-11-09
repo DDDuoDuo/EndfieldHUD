@@ -185,9 +185,9 @@ final class SystemEventLog {
     private enum Failure { case load, version, save }
     var statusMessage: String? {
         switch failure {
-        case .load?: return "Saved log could not be read; the original file is preserved."
-        case .version?: return "This log uses a newer format; the original file is preserved."
-        case .save?: return "The log could not be saved. New events are kept in this session."
+        case .load?: return "Saved log could not be read; the original file is preserved"
+        case .version?: return "This log uses a newer format; the original file is preserved"
+        case .save?: return "The log could not be saved. New events are kept in this session"
         case nil: return nil
         }
     }

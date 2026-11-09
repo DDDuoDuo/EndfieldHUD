@@ -2,10 +2,10 @@
 #include "modules/hypergryph_account_crypto.hpp"
 #include "modules/hypergryph_account_unicode.hpp"
 #include "core/data/file_io.hpp"
+#include "modules/hud_design_nodes.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <set>
 #include <stdexcept>
 
 namespace endfield::modules::hypergryph {
@@ -13,24 +13,6 @@ namespace {
 void need(bool value,const char* why) {if(!value) throw std::invalid_argument(why);}
 // CGRect.contains: minimum edges inside, maximum edges outside.
 bool inside(core::Rect r,core::Point p) {return r.width>0&&r.height>0&&p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
-std::optional<std::vector<std::uint8_t>> base64(std::string_view text) {
-    std::vector<std::uint8_t> out;std::uint32_t buffer{};int bits{};std::size_t padding{};
-    for(const char c:text) {
-        int v;
-        if(c>='A'&&c<='Z') v=c-'A';else if(c>='a'&&c<='z') v=c-'a'+26;else if(c>='0'&&c<='9') v=c-'0'+52;
-        else if(c=='+') v=62;else if(c=='/') v=63;else if(c=='=') {++padding;continue;}else return std::nullopt;
-        if(padding) return std::nullopt;
-        buffer=(buffer<<6)|static_cast<std::uint32_t>(v);bits+=6;
-        if(bits>=8) {bits-=8;out.push_back(static_cast<std::uint8_t>((buffer>>bits)&0xff));}
-    }
-    if(text.size()%4!=0||padding>2) return std::nullopt;
-    return out;
-}
-std::vector<char32_t> scalars(std::string_view text) {
-    std::vector<char32_t> out;
-    for(std::size_t at=0;at<text.size();) {const auto s=decodeUTF8(text,at);if(!s) return {};out.push_back(s->value);at+=s->length;}
-    return out;
-}
 std::string hexDigest(std::string_view bytes) {const auto d=sha256(bytes);return lowercaseHex(std::span<const std::uint8_t>(d.data(),d.size()));}
 GaugeImage readImage(const std::filesystem::path& file,unsigned width,unsigned height,std::string_view pin) {
     const auto bytes=ehud::data::detail::readFile(file,std::size_t(width)*height*4);
@@ -87,112 +69,25 @@ void drawLayer(GaugeImage& target,core::Rect area,double scale,const GaugeImage&
 }
 }
 
-std::optional<AccountNumerals> AccountNumerals::parse(std::string_view text) {
-    if(text.size()>65536) return std::nullopt;
-    try {
-        const auto j=Json::parse(text,65536);
-        if(!j.isObject()||!j["schema"].isNumber()||j["schema"].number()!=1) return std::nullopt;
-        AccountNumerals n;
-        if(!j["family"].isString()||!j["style"].isString()||!j["pointSize"].isNumber()||!j["padding"].isNumber()||!j["gradientScale"].isNumber()||!j["glyphs"].isArray()) return std::nullopt;
-        n.family_=j["family"].string();n.style_=j["style"].string();n.pointSize_=j["pointSize"].number();n.padding_=j["padding"].number();n.gradientScale_=j["gradientScale"].number();
-        if(n.pointSize_!=42||n.padding_!=4||n.gradientScale_!=5||n.family_!="HarmonyOS Sans SC"||n.style_!="Medium") return std::nullopt;
-        std::set<char32_t> seen;
-        for(const auto& g:j["glyphs"].array()) {
-            Glyph glyph;if(!g["character"].isString()) return std::nullopt;
-            const auto cs=scalars(g["character"].string());if(cs.size()!=1) return std::nullopt;glyph.character=cs[0];
-            for(const auto& [key,field]:std::initializer_list<std::pair<const char*,double*>>{{"width",&glyph.width},{"height",&glyph.height},{"bearingX",&glyph.bearingX},{"bearingY",&glyph.bearingY},{"advance",&glyph.advance}}) {
-                if(!g[key].isNumber()) return std::nullopt;*field=g[key].number();if(!std::isfinite(*field)||std::abs(*field)>64) return std::nullopt;
-            }
-            if(!g["columns"].isNumber()||!g["rows"].isNumber()||!g["samples"].isString()) return std::nullopt;
-            glyph.columns=static_cast<int>(g["columns"].integer());glyph.rows=static_cast<int>(g["rows"].integer());
-            auto samples=base64(g["samples"].string());
-            if(!samples||glyph.advance<=0||glyph.columns<0||glyph.columns>64||glyph.rows<0||glyph.rows>64||samples->size()!=std::size_t(glyph.columns)*glyph.rows) return std::nullopt;
-            glyph.samples=std::move(*samples);seen.insert(glyph.character);n.glyphs_.push_back(std::move(glyph));
-        }
-        const auto expected=scalars("0123456789/ —:：下次回复全部Next recoveryFull");
-        if(seen!=std::set<char32_t>(expected.begin(),expected.end())) return std::nullopt;
-        return n;
-    } catch(const std::exception&) {return std::nullopt;}
-}
-const AccountNumerals::Glyph* AccountNumerals::glyph(char32_t c) const {
-    for(const auto& g:glyphs_) if(g.character==c) return &g;
-    return nullptr;
-}
-std::optional<double> AccountNumerals::width(std::string_view text,double preferredSize) const {
-    const auto list=scalars(text);if(list.empty()) return std::nullopt;double advance=0;
-    for(const auto c:list) {const auto* g=glyph(c);if(!g) return std::nullopt;advance+=g->advance;}
-    return advance*preferredSize/pointSize_;
-}
-bool AccountNumerals::covers(std::string_view text) const {
-    const auto list=scalars(text);if(list.empty()) return false;
-    return std::all_of(list.begin(),list.end(),[&](char32_t c){return glyph(c)!=nullptr;});
-}
-std::optional<GaugeImage> AccountNumerals::render(std::string_view text,double sizeWidth,double sizeHeight,double scale,double preferredSize,bool rightAligned) const {
-    const auto list=scalars(text);if(list.empty()) return std::nullopt;
-    std::vector<const Glyph*> glyphs;for(const auto c:list) {const auto* g=glyph(c);if(!g) return std::nullopt;glyphs.push_back(g);}
-    const int width=static_cast<int>(std::ceil(sizeWidth*scale)),height=static_cast<int>(std::ceil(sizeHeight*scale));
-    if(width<=0||height<=0||std::size_t(width)*height>4096*4096) return std::nullopt;
-    double advance=0;for(const auto* g:glyphs) advance+=g->advance;
-    const double pointSize=std::min(preferredSize,std::max(4.0,(sizeWidth-2)*pointSize_/advance));
-    const double factor=pointSize/pointSize_*scale;
-    double ascent=glyphs.front()->bearingY,descent=glyphs.front()->bearingY-glyphs.front()->height;
-    for(const auto* g:glyphs) {ascent=std::max(ascent,g->bearingY);descent=std::min(descent,g->bearingY-g->height);}
-    const double baseline=(double(height)-(ascent-descent)*factor)/2+ascent*factor;
-    double x=rightAligned?double(width)-advance*factor:0;
-    GaugeImage image{unsigned(width),unsigned(height),std::vector<std::uint8_t>(std::size_t(width)*height*4,0)};
-    for(const auto* glyph:glyphs) {
-        const double glyphAdvance=glyph->advance*factor;
-        if(glyph->columns>0&&glyph->rows>0&&glyph->width>0&&glyph->height>0) {
-            const double left=x+(glyph->bearingX-padding_)*factor;
-            const double top=baseline-(glyph->bearingY+padding_)*factor;
-            const double drawnWidth=(glyph->width+2*padding_)*factor;
-            const double drawnHeight=(glyph->height+2*padding_)*factor;
-            const int minX=std::max(0,int(std::floor(left))),maxX=std::min(width,int(std::ceil(left+drawnWidth)));
-            const int minY=std::max(0,int(std::floor(top))),maxY=std::min(height,int(std::ceil(top+drawnHeight)));
-            for(int py=minY;py<maxY;++py) for(int px=minX;px<maxX;++px) {
-                const double sx=std::min(double(glyph->columns-1),std::max(0.0,(double(px)+.5-left)/drawnWidth*double(glyph->columns)-.5));
-                const double sy=std::min(double(glyph->rows-1),std::max(0.0,(double(py)+.5-top)/drawnHeight*double(glyph->rows)-.5));
-                const int x0=int(sx),y0=int(sy),x1=std::min(x0+1,glyph->columns-1),y1=std::min(y0+1,glyph->rows-1);
-                const double dx=sx-double(x0),dy=sy-double(y0);
-                const auto& b=glyph->samples;
-                const double upper=double(b[std::size_t(y0)*glyph->columns+x0])*(1-dx)+double(b[std::size_t(y0)*glyph->columns+x1])*dx;
-                const double lower=double(b[std::size_t(y1)*glyph->columns+x0])*(1-dx)+double(b[std::size_t(y1)*glyph->columns+x1])*dx;
-                const double distance=(upper*(1-dy)+lower*dy)/255-.5;
-                const auto alpha=static_cast<std::uint8_t>(std::round(std::min(1.0,std::max(0.0,distance*gradientScale_*factor+.5))*255));
-                auto* p=&image.rgba[(std::size_t(py)*width+px)*4];for(int c=0;c<4;++c) p[c]=std::max(p[c],alpha);
-            }
-        }
-        x+=glyphAdvance;
-    }
-    return image;
-}
 GaugeAssets GaugeAssets::load(const std::filesystem::path& directory) {
     ehud::data::detail::validateRoot(directory);
     GaugeAssets assets;
-    const auto numerals=ehud::data::detail::readFile(directory/"account-numerals.json",65536);
-    need(numerals&&hexDigest(*numerals)=="e645664e177f258995cdf027011ef3f7a6c9795dc19eca0a887c8d5843673c68","Original account numerals are missing or changed");
-    auto parsed=AccountNumerals::parse(*numerals);need(parsed.has_value(),"Original account numerals failed validation");assets.numerals=std::move(*parsed);
     assets.back=readImage(directory/"wallet-back.rgba",60,50,"553164225aec76006254053f7cd24b7028628110a1b23e2795f42fc01eb91f7f");
     assets.deco=readImage(directory/"wallet-deco.rgba",60,50,"0dd747088b0d383da189b1630b134a2665bdbb80b4e7154327babc1bbcbd512c");
-    assets.icon=readImage(directory/"item-ap.rgba",80,80,"7b86163904d67f26d924669548b003a6e65c6ec3fd4f32c3756ee0d6f43575ad");
     assets.silhouette=readImage(directory/"wallet-silhouette.rgba",60,50,"d73ec9f8f56bfcbfdaea7ab041c3489b0289e51e2d962c4888b5eb619ddb35cc");
     return assets;
 }
 GaugeImage composeGaugeArtwork(const GaugeAssets& a,double scale) {
-    need(std::isfinite(scale)&&scale>=1&&scale<=3,"Gauge scale is 1...3");
+    need(std::isfinite(scale)&&scale>=1&&scale<=16,"Gauge scale is 1...16");
     using namespace gauge_geometry;
     GaugeImage image{unsigned(std::ceil(artwork.width*scale)),unsigned(std::ceil(artwork.height*scale)),{}};
     image.rgba.assign(std::size_t(image.width)*image.height*4,0);
     drawLayer(image,artwork,scale,a.back,bar,std::pair{29.0/60,2.0/60},false);
     drawLayer(image,artwork,scale,a.deco,bar,std::pair{28.0/60,4.0/60},false);
-    drawLayer(image,artwork,scale,a.icon,icon,std::nullopt,true);
     return image;
 }
-void composeNumber(GaugeImage& target,const GaugeImage& number,double scale) {
-    drawLayer(target,gauge_geometry::artwork,scale,number,gauge_geometry::number,std::nullopt,false);
-}
 GaugeImage composeHighlight(const GaugeAssets& a,double scale) {
-    using namespace gauge_geometry;
+    using namespace gauge_geometry;need(std::isfinite(scale)&&scale>=1&&scale<=16,"Gauge scale is 1...16");
     GaugeImage mask{unsigned(std::ceil(bar.width*scale)),unsigned(std::ceil(bar.height*scale)),{}};
     mask.rgba.assign(std::size_t(mask.width)*mask.height*4,0);
     drawLayer(mask,bar,scale,a.silhouette,bar,std::pair{29.0/60,2.0/60},false);
@@ -204,13 +99,79 @@ GaugeImage composeHighlight(const GaugeAssets& a,double scale) {
     }
     return mask;
 }
-GaugePopoverLayout GaugePopoverLayout::make(std::array<double,2> labels,std::array<double,2> values,double templateWidth) {
+Json gaugeTextLayer(std::string id,std::string_view text,const GaugeTextStyle& style,design::Size cell,core::TextRegion region) {
+    need(std::isfinite(cell.width)&&std::isfinite(cell.height)&&cell.width>0&&cell.height>0,"Gauge text cells have a size");
+    namespace d=design;
+    d::TextBlock block(std::string(text),d::TextStyle{style.size,d::FontWeight::medium,d::white(1)},style.rightAligned?d::TextAlignment::right:d::TextAlignment::left);
+    block.language=region;block.maximumLines=1;block.truncates=false;block.minimumScale=style.minimumFit;block.setLineFrame({0,0,cell.width,cell.height});
+    return d::textNode(std::move(id),block,d::TextServices{});
+}
+GaugeImage cellRaster(std::span<const std::uint8_t> pixels,unsigned width,unsigned height,core::Point origin,design::Size cell,double scale,bool centreOnInk) {
+    need(pixels.size()==std::size_t(width)*height*4&&std::isfinite(origin.x)&&std::isfinite(origin.y)&&std::isfinite(scale)&&scale>0,"Invalid gauge text raster");
+    GaugeImage out{cellPixels(cell.width,scale),cellPixels(cell.height,scale),{}};
+    need(out.width>0&&out.height>0&&std::size_t(out.width)*out.height<=4096u*4096u,"Invalid gauge text cell");
+    out.rgba.assign(std::size_t(out.width)*out.height*4,0);
+    unsigned top=height,bottom=0;
+    for(unsigned y=0;y<height;++y) for(unsigned x=0;x<width;++x) if(pixels[(std::size_t(y)*width+x)*4+3]) {top=std::min(top,y);bottom=std::max(bottom,y+1);break;}
+    if(top>=bottom) return out;
+    // renderText: textPosition.y = (size.height - ink.height) / 2 - ink.minY.
+    const long dx=std::lround(origin.x*scale),dy=centreOnInk?std::lround((double(out.height)-double(bottom-top))/2)-long(top):std::lround(origin.y*scale);
+    for(unsigned y=top;y<bottom;++y) {
+        const long ty=long(y)+dy;if(ty<0||ty>=long(out.height)) continue;
+        for(unsigned x=0;x<width;++x) {
+            const long tx=long(x)+dx;if(tx<0||tx>=long(out.width)) continue;
+            const auto* p=&pixels[(std::size_t(y)*width+x)*4];auto* q=&out.rgba[(std::size_t(ty)*out.width+std::size_t(tx))*4];const unsigned a=p[3];
+            for(int c=0;c<3;++c) q[c]=static_cast<std::uint8_t>((p[c]*a+127)/255);
+            q[3]=static_cast<std::uint8_t>(a);
+        }
+    }
+    return out;
+}
+const std::array<SanityIconPolygon,3>& sanityIconPolygons() {
+    using P=core::Point;
+    static const std::array<SanityIconPolygon,3> polygons{{
+        // The white outline, its tail running down to the lower left.
+        {{P{27,12.8},P{33,12.9},P{46,14.9},P{57,18.9},P{64,21.9},P{66,23.4},P{71,35},P{71,37.6},P{67,43.2},P{63,45},P{47.4,45},P{39.4,57.4},
+          P{28.9,71.8},P{27.8,71.8},P{27.8,56.6},P{23,55.8},P{17,54.6},P{14.6,53.4},P{14,47},P{9,38.6},P{9,35},P{15,21.9},P{20,18}},1},
+        // The grey head inside it, open along the tail's right edge.
+        {{P{29,18},P{38,19},P{47,21},P{53,23},P{57,25},P{61,27},P{63,30},P{65,34},P{65,37},P{63,39.6},P{54,40},P{54,41.8},P{52,43},P{52,45},
+          P{47.4,45},P{39.4,57.4},P{28.9,71.6},P{33,57.4},P{33,53},P{31,52},P{28,51},P{23,50.2},P{19.6,49.6},P{19,46},P{17,41},P{15,37.5},
+          P{15,35},P{19,27.5},P{19,26},P{23,23},P{27,20}},101.0/255},
+        // The bolt: an upright bar, a short arm, then a spike into the tail.
+        {{P{33,23.5},P{46,23.5},P{40,42},P{49.2,42},P{47.4,44},P{36.4,58.4},P{39.6,44},P{31,44}},1}}};
+    return polygons;
+}
+Json sanityIconLayer(std::string id,double size) {
+    need(std::isfinite(size)&&size>0,"The Sanity icon has a size");
+    namespace d=design;
+    auto root=d::frameNode(id,{0,0,size,size});const double unit=size/80;Json::Array children;
+    for(std::size_t n=0;n<sanityIconPolygons().size();++n) {
+        const auto& polygon=sanityIconPolygons()[n];d::PathBuilder path;path.move(polygon.points.front());
+        for(std::size_t k=1;k<polygon.points.size();++k) path.line(polygon.points[k]);
+        path.close();
+        children.push_back(d::shape(id+"."+std::to_string(n),{0,0,size,size},path.transformed(unit,0,0,unit,0,0),d::Color{polygon.white,polygon.white,polygon.white,1}));
+    }
+    d::addChildren(root,std::move(children));
+    return root;
+}
+GaugePopoverLayout GaugePopoverLayout::make(std::array<double,2> labels,std::array<double,2> values,double templateWidth,GaugePopoverDirection direction) {
     for(const auto v:{labels[0],labels[1],values[0],values[1],templateWidth}) need(std::isfinite(v)&&v>=0,"Gauge popover widths are finite");
     GaugePopoverLayout out;
     const double value=std::ceil(std::max({values[0],values[1],templateWidth}))+slack;
     const double fixed=leading+columnGap+refreshGap+refreshWidth+trailing;
     const double width=std::min(maximumWidth,std::max(minimumWidth,fixed+std::ceil(std::max(labels[0],labels[1]))+slack+value));
-    out.frame=frameFor(width);out.valueWidth=value;out.labelWidth=width-fixed-value;return out;
+    out.frame=frameFor(width,direction);out.valueWidth=value;out.labelWidth=width-fixed-value;return out;
+}
+GaugePopoverDirection GaugePopoverLayout::direction(core::Rect gauge,core::Rect bounds) noexcept {
+    if(!(gauge.width>0)) return {};
+    const double scale=gauge.width/gauge_geometry::bounds.width;
+    const auto extent=[&](GaugePopoverDirection d){
+        const auto menu=frameFor(maximumWidth,d);
+        return core::Rect{gauge.x+menu.x*scale,gauge.y+menu.y*scale,menu.width*scale,menu.height*scale};
+    };
+    const auto designed=extent({}),mirrored=extent({true,true});
+    return {designed.x<bounds.x&&mirrored.x+mirrored.width<=bounds.x+bounds.width,
+            designed.y+designed.height>bounds.y+bounds.height&&mirrored.y>=bounds.y};
 }
 core::Rect GaugePopoverLayout::cell(unsigned index) const noexcept {
     const double y=rows[index%2];
@@ -239,20 +200,48 @@ std::string prefixGaugeValue(std::string_view text,std::size_t count) {
 
 bool SanityGaugeModel::canOpen() const noexcept {return sanity_.has_value()&&!hidden_;}
 bool SanityGaugeModel::opensWorkMode() const noexcept {return !sanity_.has_value()&&!hidden_;}
-SanityGaugeModel::Changes SanityGaugeModel::update(std::string value,std::string label,bool visible,double scale,std::optional<SanityPresentation> sanity,Time date,core::Language language) {
-    Changes changes;scale=std::isfinite(scale)?std::min(3.0,std::max(1.0,scale)):2;
+double SanityGaugeModel::targetScale() const noexcept {return design::textContentsScale(baseScale_,sizeFactor_);}
+double SanityGaugeModel::refreshScale() const noexcept {return design::layerContentsScale(baseScale_,sizeFactor_);}
+bool SanityGaugeModel::drawIcon(double scale) {
+    if(iconScale_==scale) return false;
+    iconScale_=scale;++iconRenders_;return true;
+}
+SanityGaugeModel::Changes SanityGaugeModel::update(std::string value,std::string label,bool visible,double base,std::optional<SanityPresentation> sanity,Time date,core::Language language) {
+    Changes changes;const double refreshBefore=refreshScale();baseScale_=std::isfinite(base)?base:2;const double scale=targetScale();
     value=prefixGaugeValue(value,24);const bool wasAvailable=canOpen(),wasLink=opensWorkMode();
     sanity_=std::move(sanity);date_=date;
     if(language_!=language) {language_=language;}
     if(value_!=value||label_!=label||hidden_==visible||scale_!=scale) {
         if(value_!=value||scale_!=scale) {changes.number=true;++numberRenders_;}
+        changes.icon=drawIcon(scale);changes.scale=scale_!=scale;
         if(hidden_==visible) changes.visibility=true;
         value_=std::move(value);label_=std::move(label);scale_=scale;++updates_;hidden_=!visible;
     }
+    changes.scale|=refreshScale()!=refreshBefore;
     if(!canOpen()) changes.popover|=dismiss();
     if(open_) changes.tooltip=renderTooltip();
     if(wasAvailable!=canOpen()||wasLink!=opensWorkMode()) changes.availability=true;
     return changes;
+}
+SanityGaugeModel::Changes SanityGaugeModel::setScale(double base) {
+    Changes changes;const double refreshBefore=refreshScale();baseScale_=std::isfinite(base)?base:2;const double scale=targetScale();
+    // The refresh arrow follows the base scale and size whatever happens below.
+    changes.scale=refreshScale()!=refreshBefore;
+    if(scale_==0||scale_==scale) return changes;
+    changes.number=true;++numberRenders_;changes.icon=drawIcon(scale);scale_=scale;changes.scale=true;
+    if(open_) changes.tooltip=renderTooltip();
+    return changes;
+}
+SanityGaugeModel::Changes SanityGaugeModel::setPopoverDirection(GaugePopoverDirection direction) {
+    Changes changes;if(direction==direction_) return changes;
+    direction_=direction;tooltip_.layout.frame=GaugePopoverLayout::frameFor(tooltip_.layout.frame.width,direction_);
+    changes.popover=true;return changes;
+}
+SanityGaugeModel::Changes SanityGaugeModel::setSizeFactor(double size) {
+    // AppConfiguration.clamp(sizeFactor, to: 0.25...4, fallback: 1).
+    const double clamped=std::isfinite(size)?std::min(4.0,std::max(.25,size)):1;
+    if(clamped==sizeFactor_) return {};
+    sizeFactor_=clamped;return setScale(baseScale_);
 }
 bool SanityGaugeModel::renderTooltip() {
     if(!sanity_) return false;
@@ -266,15 +255,10 @@ bool SanityGaugeModel::renderTooltip() {
     const auto key=first+"|"+second+"|"+next+"|"+full+"|"+scaleText+"|"+(sanity_->refreshAvailable?"1":"0")+"|"+(sanity_->isRefreshing?"1":"0");
     if(key==renderedKey_) return false;
     renderedKey_=key;++tooltipRenders_;
-    // English labels are the source glyphs; other languages take the
-    // standard faces (HarmonyOS Sans, the region's Noto for CJK).
-    const bool sourceLabels=!core::isCJK(language_);
-    const auto numerals=[&](std::string_view text){return widths.numerals?widths.numerals(text):std::nullopt;};
-    const auto standard=[&](std::string_view text){return widths.standard?widths.standard(text):0.0;};
-    const auto label=[&](std::string_view text){if(sourceLabels)if(const auto w=numerals(text)) return *w;return standard(text);};
-    const auto value=[&](std::string_view text){if(const auto w=numerals(text)) return *w;return standard(text);};
-    tooltip_.layout=GaugePopoverLayout::make({label(first),label(second)},{value(next),value(full)},value(GaugePopoverLayout::valueTemplate));
-    tooltip_.text={first,second,next,full};tooltip_.refreshEnabled=sanity_->refreshAvailable&&!sanity_->isRefreshing;tooltip_.sourceLabels=sourceLabels;
+    // HarmonyOS Sans, with the region's Noto for CJK labels.
+    const auto width=[&](std::string_view text){return widths.standard?widths.standard(text):0.0;};
+    tooltip_.layout=GaugePopoverLayout::make({width(first),width(second)},{width(next),width(full)},width(GaugePopoverLayout::valueTemplate),direction_);
+    tooltip_.text={first,second,next,full};tooltip_.refreshEnabled=sanity_->refreshAvailable&&!sanity_->isRefreshing;
     return true;
 }
 bool SanityGaugeModel::perform(std::string_view id) {
