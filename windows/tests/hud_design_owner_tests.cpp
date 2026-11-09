@@ -17,8 +17,10 @@
 #include <uiautomation.h>
 #include <wrl/client.h>
 #include <cmath>
+#include <functional>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -91,8 +93,10 @@ struct FakeCanvas final : d::Canvas {
     unsigned entrances{};
     d::Point entranceOffset{};
     double entranceDelay{-1};
+    std::function<void()> onEntrance; // sees the owner's state as the entrance plays
     void playPageEntrance(d::Point offset, double delay) override {
         ++entrances; entranceOffset = offset; entranceDelay = delay;
+        if (onEntrance) onEntrance();
         d::Canvas::playPageEntrance(offset, delay);
     }
 };
@@ -236,16 +240,29 @@ void run(const std::filesystem::path& shader) {
         entering.current.entrance = core::ModuleEntrance{{24, 0}, .085, 0, 0};
         frame(entering, .09);
         check(fake->entrances == 3 && fake->entranceDelay == 0 && fake->entranceOffset.x == 24, "A swap's entrance has no delay");
-        // The end of the boot log (Mac 8ccf305): the centre shows again in the
-        // sample that carries its entrance from below, and this update plays
-        // that entrance before it poses the canvas, so no frame shows the
-        // whole page before its rows are hidden.
+        // The end of the boot log (Mac 8ccf305): the boot log conceals the
+        // centre (opacity 0, still attached); the sample that shows it again
+        // carries its entrance from below, and that update plays the entrance
+        // before it poses the canvas, so no frame shows the whole page before
+        // its rows are hidden.
+        auto concealed = entering;
+        concealed.current.opacity = 0;
+        frame(concealed, .092);
+        const auto hidden = owner.core().pose(core::Module::clipboard);
+        check(fake->entrances == 3 && hidden && hidden->opacity == 0, "The concealed centre is posed at opacity 0 and plays no entrance");
         const auto below = core::ShellPosition::subpageOffset(0, 1);
-        entering.current.opacity = 1;
-        entering.current.entrance = core::ModuleEntrance{below, .095, 0, 0};
-        frame(entering, .095);
+        std::optional<bool> posedFirst;
+        fake->onEntrance = [&] { posedFirst = owner.core().pose(core::Module::clipboard).has_value(); };
+        auto revealed = concealed;
+        revealed.current.opacity = 1;
+        revealed.current.entrance = core::ModuleEntrance{below, .095, 0, 0};
+        frame(revealed, .095);
+        fake->onEntrance = nullptr;
+        const auto shown = owner.core().pose(core::Module::clipboard);
         check(fake->entrances == 4 && fake->entranceDelay == 0 && fake->entranceOffset.x == below.x && fake->entranceOffset.y == below.y,
-            "The boot log's end shows the centre and plays its entrance from below in one update");
+            "The boot log's end plays the centre's entrance from below with no delay");
+        check(posedFirst == false && shown && shown->opacity == 1,
+            "The update that shows the centre plays its entrance before its first pose");
     }
     // --- leaving, park and prewarm ----------------------------------------------------------
     auto away = sample(core::Module::clipboard);
