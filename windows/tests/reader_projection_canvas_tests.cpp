@@ -346,7 +346,17 @@ void readerKeepsPages() {
     r.source->count = 0;
     canvas.show(w.now); canvas.setActive(true, w.now); r.sync();
     check(r.state->error() && canvas.pageViews().size() <= 1, "A reopen that fails keeps no neighbours");
-    r.activate(false);
+    // Placed while inactive (Mac e0ae44b: `isActive && pageColumn.isVisible`):
+    // the state renders the column again for a canvas that has left, whose
+    // column is still in its page; the new neighbours are placed without a fade.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    r.source->count = 5;
+    w.advance(1);
+    r.state->setActive(true); r.sync();
+    check(!canvas.isActive() && !r.state->pages().empty() && canvas.pageViews().size() >= 2 && canvas.pageClip() && d::isVisible(*canvas.pageClip(), canvas.root()),
+        "The state renders the column again for the inactive canvas, its column still shown in the page");
+    for (const auto& view : canvas.pageViews()) check(!enter(*view.layer).present() || enter(*view.layer).start < w.now - .5, "A neighbour placed while inactive does not fade in");
+    r.state->setActive(false); r.sync();
 }
 
 // --- Projection fixtures --------------------------------------------------------------------------
