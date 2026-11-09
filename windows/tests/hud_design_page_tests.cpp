@@ -1435,6 +1435,46 @@ void focusMoves(RecordedMeasurer& measurer) {
     w.context.setEditorHost(nullptr);
 }
 
+// HUDDesignCanvas.suspendInput (:556, the HUD's close): an editing field
+// commits and a slider drag ends without its final value, while the page,
+// an open menu or pop-over and a running sub-page swap stay as they are.
+void suspendsInput(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FieldHost host; w.context.setEditorHost(&host);
+    FieldCanvas edited(endfield::core::Module::system, w.context);
+    edited.show(w.now); edited.setActive(true, w.now);
+    edited.field->beginEditing(); host.typed = "Perlica";
+    edited.suspendInput();
+    check(!edited.field->editing() && edited.commits == std::vector<std::string>{"Perlica"} && edited.isActive(), "An editing field commits; the canvas stays active");
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const Rect sr = canvas.slider->rect(canvas.root());
+    d::PointerInput press;
+    canvas.pointerDown({sr.x + 20, sr.y + sr.height / 2}, press, w.now);
+    canvas.pointerDragged({sr.x + 200, sr.y + sr.height / 2}, w.now);
+    check(canvas.dragging(), "A slider drag is under way");
+    canvas.events.clear();
+    canvas.suspendInput();
+    check(!canvas.dragging() && std::none_of(canvas.events.begin(), canvas.events.end(), [](const std::string& e) { return e.ends_with(" true"); }),
+        "The drag ends without a final value");
+    const Point drop = centre(*canvas.dropdown, canvas.root());
+    canvas.pointerDown(drop, press, w.now); canvas.pointerUp(drop, w.now);
+    check(canvas.menuOpen(), "A menu is open");
+    canvas.suspendInput();
+    check(canvas.menuOpen() && canvas.capturesPointer(), "The menu stays open (it leaves with the module)");
+    canvas.closeMenu();
+    canvas.openPopover(std::make_unique<d::Popover>(canvas.env(), "Pen", std::nullopt, 270, 60), canvas.dropdown, std::nullopt, {});
+    canvas.suspendInput();
+    check(canvas.popoverOpen(), "A pop-over stays open");
+    canvas.closePopover();
+    canvas.depth = 1; canvas.navigate(1);
+    canvas.suspendInput();
+    check(canvas.transitioning() && canvas.page().layer().animating(w.now + .05), "A running sub-page swap keeps its leave and deadline");
+    w.advance(.2);
+    check(!canvas.transitioning(), "The swap lands on time");
+    w.context.setEditorHost(nullptr);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: hud_design_page_tests <hud-design-source.json>");
@@ -1458,6 +1498,7 @@ int main(int argc, char** argv) {
         delayedEntrance(measurer);
         carriedEntrance(measurer);
         focusMoves(measurer);
+        suspendsInput(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {

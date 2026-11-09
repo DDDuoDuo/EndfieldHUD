@@ -267,7 +267,7 @@ std::vector<std::pair<std::string, double>> Canvas::currentOffsets() const {
 // navigate(dx:dy:) (:318-350). The next page, a Back included, starts at the top.
 void Canvas::navigate(double dx, double dy) {
     const Point offset = subpageOffset(dx, dy);
-    closePopups(); endEditing(true); cancelGestures();
+    closePopups(); suspendInput();
     auto& deadlines = env().deadlines;
     const auto clock = env().clock();
     if (clock.reduceMotion || !attached_) {
@@ -522,6 +522,7 @@ void Canvas::endEditing(bool commit) {
     for (TextField* field : std::vector<TextField*>(fields_)) if (field->editing()) field->endEditing(commit);
     endOtherEditing(commit);
 }
+void Canvas::suspendInput() { endEditing(true); cancelGestures(); }
 // The canvas's other editors (the Archive body, the Notes TEXT note) are text
 // views too: they end editing the same way (their textDidEndEditing flushes
 // or saves through the blur, ArchiveCanvas.swift:674-677, NotesCanvas.swift:606-609).
@@ -588,7 +589,7 @@ void Canvas::setActive(bool active, double now) {
     } else {
         entrance_.reset();
         willEndInteraction();
-        closePopups(); endEditing(true); cancelGestures(); settleSwap(true);
+        closePopups(); suspendInput(); settleSwap(true);
         didDeactivate();
     }
     notifyInput();
@@ -625,8 +626,7 @@ void Canvas::prepareToLeave(double now) {
     entrance_.reset();
     willEndInteraction();
     closePopups();
-    endEditing(true);
-    cancelGestures();
+    suspendInput();
     settleSwap(true);
     willLeave();
     attached_ = false;
