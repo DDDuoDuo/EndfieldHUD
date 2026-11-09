@@ -519,6 +519,9 @@ void mediaLeave() {
         leave(w);
         check(w.media.log.empty() && w.media.isPlaying, "A GIF is not paused by a leave");
         back(w);
+        // Its frame restarts at 0 in the player: a preserved hide and re-show of a playing
+        // GIF decodes frame 0 and keeps playing (notes_image_playback_contracts, "Reopen
+        // starts source GIF frame0 and restores playback intent").
         check(w.media.log.empty() && w.media.shown.size() == 1 && w.media.isPlaying, "Back, the GIF keeps its presentation and playback");
     }
     {
