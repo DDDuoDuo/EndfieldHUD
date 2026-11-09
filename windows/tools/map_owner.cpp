@@ -203,15 +203,16 @@ void MapOwner::setOverlayVisible(bool v, double t) {
     i.core->setOverlayVisible(v, t);
     i.synchronize();
 }
-// The close's start: input stops (the core), the pin pulse stops on the
-// first closing frame, and the raster working set goes now, as the Mac's
-// close runs releaseRasterWorkingSet; the map stays drawn until the hide.
+// The close's start: input stops (the core) and the pin pulse stops on the
+// first closing frame. The Mac's close runs releaseRasterWorkingSet, which
+// releases only an inactive canvas (WorldMapCanvas.swift:82): closing on the
+// Map keeps its raster until the hide deactivates it (didDeactivate).
 void MapOwner::overlayClosing(double t) {
     auto& i = *impl_;
     i.clock(t);
     i.core->overlayClosing(t);
     if (!i.closing && i.overlay) { i.closing = true; (void)i.scene->setAppearance(i.sceneAppearance()); }
-    i.releaseWorkingSet();
+    if (!i.canvas->isActive()) i.releaseWorkingSet();
     i.synchronize();
 }
 void MapOwner::update(const app::ModuleFrame& f) {
