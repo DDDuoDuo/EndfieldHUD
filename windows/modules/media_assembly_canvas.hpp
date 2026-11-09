@@ -38,7 +38,12 @@ struct MediaAssemblyShelfChoice {
 // released after the import.
 struct MediaAssemblyShelfFile { std::string path; std::shared_ptr<void> lease; };
 struct MediaAssemblyCanvasServices {
-    std::function<double()> now;                    // the host clock (controller notices arrive in the executor's drain)
+    // The host clock (controller notices arrive in the executor's drain),
+    // given to Canvas::catchUpClock. Kept beside the Context's host clock
+    // because the owner folds in its own clocked event time (deadlines and
+    // dialogs, max(event time, design clock)), which its tests drive apart
+    // from the area clock.
+    std::function<double()> now;
     std::function<std::string()> uuid;              // sticker identities
     std::function<std::vector<MediaAssemblyShelfChoice>()> shelfChoices;
     // Throws MediaAssemblyFailure (reported) or returns nullopt (unavailable).

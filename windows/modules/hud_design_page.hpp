@@ -281,8 +281,10 @@ public:
     motion::Clock clock() const noexcept { return env().clock(); }
     // env().now moves forward to the context's host clock (setHostClock), if
     // any: a module's data notice that arrives outside a frame calls it before
-    // it starts motion.
+    // it starts motion. The second form catches up to a time a canvas's own
+    // owner gives (Media Assembly). Neither moves it back.
     void catchUpClock();
+    void catchUpClock(double hostTime);
     std::string text(std::string_view english, std::string_view simplifiedChinese, std::span<const std::string_view> arguments = {}) const;
     ModuleTitle title(std::string_view english, std::string_view simplifiedChinese) const;
     // In-place re-render (LIB-75): no entrance of its own, every scroll area

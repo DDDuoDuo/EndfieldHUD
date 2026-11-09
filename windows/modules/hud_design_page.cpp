@@ -177,8 +177,10 @@ Canvas::~Canvas() {
 }
 void Canvas::begin(double now) { env().now = now; }
 void Canvas::catchUpClock() {
-    if (!context_->hostClock_) return;
-    if (const double t = context_->hostClock_(); std::isfinite(t)) env().now = std::max(env().now, t);
+    if (context_->hostClock_) catchUpClock(context_->hostClock_());
+}
+void Canvas::catchUpClock(double hostTime) {
+    if (std::isfinite(hostTime)) env().now = std::max(env().now, hostTime);
 }
 void Canvas::notifyInput() const { if (context_->onInputStateChange) context_->onInputStateChange(); }
 // HUDDesignCanvas.recordingModeChanged (:229) and renderScaleChanged (:231)

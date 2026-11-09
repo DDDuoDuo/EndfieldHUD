@@ -85,7 +85,7 @@ bool MediaAssemblyCanvas::isEditable() const noexcept {
     return session.document() && !session.busy() && !isExporting() && !closing_;
 }
 void MediaAssemblyCanvas::controllerChanged() {
-    if (services_.now) env().now = std::max(env().now, services_.now());
+    if (services_.now) catchUpClock(services_.now());
     if (!presented_) return;
     if (handlingChange_) { changePending_ = true; return; }
     handlingChange_ = true;
@@ -627,7 +627,7 @@ void MediaAssemblyCanvas::startExport(const std::string& path, bool overwrite, c
     startExportTicker();
 }
 void MediaAssemblyCanvas::exportFinished(std::optional<std::string> target, bool failed, std::string name, bool original) {
-    if (services_.now) env().now = std::max(env().now, services_.now());
+    if (services_.now) catchUpClock(services_.now());
     if (!failed && target) {
         const auto& document = controller_->session().document();
         if (document && services_.samePath && services_.samePath(*target, document->path)) reloadingAfterOverwrite_ = true;
