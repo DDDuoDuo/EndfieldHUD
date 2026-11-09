@@ -195,6 +195,12 @@ void noteEditorPart(const char* body) {
     };
     canvas.show(w.now);
     check(host.attaches == 0, "Shown but inactive, the note has no editor yet");
+    // Mac 1da1863 (attach from the showing) has nothing to port: the editor
+    // attaches only on activation, so a switch overtaken before it activated
+    // the module (shown, then only left) never attaches it.
+    canvas.prepareToLeave(w.now);
+    check(host.attaches == 0, "A switch overtaken before activation leaves no editor attached");
+    canvas.show(w.now);
     canvas.setActive(true, w.now);
     // The owner's first pose of the editor follows this attach.
     check(host.attaches == 1, "Activated on the TEXT tab, the note attaches its editor");
