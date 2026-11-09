@@ -95,6 +95,10 @@ public:
     // registered first): the controller's and the login's language and accent.
     void setAppearance(const app::ModuleAppearance&,double time);
     void setOverlayVisible(bool,double time);
+    // The close's start (48584b5, C6d): the page keeps drawing with input
+    // suspended, the recovery menu fades out, the sign-in window and the
+    // controller's requests stop; the page's full leave waits for the hidden
+    // HUD (concealed, retracted).
     void overlayClosing(double time);
     // The header wallet uses the same projected centre plane; headerOpacity is
     // the shell chrome opacity (the page uses the frame's).
@@ -109,6 +113,9 @@ public:
     // not shown keeps no artwork and a shut recovery popover releases its
     // card (rebuilt when next shown); the wallet stays.
     void concealed(double time);
+    // A File Shelf drag's retract hid the HUD (overlayRetracted): the page
+    // leaves as at concealment, keeping its session and artwork.
+    void retracted(double time);
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime(double now) const;
     bool deadline(double time);                         // true: visible content changed

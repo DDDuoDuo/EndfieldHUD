@@ -349,12 +349,17 @@ public:
     void setAppearance(const app::ModuleAppearance& a, double t) override { clock(t); core_->setAppearance(a, t); }
     void setOverlayVisible(bool visible, double t) override {
         clock(t);
+        // A hide, or a reopen mid-close, ends that close's presentation first.
+        if (!visible || closing_) concealPresentation();
         overlayVisible_ = visible;
-        if (!visible) canvas_->setPresented(false, time_);
         core_->setOverlayVisible(visible, t);
         followPresentation();
     }
-    void overlayClosing(double t) override { clock(t); canvas_->setPresented(false, time_); core_->overlayClosing(t); overlayVisible_ = false; followPresentation(); }
+    // The close's start (6e72c30): Now Playing stays presented (its clock,
+    // its volume pop-up and the audio vote) until the HUD is hidden; only
+    // input stops (DesignOwnerCore::overlayClosing cancels the seek and
+    // volume drags with the canvas's gestures).
+    void overlayClosing(double t) override { clock(t); closing_ = true; core_->overlayClosing(t); }
     // setPresented follows the presentation exactly as v1.2.0's owner did:
     // the module is the current or incoming surface, requested, in a visible
     // HUD (Mac: from the start of the reveal, before input is accepted).
@@ -362,7 +367,7 @@ public:
         clock(f.time);
         const auto& sample = f.presentation;
         const bool shown = sample.shows(core::Module::nowPlaying);
-        canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
+        if (!closing_) canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
         synchronize(time_);
         core_->update(f);
         placeCover();
@@ -430,7 +435,11 @@ public:
         case app::HostEvent::Kind::utilityCompleted:
             // Service results, downloads, decoded artwork/lyrics, queue capacity.
             return deliver(time_);
+        case app::HostEvent::Kind::overlayRetracted:
+            concealPresentation(); overlayVisible_ = false;
+            return core_->hostEvent(e, t);
         case app::HostEvent::Kind::overlayConcealed: {
+            concealPresentation(); overlayVisible_ = false;
             followPresentation();
             (void)core_->hostEvent(e, t);   // canvases not shown keep no artwork
             // Closed on another module: keep no cover texture and only the
@@ -514,6 +523,12 @@ private:
     }
     // The WinHTTP session is retained exactly while Now Playing is presented;
     // released, it closes with its connections once no download is in flight.
+    // The hidden HUD (or a reopen mid-close): the presentation the close kept ends.
+    void concealPresentation() {
+        closing_ = false;
+        canvas_->setPresented(false, time_);
+        followPresentation();
+    }
     void followPresentation() {
         if (!http_) return;
         const bool active = service_->snapshot().active;
@@ -912,6 +927,7 @@ private:
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
     const d::Layer* insertedAfter_{};
     bool insertion_{}, httpRetained_{}, overlayVisible_{true};
+    bool closing_{};   // overlayClosing until the hidden HUD (concealPresentation)
     double time_{};
     std::uint64_t seenRevision_{};
     // Coverage evidence (never user content: action and source only).

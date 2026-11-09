@@ -147,7 +147,12 @@ void AccountLinkingOwner::setOverlayVisible(bool visible,double t) {
     // (if any) closes now, or with the last request still finishing.
     i.services->setNetworkRetained(visible);
 }
-void AccountLinkingOwner::overlayClosing(double t) {cancelInteraction(t);impl_->page->overlayClosing(t);setOverlayVisible(false,t);}
+void AccountLinkingOwner::overlayClosing(double t) {
+    auto& i=*impl_;i.advance(t);
+    (void)i.gauge->dismiss(i.time);i.page->overlayClosing(i.time);i.gauge->setOverlayVisible(false,i.time);
+    if(i.overlay) {i.overlay=false;i.visibility();i.syncPage(i.time);}
+    i.services->setNetworkRetained(false);
+}
 void AccountLinkingOwner::update(const app::ModuleFrame& frame,float headerOpacity) {
     auto& i=*impl_;i.advance(frame.time);if(!i.resized) return;
     const bool selected=frame.presentation.requested==core::Module::account;
@@ -167,6 +172,10 @@ void AccountLinkingOwner::prewarm(const app::ModuleFrame& frame) {
 void AccountLinkingOwner::concealed(double t) {
     auto& i=*impl_;i.advance(t);
     (void)i.page->hostEvent({app::HostEvent::Kind::overlayConcealed,0},i.time);(void)i.gauge->conceal();
+}
+void AccountLinkingOwner::retracted(double t) {
+    auto& i=*impl_;i.advance(t);
+    (void)i.page->hostEvent({app::HostEvent::Kind::overlayRetracted,0},i.time);
 }
 bool AccountLinkingOwner::requiresFrames(double t) const {const auto& i=*impl_;return i.page->requiresFrames(t)||i.gauge->requiresFrames(t);}
 std::optional<double> AccountLinkingOwner::nextWakeTime(double now) const {

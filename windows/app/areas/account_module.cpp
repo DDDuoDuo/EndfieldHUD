@@ -351,6 +351,10 @@ public:
             // rasters (the next show rebuilds them); the wallet stays.
             owner_->concealed(t);
             return syncWorkMode(t);
+        case K::overlayRetracted:
+            // A File Shelf drag's retract hid the HUD: the face leaves now.
+            owner_->retracted(t);
+            return syncWorkMode(t);
         default: return syncWorkMode(t);
         }
     }

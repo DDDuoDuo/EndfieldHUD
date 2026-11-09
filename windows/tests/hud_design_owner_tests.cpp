@@ -393,6 +393,83 @@ void run(const std::filesystem::path& shader) {
         for (const auto& id : filler) (void)raster.remove(id);
         restyle(false, 4.05);
     }
+    // --- the HUD close (48584b5, 5c8a905): input stops, the canvas stays --------------------------
+    // C5 and C7: the canvas stays active and drawn with input suspended, a
+    // press held across the close activates nothing (its capture loss and
+    // release included), and the full leave waits for the hidden HUD; C1: the
+    // confirm bar keeps composing, deciding nothing, until then.
+    {
+        frame(sample(core::Module::clipboard), 4.45);
+        const auto pressAt = centre(*core0.clientRect({100, 200, 200, 50}));
+        check(fake->isActive() && core0.inputModule() == core::Module::clipboard, "Clipboard is shown before the close");
+        const unsigned leaves = fake->leaves, pressed = fake->pressed, keys = fake->keys, scrolls = fake->scrolls;
+        unsigned decided{};
+        d::ConfirmRequest request; request.id = "close"; request.title = "Delete?"; request.confirmTitle = "Delete";
+        owner.pointer({app::PointerKind::down, app::PointerButton::left, pressAt.x, pressAt.y}, 4.451);
+        check(owner.capturesPointer(), "A press is held");
+        owner.overlayClosing(4.452); overlay.overlayClosing(4.452);
+        check(fake->isActive() && fake->leaves == leaves && !core0.inputModule() && !owner.capturesPointer() && !owner.pointerLocked() && !owner.covers(pressAt) && !owner.cursorAt(pressAt),
+            "The close keeps the canvas active with no input");
+        check(!owner.pointer({app::PointerKind::captureLost, app::PointerButton::none, pressAt.x, pressAt.y}, 4.453)
+            && !owner.pointer({app::PointerKind::up, app::PointerButton::left, pressAt.x, pressAt.y}, 4.454) && fake->pressed == pressed,
+            "The held press activates nothing: no synthetic release, its capture loss and release are ignored");
+        check(!owner.wheel({pressAt.x, pressAt.y, -1, false, 0, 3}, 4.455) && !core0.key({app::KeyKind::down, 'K'}, 0, 4.456) && fake->keys == keys && fake->scrolls == scrolls,
+            "Wheel and keys are ignored");
+        check(owner.automationRefresh(nullptr) && owner.automationCount() == 0, "No automation stand-ins while closing");
+        check(frame(sample(core::Module::clipboard), 4.5) > 0 && fake->isActive(), "The canvas keeps drawing through the close");
+        context.confirm(request, [&] { ++decided; }, [&] { ++decided; });
+        overlay.overlayClosing(4.51);
+        check(frame(sample(core::Module::clipboard), 4.52) > 1 && overlay.presented() && !overlay.capturesPointer() && !overlay.key({app::KeyKind::down, VK_ESCAPE}, 4.53) && !decided,
+            "A confirm bar keeps composing through the close and decides nothing");
+        (void)owner.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 4.8); (void)overlay.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 4.8);
+        check(!fake->isActive() && fake->leaves == leaves + 1 && !overlay.capturesPointer() && !decided, "The hidden HUD leaves and resets the overlay");
+        frame(sample(core::Module::clipboard), 4.81);
+        check(overlay.modalEntries().empty() && !overlay.presented(), "Nothing of the overlay is composed once hidden");
+        owner.setOverlayVisible(true, 4.9); overlay.setOverlayVisible(true, 4.9);
+        check(frame(sample(core::Module::clipboard), 4.95) > 0 && fake->isActive() && core0.inputModule() == core::Module::clipboard, "The next open activates it again");
+        // A reopen mid-close (C19) ends that close first: the canvas left and comes back.
+        owner.overlayClosing(4.96); overlay.overlayClosing(4.96);
+        owner.setOverlayVisible(true, 4.97); overlay.setOverlayVisible(true, 4.97);
+        check(fake->leaves == leaves + 2 && frame(sample(core::Module::clipboard), 4.98) > 0 && fake->isActive(), "A reopen mid-close leaves, then shows the canvas again");
+    }
+    // B5-1: a switch the close caught. Forward (Volume to Clipboard at +.05):
+    // Volume departs, posed and drawn without input; Clipboard landed hidden,
+    // built but never drawn or activated. Reversed: the screen still leaving
+    // stays active with its input suspended.
+    {
+        frame(sample(core::Module::volume), 5);
+        check(skipped->isActive(), "Volume is shown");
+        auto away = sample(core::Module::volume);
+        away.requested = core::Module::clipboard; away.transitioning = away.directional = true; away.acceptsModuleInput = false;
+        away.incoming = sample(core::Module::clipboard, false).current;
+        frame(away, 5.01);
+        check(!skipped->isActive() && !fake->isActive(), "The switch leaves Volume; Clipboard is only prepared");
+        owner.overlayClosing(5.05); overlay.overlayClosing(5.05);
+        auto settled = sample(core::Module::clipboard, false);   // landed hidden
+        settled.departing = sample(core::Module::volume).current;
+        settled.departing->opacity = .4;
+        frame(settled, 5.06);
+        check(!owner.entries(core::Module::volume).empty() && !core0.inputModule() && !skipped->isActive(), "The departing Volume is drawn, takes no input and is not activated");
+        check(owner.entries(core::Module::clipboard).empty() && fake->isShown() && !fake->isActive(), "The landed Clipboard is built but not drawn or activated");
+        settled.departing.reset();
+        frame(settled, 5.2);
+        check(owner.entries(core::Module::volume).empty() && !skipped->isShown(), "Once its leave ended the departing screen goes");
+        (void)owner.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.4); (void)overlay.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.4);
+        owner.setOverlayVisible(true, 5.5); overlay.setOverlayVisible(true, 5.5);
+        frame(sample(core::Module::clipboard), 5.55);
+        check(fake->isActive() && !owner.entries(core::Module::clipboard).empty(), "The next open shows the landed module");
+        // Reversed: Clipboard to Volume and back, closed at +.05.
+        auto reversed = sample(core::Module::clipboard);
+        reversed.current.opacity = .5;
+        frame(reversed, 5.6);
+        owner.overlayClosing(5.61); overlay.overlayClosing(5.61);
+        frame(reversed, 5.62);
+        check(fake->isActive() && !core0.inputModule() && !owner.entries(core::Module::clipboard).empty(), "A reversed switch keeps its screen active with input suspended");
+        (void)owner.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.8); (void)overlay.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.8);
+        owner.setOverlayVisible(true, 5.9); overlay.setOverlayVisible(true, 5.9);
+        frame(sample(core::Module::clipboard), 5.95);
+        check(fake->isActive(), "Reopened");
+    }
     // --- the crowd across owners -----------------------------------------------------------------
     // In the application every module has its own owner core, all sharing
     // one rasterizer, and the owners collect in registration order. The

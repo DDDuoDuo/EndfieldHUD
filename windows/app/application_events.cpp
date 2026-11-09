@@ -402,19 +402,20 @@ void Application::Impl::transitionDeadlineExpired(double time){
 // and the window hides during the drag; should they not, the state resolves
 // on the frames after the loop returns.
 // The Mac hides and restores the same view without prepareToLeave, so the
-// Shelf keeps its scroll across the drag: the close here left its canvas
-// (which then starts at the top), so the retract keeps that scroll.
+// Shelf keeps its scroll across the drag: the hide here (overlayRetracted),
+// or a restore before it (the open ends the retract's close), leaves its
+// canvas, which would then start at the top, so each keeps that scroll.
 void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double time){
     using K=core::SystemOverlayEffect::Kind;
+    const auto keepShelfScroll=[&]{if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});};
     switch(e.kind){
-    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);
-        if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});break;
+    case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
     // stopMotionForConcealment + orderOut: the hidden HUD ends what the
     // retract's close left playing (overlayRetracted; no overlayConcealed)
     // and clears the highlights kept through it (deactivateModuleInput:
     // clearControlHighlights).
-    case K::shelfHide:host.hide();presentationPriority.restore();clearControlHighlights(time);broadcast(HostEvent::Kind::overlayRetracted,time);break;
-    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);break;
+    case K::shelfHide:host.hide();presentationPriority.restore();clearControlHighlights(time);broadcast(HostEvent::Kind::overlayRetracted,time);keepShelfScroll();break;
+    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);keepShelfScroll();break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
     default:break;
     }

@@ -13,7 +13,12 @@
 //   setAppearance(appearance, time)     language, theme, accent, reduce-motion,
 //                                       ambient and low-power (one event, no poll)
 //   setOverlayVisible(true, time)       HUD opening
-//   overlayClosing(time)                HUD closing: cancel gestures, then hide
+//   overlayClosing(time)                HUD closing: input stops at once (no
+//                                       synthetic release); content that leaves
+//                                       with the close stays drawn and finishes
+//                                       its motion, and its full deactivation
+//                                       waits for hostEvent overlayConcealed or
+//                                       overlayRetracted (the hidden HUD)
 //   update(frame)                       once per presented frame, after Notes,
 //                                       with the source center plane, chrome
 //                                       settings, module presentation and opacity
@@ -298,6 +303,9 @@ public:
     virtual void resize(const ClientMetrics&) {}
     virtual void setAppearance(const ModuleAppearance&, double) {}
     virtual void setOverlayVisible(bool, double) {}
+    // Default for owners with nothing to leave with the close: cancel and hide
+    // at once. Design owners keep drawing until the hidden HUD instead
+    // (tools::DesignOwnerCore::overlayClosing).
     virtual void overlayClosing(double time) { cancelInteraction(time); setOverlayVisible(false, time); }
     virtual void update(const ModuleFrame&) {}
     // Launch prewarm (Mac AppDelegate prewarmDesktop): called at most once,

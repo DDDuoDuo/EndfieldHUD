@@ -235,7 +235,15 @@ void ArchiveOwner::setOverlayVisible(bool value, double t) {
     i.core->setOverlayVisible(value, t);
     if (!value) i.media->setVisible(false, i.time);
 }
-void ArchiveOwner::overlayClosing(double t) { cancelInteraction(t); setOverlayVisible(false, t); }
+// The close's start stops input only (DesignOwnerCore::overlayClosing): the
+// body editor's press ends without a release; the page and its media stay
+// presented until the hidden HUD (hostEvent).
+void ArchiveOwner::overlayClosing(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    i.route->cancel();
+    i.core->overlayClosing(t);
+}
 void ArchiveOwner::update(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
@@ -324,15 +332,20 @@ bool ArchiveOwner::flush(double t) { auto& i = *impl_; (void)i.core->finishEditi
 bool ArchiveOwner::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
+    using K = app::HostEvent::Kind;
+    // The hidden HUD (the close finished, or a File Shelf drag's retract hid
+    // it): the canvas left with the core's full deactivation; its media go
+    // too (a playing video kept playing through the close, as on the Mac).
+    const bool hidden = e.kind == K::overlayConcealed || e.kind == K::overlayRetracted;
+    if (hidden) { i.overlay = false; i.route->cancel(); }
     bool changed = i.core->hostEvent(e, t);
     // The HUD closed: the Mac's canvas (and its session) ends with it.
-    if (e.kind == app::HostEvent::Kind::overlayConcealed) {
+    if (e.kind == K::overlayConcealed) {
         i.enter(t);
         i.canvas->endSession();
-        i.media->setVisible(false, i.time);
         i.releasePending = true;
-        changed = true;
     }
+    if (hidden) { i.media->setVisible(false, i.time); changed = true; }
     return changed;
 }
 std::optional<app::ModuleCursor> ArchiveOwner::cursorAt(core::Point p) const {
