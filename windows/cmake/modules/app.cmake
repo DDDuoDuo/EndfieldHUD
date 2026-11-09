@@ -317,6 +317,18 @@ if(WIN32)
       target_link_libraries(application_utility_idle_tests PRIVATE hud_utility)
       add_test(NAME application_utility_idle_contracts COMMAND application_utility_idle_tests)
     endif()
+    # The thread census the hidden summon-cycle check reads: pool workers by
+    # their ntdll start, busy in a callback, idle on their worker factory.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/process_diagnostics.cpp")
+      add_executable(process_diagnostics_tests tests/process_diagnostics_tests.cpp app/process_diagnostics.cpp)
+      target_include_directories(process_diagnostics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+      target_compile_definitions(process_diagnostics_tests PRIVATE ${EHUD_APP_DEFINITIONS})
+      target_link_libraries(process_diagnostics_tests PRIVATE hud_data psapi dxgi)
+      add_test(NAME process_diagnostics_contracts COMMAND process_diagnostics_tests)
+      if(MSVC)
+        target_compile_options(process_diagnostics_tests PRIVATE /W4 /permissive- /EHsc)
+      endif()
+    endif()
     # The built-in Volume owner's app-row icons on the shared utility queue
     # (native/volume_icon_provider.hpp VolumeQueuedIconProvider).
     add_executable(application_volume_icons_tests tests/application_volume_icons_tests.cpp)
@@ -390,13 +402,13 @@ if(WIN32)
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=21 -DHOST_CHECKS=465 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=22 -DHOST_CHECKS=465 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=464 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=16 -DHOST_CHECKS=464 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       # The same owner's memory and thread census (launch, every module,

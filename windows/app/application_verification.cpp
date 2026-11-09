@@ -12,6 +12,7 @@
 #include "modules/hud_design_controls.hpp"
 #include "modules/notes_canvas.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -22,7 +23,6 @@
 #include <map>
 #include <set>
 #include <thread>
-#include <tlhelp32.h>
 #include <psapi.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
@@ -3648,15 +3648,56 @@ int Application::Impl::runHiddenVerification(){
                 }
                 // Repeated summon cycles retain no extra raster resources,
                 // handles or threads once the first cycles have warmed caches.
-                const auto handles=[]{DWORD count{};need(GetProcessHandleCount(GetCurrentProcess(),&count)!=FALSE,"Read own handle count");return count;};
-                const auto threads=[]{const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);need(snapshot!=INVALID_HANDLE_VALUE,"Read own threads");THREADENTRY32 entry{};entry.dwSize=sizeof(entry);unsigned count{};
-                    for(BOOL more=Thread32First(snapshot,&entry);more;more=Thread32Next(snapshot,&entry))if(entry.th32OwnerProcessID==GetCurrentProcessId())++count;CloseHandle(snapshot);return count;};
+                // The process's threads include the OS thread pool's workers
+                // (most of them run WARP rasterisation): the system adds them
+                // under CPU load, such as other suites running beside this one,
+                // and retires them on its own idle timer, and they hold no handle
+                // in this process. So both counts are read settled (the GPU has
+                // finished every frame and the utility queues are idle) with the
+                // idle pool workers left out. The settled read waits (bounded)
+                // until every pool worker is back waiting for work, so one that
+                // has just finished the last frame's WARP work is not caught on
+                // its way back; a thread that has exited since the capture is not
+                // counted. A pool worker still busy at the bound, and every
+                // thread the application or a driver starts, counts.
+                struct Census{DWORD handles{};unsigned threads{},idlePool{},busyPool{};std::vector<ThreadActivity>list;};
+                const auto censusNow=[&]{
+                    Census c;need(GetProcessHandleCount(GetCurrentProcess(),&c.handles)!=FALSE,"Read own handle count");
+                    c.list=captureThreadActivity();need(!c.list.empty(),"Read own threads");
+                    for(const auto&thread:c.list){if(thread.exited)continue;if(idlePoolWorker(thread))++c.idlePool;else{++c.threads;if(thread.poolWorker)++c.busyPool;}}
+                    return c;};
+                const auto census=[&](bool settled){
+                    if(!settled)return censusNow();
+                    (void)renderer.waitForGpuIdle();if(utility){utility->waitIdle();if(longWork)longWork->waitIdle();}
+                    // How long the pool workers get to go back to waiting for work.
+                    constexpr auto poolSettleBound=std::chrono::seconds(2);
+                    const auto until=std::chrono::steady_clock::now()+poolSettleBound;
+                    auto c=censusNow();
+                    while(c.busyPool&&std::chrono::steady_clock::now()<until){Sleep(2);c=censusNow();}
+                    return c;};
                 const auto cycle=[&]{perform(lifecycle.toggle(),t);t=run(t,1.2);perform(lifecycle.toggle(),t);t=run(t,1.2);};
                 for(unsigned n=0;n<3;++n)cycle();
-                const auto warmRaster=rasterizer.stats();const auto warmHandles=handles();const auto warmThreads=threads();
-                for(unsigned n=0;n<20;++n)cycle();
+                const auto warmRaster=rasterizer.stats();const auto warm=census(true);const auto warmTypes=captureHandleTypes();
+                // The kernel's thread state is read right: settled, the pool workers
+                // this process has are seen waiting for work.
+                lifecycleCheck(warm.busyPool==0||warm.idlePool>0,"The settled census sees the OS pool workers waiting for work");
+                // Each cycle's counts as they stand (not settled), for the failure message.
+                std::string perCycle;
+                for(unsigned n=0;n<20;++n){cycle();const auto c=census(false);perCycle+=" "+std::to_string(c.handles)+"/"+std::to_string(c.threads)+"+"+std::to_string(c.idlePool);}
                 lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&rasterizer.stats().entries==warmRaster.entries&&rasterizer.stats().resourceBytes==warmRaster.resourceBytes,"Twenty summon cycles retain the warmed raster cache exactly");
-                lifecycleCheck(handles()<=warmHandles+8&&threads()<=warmThreads+2,"Twenty summon cycles leak no handles or threads");
+                {const auto after=census(true);
+                 std::string detail;
+                 if(after.handles>warm.handles+8||after.threads>warm.threads+2){
+                     // What grew: handle types and the threads that were not there warm.
+                     std::map<std::string,long long>types;for(const auto&[name,n]:warmTypes)types[name]-=n;for(const auto&[name,n]:captureHandleTypes())types[name]+=n;
+                     detail=" (handles "+std::to_string(warm.handles)+" -> "+std::to_string(after.handles)+", threads "+std::to_string(warm.threads)+" -> "+std::to_string(after.threads)+
+                         " with idle pool workers "+std::to_string(warm.idlePool)+" -> "+std::to_string(after.idlePool)+", busy at the settle bound "+std::to_string(warm.busyPool)+" -> "+std::to_string(after.busyPool)+"; handles/threads+idle per cycle:"+perCycle+"; handle types:";
+                     for(const auto&[name,n]:types)if(n)detail+=" "+name+(n>0?" +":" ")+std::to_string(n);
+                     detail+="; new threads:";
+                     for(const auto&thread:after.list)if(!thread.exited&&!idlePoolWorker(thread)&&std::none_of(warm.list.begin(),warm.list.end(),[&](const ThreadActivity&w){return w.id==thread.id;}))
+                         detail+=" "+thread.module+"+"+std::to_string(thread.offset)+(thread.description.empty()?"":" '"+thread.description+"'")+" state "+std::to_string(thread.state)+"/"+std::to_string(thread.waitReason);
+                     detail+=")";}
+                 lifecycleCheck(after.handles<=warm.handles+8&&after.threads<=warm.threads+2,("Twenty summon cycles leak no handles or threads"+detail).c_str());}
                 if(args.sessionEndCoverage){
                     // WM_QUERYENDSESSION drains dirty writes and keeps running;
                     // WM_ENDSESSION conceals without animation, drains and stops.
