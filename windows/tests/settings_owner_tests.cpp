@@ -171,10 +171,14 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& resou
     check(modulesEntries > 0 && display.section() == "modules", "The Modules page composes its glyph rows");
     // --- Close: park and release ------------------------------------------------------------
     const auto resident = raster.stats().entries;
-    owner.setOverlayVisible(false, 13); overlay.setOverlayVisible(false, 13);
-    owner.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13);
-    check(settings.logoArtworks() == 0, "The concealed HUD keeps no decoded logo artwork");
-    frame(core::Module::system, 13.1);
+    // The host's close: overlayClosing, the close's frames (the page stays
+    // active and drawn, taking no input), then the hidden HUD.
+    owner.overlayClosing(13); overlay.overlayClosing(13);
+    check(frame(core::Module::display, 13.05) > 0 && display.isActive() && display.section() == "modules" && !owner.capturesPointer(),
+        "Through the close Display stays active and drawn on its Modules page, taking no input");
+    owner.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13.1); overlay.hostEvent({app::HostEvent::Kind::overlayConcealed}, 13.1);
+    check(settings.logoArtworks() == 0 && !display.isActive(), "The concealed HUD leaves the page and keeps no decoded logo artwork");
+    frame(core::Module::system, 13.2);
     check(raster.stats().entries <= resident, "Closing parks what is not shown");
     composition.detach(renderer);
     owner.release(renderer); overlay.release(renderer);

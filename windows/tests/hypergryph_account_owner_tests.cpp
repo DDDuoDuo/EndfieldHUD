@@ -220,8 +220,13 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
         clock+=.3;frame({});
         {
+            const bool pageActive=owner.page().canvas(core::Module::account)->isActive();const auto requestsBefore=owner.activeRequests();
             const double closedAt=clock+=.05;owner.overlayClosing(closedAt);
             clock=closedAt+.08;frame({});const double fading=owner.gauge().sceneStats().popoverOpacity;
+            // C6d: the close's start stops the sign-in, the controller and the
+            // network only; the page stays as it was (active and drawn) until the hidden HUD.
+            check(owner.page().canvas(core::Module::account)->isActive()==pageActive&&(!pageActive||!owner.moduleEntries().empty())&&owner.activeRequests()<=requestsBefore,
+                  "Through the close the Account page stays as it was, drawn, with no new account work");
             check(!owner.gauge().model().popoverOpen()&&!owner.capturesPointer()&&owner.recoveryEntries().size()==1&&fading>0&&fading<1,
                   ("At +.08 s the closed recovery menu still fades out on the top layer ("+std::to_string(fading)+")").c_str());
             // A press on the wallet during the close is refused (allowsModuleInput).

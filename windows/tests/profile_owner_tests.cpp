@@ -251,7 +251,12 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(saved.name=="Synced"&&saved.gamePlayerID=="1234567890123"&&saved.themeColorHex=="0000FF"&&saved.thumbnailZoom==1&&!saved.backgroundFilename&&saved.avatarFilename==gameAvatar,"profile.json holds the final record (Default reset the thumbnail)");
     check(!std::filesystem::exists(t.root/"Profile"/"Images"/ *avatarName),"The replaced manual avatar file is removed after the commit");
     (void)frameImages;
-    core.overlayClosing(time);owner->setOverlayVisible(false,time);paint();
+    // The area's close (ProfileArea::overlayClosing: the pickers close, then the core's input stop), its frames, then the hidden HUD.
+    const bool shownBeforeClose=canvas.isActive();
+    owner->setOverlayVisible(false,time);core.overlayClosing(time);paint();
+    check(canvas.isActive()==shownBeforeClose&&!core.capturesPointer(),"Through the close the page stays as it was, taking no input");
+    (void)core.hostEvent({app::HostEvent::Kind::overlayConcealed,0},time);paint();
+    check(!canvas.isActive(),"The hidden HUD leaves the page");
     composition.detach(renderer);owner->release(renderer);overlay.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner releases every GPU resource");
     owner.reset();renderer.reset();
     // 9. A record that cannot be read: the source message as the Notice toast, defaults, no writes, no card.

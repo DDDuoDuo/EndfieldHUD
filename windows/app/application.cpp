@@ -1291,7 +1291,10 @@ void Application::Impl::constructCalendar(){
     auto ownerOptions=designOwnerOptions("calendar",routing);
     ownerOptions.appearance=[this](const ModuleAppearance&a,double){if(calendarLanguage!=a.language){calendarLanguage=a.language;calendarNotifications->setLanguage(calendarLanguage);calendarState->refreshForSystemChange();updateCalendarWake();}};
     ownerOptions.updated=[this](const ModuleFrame&){if(calendarWakeActive!=calendarState->active())updateCalendarWake();};
-    ownerOptions.closing=[this](double){updateCalendarWake();};
+    // The close keeps the canvas presented until the hidden HUD leaves it
+    // (DesignOwnerCore::concealClosed runs before this hook): the wake takes
+    // the hidden state there, not at the close's start.
+    ownerOptions.hostEvent=[this](const HostEvent&e,double){if(e.kind==HostEvent::Kind::overlayConcealed||e.kind==HostEvent::Kind::overlayRetracted)updateCalendarWake();return false;};
     ownerOptions.flush=[this](double){return flushCalendar();};
     auto core=std::make_unique<tools::DesignOwnerCore>(rasterizer,designOverlay->context(),std::move(ownerOptions));
     modules::CalendarCanvasOptions canvasOptions;canvasOptions.formats=calendarCivil->formats();canvasOptions.text=text;

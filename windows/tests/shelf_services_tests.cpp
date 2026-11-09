@@ -353,7 +353,8 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
         for (int k = 0; k < 3; ++k) hud.frame();
         check(hud.canvas().isActive(), "Back on the Shelf"); }
     {   std::uint64_t shown{};
-        gated([&] { hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time); shown = toasts(); });
+        // The host's close: overlayClosing, then the hidden HUD (no setOverlayVisible(false)).
+        gated([&] { hud.owner->overlayClosing(hud.time); hud.frame(); (void)hud.owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, hud.time); shown = toasts(); });
         check(toasts() == shown, "An Open whose HUD closed before the Shell returned shows no toast");
         hud.owner->setOverlayVisible(true, hud.time); for (int k = 0; k < 3; ++k) hud.frame();
         check(hud.canvas().isActive(), "The HUD shown again on the Shelf"); }
@@ -630,7 +631,8 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     std::cout << "cost: switching back to the Shelf inside the open HUD " << back << " ms\n";
     hud.frame(core::Module::fileShelf, core::Module::clipboard);
     hud.frame(core::Module::clipboard);
-    hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time);
+    hud.owner->overlayClosing(hud.time);
+    for (int k = 0; k < 3; ++k) hud.frame(core::Module::clipboard);
     (void)hud.owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, hud.time);
     hud.frame(core::Module::clipboard);
     const auto closed = shelf.resources();

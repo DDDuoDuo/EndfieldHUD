@@ -148,10 +148,17 @@ struct Harness {
         appearance.reduceMotion = reduce;
         overlay->setAppearance(appearance, time); owner->setAppearance(appearance, time);
     }
+    // The host's close: overlayClosing, the close's frames, then the hidden
+    // HUD (it never sends setOverlayVisible(false) on a close). The shown
+    // note stays active and drawn through the close, taking no input.
     void closeHUD() {
+        auto* canvas = owner->core().canvas(core::Module::notes);
+        const bool wasActive = canvas && canvas->isActive();
         owner->overlayClosing(time); overlay->overlayClosing(time); settle(30);
-        owner->setOverlayVisible(false, time); overlay->setOverlayVisible(false, time);
-        (void)owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, time); settle(10);
+        check(!canvas || canvas->isActive() == wasActive, "The close keeps the note canvas as it was until the hide");
+        check(!owner->capturesPointer() && !owner->capturesKeys(), "The close takes no input");
+        (void)owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, time); (void)overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, time); settle(10);
+        check(!canvas || !canvas->isActive(), "The hidden HUD leaves the note canvas");
     }
     void openHUD() { owner->setOverlayVisible(true, time); overlay->setOverlayVisible(true, time); settle(40); }
     // The note's glyph scene is among the owner's entries, after a part the
@@ -333,10 +340,9 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     // hidden frame of the quit's drain) still composes the ended editor's
     // glyphs: they are collected only after a publication without them.
     h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(30);
-    h.owner->setOverlayVisible(false, h.time); h.overlay->setOverlayVisible(false, h.time);
     const auto ended = h.owner->body().entry();
-    check(ended.has_value(), "The closed note's editor is still composed before the concealment");
-    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time);
+    check(ended.has_value() && h.composed(), "Through the close the note's editor is still composed");
+    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time);
     check(!h.owner->body().entry(), "The concealment's session reset ends the note's editor");
     h.composition.detach(h.renderer);
     h.publish();
@@ -345,6 +351,29 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
     check(h.composed() && h.inked() >= drawn, "The next session's note shows after an ended editor was collected late");
 }
 }
+// 8e3de69 has nothing to port (the caret is gated on every pose: the window
+// foreground, the owner's focus and the field's), locked here: Notes shown as
+// the HUD opens with its note focused; the HUD losing key focus hides the
+// caret (no blink wake, no frame), focus back shows it again.
+void caretFollowsFocus(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
+    Harness h(shader, notesFormat, "Focus");
+    h.setReduceMotion(false);
+    h.modules.select(core::Module::notes, h.time);
+    h.settle(60);
+    h.closeHUD();
+    h.openHUD();
+    auto* area = h.owner->canvas().noteArea();
+    check(area != nullptr && h.owner->canvas().isActive(), "Notes is active on the HUD's opening");
+    area->focus(std::nullopt);
+    h.settle(2);
+    check(area->isFocused() && h.owner->body().nextWakeTime(h.time).has_value(), "The focused note's caret blinks (its wake)");
+    h.owner->focus(false, h.time);
+    h.settle(2);
+    check(!h.owner->body().nextWakeTime(h.time) && !h.owner->body().requiresFrames(h.time), "Key focus lost hides the caret: no blink wake or frame");
+    h.owner->focus(true, h.time);
+    h.settle(2);
+    check(area->isFocused() && h.owner->body().nextWakeTime(h.time).has_value(), "Key focus back shows the caret: its blink wakes again");
+}
 int wmain(int argc, wchar_t** argv) {
     const auto hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
@@ -352,6 +381,7 @@ int wmain(int argc, wchar_t** argv) {
         run(argv[1], argv[2]);
         longFirstShowing(argv[1], argv[2]);
         unfold(argv[1], argv[2]);
+        caretFollowsFocus(argv[1], argv[2]);
         CoUninitialize();
         std::cout << "PASS " << checks << " Notes centre owner checks\n";
         return 0;

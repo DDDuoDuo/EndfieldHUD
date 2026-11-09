@@ -270,9 +270,19 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
         panel->setValue(d::Channel::opacity, 1); h.frame();
         check(h.owner->entries(core::Module::archive).size() == rest && h.owner->core().sceneStats(core::Module::archive)->groups == 0, "At rest the panel's parts draw directly");
     }
-    // The HUD session ends: the canvas discards its document and the media go.
-    h.owner->setOverlayVisible(false, h.time); h.settle(5);
-    h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(5);
+    // The HUD closes in the host's order (overlayClosing, frames, then the
+    // hidden HUD): through the close the page stays active and drawn with no
+    // input and its media stay; the hidden HUD ends the session, the canvas
+    // discards its document and the media go.
+    {
+        const auto posters = h.owner->media().posters();
+        h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(5);
+        check(canvas.isActive() && canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && !h.owner->capturesPointer()
+            && !h.owner->entries(core::Module::archive).empty() && h.owner->media().posters() == posters,
+            "Through the close the page stays active and drawn with its media, taking no input");
+    }
+    (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(5);
+    check(!canvas.isActive(), "The hidden HUD leaves the page");
     check(!canvas.bodyArea() && h.owner->media().posters() == 0, "The closed HUD keeps no document editor or posters");
     std::printf("Archive owner: first showing %.1f ms | idle %.3f ms/frame | switch away %.1f ms, back %.1f ms (slowest frames) | %zu raster entries\n",
         first, idle / 60, away, back, h.raster.stats().entries);
@@ -284,21 +294,24 @@ void run(const std::filesystem::path& shader, const std::filesystem::path& notes
 // proof the host builds.
 void unseen(const std::filesystem::path& shader, const std::filesystem::path& notesFormat) {
     Harness h(shader, notesFormat, true);
-    const auto closeHUD = [&] {
+    // overlayClosing, the close's frames, then the hidden HUD (no
+    // setOverlayVisible(false): the host never sends it on a close).
+    const auto closeHUD = [&](bool shown) {
         h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(30);
-        h.owner->setOverlayVisible(false, h.time); h.overlay->setOverlayVisible(false, h.time);
-        (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
+        if (shown) check(h.owner->canvas().isActive() && h.owner->canvas().bodyArea() && h.owner->state().active() && !h.owner->capturesPointer(),
+            "Through the close the shown Archive stays active with its document, taking no input");
+        (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
     };
     h.settle(20);
-    closeHUD();
+    closeHUD(false);
     check(!h.owner->canvas().bodyArea() && !h.owner->state().active(), "Closing before Archive was shown touches nothing");
     h.owner->setOverlayVisible(true, h.time); h.overlay->setOverlayVisible(true, h.time);
     h.modules.select(core::Module::archive, h.time); h.settle(40);
     check(h.owner->canvas().displayedPage().kind == m::ArchiveCanvas::PageKind::list, "A later opening shows the list");
     check(h.owner->canvas().performAccessibilityAction("new", h.time), "New after an unseen session");
     h.settle(20);
-    closeHUD();
-    check(!h.owner->canvas().bodyArea(), "The close after showing discards the document");
+    closeHUD(true);
+    check(!h.owner->canvas().bodyArea() && !h.owner->canvas().isActive(), "The hidden HUD after showing discards the document");
 }
 int wmain(int argc, wchar_t** argv) {
     const auto hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
