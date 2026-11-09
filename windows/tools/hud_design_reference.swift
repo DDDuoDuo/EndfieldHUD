@@ -1085,6 +1085,43 @@ private final class FakeCanvas: HUDDesignCanvas {
         try record("offsetsForgottenAfterDeactivate")
         payload["canvas"] = canvasRows
 
+        // MARK: The HUD close's module settle (HUDModuleContent.settle(concealed:), leaveForClose)
+        // A switch Clipboard -> Event Log caught by the close at +.05 (forward), reversed back to
+        // Clipboard (+.02, closed at +.05), or after its swap (+.16): which screen is committed,
+        // hidden or departing, and which wrappers carry the module leave, before and after
+        // leaveForClose. Real run-loop time (the swap is a DispatchWorkItem after .13 s).
+        var closeRows: [[String: Any]] = []
+        let closeContext = HUDDesignContext(env: env, overlay: HUDCenterOverlay(env: env, schedule: { _, _ in }))
+        func closeCase(_ name: String, _ script: (HUDModuleContent) -> Void) {
+            let content = HUDModuleContent(initialModule: .clipboard, reduceMotion: { false })
+            content.register(FakeCanvas(module: .clipboard, context: closeContext), for: .clipboard)
+            content.register(FakeCanvas(module: .eventLog, context: closeContext), for: .eventLog)
+            content.select(module: .clipboard, animated: false)
+            script(content)
+            func state(_ step: String) -> [String: Any] {
+                let wrappers = content.layer.sublayers ?? []
+                let current = content.activeContentLayer?.superlayer
+                let leaving = wrappers.filter { $0.animation(forKey: "module.leave") != nil }
+                return ["step": step, "selected": content.selectedModule.rawValue, "transitioning": content.isTransitioning,
+                        "contentLayers": content.contentLayerCount, "wrappers": wrappers.count,
+                        "currentHidden": current?.isHidden ?? true, "currentLeaving": current?.animation(forKey: "module.leave") != nil,
+                        "departing": wrappers.count > content.contentLayerCount, "leaving": leaving.count]
+            }
+            var rows: [[String: Any]] = []
+            content.settle(concealed: true); rows.append(state("settled"))
+            content.leaveForClose(); rows.append(state("leaveForClose"))
+            content.cancel(); rows.append(state("cancelled"))
+            closeRows.append(["case": name, "steps": rows])
+        }
+        closeCase("forward") { c in c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05)) }
+        closeCase("reversed") { c in
+            c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+            c.select(module: .clipboard, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+        }
+        closeCase("landed") { c in c.select(module: .eventLog, animated: true); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.16)) }
+        closeCase("settledNoSwitch") { _ in }
+        payload["moduleClose"] = closeRows
+
         // MARK: Text measurements and provenance
         for language in HUDTextLanguage.regions { for (_, style) in typeStyles { _ = recorder.lineMetrics(style(), language: language) } }
         payload["text"] = ["widths": recorder.widths.keys.sorted().map { recorder.widths[$0]! },

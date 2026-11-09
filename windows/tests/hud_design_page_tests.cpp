@@ -21,6 +21,7 @@
 // The Mac oracle drives its swap with a real run loop; here time is the
 // explicit clock (Context::advance). Q4 builds the next page when a swap
 // starts, so build COUNTS differ from the Mac's; rebuild DECISIONS are compared.
+#include "core/module_presentation.hpp"
 #include "modules/hud_design_page.hpp"
 #include <cmath>
 #include <fstream>
@@ -1631,6 +1632,47 @@ void suspendsInput(RecordedMeasurer& measurer) {
     w.context.setEditorHost(nullptr);
 }
 
+// The HUD close's module settle against the Mac's HUDModuleContent
+// (hud_design_reference.swift "moduleClose": settle(concealed:), leaveForClose,
+// cancel on a switch caught at +.05, reversed, after its swap, and with no
+// switch). Mapped onto core::ModulePresentation: a hidden screen is one not
+// attached; a wrapper carrying module.leave is a surface on a leave (its
+// opacity falling); the departing wrapper is ModulePresentationSample::departing.
+// The Mac keeps the departing wrapper (transparent) until the next change;
+// Windows drops it once its .13 s leave ended, after these steps.
+void moduleCloseOracle(const J& cases) {
+    using endfield::core::Module;
+    using endfield::core::ModulePresentation;
+    check(cases.array().size() == 4, "The oracle records four module close cases");
+    for (const auto& c : cases.array()) {
+        const std::string name = c["case"].string();
+        ModulePresentation p(Module::clipboard);
+        p.setDesignScreen(Module::clipboard, true); p.setDesignScreen(Module::eventLog, true);
+        double t = 10;
+        (void)p.sample(t);
+        if (name == "forward") { p.select(Module::eventLog, t); t += .05; }
+        else if (name == "reversed") { p.select(Module::eventLog, t); p.select(Module::clipboard, t + .02); t += .05; }
+        else if (name == "landed") { p.select(Module::eventLog, t); t += .16; (void)p.sample(t); }
+        // A surface on a leave fades: the sample a moment later shows it below 1.
+        const auto leaving = [](const endfield::core::ModulePresentationSurface& s) { return s.attached && s.opacity < 1 - 1e-9; };
+        for (const auto& m : c["steps"].array()) {
+            const std::string step = m["step"].string(), where = "Module close " + name + "/" + step;
+            endfield::core::ModulePresentationSample s;
+            if (step == "settled") s = p.settleForClose(t).presentation;
+            else if (step == "leaveForClose") s = p.leaveForClose(t).presentation;
+            else s = p.cancel(t).presentation;
+            const auto later = p.sample(t + .01).presentation;   // a moment later, inside every leave
+            check(std::string(endfield::core::moduleIdentifier(s.selected)) == m["selected"].string() && s.transitioning == m["transitioning"].boolean(), where + ": committed module");
+            check(!s.current.attached == m["currentHidden"].boolean(), where + ": landed screen hidden");
+            check(leaving(later.current) == m["currentLeaving"].boolean(), where + ": current screen on a leave");
+            check(later.departing.has_value() == m["departing"].boolean(), where + ": departing screen");
+            const int onLeave = int(leaving(later.current)) + int(later.departing && later.departing->opacity < 1 - 1e-9);
+            check(onLeave == int(m["leaving"].number()), where + ": surfaces on a leave");
+            t += .01;
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: hud_design_page_tests <hud-design-source.json>");
@@ -1647,6 +1689,8 @@ int main(int argc, char** argv) {
         confirmBars(measurer, overlay);
         placementStrip(measurer, overlay);
         canvasScript(measurer, canvas);
+        if (!parts.contains("moduleClose")) throw std::runtime_error("Oracle section missing: moduleClose");
+        moduleCloseOracle(J::parse(parts.at("moduleClose"), 1024 * 1024));
         lifetimes(measurer);
         recordingModeWork(measurer);
         keptIds(measurer);
