@@ -433,6 +433,7 @@ endforeach()
 # Licence and notice files inside the folders staged into resources/ (also
 # external inputs, such as the OrbiPom folder with Matter.js's licence).
 set(staged_licences 0)
+set(staged_map_data "")
 if(RESOURCE_SPECS AND EXISTS "${RESOURCE_SPECS}")
   file(STRINGS "${RESOURCE_SPECS}" specs)
   foreach(spec IN LISTS specs)
@@ -445,6 +446,9 @@ if(RESOURCE_SPECS AND EXISTS "${RESOURCE_SPECS}")
     list(GET fields 2 staged_source)
     list(GET fields 3 destination)
     set(files "")
+    if(kind STREQUAL "directory" AND destination STREQUAL "map")
+      set(staged_map_data "${staged_source}")
+    endif()
     if(kind STREQUAL "directory" AND IS_DIRECTORY "${staged_source}")
       file(GLOB_RECURSE files "${staged_source}/*")
     elseif(kind STREQUAL "file" AND EXISTS "${staged_source}")
@@ -469,10 +473,16 @@ endif()
 
 # The country data's notices cite every source its provenance manifest names:
 # Natural Earth, and for China's boundary WGII and AMap with the permission
-# and the GCJ-02 to WGS84 conversion (CREDITS.md, Map data).
-set(country_manifest "${SOURCE}/../Resources/WorldMap/Countries-SOURCES.json")
+# and the GCJ-02 to WGS84 conversion (CREDITS.md, Map data). The manifest is
+# the one the package ships: the folder staged into resources/map
+# (EHUD_MAP_RESOURCE_DIR) when the build stages resources, else the source
+# tree's Resources/WorldMap, its default.
+if(staged_map_data STREQUAL "")
+  set(staged_map_data "${SOURCE}/../Resources/WorldMap")
+endif()
+set(country_manifest "${staged_map_data}/Countries-SOURCES.json")
 if(NOT EXISTS "${country_manifest}")
-  ehud_notices_fail("../Resources/WorldMap/Countries-SOURCES.json (the country data's provenance) is missing")
+  ehud_notices_fail("${country_manifest} (the country data's provenance, shipped in resources/map) is missing")
 else()
   file(READ "${country_manifest}" country_sources)
   set(country_citations "Made with Natural Earth")
