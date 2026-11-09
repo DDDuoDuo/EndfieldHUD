@@ -433,7 +433,7 @@ void run(const std::filesystem::path& shader) {
         check(fake->isActive() && core0.inputModule() == core::Module::clipboard, "Clipboard is shown before the close");
         const unsigned leaves = fake->leaves, pressed = fake->pressed, keys = fake->keys, scrolls = fake->scrolls;
         unsigned decided{};
-        d::ConfirmRequest request; request.id = "close"; request.title = "Delete?"; request.confirmTitle = "Delete";
+        d::ConfirmRequest closeRequest; closeRequest.id = "close"; closeRequest.title = "Delete?"; closeRequest.confirmTitle = "Delete";
         owner.pointer({app::PointerKind::down, app::PointerButton::left, pressAt.x, pressAt.y}, 4.451);
         check(owner.capturesPointer(), "A press is held");
         owner.overlayClosing(4.452); overlay.overlayClosing(4.452);
@@ -447,7 +447,7 @@ void run(const std::filesystem::path& shader) {
         (void)owner.automationRefresh(nullptr);
         check(owner.automationCount() == 0, "No automation stand-ins while closing");
         check(frame(sample(core::Module::clipboard), 4.5) > 0 && fake->isActive(), "The canvas keeps drawing through the close");
-        context.confirm(request, [&] { ++decided; }, [&] { ++decided; });
+        context.confirm(closeRequest, [&] { ++decided; }, [&] { ++decided; });
         overlay.overlayClosing(4.51);
         check(frame(sample(core::Module::clipboard), 4.52) > 1 && overlay.presented() && !overlay.capturesPointer() && !overlay.key({app::KeyKind::down, VK_ESCAPE}, 4.53) && !decided,
             "A confirm bar keeps composing through the close and decides nothing");
@@ -469,10 +469,10 @@ void run(const std::filesystem::path& shader) {
     {
         frame(sample(core::Module::volume), 5);
         check(skipped->isActive(), "Volume is shown");
-        auto away = sample(core::Module::volume);
-        away.requested = core::Module::clipboard; away.transitioning = away.directional = true; away.acceptsModuleInput = false;
-        away.incoming = sample(core::Module::clipboard, false).current;
-        frame(away, 5.01);
+        auto toClipboard = sample(core::Module::volume);
+        toClipboard.requested = core::Module::clipboard; toClipboard.transitioning = toClipboard.directional = true; toClipboard.acceptsModuleInput = false;
+        toClipboard.incoming = sample(core::Module::clipboard, false).current;
+        frame(toClipboard, 5.01);
         check(!skipped->isActive() && !fake->isActive(), "The switch leaves Volume; Clipboard is only prepared");
         owner.overlayClosing(5.05); overlay.overlayClosing(5.05);
         auto settled = sample(core::Module::clipboard, false);   // landed hidden
