@@ -22,8 +22,8 @@ PINS = {
     'Sources/HUDDeploymentFlicker.swift': 'e70a01035068f06ed4b82baf814e86450d49d8db8073cfef5a03532ac010f0b2',
     'Sources/BatteryMonitor.swift': '14780312feeaf1e979234063c26a11f975a03153c922c22206f23a087a06793d',
     'Sources/BatteryCapacity.swift': 'c3721960e2f2178d94d23f019866a4358f6a7e27a3199c0ce7b2094b030ec9e4',
-    'Sources/OverlayController.swift': '0a8c92891f4f05878a3baeeca9e6301ae035a59e1e775fa466b1f2d58c9185ca',
-    'Sources/SystemHUDView.swift': '28ee1c0d6c56ecfc94efac79cd022877a60e7b96d732ce5c7b2b38c5405f6fdc',
+    'Sources/OverlayController.swift': '12de208b4e44a5115e9dc26cf869034d7f1fd2288452526aa721956728ad650c',
+    'Sources/SystemHUDView.swift': '92f713a0b8cd4ccf26bdce7ea0df3617fcbb02141596f685c2b7ff4128983b49',
     'Sources/HUDPlacementEditor.swift': '73ac4a52ff2f5038b81a83dbfd7f929196e597c528d299f30219ba7ecd9a9031',
 }
 
