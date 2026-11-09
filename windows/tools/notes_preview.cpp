@@ -646,6 +646,9 @@ bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope e
     const bool closing=i.modules.requiresFrames()&&!i.modules.isTransitioning();
     i.modules.reveal();
     return i.settleMotion(true)||closing;}
+NotesPreview::MotionTracks NotesPreview::motionTracks()const noexcept{MotionTracks out;for(const auto&t:impl_->tracks)switch(t.kind){
+    case Impl::TrackKind::sectionIn:++out.sectionIn;break;case Impl::TrackKind::sectionOut:++out.sectionOut;break;case Impl::TrackKind::create:++out.create;break;
+    case Impl::TrackKind::remove:++out.remove;break;case Impl::TrackKind::mutation:++out.mutation;break;}return out;}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}

@@ -161,6 +161,9 @@ public:
     // left playing ends (the departing screen, the close leave, every notes
     // track); true when something changed.
     bool concealCentre(double time);
+    // The notes' own motion tracks by kind (tests: what the close keeps and settles).
+    struct MotionTracks { std::size_t sectionIn{}, sectionOut{}, create{}, remove{}, mutation{}; };
+    MotionTracks motionTracks()const noexcept;
     core::Module selected()const noexcept;
     const core::ModulePresentationSample& modulePresentation()const noexcept;
     void resize(const app::ClientMetrics&);

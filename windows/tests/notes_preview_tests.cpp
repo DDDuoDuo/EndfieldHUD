@@ -1208,6 +1208,53 @@ void centrePressFinishes(HWND hwnd,gpu::Renderer&renderer,const std::filesystem:
     check(savedNotes(f.root.path).front().text==note.text+"!","The closed field saved its text");
     f.release();
 }
+// The HUD's close and the notes' own motion (N-1, C15 to C18): the close's
+// start settles the mutation pulse only, so a card at rest stays at rest;
+// the deletion and section tracks keep playing (closeCentre); the hidden HUD
+// settles every track, the deleted card included, and nothing is left asking
+// for frames (concealCentre). The next open shows the module again.
+void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,formats);const auto notes=savedNotes(f.root.path);
+    check(notes.size()>=2,"The sample workspace has two notes");
+    const auto total=[&]{const auto m=f.preview->motionTracks();return m.sectionIn+m.sectionOut+m.create+m.remove+m.mutation;};
+    f.tick(1);
+    // N-1: a mutation at t, the close at t+.1: no mutation track left.
+    check(f.preview->perform("note:"+notes[0].id+":pin",f.time),"Pin the first note");f.frame();
+    check(f.preview->motionTracks().mutation==1,"The pin pulses its card");
+    f.tick(.1);
+    f.preview->closeCentre(f.time);
+    check(f.preview->motionTracks().mutation==0,"The close's start settles the mutation pulse (N-1)");
+    f.tick(.1);(void)f.preview->concealCentre(f.time);f.frame();
+    check(total()==0,"The hidden HUD keeps no notes track");
+    f.preview->revealCentre();f.tick(.5);
+    check(f.preview->selected()==core::Module::notes&&!f.preview->modulePresentation().transitioning,"The next open shows Notes again");
+    // C15 to C18: a deletion and a section switch caught by the close.
+    check(f.preview->perform("note:"+notes[1].id+":delete",f.time),"Ask to delete the second note");f.tick(.05);
+    check(f.preview->perform("note:"+notes[1].id+":confirmDelete",f.time),"Confirm the deletion");f.frame();
+    check(f.preview->motionTracks().remove==1,"The deleted card leaves on its track");
+    f.preview->select(core::Module::map,f.time);f.tick(.02);
+    const auto out=f.preview->motionTracks().sectionOut;
+    check(out>=1,"Switching away, the cards leave on their section track");
+    f.tick(.02);
+    f.preview->closeCentre(f.time);
+    // The forward switch the close caught keeps the notes leaving: no section comes back in.
+    {const auto m=f.preview->motionTracks();check(m.remove==1&&m.sectionOut==out&&m.sectionIn==0&&m.mutation==0,"The close's start keeps the deletion and section tracks playing (C15, C17)");}
+    f.tick(.02);
+    check(f.preview->concealCentre(f.time),"The hidden HUD settles what the close left playing");
+    check(total()==0&&!f.preview->requiresFrames(f.time),"Once hidden no notes track is left and nothing asks for frames (C18)");
+    f.frame();
+    check(!f.draw(cardID(notes[1])),"The deleted card is released");
+    f.preview->revealCentre();f.tick(.5);
+    // Reversed (the Map to Notes, away and back while Notes still leaves),
+    // caught by the close: the settled change brings the notes back in.
+    f.preview->select(core::Module::notes,f.time);f.tick(.5);
+    f.preview->select(core::Module::map,f.time);f.tick(.02);
+    f.preview->select(core::Module::notes,f.time);f.tick(.01);
+    f.preview->closeCentre(f.time);
+    check(f.preview->selected()==core::Module::notes&&f.preview->motionTracks().sectionIn>=1,"A reversed switch the close caught shows the notes again");
+    f.tick(.4);(void)f.preview->concealCentre(f.time);f.preview->revealCentre();f.tick(.5);
+    f.release();
+}
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3, "Pass HUD shader and the Notes format resources (resources/notes-format)");
@@ -1236,6 +1283,7 @@ int wmain(int argc, wchar_t** argv) {
         editMenu(window.hwnd,renderer,formats);
         designFocus(window.hwnd,renderer,formats);
         centrePressFinishes(window.hwnd,renderer,formats);
+        closeMotion(window.hwnd,renderer,formats);
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";
         return 0;
