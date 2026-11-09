@@ -684,6 +684,9 @@ public:
     void didActivate() override { events.push_back("didActivate"); }
     void didDeactivate() override { events.push_back("didDeactivate"); }
     void willLeave() override { events.push_back("willLeave"); }
+    // The page part of every entrance, played or carried (not an oracle event).
+    int pageEntrances{};
+    void playPageEntrance(Point offset, double delay) override { ++pageEntrances; Canvas::playPageEntrance(offset, delay); }
 };
 Point centre(const d::Control& c, const d::Layer& root) { const Rect r = c.rect(root); return {r.x + r.width / 2, r.y + r.height / 2}; }
 const char* roleName(d::AccessibilityRole r) {
@@ -1163,12 +1166,17 @@ void carriedEntrance(RecordedMeasurer& measurer) {
         check(near(rows[0]->presented(d::Channel::opacity, w.now), 0), "The first row is still hidden before the delayed start");
     }
     {
-        // Left (prepareToLeave, then shown again) or deactivated: no carry.
+        // Left (prepareToLeave while still active, as the owner leaves a
+        // shown module, then shown again) or deactivated: no carry.
         FakeCanvas c(endfield::core::Module::clipboard, w.context);
         c.show(w.now); c.setActive(true, w.now);
         c.playEntrance(offset, w.now);
         w.advance(.1);
-        c.setActive(false, w.now); c.prepareToLeave(w.now); c.show(w.now);
+        c.prepareToLeave(w.now);
+        check(c.isActive(), "Still active while it leaves");
+        rebuild(c);
+        check(noEnter(c), "A module leaving carries no entrance");
+        c.show(w.now);
         rebuild(c);
         check(noEnter(c), "A module that left carries no entrance");
         c.setActive(true, w.now);
@@ -1187,9 +1195,12 @@ void carriedEntrance(RecordedMeasurer& measurer) {
         c.depth = 1; c.navigate(1);
         const double landing = w.now + d::duration::leave;
         w.advance(.05);
+        const int entrances = c.pageEntrances;
         rebuild(c);
+        check(c.transitioning() && c.pageEntrances == entrances, "A rebuild during the swap starts no entrance before the landing");
         w.advance(landing - w.now);
         check(!c.transitioning(), "The swap landed");
+        check(c.pageEntrances == entrances + 1, "The landing plays the new page's entrance once");
         const auto rows = c.page().staggered();
         const auto swap = d::subpageOffset(1);
         for (std::size_t i = 0; i < rows.size(); ++i)
@@ -1213,6 +1224,15 @@ void carriedEntrance(RecordedMeasurer& measurer) {
         w.appearance(Language::english);
         rebuild(c);
         check(noEnter(c), "The entrance dropped under Reduce Motion stays dropped");
+        // An entrance played under Reduce Motion is not recorded: with motion
+        // back on, a rebuild inside its length still carries nothing.
+        w.appearance(Language::english, "FAD41F", false, true);
+        c.playEntrance(offset, w.now);
+        w.appearance(Language::english);
+        w.advance(.1);
+        const int entrances = c.pageEntrances;
+        rebuild(c);
+        check(noEnter(c) && c.pageEntrances == entrances, "An entrance played under Reduce Motion is not carried");
     }
 }
 

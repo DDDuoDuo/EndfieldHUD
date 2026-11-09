@@ -391,6 +391,24 @@ void workMode(Run& run) {
             && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - t0) < 1e-9, "The rebuilt inner title's wipe and fade carry on in phase");
         check(staggered.back()->presented(d::Channel::opacity, w.now) < .05, "The last row is still entering");
     }
+    {   // Reduce Motion switched on mid-entrance re-renders (reduceMotionChanged)
+        // and carries nothing; switched off again inside the entrance's length,
+        // the dropped entrance stays dropped.
+        WorkWorld w(run.measurer);
+        w.canvas->playEntrance({0, 24}, w.now);
+        w.advance(.1);
+        const auto entering = [&] {
+            for (const auto* row : w.canvas->page().staggered()) if (row->tracks().slots[std::size_t(d::MotionSlot::enter)][0].present()) return true;
+            const auto* title = findLayer(w.canvas->root(), "workMode.title");
+            return title && title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].present();
+        };
+        const auto built = w.harness.context.pagesBuilt();
+        w.harness.reduce(true);
+        check(w.harness.context.pagesBuilt() == built + 1 && !entering(), "Reduce Motion re-renders Work Mode without carrying the entrance");
+        w.advance(.1);
+        w.harness.reduce(false);
+        check(w.harness.context.pagesBuilt() == built + 2 && !entering(), "Motion back on mid-entrance carries nothing either");
+    }
     { WorkWorld w(run.measurer, L::english, "22A6F2", true); snap("countdownIdle", w, L::english, true); }
     {
         WorkWorld w(run.measurer);
