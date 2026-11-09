@@ -878,6 +878,52 @@ private:
         present(.5);
         settle(step);
         step.check(canvas_->presented() && service_->snapshot().active && audioFixture_->nowPlayingVisible(), "The next frame presents Now Playing again");
+        // B5-6 (Mac d6370b0, 45b62b8): a cover cross-fade the close catches keeps
+        // both covers drawn until its .2 s fade ends, then the old one drops.
+        // The fixture player has one cover (as on the Mac), so a decode for
+        // another slot size stands in for a new one: the canvas cross-fades
+        // whenever the decoded cover changes. The close here starts .1 s in.
+        {
+            const auto slot = session_->artworkPixels();
+            const unsigned side = std::min(slot.layout, 192u) == 160u ? 150u : 160u; // a small cover's size other than the shown one
+            const auto shown = canvas_->coverViews(t)[1].image;
+            const auto coverComposed = [&] {
+                const auto* carrier = cover_->entry().scene;
+                for (const auto& e : core_->entries(core::Module::nowPlaying)) if (e.scene == carrier) return true;
+                return false;
+            };
+            session_->setArtworkPixels({side, side});
+            settle(step);
+            const double changed = t; // the refresh that started the fade ran on this clock
+            {
+                const auto views = canvas_->coverViews(t);
+                step.check(shown && views[0].image == shown && views[1].image && views[1].image != shown, "A new decoded cover starts the cross-fade over the shown one");
+            }
+            present(.1);
+            overlayClosing(t);
+            unsigned frames = 0;
+            bool both = true;
+            while (t + 1. / 60 < changed + .2 - 1e-6) {
+                present(1. / 60);
+                const auto views = canvas_->coverViews(t);
+                both = both && canvas_->presented() && views[0].image == shown && views[1].image && views[0].backdrop && views[1].backdrop &&
+                       cover_->stats().drawnTextures == 4 && coverComposed();
+                ++frames;
+            }
+            step.check(frames >= 4 && both, "Through the close both small covers and their backdrops stay drawn until the cross-fade ends (" + std::to_string(frames) + " frames)");
+            present(1. / 30);
+            {
+                const auto views = canvas_->coverViews(t);
+                step.check(t > changed + .2 && !views[0].image && views[1].image && cover_->stats().drawnTextures == 2 && coverComposed(),
+                           "Once the cross-fade ended inside the close only the new cover is drawn");
+            }
+            setOverlayVisible(true, t);
+            session_->setArtworkPixels(slot);
+            settle(step);
+            present(.5);
+            settle(step);
+            step.check(canvas_->presented() && canvas_->coverViews(t)[1].image && cover_->stats().drawnTextures == 2, "Its own slot's cover shows again once the HUD is back");
+        }
         // The later cycles count one provider start per presentation from here.
         startsBefore_ += *starts_ - startsAt;
     }
