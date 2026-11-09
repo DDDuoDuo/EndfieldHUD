@@ -328,7 +328,14 @@ void ProfileCanvas::stopHoursTimer() { if (hoursTimer_) { cancel(hoursTimer_); h
 // while the closed pop-over still exists).
 void ProfileCanvas::didClosePopover() {
     popoverBinders_.clear();                     // the Mac's weak captures: the closed pop-over's controls are gone
-    if (side_) { trackArena(nullptr); side_.reset(); }
+    // The button lives inside the pop-over's content: it goes when the
+    // pop-over leaves the tree (at once, or at the next showing when the
+    // module leaving kept it drawn, 2e08932).
+    if (side_) {
+        trackArena(nullptr);
+        std::shared_ptr<ProfileSideArena> side(std::move(side_));
+        retirePopup([side]() mutable { side.reset(); }, keepsClosingPopupsDrawn());
+    }
     revertPreview(true);
 }
 void ProfileCanvas::revertPreview(bool animated) {

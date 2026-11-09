@@ -578,6 +578,20 @@ void documentMenu() {
     check(c.rightPointerDown(centre("doc:" + untitled), w.now) && c.menuOpen() && rows().size() == 3 && !w.state.selected(), "A right-click opens the menu without opening the document");
     check(c.rightPointerDown(centre("doc:" + untitled), w.now) && !c.menuOpen(), "A right-click with the menu open closes it");
     check(c.rightPointerDown(centre(more(untitled)), w.now) && c.menuOpen(), "A right-click on the ⋯ opens the tile's menu");
+    // OPEN-B5-4: the module leaving closes the menu but keeps it drawn
+    // (2e08932); its didCloseMenu asks for a refresh, which waits while the
+    // canvas leaves (leaving_), so the leaving page is not rebuilt; the next
+    // showing removes the menu and brings the page up to date.
+    {
+        const auto* menuLayer = c.top().children().back();
+        const auto built = w.context.pagesBuilt();
+        c.prepareToLeave(w.now); c.setActive(false, w.now);
+        w.advance(.2); w.settle();
+        check(!c.menuOpen() && menuLayer->parent() == &c.top() && w.context.pagesBuilt() == built, "The leave keeps the closed menu drawn and rebuilds no page");
+        c.show(w.now); c.setActive(true, w.now); w.settle();
+        check(c.top().children().empty() || c.top().children().back() != menuLayer, "The next showing removes it");
+        check(c.rightPointerDown(centre(more(untitled)), w.now) && c.menuOpen(), "The tile's menu opens again");
+    }
     // Delete asks with the title and stays on the gallery.
     check(w.press("doc.menu:delete"), "Delete");
     const auto& request = w.context.overlay().confirmState().request();

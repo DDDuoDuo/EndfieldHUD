@@ -7,6 +7,7 @@
 #include "modules/profile_canvas.hpp"
 #include "native/profile_text.hpp"
 #include "tests/hud_design_oracle.hpp"
+#include <functional>
 #include <iostream>
 
 namespace d = endfield::modules::design;
@@ -343,6 +344,22 @@ void behaviour() {
     check(!store->profile().themeColorHex, "Follow HUD on clears the colour");
     canvas.perform("theme:follow", w.now);
     check(store->profile().themeColorHex == std::optional<std::string>("6EDFE8"), "and off again restores the one it replaced");
+    // The pop-over leaving with the module (2e08932) keeps its second Follow
+    // HUD button, which lives in its own arena, drawn until the next showing.
+    {
+        std::function<const d::Layer*(const d::Layer&)> follow = [&](const d::Layer& l) -> const d::Layer* {
+            if (l.id().ends_with("theme:follow")) return &l;
+            for (const auto* c : l.children()) if (const auto* f = follow(*c)) return f;
+            return nullptr;
+        };
+        const auto* button = follow(canvas.top());
+        check(canvas.popoverOpen() && button, "The Card theme pop-over shows its Follow HUD button");
+        canvas.prepareToLeave(w.now);
+        check(!canvas.popoverOpen() && follow(canvas.top()) == button && button->parent(), "Left with the module, it stays drawn with its button");
+        canvas.show(w.now);
+        check(!follow(canvas.top()), "The next showing removes both");
+        canvas.perform("profile:backgroundMenu", w.now);
+    }
     canvas.perform("theme:custom", w.now);
     check(o.colors == 1 && canvas.colorPanelOpen() && canvas.presentingPanel() && canvas.inputLocked(), "Custom colour opens the panel and holds the HUD");
     canvas.colorChanged({1, 128. / 255, 0});

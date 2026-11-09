@@ -158,7 +158,10 @@ private:
     bool setAppVolume(double value);
     void toggleVolume();
     void openVolume();
-    void closeVolume();
+    // `keepingDrawn` (the module leaving, NowPlayingCanvas.swift:584): the
+    // pop-up stops taking input but stays drawn to leave with the page until
+    // the next showing (Canvas::retirePopup).
+    void closeVolume(bool keepingDrawn = false);
     void adjustVolume(double value, bool final);
     void renderPopup();
     std::string trackStatus() const;

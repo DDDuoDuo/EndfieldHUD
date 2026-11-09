@@ -335,8 +335,10 @@ void Canvas::landConcealedSwap() {
     finishLeave();
     install(std::move(pending_), true);
 }
-// revealSettledPage (:396-401, 2def26e): no header hold remains to release.
+// revealSettledPage (:396-401, 2e08932, 2def26e): the popups that left with
+// the module go first; no header hold remains to release.
 void Canvas::revealSettledPage() {
+    removeDepartedPopups();
     if (swapDeadline_) return;
     landConcealedSwap();
     motion::release(page_->layer(), MotionSlot::hold);
@@ -488,8 +490,7 @@ void Canvas::closeMenu() {
     if (menuAnchor_) if (auto* shown = dynamic_cast<MenuAnchor*>(findControl(*menuAnchor_))) shown->setOpen(false);
     menuAnchor_.reset();
     for (Control* control : menu->controls()) control->clearInteractionState();
-    menu->layer().removeFromParent();
-    bury(std::move(menu));
+    retirePopup([this, menu] { menu->layer().removeFromParent(); bury(menu); }, keepsClosingPopupsDrawn_);
     ++structure_;
     refreshRouter();
     notifyInput();
@@ -515,14 +516,31 @@ void Canvas::closePopover() {
     if (Control* close = popover->closeButton()) close->clearInteractionState();
     popoverControls_.clear();
     forgetFields(popover->layer());
-    popover->layer().removeFromParent();
-    bury(std::move(popover));
+    retirePopup([this, popover] { popover->layer().removeFromParent(); bury(popover); }, keepsClosingPopupsDrawn_);
     ++structure_;
     refreshRouter();
     notifyInput();
     didClosePopover();
 }
 void Canvas::closePopups() { closeMenu(); closePopover(); }
+// closePopupsForLeave (:525-529): the module leaving keeps them drawn.
+void Canvas::closePopupsForLeave() {
+    keepsClosingPopupsDrawn_ = true;
+    struct Reset { bool& value; ~Reset() { value = false; } } reset{keepsClosingPopupsDrawn_};
+    closePopups();
+}
+void Canvas::retirePopup(std::function<void()> remove, bool keepingDrawn) {
+    if (!remove) return;
+    if (keepingDrawn) { departedPopups_.push_back(std::move(remove)); return; }
+    remove();
+}
+void Canvas::removeDepartedPopups() {
+    if (departedPopups_.empty()) return;
+    auto departed = std::move(departedPopups_);
+    departedPopups_.clear();
+    for (auto& remove : departed) remove();
+    ++structure_;
+}
 
 // --- Text fields (:483-498) ------------------------------------------------------
 void Canvas::registerField(TextField& field) {
@@ -614,7 +632,7 @@ void Canvas::setActive(bool active, double now) {
     } else {
         entrance_.reset();
         willEndInteraction();
-        closePopups(); suspendInput(); settleSwap(true);
+        closePopupsForLeave(); suspendInput(); settleSwap(true);
         didDeactivate();
     }
     notifyInput();
@@ -622,6 +640,7 @@ void Canvas::setActive(bool active, double now) {
 // A scrolled page is built again at offset 0 (rows a module lays out for
 // the visible part follow the new offset); an unscrolled one stays.
 void Canvas::resetSession() {
+    removeDepartedPopups();
     if (active_) return;
     landConcealedSwap();                                  // a new session drops the page that left
     if (!page_ || !renderedLanguage_) return;
@@ -651,7 +670,7 @@ void Canvas::prepareToLeave(double now) {
     begin(now);
     entrance_.reset();
     willEndInteraction();
-    closePopups();
+    closePopupsForLeave();
     suspendInput();
     settleSwap(true);
     willLeave();

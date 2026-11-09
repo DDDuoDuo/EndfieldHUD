@@ -341,6 +341,14 @@ public:
     // (navigate, leave, deactivate, palette, openMenu / openPopover, confirm)
     // dispatches to it.
     virtual void closePopups();
+    // HUDDesignCanvas.keepsClosingPopupsDrawn / retirePopup (2e08932): while
+    // the module leaves (prepareToLeave, setActive(false)) a menu or pop-over
+    // that closes stops taking input but stays drawn to leave with the page;
+    // the next showing (show, setActive(true)) or a new session removes it.
+    // Every other close removes it at once. `remove` takes the closed popup's
+    // layers out of the tree; capture only `this` or owning pointers.
+    bool keepsClosingPopupsDrawn() const noexcept { return keepsClosingPopupsDrawn_; }
+    void retirePopup(std::function<void()> remove, bool keepingDrawn);
     bool menuOpen() const noexcept { return menu_ != nullptr; }
     bool popoverOpen() const noexcept { return popover_ != nullptr; }
     // Text fields (one edits at a time; others end with commit).
@@ -491,6 +499,10 @@ private:
     // Replaced pages, closed menus and pop-overs: destroyed by a deadline at
     // the current time, never while one of their callbacks is on the stack.
     std::vector<std::shared_ptr<void>> graveyard_;
+    // Closed popups kept drawn while the module leaves (retirePopup); after
+    // the graveyard, so they go first when the canvas dies.
+    std::vector<std::function<void()>> departedPopups_;
+    bool keepsClosingPopupsDrawn_{};
     std::unique_ptr<Menu> menu_;
     std::unique_ptr<Popover> popover_;
     std::optional<std::string> menuAnchor_;
@@ -524,6 +536,8 @@ private:
     void finishLeave();
     void revealSettledPage();
     void landConcealedSwap();
+    void closePopupsForLeave();
+    void removeDepartedPopups();
     bool stale() const noexcept;
     void rerenderIfStale();
     void bury(std::shared_ptr<void>);

@@ -388,7 +388,8 @@ void NowPlayingCanvas::setPresented(bool value, double now) {
         if (services_.setPresented) services_.setPresented(true);
         refresh(now);
     } else {
-        stopClock(); closeVolume(); if (seek_) seek_->cancelDrag();
+        // The volume pop-up stays drawn to leave with the page.
+        stopClock(); closeVolume(true); if (seek_) seek_->cancelDrag();
         // Nothing keeps running on the hidden page (bar runs, lyric slides,
         // fades); a finite entrance finishes under the module's leave, and a
         // track change's page swap in flight finishes leaving (finiteKeys,
@@ -399,7 +400,7 @@ void NowPlayingCanvas::setPresented(bool value, double now) {
     }
 }
 void NowPlayingCanvas::renderScaleChanged() { closeVolume(); Canvas::renderScaleChanged(); }
-void NowPlayingCanvas::closePopups() { Canvas::closePopups(); closeVolume(); }
+void NowPlayingCanvas::closePopups() { Canvas::closePopups(); closeVolume(keepsClosingPopupsDrawn()); }
 void NowPlayingCanvas::refresh(double now) {
     env().now = std::max(env().now, now);
     if (!presented_) return;
@@ -728,14 +729,15 @@ void NowPlayingCanvas::openVolume() {
     refreshRouter();
     if (context().onInputStateChange) context().onInputStateChange();
 }
-void NowPlayingCanvas::closeVolume() {
+void NowPlayingCanvas::closeVolume(bool keepingDrawn) {
     if (!volumeOpen_) return;
     volumeOpen_ = false; volumeGesture_.reset();
     if (popup_) {
         popup_->clearInteractionState();
         page().remove(*popup_);
-        d::motion::removeWipe(popup_->layer());
-        popup_->layer().setHidden(true);
+        // Through `this` only: the page (and its pop-up) may be rebuilt before
+        // a kept pop-up goes; one that opened again meanwhile stays.
+        retirePopup([this] { if (volumeOpen_ || !popup_) return; d::motion::removeWipe(popup_->layer()); popup_->layer().setHidden(true); }, keepingDrawn);
     }
     if (volumeButton_) volumeButton_->setOn(false);
     refreshRouter();

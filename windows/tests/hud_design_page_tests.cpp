@@ -1506,6 +1506,50 @@ void concealedSettles(RecordedMeasurer& measurer) {
     check(!items.empty(), "Shown again, it lists its controls");
 }
 
+// Popups leave with their module (2e08932): a menu or pop-over open when the
+// module leaves or deactivates closes (no input, no routed control) but stays
+// drawn under top() until the next showing; every other close removes it.
+void popupsLeaveWithModule(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    d::PointerInput press;
+    const Point drop = centre(*canvas.dropdown, canvas.root());
+    const auto openMenu = [&] { canvas.pointerDown(drop, press, w.now); canvas.pointerUp(drop, w.now); check(canvas.menuOpen(), "The menu opens"); return &canvas.top().children().back()->id(); };
+    const auto drawn = [&](const std::string& id) { for (const auto* c : canvas.top().children()) if (c->id() == id) return true; return false; };
+    const auto routedMenu = [&] { std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+        return std::any_of(items.begin(), items.end(), [](const auto& i) { return i.role == d::AccessibilityRole::menuItem; }); };
+    // prepareToLeave keeps it drawn; show() removes it.
+    std::string menu = *openMenu();
+    canvas.prepareToLeave(w.now);
+    check(!canvas.menuOpen() && !canvas.capturesPointer() && drawn(menu) && !canvas.dropdown->isOpen() && !routedMenu(), "A menu open at the leave closes but stays drawn, with no routed row");
+    w.advance(1);
+    check(drawn(menu), "It is still drawn after the graveyard's turn");
+    canvas.show(w.now);
+    check(!drawn(menu), "The next showing removes it");
+    // setActive(false) keeps it; setActive(true) removes it.
+    menu = *openMenu();
+    canvas.setActive(false, w.now);
+    check(!canvas.menuOpen() && drawn(menu), "A menu open at deactivation stays drawn");
+    canvas.setActive(true, w.now);
+    check(!drawn(menu) && !routedMenu(), "Reactivation removes it");
+    // A pop-over too; a new session removes it as well.
+    canvas.openPopover(std::make_unique<d::Popover>(canvas.env(), "Pen", std::nullopt, 270, 60), canvas.dropdown, std::nullopt, {});
+    const std::string popover = canvas.top().children().back()->id();
+    canvas.setActive(false, w.now);
+    check(!canvas.popoverOpen() && drawn(popover), "A pop-over open at deactivation stays drawn");
+    canvas.resetSession();
+    check(!drawn(popover), "A new session removes it");
+    // Every other close removes at once: an outside press, a sub-page change.
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    menu = *openMenu();
+    canvas.pointerDown({560, 480}, press, w.now);
+    check(!drawn(menu), "An outside press removes the menu at once");
+    menu = *openMenu();
+    canvas.navigate(1);
+    check(!drawn(menu), "A sub-page change removes it at once");
+}
+
 // HUDCenterOverlay.suspendInput (:505-511, the HUD's close): the bar stays
 // drawn and dimmed but decides nothing; no handler runs, not even after its
 // timers; reset() at the hidden HUD takes it away.
@@ -1591,6 +1635,7 @@ int main(int argc, char** argv) {
         suspendsInput(measurer);
         suspendedBar(measurer);
         concealedSettles(measurer);
+        popupsLeaveWithModule(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {

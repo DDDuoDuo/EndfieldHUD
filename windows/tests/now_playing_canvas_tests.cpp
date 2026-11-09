@@ -323,6 +323,36 @@ void coverCrossFade() {
         && !canvas.coverViews(w.now)[0].image, "The instant path removes the running fade and shows the new cover at once");
 }
 
+// The volume pop-up leaves with its page (2e08932, closeVolume(keepingDrawn:)
+// :584): a switch away keeps it drawn, the next showing hides it. A drag the
+// HUD's close cancels (Canvas::suspendInput) applies nothing more (OPEN-8).
+void volumeLeavesWithPage() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    control(canvas, "volume")->activate();
+    auto* popup = control(canvas, "appVolume");
+    const auto origin = popup->rect(canvas.root());
+    canvas.pointerDown({origin.x + 22, origin.y + 30 + 106 * .5}, {}, w.now);
+    canvas.pointerDragged({origin.x + 22, origin.y + 30 + 106 * .4}, w.now);
+    const auto sent = ctl.sent.size();
+    check(sent > 0 && ctl.sent.back().kind == m::NowPlayingIntentKind::volume, "A volume drag applies as it moves");
+    canvas.suspendInput();
+    canvas.pointerDragged({origin.x + 22, origin.y + 30 + 106 * .2}, w.now);
+    canvas.pointerUp({origin.x + 22, origin.y + 30 + 106 * .2}, w.now);
+    check(ctl.sent.size() == sent && canvas.volumeOpen(), "The close's input stop ends the drag: nothing more applies, the pop-up stays open");
+    auto& layer = popup->layer();
+    canvas.setPresented(false, w.now);
+    check(!canvas.volumeOpen() && !layer.hidden() && !control(canvas, "appVolume"), "Switching away closes the pop-up but keeps it drawn with the page");
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(!layer.hidden(), "It leaves with the page");
+    canvas.setPresented(true, w.now); canvas.show(w.now);
+    check(layer.hidden() && !canvas.volumeOpen(), "The next showing hides it");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -402,6 +432,7 @@ int main(int argc, char** argv) {
         nothingPlaying();
         stopKeepsFiniteMotion();
         coverCrossFade();
+        volumeLeavesWithPage();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);
