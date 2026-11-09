@@ -1210,7 +1210,8 @@ void centrePressFinishes(HWND hwnd,gpu::Renderer&renderer,const std::filesystem:
 }
 // The HUD's close and the notes' own motion (N-1, C15 to C18): the close's
 // start settles the mutation pulse only, so a card at rest stays at rest;
-// the deletion and section tracks keep playing (closeCentre); the hidden HUD
+// the deletion and section tracks keep playing and finish on their own
+// clocks inside the close, the fading card drawn (closeCentre); the hidden HUD
 // settles every track, the deleted card included, and nothing is left asking
 // for frames (concealCentre). The next open shows the module again.
 void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
@@ -1224,12 +1225,15 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     check(notes.size()==3,"The workspace holds the three notes");
     const auto total=[&]{const auto m=f.preview->motionTracks();return m.sectionIn+m.sectionOut+m.create+m.remove+m.mutation;};
     f.tick(1);
-    // N-1: a mutation at t, the close at t+.1: no mutation track left.
+    const auto world=[&](const data::Note&n){const auto*d=f.draw(cardID(n));check(d!=nullptr,"The card is drawn");return d->world;};
+    const auto rest=world(notes[0]);
+    // N-1: a mutation at t, the close at t+.1: no mutation track left, the card at rest.
     check(f.preview->perform("note:"+notes[0].id+":pin",f.time),"Pin the first note");f.frame();
     check(f.preview->motionTracks().mutation==1,"The pin pulses its card");
     f.tick(.1);
-    f.preview->closeCentre(f.time);
-    check(f.preview->motionTracks().mutation==0,"The close's start settles the mutation pulse (N-1)");
+    check(!(world(notes[0])==rest),"Mid-pulse the card is lifted");
+    f.preview->closeCentre(f.time);f.frame();
+    check(f.preview->motionTracks().mutation==0&&world(notes[0])==rest,"The close's start settles the mutation pulse and puts the card at rest (N-1)");
     f.tick(.1);(void)f.preview->concealCentre(f.time);f.frame();
     check(total()==0,"The hidden HUD keeps no notes track");
     f.preview->revealCentre();f.tick(.5);
@@ -1245,6 +1249,7 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     f.preview->closeCentre(f.time);
     // The forward switch the close caught keeps the notes leaving: no section comes back in.
     {const auto m=f.preview->motionTracks();check(m.remove==1&&m.sectionOut==out&&m.sectionIn==0&&m.mutation==0,"The close's start keeps the deletion and section tracks playing (C15, C17)");}
+    f.frame();check(f.draw(cardID(notes[1]))!=nullptr,"The deleted card keeps its artwork while it fades (C16)");
     f.tick(.02);
     check(f.preview->concealCentre(f.time),"The hidden HUD settles what the close left playing");
     check(total()==0&&!f.preview->requiresFrames(f.time),"Once hidden no notes track is left and nothing asks for frames (C18)");
@@ -1259,6 +1264,22 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     f.preview->closeCentre(f.time);
     check(f.preview->selected()==core::Module::notes&&f.preview->motionTracks().sectionIn>=1,"A reversed switch the close caught shows the notes again");
     f.tick(.4);(void)f.preview->concealCentre(f.time);f.preview->revealCentre();f.tick(.5);
+    // C15: tracks the close keeps finish on their own clocks inside it, before
+    // the hidden HUD: the deletion fade at .20, the section leave at .30.
+    // Unpinned, the first note is the card that leaves with the section.
+    check(f.preview->perform("note:"+notes[0].id+":pin",f.time),"Unpin the first note");f.tick(.5);
+    check(f.preview->perform("note:"+notes[2].id+":delete",f.time),"Ask to delete the third note");f.tick(.05);
+    check(f.preview->perform("note:"+notes[2].id+":confirmDelete",f.time),"Confirm the third note's deletion");f.frame();
+    const double deleted=f.time;
+    f.preview->select(core::Module::map,f.time);const double left=f.time;f.tick(.1);
+    f.preview->closeCentre(f.time);
+    f.time=deleted+.18;f.frame();
+    {const auto m=f.preview->motionTracks();check(m.remove==1,"Inside the close the deletion fade still plays");check(m.sectionOut>=1,"Inside the close the section leave still plays");check(f.draw(cardID(notes[2]))!=nullptr,"Inside the close the fading card is drawn");}
+    f.time=deleted+.22;f.frame();
+    check(f.preview->motionTracks().remove==0&&!f.draw(cardID(notes[2])),"The deletion fade ends at .20 inside the close and releases its card (C15)");
+    f.time=left+.28;f.frame();check(f.preview->motionTracks().sectionOut>=1,"The section leave is still playing at .28");
+    f.time=left+.32;f.frame();check(f.preview->motionTracks().sectionOut==0,"The section leave ends at .30 inside the close (C15)");
+    (void)f.preview->concealCentre(f.time);f.preview->revealCentre();f.tick(.5);
     f.release();
 }
 int wmain(int argc, wchar_t** argv) {
