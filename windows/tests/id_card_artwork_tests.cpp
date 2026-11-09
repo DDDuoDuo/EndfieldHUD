@@ -19,6 +19,7 @@ std::vector<std::uint8_t>base64(std::string_view s){
     return out;
 }
 std::vector<std::uint8_t>unhex(std::string_view s){
+    check(s.size()%2==0,"Fixture hex has whole bytes");
     std::vector<std::uint8_t>out;out.reserve(s.size()/2);
     const auto digit=[](char c)->unsigned{check(std::isxdigit(static_cast<unsigned char>(c))!=0,"Fixture hex");return c<='9'?unsigned(c-'0'):unsigned((c|32)-'a'+10);};
     for(std::size_t k=0;k+1<s.size();k+=2)out.push_back(static_cast<std::uint8_t>(digit(s[k])*16+digit(s[k+1])));
@@ -106,6 +107,7 @@ int main(int argc,char**argv){
                 // rounding; next to the right and top edges, where the picture
                 // ends inside an output pixel, Core Image's fractional-edge
                 // filtering is not public (as for the portraits above).
+                check(expected.size()==actual.image.rgba.size(),"Panning oracle pixels cover the whole image");
                 const auto w=actual.image.width,h=actual.image.height;int maximum{};double total{};std::size_t count{};
                 for(unsigned y=2;y+2<h;++y)for(unsigned x=2;x+2<w;++x)for(unsigned c=0;c<4;++c){
                     const auto i=(std::size_t(y)*w+x)*4+c;const int d=std::abs(int(actual.image.rgba[i])-int(expected[i]));maximum=std::max(maximum,d);total+=d;++count;}
