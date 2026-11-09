@@ -3311,6 +3311,29 @@ int Application::Impl::runHiddenVerification(){
                         contentCheck(!systemPage.isActive()&&!systemPage.menuOpen(),"Once hidden the System page has left, its menu closed (C7)");
                         closeReopen();contentCheck(notes->selected()==systemModule&&!languageMenu(),"The next open shows the System page without the menu");
                     }
+                    // B5-5 (5c8a905, 939926a; L-D1, Mac parity): a running stopwatch blinks
+                    // Work Mode's FOCUS square (an endless loop); the close's start stops
+                    // it at its model.
+                    if(workMode&&workModeCanvas&&workModeModuleOwner&&registry.enabled(*workModeModuleOwner)){
+                        using Phase=modules::WorkModePhase;using Kind=modules::WorkModeKind;
+                        closeShow(core::Module::workMode);const auto kind=workMode->snapshot(hostTime(t)).kind;
+                        if(workMode->snapshot(hostTime(t)).phase!=Phase::idle){(void)workModeCanvas->performAccessibilityAction("workMode.reset",hostTime(t));t=run(t,.3);}
+                        if(kind!=Kind::stopwatch){(void)workModeCanvas->performAccessibilityAction("workMode.kind:1",hostTime(t));t=run(t,.5);}
+                        const bool started=workModeCanvas->performAccessibilityAction("workMode.primary",hostTime(t))&&workMode->snapshot(hostTime(t)).phase==Phase::running;t=run(t,.5);
+                        const auto*dot=layerEnding(workModeCanvas->root(),"workMode.state.dot");
+                        contentCheck(started&&dot&&dot->animating(hostTime(t)),"A running Work Mode stopwatch blinks its FOCUS square");
+                        perform(lifecycle.toggle(),t);
+                        {const double closedAt=t;bool still=true;
+                         for(unsigned n=1;n<=6;++n){t=closedAt+n/60.;closeFrame(t);const auto*square=layerEnding(workModeCanvas->root(),"workMode.state.dot");
+                             still=still&&square&&!square->animating(hostTime(t))&&std::abs(square->presented(modules::design::Channel::opacity,hostTime(t))-square->value(modules::design::Channel::opacity))<1e-9;}
+                         contentCheck(still&&workModeCanvas->isActive(),"From the close's first frame the FOCUS square shows its model opacity: its blink stopped as the close started (B5-5)");}
+                        closeFinish();closeReopen();
+                        // Work Mode idle again on its own tab: paused (a running stopwatch offers Lap, not Reset), then reset.
+                        if(workMode->snapshot(hostTime(t)).phase==Phase::running){(void)workModeCanvas->performAccessibilityAction("workMode.primary",hostTime(t));t=run(t,.3);}
+                        (void)workModeCanvas->performAccessibilityAction("workMode.reset",hostTime(t));t=run(t,.3);
+                        if(kind!=Kind::stopwatch){(void)workModeCanvas->performAccessibilityAction("workMode.kind:0",hostTime(t));t=run(t,.5);}
+                        need(workMode->snapshot(hostTime(t)).phase==Phase::idle&&workMode->snapshot(hostTime(t)).kind==kind,"Work Mode is idle again on its own tab after the loop check");
+                    }
                     closeShow(core::Module::notes);
                 }
                 // Hand-offs to other applications (OverlayController afterSystemClose,
