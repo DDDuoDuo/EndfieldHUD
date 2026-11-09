@@ -71,15 +71,17 @@ void actual(const char*terrainPath,const char*countryPath){const auto terrainByt
     check(m::mapEvenOddContains(india->path,at(96.16,27.92))&&!m::mapEvenOddContains(china->path,at(96.16,27.92)),"Tezu stays outside China's official boundary");
     for(const auto p:{at(94.91,27.47),at(92.8,26.63),at(91.74,26.14)})check(m::mapEvenOddContains(india->path,p)&&!m::mapEvenOddContains(china->path,p),"Dibrugarh, Tezpur and Guwahati in Assam stay inside India");
     check(!m::mapEvenOddContains(china->path,at(139.6917,35.6895)),"Grouping does not extend the China outline over neighbouring country geometry");
-    // Mac WorldMapPathGeometryTests: the whole China outline around Shenzhen,
-    // in the Mac geometry window (visible circle plus 128 points, tolerance
-    // 0.28 over the power-of-two detail scale).
+    // Mac WorldMapPathGeometryTests: the whole China outline and every real
+    // contour band around Shenzhen, in the Mac geometry window (visible circle
+    // plus 128 points, tolerance 0.28 over the power-of-two detail scale).
     m::MapPathGeometry indexedChina(china->path);const auto shenzhen=at(114.0579,22.5431);const auto vertexCount=[](const m::MapPath&path){std::size_t n{};for(const auto&r:path)n+=r.points.size();return n;};
     for(const double zoom:{2.1,8.,72.,128.}){const double scale=440*zoom/1024,detail=std::pow(2.,std::ceil(std::log2(scale))),tolerance=.28/detail;const R window{shenzhen.x-234/scale-128/scale,shenzhen.y-234/scale-128/scale,468/scale+256/scale,468/scale+256/scale};
         const auto local=indexedChina.clippedPolygon(window,tolerance);bool bounded=true;for(const auto*path:{&local.fillPath,&local.linePath})for(const auto&r:*path)for(auto p:r.points)bounded&=p.x>=window.x-1e-9&&p.x<=window.x+window.width+1e-9&&p.y>=window.y-1e-9&&p.y<=window.y+window.height+1e-9;
         check(bounded,"Real country geometry stays bounded at overview and city zoom");check(m::mapEvenOddContains(local.fillPath,shenzhen),"Shenzhen remains on the raised country face after clipping and simplification");
         if(zoom>=72)check(vertexCount(local.fillPath)<2500&&vertexCount(local.linePath)<2500,"City zoom never submits the entire national outline");
-        else if(zoom==2.1)check(vertexCount(local.fillPath)<2000,"The world overview does not render city-resolution coastline geometry");}
+        else if(zoom==2.1)check(vertexCount(local.fillPath)<2000,"The world overview does not render city-resolution coastline geometry");
+        std::size_t contourCount{};for(const auto&band:terrain.bands){if(band.elevation==0)continue;const auto path=m::MapPathGeometry(band.contourPath).clippedLines(window,tolerance);bool inside=true;for(const auto&r:path)for(auto p:r.points)inside&=p.x>=window.x-1e-9&&p.x<=window.x+window.width+1e-9&&p.y>=window.y-1e-9&&p.y<=window.y+window.height+1e-9;check(inside,"Every real contour band is clipped before rendering");contourCount+=vertexCount(path);}
+        if(zoom>=72)check(contourCount<1000,"A city viewport submits only nearby terrain contour segments");}
     m::MapPathGeometry coast(terrain.bands[2].contourPath);const auto local=coast.clippedLines({830,180,24,24},.035);bool clippedInside=true;for(const auto&r:local)for(auto p:r.points)clippedInside&=p.x>=830-1e-10&&p.x<=854+1e-10&&p.y>=180-1e-10&&p.y<=204+1e-10;check(clippedInside,"Every actual coast vertex stays bounded to requested viewport");
 }
 }
