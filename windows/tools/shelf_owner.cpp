@@ -260,7 +260,7 @@ struct ShelfService::Impl {
     }
     bool picking() const { const auto stats = picker->stats(); return stats.queued || stats.presenting; }
 
-    // ---- Utility work (properties reads, import-ledger writes) ----
+    // ---- Utility work (properties reads, relink-ledger writes) ----
     // Work receives value-owned inputs only. Each completion runs on the HUD
     // thread (the shared executor's drain or this service's workMessage) and
     // then asks the host for a frame.
