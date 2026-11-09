@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "tools/notes_preview.hpp"
+#include "tools/notes_desktop_controls.hpp"
 #include "tools/hud_design_overlay_owner.hpp"
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
@@ -861,7 +862,43 @@ void desktopControls(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::pat
     check(f.pointer(app::PointerKind::down,size)&&(f.pointer(app::PointerKind::up,size),true),"A second press on the button closes the menu");f.tick(.3);
     check(!drawn("notes.desk."),"The closed menu leaves the plane after its fade");
     check(f.key(app::KeyKind::down,VK_ESCAPE),"Escape finishes the edit");f.tick(.3);
+    // C4: the HUD's close dismisses an open menu with its .14 s fade (HUDNotesInteraction
+    // deactivate(animated:)); under Reduce Motion it goes at once. Input stops at the close's start.
+    const auto composed=[&](std::string_view part){return std::any_of(f.composition.draws().begin(),f.composition.draws().end(),[&](const auto&d){return d.sourceID.find(part)!=std::string::npos;});};
+    const auto closeWithMenu=[&](bool reduce){
+        overlay.context().env().reduceMotion=reduce;
+        check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Open the note for editing");f.tick(.05);
+        check(f.pointer(app::PointerKind::down,size)&&(f.pointer(app::PointerKind::up,size),true),"The font size button opens its menu");f.tick(.3);
+        check(drawn("notes.desk."),"The size menu is drawn before the close");
+        const double closed=f.time;f.preview->closeCentre(f.time);f.frame();
+        std::vector<gpu::NotesAutomationElement> open;f.preview->automationElements(open);
+        check(std::none_of(open.begin(),open.end(),[](const auto&e){return e.id.starts_with("notes.desk:");}),"The close's start takes the menu's controls out of input");
+        if(reduce)check(!composed("notes.desk."),"Under Reduce Motion the close removes the menu at once (C4)");
+        else{f.time=closed+.10;f.frame();check(composed("notes.desk."),"The menu's artwork is still fading .10 s into the close (C4)");
+            f.time=closed+.15;f.frame();check(!composed("notes.desk."),"The menu's .14 s fade has ended inside the close (C4)");}
+        f.tick(.4);(void)f.preview->concealCentre(f.time);f.preview->revealCentre();f.tick(.5);
+    };
+    closeWithMenu(false);closeWithMenu(true);overlay.context().env().reduceMotion=false;
+    // N-1: the close catches the deletion confirmation still rising (.16 s). Its start
+    // cancels the request (HUDNotesInteraction.deactivate -> cancelInteraction), so the
+    // confirmation is gone at once and the note stays.
+    check(f.pointer(app::PointerKind::down,deletePoint(original))&&(f.pointer(app::PointerKind::up,deletePoint(original)),true),"The card's delete button asks again");f.tick(.03);
+    check(drawn("notes.deletion"),"Mid-rise the confirmation is drawn");
+    f.preview->closeCentre(f.time);f.frame();
+    check(!composed("notes.deletion")&&savedNotes(f.root.path).size()==1,"The close's start hides a rising confirmation at once and keeps the note (N-1)");
+    f.tick(.4);(void)f.preview->concealCentre(f.time);f.preview->revealCentre();f.tick(.5);
     f.release();
+    // N-1, a confirmation the close cannot cancel (finish() fails while the text service holds
+    // its lock, so the request stays): the close's settle ends its rise at once
+    // (notes.confirm.reveal). Driven on the controls directly: a locked TSF field cannot be staged here.
+    gpu::LayerRasterOptions ro;ro.pixelsPerPoint=1;tools::NotesDesktopControls controls(raster,ro);controls.setEnvironment(&overlay.context().env());
+    const double at=overlay.context().env().now+1;
+    controls.setDeletion(tools::NotesDesktopControls::Deletion{"synthetic",{core::Rect{100,100,25,25},core::Rect{131,100,25,25}},{"Cancel deletion","Confirm deletion"}},at);
+    controls.poseDeletion(core::Matrix4{},1,at);
+    check(!controls.deletionEntries().empty()&&controls.requiresFrames(at+.05),"A new confirmation rises over .16 s");
+    controls.settleMotion();controls.poseDeletion(core::Matrix4{},1,at+.05);
+    check(!controls.deletionEntries().empty()&&!controls.requiresFrames(at+.05),"The settle leaves the confirmation in place with no rise left (N-1)");
+    controls.setDeletion(std::nullopt,at+.05);
 }
 // Stands in for the system clipboard: every copy and paste crosses the real
 // data-object codec, and the system clipboard is never opened.
@@ -1226,6 +1263,7 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     const auto total=[&]{const auto m=f.preview->motionTracks();return m.sectionIn+m.sectionOut+m.create+m.remove+m.mutation;};
     f.tick(1);
     const auto world=[&](const data::Note&n){const auto*d=f.draw(cardID(n));check(d!=nullptr,"The card is drawn");return d->world;};
+    const auto cardScene=[&](const data::Note&n)->const gpu::LayerScene*{for(const auto&e:f.preview->entries())for(const auto&d:e.scene->draws())if(d.sourceID.ends_with(cardID(n)))return e.scene;return nullptr;};
     const auto rest=world(notes[0]);
     // N-1: a mutation at t, the close at t+.1: no mutation track left, the card at rest.
     check(f.preview->perform("note:"+notes[0].id+":pin",f.time),"Pin the first note");f.frame();
@@ -1242,6 +1280,7 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     check(f.preview->perform("note:"+notes[1].id+":delete",f.time),"Ask to delete the second note");f.tick(.05);
     check(f.preview->perform("note:"+notes[1].id+":confirmDelete",f.time),"Confirm the deletion");f.frame();
     check(f.preview->motionTracks().remove==1,"The deleted card leaves on its track");
+    const auto*removed=cardScene(notes[1]);check(removed!=nullptr,"The deleted card's scene is retained");const auto removedResources=removed->resourceRevision();
     f.preview->select(core::Module::map,f.time);f.tick(.02);
     const auto out=f.preview->motionTracks().sectionOut;
     check(out>=1,"Switching away, the cards leave on their section track");
@@ -1249,7 +1288,7 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     f.preview->closeCentre(f.time);
     // The forward switch the close caught keeps the notes leaving: no section comes back in.
     {const auto m=f.preview->motionTracks();check(m.remove==1&&m.sectionOut==out&&m.sectionIn==0&&m.mutation==0,"The close's start keeps the deletion and section tracks playing (C15, C17)");}
-    f.frame();check(f.draw(cardID(notes[1]))!=nullptr,"The deleted card keeps its artwork while it fades (C16)");
+    f.frame();check(f.draw(cardID(notes[1]))!=nullptr&&cardScene(notes[1])==removed&&removed->resourceRevision()==removedResources,"The deleted card keeps its retained artwork while it fades through the close's start (C16)");
     f.tick(.02);
     check(f.preview->concealCentre(f.time),"The hidden HUD settles what the close left playing");
     check(total()==0&&!f.preview->requiresFrames(f.time),"Once hidden no notes track is left and nothing asks for frames (C18)");
@@ -1271,10 +1310,19 @@ void closeMotion(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&fo
     check(f.preview->perform("note:"+notes[2].id+":delete",f.time),"Ask to delete the third note");f.tick(.05);
     check(f.preview->perform("note:"+notes[2].id+":confirmDelete",f.time),"Confirm the third note's deletion");f.frame();
     const double deleted=f.time;
+    // C16: the fading card keeps its retained artwork (NotesWorkspace.swift:784, the
+    // close's cancelInteraction skips cards still leaving): no re-render, only its opacity falls.
+    const auto*fading=cardScene(notes[2]);check(fading!=nullptr,"The deleted card's scene is retained");
+    const auto fadingContent=fading->contentRevision(),fadingResources=fading->resourceRevision();
     f.preview->select(core::Module::map,f.time);const double left=f.time;f.tick(.1);
-    f.preview->closeCentre(f.time);
+    f.preview->closeCentre(f.time);f.frame();
+    const auto rasters=raster.stats().rasterizations;
+    const auto*atClose=f.draw(cardID(notes[2]));check(atClose!=nullptr,"At the close's start the fading card is drawn");const float closeOpacity=atClose->opacity;
     f.time=deleted+.18;f.frame();
-    {const auto m=f.preview->motionTracks();check(m.remove==1,"Inside the close the deletion fade still plays");check(m.sectionOut>=1,"Inside the close the section leave still plays");check(f.draw(cardID(notes[2]))!=nullptr,"Inside the close the fading card is drawn");}
+    {const auto m=f.preview->motionTracks();check(m.remove==1,"Inside the close the deletion fade still plays");check(m.sectionOut>=1,"Inside the close the section leave still plays");
+        const auto*late=f.draw(cardID(notes[2]));check(late!=nullptr&&late->opacity>0&&late->opacity<1&&late->opacity<closeOpacity,"Inside the close the fading card is drawn, fainter than at the close's start (C15)");
+        check(cardScene(notes[2])==fading&&fading->contentRevision()==fadingContent&&fading->resourceRevision()==fadingResources&&raster.stats().rasterizations==rasters,
+            "The fading card is drawn from its retained artwork, never re-rendered (C16)");}
     f.time=deleted+.22;f.frame();
     check(f.preview->motionTracks().remove==0&&!f.draw(cardID(notes[2])),"The deletion fade ends at .20 inside the close and releases its card (C15)");
     f.time=left+.28;f.frame();check(f.preview->motionTracks().sectionOut>=1,"The section leave is still playing at .28");
