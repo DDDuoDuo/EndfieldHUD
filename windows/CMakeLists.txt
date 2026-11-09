@@ -916,7 +916,8 @@ if(BUILD_TESTING)
   set_tests_properties(system_services_contracts PROPERTIES TIMEOUT 60)
   if(WIN32)
     # Explicit source-prepared fixture assets stay outside the runtime tree.
-    # Run this integration tool with the prepared bundle and its independent pins.
+    # Its ctest (notes_preview_contracts: a hidden WARP window, native/hud.hlsl
+    # and resources/notes-format) is added in cmake/modules/notes.cmake.
     add_executable(notes_preview_tests tests/notes_preview_tests.cpp)
     target_compile_definitions(notes_preview_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(notes_preview_tests PRIVATE hud_native winsqlite3)
