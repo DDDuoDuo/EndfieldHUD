@@ -246,7 +246,7 @@ void Canvas::rerenderIfStale() {
 
 // --- Rendering (:289-401) ----------------------------------------------------
 void Canvas::rerender() {
-    if (swapDeadline_) {                                 // the swap lands its own, rebuilt page
+    if (swapDeadline_ || concealedSwap_) {               // the swap lands its own, rebuilt page
         if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
         pending_ = makePage({}, true);
         return;
@@ -271,14 +271,18 @@ void Canvas::navigate(double dx, double dy) {
     auto& deadlines = env().deadlines;
     const auto clock = env().clock();
     if (clock.reduceMotion || !attached_) {
-        if (swapDeadline_) {
-            deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset();
+        if (swapDeadline_ || concealedSwap_) {
+            if (swapDeadline_) { deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset(); }
+            concealedSwap_ = false;
             finishLeave();
             if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
         }
         install(makePage({}, false), false);
         return;
     }
+    // A concealed settle's page lands first (the Mac's finishLeave), held
+    // invisible as the Mac's held page leaves from opacity 0.
+    if (concealedSwap_) { landConcealedSwap(); motion::hold(page_->layer()); }
     // A swap in flight (Q / E pressed again) is retargeted and lands on time.
     if (swapDeadline_) deadlines.cancel(swapToken_);
     else {
@@ -302,29 +306,50 @@ void Canvas::completeSwap() {
     playEntrance(swapOffset_, env().now);                // self.playEntrance(from:) (:330)
     notifyInput();
 }
-// settleSwap(concealed:) (:342-353).
+// settleSwap(concealed:) (:342-353, 5c8a905). Concealed (a module leaving or
+// deactivated, the HUD's close included): the old page and the header finish
+// the leave they are in and their models end transparent, while the next
+// page waits, built but out of the tree, until the module shows again
+// (revealSettledPage) instead of popping in while it leaves. The Mac
+// installs and holds it at once; here both header slots carry the same layer
+// ids, so the staging header cannot join the tree beside the leaving one:
+// the landing is deferred, and the leaving header finishes its leave with its
+// old title (decision H-D1; the Mac's one header shows the new title as it fades).
 void Canvas::settleSwap(bool concealed) {
     if (!swapDeadline_) return;
     env().deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset();
+    if (concealed) {
+        concealedSwap_ = true;
+        if (leaving_) leaving_->setValue(Channel::opacity, 0);
+        if (showsHeader_ && currentHeader()) currentHeader()->layer().setValue(Channel::opacity, 0);
+        return;
+    }
     finishLeave();
     install(std::move(pending_), true);
-    if (concealed) {
-        motion::hold(page_->layer());
-        if (showsHeader_ && currentHeader()) motion::hold(currentHeader()->layer());
-    }
 }
+// The concealed settle lands: the old page and header leave the tree and
+// the next page installs without an entrance.
+void Canvas::landConcealedSwap() {
+    if (!concealedSwap_) return;
+    concealedSwap_ = false;
+    finishLeave();
+    install(std::move(pending_), true);
+}
+// revealSettledPage (:396-401, 2def26e): no header hold remains to release.
 void Canvas::revealSettledPage() {
     if (swapDeadline_) return;
+    landConcealedSwap();
     motion::release(page_->layer(), MotionSlot::hold);
-    if (showsHeader_ && currentHeader()) motion::release(currentHeader()->layer(), MotionSlot::hold);
 }
+// finishLeave (:403-410): the header is opaque again (a concealed settle
+// left its model transparent).
 void Canvas::finishLeave() {
     if (leaving_) {
         leaving_->removeMotion(MotionSlot::leave);
         leaving_->removeFromParent();
         leaving_ = nullptr;
     }
-    if (auto* header = currentHeader()) header->layer().removeMotion(MotionSlot::leave);
+    if (auto* header = currentHeader()) { header->layer().removeMotion(MotionSlot::leave); header->layer().setValue(Channel::opacity, 1); }
 }
 // makePage(restoring:) (:375-382).
 std::unique_ptr<Page> Canvas::makePage(const std::vector<std::pair<std::string, double>>& offsets, bool staged) {
@@ -598,6 +623,7 @@ void Canvas::setActive(bool active, double now) {
 // the visible part follow the new offset); an unscrolled one stays.
 void Canvas::resetSession() {
     if (active_) return;
+    landConcealedSwap();                                  // a new session drops the page that left
     if (!page_ || !renderedLanguage_) return;
     const auto areas = page_->scrollAreas();
     if (std::any_of(areas.begin(), areas.end(), [](const auto& area) { return area->offset() != 0; })) install(makePage({}, false), false);
@@ -646,7 +672,7 @@ void Canvas::cancelGestures() {
 // --- Pointer input, content-box px (:502-577) -----------------------------------------
 bool Canvas::pointerDown(Point point, const PointerInput& input, double now) {
     begin(now);
-    if (!active_ || swapDeadline_) return false;
+    if (!active_ || swapDeadline_ || concealedSwap_) return false;
     if (interceptPointerDown(point, input)) { notifyInput(); return true; }
     // The first press outside an open menu or pop-over only closes it; a press
     // on its anchor closes it too (the anchor toggles).
@@ -683,7 +709,7 @@ void Canvas::pointerUp(Point point, double now) {
 }
 bool Canvas::rightPointerDown(Point point, double now) {
     begin(now);
-    if (!active_ || swapDeadline_) return false;
+    if (!active_ || swapDeadline_ || concealedSwap_) return false;
     if (capturesPointer()) { closePopups(); return true; }
     return handleRightPointerDown(point);
 }
@@ -694,7 +720,7 @@ void Canvas::pointerMoved(std::optional<Point> point, bool buttonDown, double no
 }
 // An enabled control is drawn under this point: the host gives the press to the module before the shell.
 bool Canvas::containsControl(Point point) const { return control(point) != nullptr; }
-Control* Canvas::control(Point point) const { return active_ && !swapDeadline_ ? router_.control(point, *root_) : nullptr; }
+Control* Canvas::control(Point point) const { return active_ && !swapDeadline_ && !concealedSwap_ ? router_.control(point, *root_) : nullptr; }
 // Wheel: an open menu (always consumes), a pop-over, the module's zoom surfaces, then scroll areas.
 bool Canvas::scroll(Point point, Point delta, double now) {
     begin(now);
@@ -758,7 +784,7 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
 
 // --- Accessibility (:606-622) ----------------------------------------------------------
 void Canvas::accessibilityItems(std::vector<AccessibilityItem>& out) const {
-    if (!active_ || swapDeadline_) return;
+    if (!active_ || swapDeadline_ || concealedSwap_) return;
     router_.accessibilityItems(*root_, out);
 }
 bool Canvas::performAccessibilityAction(std::string_view id, double now) {

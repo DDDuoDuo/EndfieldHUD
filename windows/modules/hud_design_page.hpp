@@ -318,8 +318,11 @@ public:
     // at once. Q4: the next page (and its own staging header) is BUILT here,
     // when the swap starts, and installed at the deadline.
     void navigate(double dx, double dy = 0);
-    // Completes a pending swap at once; `concealed` keeps page and header held
-    // invisible until the module shows again (a module leaving).
+    // Completes a pending swap at once. `concealed` (a module leaving, the
+    // HUD's close): the old page and header finish their leave and end
+    // transparent; the next page lands, without an entrance, when the module
+    // shows again (show, setActive(true)), or a navigate or new session drops
+    // the old page first. transitioning() is false meanwhile.
     void settleSwap(bool concealed = false);
     bool transitioning() const noexcept { return swapDeadline_.has_value(); }
     // Menus (LIB-78): one menu or pop-over at a time (opening closes the
@@ -501,6 +504,7 @@ private:
     mutable std::array<std::uint64_t, 8> revisionKey_{};
     mutable std::uint64_t revision_{};
     std::optional<double> swapDeadline_;
+    bool concealedSwap_{};                      // settleSwap(true) left the old page leaving; pending_ lands on reveal
     Point swapOffset_;
     // The entrance playing on the page (HUDDesignCanvas.entrance: its offset
     // and start), until the module leaves; an in-place re-render carries it.
@@ -519,6 +523,7 @@ private:
     void cancelGestures();
     void finishLeave();
     void revealSettledPage();
+    void landConcealedSwap();
     bool stale() const noexcept;
     void rerenderIfStale();
     void bury(std::shared_ptr<void>);

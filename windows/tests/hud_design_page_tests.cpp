@@ -747,6 +747,10 @@ struct CanvasRun {
         }
         std::vector<d::AccessibilityItem> items;
         c.accessibilityItems(items);
+        // Back-map (5c8a905): the Mac's concealed settle installs the next page
+        // and lists its controls; here the next page lands when the module
+        // shows again, and the concealed page lists nothing until then.
+        if (label == "prepareToLeaveConcealed") { check(items.empty(), where + ": a concealed settle lists no control"); return m; }
         const auto& expectedItems = m["accessibility"].array();
         std::string got; for (const auto& item : items) got += item.id + " ";
         check(items.size() == expectedItems.size(), where + ": accessibility items " + got);
@@ -889,14 +893,34 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
     canvas.settleSwap();
     run.step(canvas, "backSettled");
     canvas.depth = 1; canvas.navigate(1);
+    const double navigated = w.now;
+    w.advance(.05);
     canvas.prepareToLeave(w.now);
     {
         run.step(canvas, "prepareToLeaveConcealed");
-        check(!d::isVisible(canvas.page().layer(), root) || canvas.page().layer().presented(d::Channel::opacity, w.now) == 0, "A settled page stays concealed while the module leaves");
+        // 5c8a905 (B5-2): the old page and header stay in the tree finishing
+        // their leave, models transparent; the next page waits out of the tree.
+        auto& old = canvas.page().layer();
+        auto& header = canvas.header().layer();
+        const auto leave = endfield::core::DesignMotion::leaveAt(w.now - navigated, {});
+        check(old.parent() == &root && header.parent() == &root && old.value(d::Channel::opacity) == 0 && header.value(d::Channel::opacity) == 0,
+            "The leaving page and header stay drawn, their models transparent");
+        check(std::abs(old.presented(d::Channel::opacity, w.now) - leave.opacity) < 1e-9 && std::abs(header.presented(d::Channel::opacity, w.now) - leave.opacity) < 1e-9
+            && old.presented(d::Channel::opacity, w.now + .2) == 0, "They finish the leave they are in");
+        check(canvas.header().crumbTexts().size() != 5 && !canvas.transitioning(), "The next page (and its header) are not in the tree; no swap remains");
+        std::set<std::string> ids; bool unique = true;
+        std::function<void(const d::Layer&)> walk = [&](const d::Layer& l) { unique &= ids.insert(l.id()).second; for (const auto* c : l.children()) walk(*c); };
+        walk(root);
+        check(unique, "No layer id is in the tree twice");
     }
     canvas.show(w.now);
     run.step(canvas, "revealedByMakeContent");
     check(canvas.page().layer().presented(d::Channel::opacity, w.now) == 1, "Showing the module reveals the settled page");
+    {
+        auto& header = canvas.header().layer();
+        check(header.presented(d::Channel::opacity, w.now) == 1 && header.value(d::Channel::opacity) == 1 && !header.tracks().slots[std::size_t(d::MotionSlot::hold)][0].present()
+            && canvas.header().crumbTexts().size() == 5, "The next page and its header land, opaque, with no hold (2def26e)");
+    }
     canvas.depth = 0;
     w.appearance(Language::english, "FAD41F", false, true);
     canvas.navigate(-1);
@@ -1435,6 +1459,53 @@ void focusMoves(RecordedMeasurer& measurer) {
     w.context.setEditorHost(nullptr);
 }
 
+// A concealed sub-page settle (5c8a905, 2def26e): navigate, rerender,
+// setActive and resetSession each end it once, with the old page out of the
+// tree and the header opaque again.
+void concealedSettles(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto settle = [&] { canvas.depth = 1; canvas.navigate(1); w.advance(.05); canvas.prepareToLeave(w.now); return &canvas.page().layer(); };
+    const auto settled = [&](const d::Layer* old, const std::string& what) {
+        check(old != &canvas.page().layer() && !old->parent() && canvas.page().layer().parent() == &canvas.root() && !canvas.transitioning(), what + ": the old page left the tree");
+        check(canvas.header().layer().value(d::Channel::opacity) == 1 && canvas.header().layer().parent() == &canvas.root(), what + ": the header is opaque again");
+    };
+    // A second navigate without show(): the old page goes first; the module is detached, so it installs at once.
+    auto* old = settle();
+    const int builds = canvas.builds;
+    canvas.depth = 0; canvas.navigate(-1);
+    settled(old, "A navigate after a concealed settle");
+    check(canvas.builds == builds + 1 && canvas.header().crumbTexts().size() == 3, "It builds the page asked for, not the one that waited (" + std::to_string(canvas.builds - builds) + " builds, " + std::to_string(canvas.header().crumbTexts().size()) + " crumbs)");
+    // A rerender while it waits rebuilds only the waiting page.
+    canvas.show(w.now);
+    old = settle();
+    const int before = canvas.builds;
+    canvas.rerender();
+    check(canvas.builds == before + 1 && &canvas.page().layer() == old && old->parent() == &canvas.root(), "A rerender rebuilds the waiting page, out of the tree");
+    canvas.setActive(false, w.now); canvas.setActive(true, w.now);
+    settled(old, "setActive(true)");
+    check(canvas.header().crumbTexts().size() == 5 && canvas.page().layer().presented(d::Channel::opacity, w.now) == 1, "The waiting page lands, with its header");
+    // resetSession (a new HUD session) drops it too.
+    canvas.show(w.now);
+    canvas.depth = 0; canvas.navigate(-1); w.advance(.2);
+    old = settle();
+    check(old->parent() == &canvas.root(), "A concealed settle waits");
+    canvas.setActive(false, w.now);
+    canvas.resetSession();
+    settled(old, "resetSession");
+    // Input waits for the landing: no press, control or accessibility item.
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    canvas.depth = 0; canvas.navigate(-1); w.advance(.05);
+    canvas.settleSwap(true);
+    std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
+    d::PointerInput press;
+    check(items.empty() && !canvas.control({300, 300}) && !canvas.pointerDown({300, 300}, press, w.now), "A concealed settle takes no input until it lands");
+    canvas.show(w.now);
+    canvas.accessibilityItems(items);
+    check(!items.empty(), "Shown again, it lists its controls");
+}
+
 // HUDCenterOverlay.suspendInput (:505-511, the HUD's close): the bar stays
 // drawn and dimmed but decides nothing; no handler runs, not even after its
 // timers; reset() at the hidden HUD takes it away.
@@ -1519,6 +1590,7 @@ int main(int argc, char** argv) {
         focusMoves(measurer);
         suspendsInput(measurer);
         suspendedBar(measurer);
+        concealedSettles(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {
