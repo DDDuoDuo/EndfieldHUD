@@ -204,6 +204,13 @@ void directionalEntranceAndReduce(){
      u=q.select(Module::clipboard,6);u=q.sample(6.13);check(u.presentation.current.entrance&&u.presentation.current.entrance->start==6.13&&u.presentation.current.entrance->delay==0,"A swap's entrance has no delay");
      const MotionPoint below=ShellPosition::subpageOffset(0,1);u=q.beginEntrance(7,false,below);
      check(u.presentation.current.entrance&&u.presentation.current.entrance->start==7&&u.presentation.current.entrance->delay==0&&u.presentation.current.entrance->offset==below,"The boot log's entrance from below has no delay");
+     // Mac 8ccf305: the boot log's end shows the centre and starts its
+     // entrance in one turn (FacilityOwner::finishBootLog: concealCentre(false)
+     // then enterCentre), so the first sample after it carries both.
+     q.setConcealed(true);u=q.sample(7.5);check(u.presentation.current.opacity==0,"The boot log conceals the centre");
+     q.setConcealed(false);(void)q.beginEntrance(8,false,below);u=q.sample(8);
+     check(u.presentation.current.opacity==1&&u.presentation.current.entrance&&u.presentation.current.entrance->start==8&&u.presentation.current.entrance->offset==below,
+         "The first sample after the boot log shows the centre with its entrance from below");
      ModulePresentation r(Module::notes);r.setDesignScreen(Module::notes,true);check(!r.beginEntrance(0,true,std::nullopt,.2).presentation.current.entrance,"No delayed entrance under Reduce Motion");
      bool rejected{};try{(void)r.beginEntrance(1,false,std::nullopt,-.1);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"A negative entrance delay is rejected");}
     const auto before=allocations.load();p.select(Module::clipboard,3);for(unsigned i=0;i<60;++i)(void)p.sample(3+i*.004);p.select(Module::notes,4);p.select(Module::map,4.05);p.sample(4.2);p.sample(4.6);

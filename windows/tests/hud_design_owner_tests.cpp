@@ -236,6 +236,16 @@ void run(const std::filesystem::path& shader) {
         entering.current.entrance = core::ModuleEntrance{{24, 0}, .085, 0, 0};
         frame(entering, .09);
         check(fake->entrances == 3 && fake->entranceDelay == 0 && fake->entranceOffset.x == 24, "A swap's entrance has no delay");
+        // The end of the boot log (Mac 8ccf305): the centre shows again in the
+        // sample that carries its entrance from below, and this update plays
+        // that entrance before it poses the canvas, so no frame shows the
+        // whole page before its rows are hidden.
+        const auto below = core::ShellPosition::subpageOffset(0, 1);
+        entering.current.opacity = 1;
+        entering.current.entrance = core::ModuleEntrance{below, .095, 0, 0};
+        frame(entering, .095);
+        check(fake->entrances == 4 && fake->entranceDelay == 0 && fake->entranceOffset.x == below.x && fake->entranceOffset.y == below.y,
+            "The boot log's end shows the centre and plays its entrance from below in one update");
     }
     // --- leaving, park and prewarm ----------------------------------------------------------
     auto away = sample(core::Module::clipboard);
