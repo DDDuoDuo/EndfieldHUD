@@ -387,6 +387,18 @@ void movieReturn(const std::filesystem::path& shader, const std::filesystem::pat
     h.await("the reopened movie's still", [&] { return h.probes.size() == engines + 1 && texture(".poster"); });
     h.settle(10);
     check(!media.playing() && h.probes.back()->seeks == 0 && h.probes.back()->plays == 0 && media.currentTime() == 0, "A new HUD opening shows the movie at zero, paused");
+    // A still that fails on the return does not block the movie (NotesMedia.swift:370-371).
+    check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play the reopened movie");
+    h.await("the reopened movie playing", [&] { return media.playing() && h.probes.back()->playing; });
+    h.probes.back()->position = .6; h.settle(5);
+    away();
+    std::filesystem::remove(movie);
+    back();
+    h.await("the movie's return without its still", [&] { return h.probes.size() == engines + 2 && h.probes.back()->seeks == 1; });
+    h.settle(10);
+    check(!media.playing() && h.probes.back()->plays == 0, "The movie whose still failed comes back paused where it was left");
+    check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play is pressed");
+    h.await("the movie playing without its still", [&] { return media.playing() && h.probes.back()->playing && h.probes.back()->plays == 1; });
 }
 int wmain(int argc, wchar_t** argv) {
     const auto hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
