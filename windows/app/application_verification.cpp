@@ -2927,12 +2927,16 @@ int Application::Impl::runHiddenVerification(){
                             close(time+.05);
                             // d8100a9: the lifted tile and the tiles that moved aside slide back
                             // to the saved order as the HUD folds (.18 s, inside the close).
-                            hostCheck(lifted&&!arrangeDrag&&swallowsArrangePress&&session->arrangeActive()&&!arrangingModules&&settingsUI->controller().revision()==before,
-                                "Closing mid-drag writes nothing and ends arranging; the tiles slide back with the close");
+                            // Arranging itself ends with the Settings page's deactivation
+                            // once the HUD is hidden (Mac 79bc665: the close's start only
+                            // drops the press, dropArrangePress(closing:)).
+                            hostCheck(lifted&&!arrangeDrag&&swallowsArrangePress&&session->arrangeActive()&&settingsUI->controller().revision()==before,
+                                "Closing mid-drag writes nothing and drops the tile; the tiles slide back with the close");
                             std::optional<double> settledAt;
                             for(unsigned f=0;f<90&&session->phase()!=core::VisibilityPhase::concealed;++f){const double frameAt=time+.1+double(f)/60;present(frameAt,true);if(!settledAt&&!session->arrangeActive())settledAt=frameAt;}
                             hostCheck(settledAt&&*settledAt<=time+.05+core::DesignMotion::listSlide+1.5/60,"The tiles settle into the saved order within .18 s, before the close ends");
-                            time+=1.6;concealed(time);time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
+                            time+=1.6;concealed(time);hostCheck(!arrangingModules,"The hidden HUD ends arranging");
+                            time+=.5;open(time);for(unsigned f=0;f<90;++f)present(time+double(f)/60,true);time+=1.5;}
                         // The order changed above goes back.
                         auto restore=settingsUI->controller().committed();restore.setModuleLayout(saved);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
