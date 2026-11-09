@@ -8,26 +8,55 @@
   "license_url": "https://www.naturalearthdata.com/about/terms-of-use/",
   "accessed": "2026-09-27",
   "source_records": 258,
-  "presentation_transfers": [
-    {
-      "area": "Southern Tibet",
-      "from": "IND",
-      "to": "CHN",
-      "source": "Natural Earth 1:10m Admin 1 States, Provinces",
-      "version": "5.1.1",
-      "source_url": "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_1_states_provinces.zip",
-      "source_page": "https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/",
-      "source_sha256": "efc59726337323058f9446210adc96673179cd344e053666ee3d28cb58ba2b05",
-      "feature": "Arunachal Pradesh",
-      "neighbours": [
-        "Assam",
-        "Nagaland"
-      ],
-      "map_units": 59.842,
-      "accessed": "2026-11-05",
-      "reason": "China's official boundary: the area India administers as Arunachal Pradesh is drawn as part of China. This is a derivative presentation, not a change to Natural Earth's source classification."
-    }
-  ],
+  "china_boundary": {
+    "source": "WGII, World Geographic Information Integration (China boundary, GCJ-02)",
+    "version": "1.0.0",
+    "generated_at": "2026-04-15T03:25:19.386Z",
+    "source_url": "https://raw.githubusercontent.com/occultskyrong/wgii/master/products/china-boundary-gcj02.json.gz",
+    "source_page": "https://github.com/occultskyrong/wgii",
+    "license_url": "https://github.com/occultskyrong/wgii/blob/master/LICENSE",
+    "original_source": "AMap (Gaode) national administrative boundary",
+    "original_source_page": "https://lbs.amap.com/",
+    "source_sha256": "ce329a0bada9d859184b0fadd37827f3dd5dedd7cc48303b99de2ab3c6a6b42b",
+    "accessed": "2026-11-09",
+    "conversion": "GCJ-02 to WGS84 by fixed-point inversion of the GCJ-02 offset",
+    "permission": "Used with the WGII author's permission; cite WGII and AMap.",
+    "neighbour_area_moved_map_units": {
+      "IND": 53.64,
+      "PRK": 0.42,
+      "BTN": 1.96,
+      "KAZ": 2.092,
+      "TJK": 0.183,
+      "MNG": 3.965,
+      "RUS": 2.889,
+      "VNM": 0.29,
+      "LAO": 0.256,
+      "KGZ": 1.329,
+      "PAK": 0.014,
+      "MMR": 0.549,
+      "AFG": 0.026,
+      "NPL": 0.152,
+      "KAS": 0.014
+    },
+    "neighbour_slivers_returned_map_units": {
+      "IND": 0.8618,
+      "NPL": 1.6121,
+      "BTN": 0.0518,
+      "MMR": 1.7736,
+      "LAO": 0.1348,
+      "VNM": 1.189,
+      "PRK": 0.3077,
+      "RUS": 1.0808,
+      "MNG": 2.0436,
+      "KAZ": 1.0102,
+      "KGZ": 0.3894,
+      "TJK": 0.4549,
+      "AFG": 0.0142,
+      "PAK": 0.6763,
+      "KAS": 0.1731
+    },
+    "reason": "China's official boundary: China is drawn with WGII's boundary and every neighbour is cut along it. This is a derivative presentation, not a change to Natural Earth's source classification."
+  },
   "presentation_grouping": {
     "CHN": {
       "name": "China",
@@ -35,9 +64,11 @@
         "CHN",
         "TWN",
         "HKG",
-        "MAC"
+        "MAC",
+        "PGA",
+        "SCR"
       ],
-      "reason": "Application presentation requested by the user: group Taiwan, Hong Kong and Macao components with China. This is a derivative grouping, not a change to Natural Earth's source classification."
+      "reason": "Taiwan, Hong Kong, Macao, the Spratly Islands and Scarborough Shoal are drawn as part of China, as in WGII's boundary. This is a derivative grouping, not a change to Natural Earth's source classification."
     }
   },
   "projection": "equirectangular; x=0 is longitude -180; y=0 is latitude 90",
@@ -48,10 +79,10 @@
   "coordinate_quantization": 16777215,
   "general_simplification_tolerance_map_units": 0.085,
   "china_simplification_tolerance_map_units": 0.006,
-  "countries": 255,
-  "vertices": 97769,
-  "bytes": 821715,
-  "sha256": "d07bc277b1f96dbfc74ec348e49360fcbf2471b7c75b39e9592f9ab04e6ce839",
+  "countries": 253,
+  "vertices": 112471,
+  "bytes": 953915,
+  "sha256": "b4fd270f78e46f877126b41465da706d1f85d90a0ff82cdd777ac0c869aa64a7",
   "records": [
     {
       "id": "ABW",
@@ -69,7 +100,7 @@
         "AFG"
       ],
       "components": 1,
-      "vertices": 213
+      "vertices": 214
     },
     {
       "id": "AGO",
@@ -402,7 +433,7 @@
         "BTN"
       ],
       "components": 1,
-      "vertices": 58
+      "vertices": 64
     },
     {
       "id": "BWA",
@@ -456,10 +487,12 @@
         "CHN",
         "TWN",
         "HKG",
-        "MAC"
+        "MAC",
+        "PGA",
+        "SCR"
       ],
-      "components": 83,
-      "vertices": 11247
+      "components": 1916,
+      "vertices": 25695
     },
     {
       "id": "CIV",
@@ -1007,8 +1040,8 @@
       "source_ids": [
         "IND"
       ],
-      "components": 35,
-      "vertices": 1155
+      "components": 43,
+      "vertices": 1220
     },
     {
       "id": "IOA",
@@ -1134,7 +1167,7 @@
         "KAS"
       ],
       "components": 1,
-      "vertices": 4
+      "vertices": 16
     },
     {
       "id": "KAZ",
@@ -1143,7 +1176,7 @@
         "KAZ"
       ],
       "components": 6,
-      "vertices": 717
+      "vertices": 723
     },
     {
       "id": "KEN",
@@ -1161,7 +1194,7 @@
         "KGZ"
       ],
       "components": 1,
-      "vertices": 199
+      "vertices": 214
     },
     {
       "id": "KHM",
@@ -1224,7 +1257,7 @@
         "LAO"
       ],
       "components": 1,
-      "vertices": 222
+      "vertices": 226
     },
     {
       "id": "LBN",
@@ -1422,7 +1455,7 @@
         "MMR"
       ],
       "components": 39,
-      "vertices": 718
+      "vertices": 739
     },
     {
       "id": "MNE",
@@ -1440,7 +1473,7 @@
         "MNG"
       ],
       "components": 1,
-      "vertices": 278
+      "vertices": 313
     },
     {
       "id": "MNP",
@@ -1593,7 +1626,7 @@
         "NPL"
       ],
       "components": 1,
-      "vertices": 136
+      "vertices": 152
     },
     {
       "id": "NRU",
@@ -1629,7 +1662,7 @@
         "PAK"
       ],
       "components": 2,
-      "vertices": 349
+      "vertices": 363
     },
     {
       "id": "PAN",
@@ -1657,15 +1690,6 @@
       ],
       "components": 5,
       "vertices": 342
-    },
-    {
-      "id": "PGA",
-      "name": "Wake Island",
-      "source_ids": [
-        "PGA"
-      ],
-      "components": 12,
-      "vertices": 46
     },
     {
       "id": "PHL",
@@ -1719,7 +1743,7 @@
         "PRK"
       ],
       "components": 10,
-      "vertices": 243
+      "vertices": 270
     },
     {
       "id": "PRT",
@@ -1781,8 +1805,8 @@
       "source_ids": [
         "RUS"
       ],
-      "components": 214,
-      "vertices": 6973
+      "components": 215,
+      "vertices": 7038
     },
     {
       "id": "RWA",
@@ -1810,15 +1834,6 @@
       ],
       "components": 11,
       "vertices": 308
-    },
-    {
-      "id": "SCR",
-      "name": "Scarborough Shoal",
-      "source_ids": [
-        "SCR"
-      ],
-      "components": 1,
-      "vertices": 4
     },
     {
       "id": "SDN",
@@ -2088,7 +2103,7 @@
         "TJK"
       ],
       "components": 3,
-      "vertices": 182
+      "vertices": 191
     },
     {
       "id": "TKM",
@@ -2277,7 +2292,7 @@
         "VNM"
       ],
       "components": 25,
-      "vertices": 597
+      "vertices": 605
     },
     {
       "id": "VUT",

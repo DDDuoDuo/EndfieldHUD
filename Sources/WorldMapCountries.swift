@@ -5,9 +5,9 @@ import CoreGraphics
 /// boundary download or polygon simplification is performed by the app.
 struct WorldMapCountries {
     static let worldSize = CGSize(width: 1024, height: 512)
-    static let attribution = "Country outlines · Natural Earth"
+    static let attribution = "Country outlines / Natural Earth; China / WGII, AMap"
     static let maximumBytes = 1024 * 1024
-    static let maximumVertices = 100000
+    static let maximumVertices = 120000
     let countries: [WorldMapCountry]
     let vertexCount: Int
 
