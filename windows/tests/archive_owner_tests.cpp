@@ -378,13 +378,15 @@ void movieReturn(const std::filesystem::path& shader, const std::filesystem::pat
     // The HUD closes and opens again: a new presentation at zero, paused.
     h.owner->overlayClosing(h.time); h.overlay->overlayClosing(h.time); h.settle(10);
     (void)h.owner->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); (void)h.overlay->hostEvent({app::HostEvent::Kind::overlayConcealed}, h.time); h.settle(10);
-    h.owner->setOverlayVisible(true, h.time); h.overlay->setOverlayVisible(true, h.time);
-    away(); back(); h.settle(30);
-    check(canvas.isActive() && canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::list, "The next opening shows Archive's list");
-    const auto id = h.owner->state().entries().front().id;
-    check(canvas.performAccessibilityAction("doc:" + id, h.time), "The tile opens its document again");
     const auto engines = h.probes.size();
-    h.await("the reopened movie's still", [&] { return h.probes.size() == engines + 1 && texture(".poster"); });
+    h.owner->setOverlayVisible(true, h.time); h.overlay->setOverlayVisible(true, h.time);
+    away(); back();
+    h.await("the next opening's Archive", [&] { return canvas.isActive() && h.owner->state().active() && canvas.displayedPage().kind != m::ArchiveCanvas::PageKind::locked; });
+    h.settle(30);
+    // The stored selection may open the document at once; from the list its tile does.
+    if (canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::list)
+        check(canvas.performAccessibilityAction("doc:" + h.owner->state().entries().front().id, h.time), "The tile opens its document again");
+    h.await("the reopened movie's still", [&] { return canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::editor && h.probes.size() == engines + 1 && texture(".poster"); });
     h.settle(10);
     check(!media.playing() && h.probes.back()->seeks == 0 && h.probes.back()->plays == 0 && media.currentTime() == 0, "A new HUD opening shows the movie at zero, paused");
     // A still that fails on the return does not block the movie (NotesMedia.swift:370-371).
