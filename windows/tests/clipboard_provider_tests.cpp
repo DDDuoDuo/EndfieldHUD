@@ -111,7 +111,7 @@ void records(const char* oracle) {
     std::ifstream file(oracle, std::ios::binary); check(bool(file), "Open the isolated ClipboardStore preview oracle");
     const std::string bytes((std::istreambuf_iterator<char>(file)), {});
     const auto document = Json::parse(bytes, 1024 * 1024);
-    check(document["sourceSHA256"].string() == "c871a86bb4b4268d7529fc685b28a1a4867fec55ce6fed5070834fb2c147d90a", "The oracle pins the Mac 1.3.0 ClipboardStore");
+    check(document["sourceSHA256"].string() == "8dbe107a2cc02dea572a88b2d5b20c6be6e32c95c07d9cfb0fca1eb653544d42", "The oracle pins the Mac 1.3.1 ClipboardStore");
     unsigned compared{};
     for (const auto& row : document["rows"].array()) {
         f.history.clear(false);
