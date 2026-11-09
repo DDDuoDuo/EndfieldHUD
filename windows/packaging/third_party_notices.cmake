@@ -467,6 +467,28 @@ if(RESOURCE_SPECS AND EXISTS "${RESOURCE_SPECS}")
   endforeach()
 endif()
 
+# The country data's notices cite every source its provenance manifest names:
+# Natural Earth, and for China's boundary WGII and AMap with the permission
+# and the GCJ-02 to WGS84 conversion (CREDITS.md, Map data).
+set(country_manifest "${SOURCE}/../Resources/WorldMap/Countries-SOURCES.json")
+if(NOT EXISTS "${country_manifest}")
+  ehud_notices_fail("../Resources/WorldMap/Countries-SOURCES.json (the country data's provenance) is missing")
+else()
+  file(READ "${country_manifest}" country_sources)
+  set(country_citations "Made with Natural Earth")
+  string(JSON china_page ERROR_VARIABLE china_error GET "${country_sources}" china_boundary source_page)
+  if(NOT china_error)
+    string(JSON china_origin GET "${country_sources}" china_boundary original_source_page)
+    list(APPEND country_citations "${china_page}" "${china_origin}" "used with the WGII author's permission" "converted from GCJ-02 to WGS84")
+  endif()
+  foreach(citation IN LISTS country_citations)
+    string(FIND "${notices}" "${citation}" found)
+    if(found EQUAL -1)
+      ehud_notices_fail("THIRD-PARTY-NOTICES.txt does not cite \"${citation}\" for the country data")
+    endif()
+  endforeach()
+endif()
+
 if(failures)
   message(FATAL_ERROR "Third-party notices are incomplete:${failures}")
 endif()

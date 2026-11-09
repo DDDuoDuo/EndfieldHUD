@@ -152,13 +152,23 @@
     },
     {
       "name": "Natural Earth",
-      "version": "5.1.1, 1:10m admin 0 countries and admin 1 states and provinces",
+      "version": "5.1.1, 1:10m admin 0 countries",
       "url": "https://www.naturalearthdata.com/",
       "license": "Public domain",
-      "use": "The Map's country outlines. China's outline follows its official boundary in Southern Tibet, drawn from the Natural Earth admin 1 areas there.",
+      "use": "The Map's country outlines, except China's outline and its land borders, which come from WGII.",
       "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
       "paths": [],
       "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
+    },
+    {
+      "name": "WGII (World Geographic Information Integration) China boundary, from AMap",
+      "version": "1.0.0, China boundary (GCJ-02), generated 2026-04-15",
+      "url": "https://github.com/occultskyrong/wgii",
+      "license": "Used with the WGII author's permission",
+      "use": "The Map's outline of China and its land borders, converted from GCJ-02 to WGS84; every neighbouring country is cut along it.",
+      "ships": ["resources/map/Countries.bin", "resources/map/Countries-SOURCES.json"],
+      "paths": [],
+      "attribution": "China's outline and its land borders follow China's official boundary from WGII (World Geographic Information Integration, https://github.com/occultskyrong/wgii), whose boundary data comes from AMap (https://lbs.amap.com/); it is used with the WGII author's permission and converted from GCJ-02 to WGS84."
     }
   ],
   "notShipped": []
