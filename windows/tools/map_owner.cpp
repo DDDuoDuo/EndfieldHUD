@@ -80,8 +80,9 @@ struct MapOwner::Impl {
     // prewarm (Windows only) builds the page without starting the painter.
     void prepare() { if (prewarming) return; if (!rasterActive) { rasterActive = true; raster->setActive(true, time); } if (requestGeography) requestGeography(); }
     void releaseWorkingSet() { if (rasterActive) { rasterActive = false; raster->setActive(false, time); } }
-    // The scene's appearance: the pulse needs ambient motion, and no close.
-    gpu::MapAppearance sceneAppearance() const { return {appearance.reducedMotion, appearance.ambient && !closing}; }
+    // The scene's appearance: the close strips the pulse (its rings stay at
+    // their model opacity 0), it does not re-style the pins.
+    gpu::MapAppearance sceneAppearance() const { return {appearance.reducedMotion, appearance.ambient, closing}; }
     // The hidden HUD or a reopen ends a close: the pulse may run again.
     void endClose() { if (!closing) return; closing = false; (void)scene->setAppearance(sceneAppearance()); }
     // The raster's style: always dark, the palette's yellow for the centre
