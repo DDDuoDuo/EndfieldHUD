@@ -158,6 +158,10 @@ void NotesDesktopControls::setDeletion(std::optional<Deletion> next, double time
         d::motion::animate(*c.root, d::Channel::translateY, 0, .16, env.clock(), d::easing::easeOut);
     }
 }
+void NotesDesktopControls::settleMotion() {
+    auto& i = *impl_;
+    if (i.confirmation) i.confirmation->root->removeAllMotion();
+}
 void NotesDesktopControls::hoverDeletion(std::optional<core::Point> point, bool pressed, double time) {
     auto& i = *impl_;
     if (!i.env || !i.confirmation) return;

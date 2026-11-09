@@ -117,7 +117,8 @@ public:
     void focus(bool v, double) override { n_.focus(v); }
     bool finishEditing(double) override { return n_.finish(); }
     // The hidden HUD (the close finished, or a File Shelf drag's retract hid
-    // it): ModulePresentation's departing screen and close leave end.
+    // it): what the close left playing ends (C18, ModulePresentation's
+    // departing screen and close leave included).
     bool hostEvent(const HostEvent& e, double t) override {
         if (e.kind != HostEvent::Kind::overlayConcealed && e.kind != HostEvent::Kind::overlayRetracted) return false;
         return n_.concealCentre(t);

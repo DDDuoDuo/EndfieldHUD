@@ -170,6 +170,9 @@ public:
     // unchanged (false); invalid/repeated/nonfinite data throws before mutation.
     // No allocation, state scan, clock or resource upload; updatePose applies it.
     bool setCardMotions(std::span<const NativeNotesCardMotion>);
+    // A media progress fill still easing (notes.media.progress) jumps to its
+    // end: the HUD's close and the hidden HUD (NotesPreview settleMotion).
+    void settleMediaProgress();
     bool updatePose(const NativeNotesWorkspacePose&);
     bool requiresFrames(double time)const;
     void connectVideoPlayback(NativeNotesVideoPlayback&);

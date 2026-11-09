@@ -276,6 +276,22 @@ struct NotesPreview::Impl {
     // HUDNotesInteraction.finishEditing / closeFormatting: the pop-up closes,
     // the field commits, gestures and a pending deletion end.
     bool finish(){closePopup(currentTime);if(workspace->editor()&&!workspace->finishEditing().finished)return false;pendingFocus=false;editorDrag=false;workspace->cancelInteraction();workspace->cancelDeletion();confirmationVisible=false;return true;}
+    // The one notes motion settle (HUDNotesInteraction / NotesWorkspace
+    // stopMotionForConcealment and the Reduce Motion switch): the mutation
+    // pulse, the deletion confirmation's rise and the media progress end at
+    // once; with `cards` the section and card tracks too (a deletion releases
+    // its card, a section leave settles the outgoing generation).
+    bool settleMotion(bool cards){
+        bool changed{};
+        for(auto it=tracks.begin();it!=tracks.end();){
+            if(!cards&&it->kind!=TrackKind::mutation){++it;continue;}
+            if(it->kind==TrackKind::remove)workspace->settleDeletion(it->token);else{const std::array patch{gpu::NativeNotesCardMotion{it->token,{}}};workspace->setCardMotions(patch);}
+            it=tracks.erase(it);changed=true;
+        }
+        if(cards)workspace->settleOutgoing(outgoingGeneration);
+        desktop->settleMotion();workspace->settleMediaProgress();
+        return changed;
+    }
     void animate(double time){bool settle=false;
         for(auto it=tracks.begin();it!=tracks.end();){mod::NotesMotionSample m;switch(it->kind){
             case TrackKind::sectionIn:case TrackKind::sectionOut:m=mod::notesSectionMotion(it->kind==TrackKind::sectionIn,it->direction,time-it->start);break;
@@ -595,7 +611,7 @@ std::optional<double>NotesPreview::nextWakeTime()const{const auto&i=*impl_;auto 
 bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const bool chrome=i.editorChromeDue(event.time);return i.workspace->sampleMedia(event.time)||chrome;}
 bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);localizeMedia(p.workspace,p.language);if(i.samePreferences(p)&&i.workspace->fontRevision()==i.raster.fontRevision()){i.pendingPreferences.reset();return true;}if(!i.finish()){i.pendingPreferences=std::move(p);return false;}
     i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();i.reportStatus();
-    if(i.preferences.reduceMotion){for(const auto&track:i.tracks){if(track.kind==Impl::TrackKind::remove)i.workspace->settleDeletion(track.token);else{const std::array patch{gpu::NativeNotesCardMotion{track.token,{}}};i.workspace->setCardMotions(patch);}}i.tracks.clear();i.workspace->settleOutgoing(i.outgoingGeneration);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
+    if(i.preferences.reduceMotion){(void)i.settleMotion(true);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
 }
 bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);need(i.sharedMedia.broker!=nullptr,"Notes shared refresh requires the app media broker");return i.mediaCompletion(event.time);}
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
@@ -623,12 +639,13 @@ void NotesPreview::closeCentre(double t){auto&i=*impl_;const Impl::TimeScope eve
     i.moduleInput=i.moduleSample.acceptsModuleInput;
     // Same-value presentations are no-ops: notes entering or leaving keep their tracks (C17).
     if(i.finish())i.change(settled.change,t);
+    (void)i.settleMotion(false);
 }
 void NotesPreview::revealCentre(){impl_->modules.reveal();}
 bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);
     const bool closing=i.modules.requiresFrames()&&!i.modules.isTransitioning();
     i.modules.reveal();
-    return closing;}
+    return i.settleMotion(true)||closing;}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}

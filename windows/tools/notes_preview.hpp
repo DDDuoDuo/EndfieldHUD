@@ -150,14 +150,16 @@ public:
     // the latest pick; a switch in flight lands hidden on its new module, its
     // old screen finishing its leave (ModulePresentation::settleForClose,
     // always); the shown design screen leaves (leaveForClose, not under
-    // Reduce Motion).
+    // Reduce Motion); the notes' own motion other than the section and card
+    // tracks settles (N-1: the mutation pulse, the deletion confirmation's
+    // rise, the media progress), so a card at rest stays at rest.
     void closeCentre(double time);
     // The next open (or a reopen mid-close) shows the committed module again
     // (ModulePresentation::reveal; NotesModule::setOverlayVisible(true)).
     void revealCentre();
     // The hidden HUD (overlayConcealed, overlayRetracted): what the close
-    // left playing ends (the departing screen, the close leave); true when
-    // something changed.
+    // left playing ends (the departing screen, the close leave, every notes
+    // track); true when something changed.
     bool concealCentre(double time);
     core::Module selected()const noexcept;
     const core::ModulePresentationSample& modulePresentation()const noexcept;
