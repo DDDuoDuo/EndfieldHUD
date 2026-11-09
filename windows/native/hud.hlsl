@@ -63,6 +63,14 @@ float3 decodeSRGB(float3 encodedRGB) {
 float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput,bool alphaInput) {
     [loop] for (uint i = 0; i < maskCount; ++i) {
         float4 local = mul(masks[i].worldToLocal, input.worldPosition);
+        // An excluding mask (corners.y) discards the inside of its rectangle.
+        [branch] if (masks[i].corners.y > 0) {
+            [branch] if (local.w > 0.0000001) {
+                float2 holePoint = local.xy / local.w;
+                if (all(holePoint >= masks[i].bounds.xy) && all(holePoint <= masks[i].bounds.zw)) discard;
+            }
+            continue;
+        }
         clip(local.w - 0.0000001);
         float2 localPoint = local.xy / local.w;
         clip(float4(localPoint - masks[i].bounds.xy, masks[i].bounds.zw - localPoint));

@@ -130,7 +130,8 @@ AccentPalette AccentPalette::make(std::string_view accentHex, bool light) {
         p.yellowLow = hsbShifted(base, -6.08, .923, .914);
         p.yellowDeep = hsbShifted(base, -4.16, .934, .945);
     }
-    p.ink = light ? darkened(p.yellowLow, .42) : p.yellow;
+    p.plateInk = darkened(p.yellowLow, .42);
+    p.ink = light ? p.plateInk : p.yellow;
     return p;
 }
 
@@ -207,8 +208,14 @@ double boxScale(double windowScale, double unit) noexcept {
     const double s = windowScale * unit;
     return std::isfinite(windowScale) && std::isfinite(s) ? std::min(8.0, std::max(1.0, s)) : 2;
 }
-double layerContentsScale(double s) noexcept { return std::isfinite(s) ? std::min(4.0, std::max(1.0, s)) : 2; }
-double textContentsScale(double s) noexcept { return std::min(4.0, std::ceil(layerContentsScale(s) * 1.35)); }
+namespace {
+double clampedRenderScale(double s) noexcept { return std::isfinite(s) ? std::min(core::maximumRenderScale, std::max(1.0, s)) : 2; }
+}
+double layerContentsScale(double s, double magnification) noexcept { return clampedRenderScale(s) * core::renderMagnification(magnification); }
+double textContentsScale(double s, double magnification) noexcept {
+    const double factor = core::renderMagnification(magnification);
+    return std::min(core::maximumRenderScale * factor, std::ceil(clampedRenderScale(s) * 1.35 * factor));
+}
 // HUDArtwork.image / HUDHatchLayer / showArtwork: clamp(ceil(s), 1, 8), non-finite 2.
 double artworkScale(double s) noexcept { return std::isfinite(s) ? std::max(1.0, std::min(8.0, std::ceil(s))) : 2; }
 } // namespace endfield::modules::design

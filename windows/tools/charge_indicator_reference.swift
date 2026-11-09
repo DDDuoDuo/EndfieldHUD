@@ -176,9 +176,10 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
         var trees: [[String: Any]] = []
         func tree(_ name: String, snapshot: BatterySnapshot, dark: Bool, chinese: Bool, metric: HUDChargeMetric,
                   telemetry: (String, SystemActivitySnapshot?), stage: OverlayStage, hovered: Bool, preview: Bool,
-                  accentHex: String = "FAD41F") throws {
+                  accentHex: String = "FAD41F", barWidth: CGFloat? = nil) throws {
             L10n.language = chinese ? .simplifiedChinese : .english
             let view = ChargeIndicatorView(frame: NSRect(origin: .zero, size: ChargeIndicatorView.canvasSize))
+            if let barWidth { view.setBarWidth(barWidth) }
             var configuration = AppConfiguration.defaults
             configuration.alertMetric = metric; configuration.accentHex = accentHex
             view.configureEmbedding(dark: dark, contentsScale: 2)
@@ -190,6 +191,7 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
             trees.append(["snapshot": name, "battery": describe(snapshot), "dark": dark, "chinese": chinese,
                           "metric": metric.rawValue, "telemetry": telemetry.0, "telemetryValue": describe(telemetry.1),
                           "stage": stage.rawValue, "hovered": hovered, "preview": preview, "accentHex": accentHex,
+                          "barWidth": Double(view.barWidth), "canvasWidth": Double(view.canvasWidth),
                           "accessibility": view.accessibilityLabel() ?? "", "embeddedBodyRect": rect(view.embeddedBodyRect),
                           "layer": try encoder.encode(view.embeddedContentLayer, id: "charge")])
         }
@@ -209,6 +211,14 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
             try tree("battery19", snapshot: snapshots[2].1, dark: true, chinese: chinese, metric: .battery, telemetry: ("none", nil),
                      stage: .compact, hovered: false, preview: true)
         }
+        // The Length setting (setBarWidth): only the compact bar stretches; the
+        // circle and banner stay centred. 150 asks for less than the minimum.
+        for width in [CGFloat(150), 200, 600, 1400] { for stage in OverlayStage.allCases { for chinese in [false, true] {
+            try tree("battery20", snapshot: snapshots[3].1, dark: true, chinese: chinese, metric: .battery, telemetry: ("none", nil),
+                     stage: stage, hovered: false, preview: false, barWidth: width)
+        }}}
+        try tree("demoCharging", snapshot: demo, dark: false, chinese: false, metric: .network, telemetry: telemetries[1],
+                 stage: .compact, hovered: false, preview: true, barWidth: 230)
         L10n.language = .english
         result["trees"] = trees
         result["unsupported"] = encoder.unsupported
@@ -240,6 +250,16 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
             let view = indicator(); view.setStage(.hidden)
             var start = Date()
             timeline("entrance", view, [
+                Event(at: 0) { start = Date(); view.animateEntrance() },
+                Event(at: 0.20) { precondition(Date() < start.addingTimeInterval(1.0)); spin(until: start.addingTimeInterval(0.23)) },
+                Event(at: 1.22) { spin(until: start.addingTimeInterval(1.25)) },
+                Event(at: 1.50) { spin(until: start.addingTimeInterval(1.53)) },
+            ], end: 1.75)
+        }
+        do {
+            let view = indicator(); view.setBarWidth(520); view.setStage(.hidden)
+            var start = Date()
+            timeline("stretchedEntrance", view, [
                 Event(at: 0) { start = Date(); view.animateEntrance() },
                 Event(at: 0.20) { precondition(Date() < start.addingTimeInterval(1.0)); spin(until: start.addingTimeInterval(0.23)) },
                 Event(at: 1.22) { spin(until: start.addingTimeInterval(1.25)) },
@@ -444,6 +464,65 @@ let telemetries: [(String, SystemActivitySnapshot?)] = [
         }
         result["geometry"] = geometry
         result["normalization"] = normalized
+
+        // G2. The bar's Length, its canvas and the bar editor's geometry
+        // (OverlayGeometry at 1.3.1), in source (bottom-left origin) desktop points.
+        var bar: [[String: Any]] = []
+        func json(_ value: Double?) -> Any { value.map { $0.isFinite ? $0 as Any : String($0) } ?? NSNull() }
+        let lengths: [Double?] = [nil, 0, -1, .nan, .infinity, 0.05, 0.2, 0.37, 0.5, 1, 1.5]
+        let barScales = [0.5, 0.65, 1, 1.25, 1.6, 2, Double.nan]
+        for screen in screens + [NSRect(x: 0, y: 0, width: 0, height: 100)] { for length in lengths { for scale in barScales {
+            let width = OverlayGeometry.barWidth(length: length, screen: screen, scale: scale)
+            let range = OverlayGeometry.lengthRange(screen: screen, scale: scale)
+            var configuration = AppConfiguration.defaults
+            configuration.scale = scale; configuration.chargeBarLength = length
+            bar.append(["kind": "width", "screen": rect(screen), "length": json(length), "scale": json(scale),
+                        "barWidth": Double(width), "canvasWidth": Double(OverlayGeometry.canvasWidth(barWidth: width)),
+                        "lengthRange": [range.lowerBound, range.upperBound],
+                        "lengthOf": OverlayGeometry.length(of: configuration, screen: screen),
+                        "normalizedLength": json(configuration.normalized.chargeBarLength)])
+        }}}
+        for screen in screens { for point in points { for length in [nil, 0.37, 1] as [Double?] { for scale in [0.65, 1, 1.6] { for editing in [false, true] {
+            var configuration = AppConfiguration.defaults
+            configuration.scale = scale; configuration.chargeBarLength = length
+            let a = OverlayGeometry.clampedAnchor(point, configuration: configuration, screen: screen, editing: editing)
+            bar.append(["kind": "clamp", "screen": rect(screen), "point": [Double(point.x), Double(point.y)].map { $0.isFinite ? $0 as Any : String($0) },
+                        "length": json(length), "scale": scale, "editing": editing, "anchor": [Double(a.x), Double(a.y)]])
+        }}}}}
+        for screen in screens { for placement in OverlayPlacement.allCases { for position in [(0.5, 0.9), (0, 0), (1, 1)] {
+            for length in [nil, 0.37, 1] as [Double?] { for scale in [0.65, 1.6] { for moved in [false, true] {
+                var configuration = AppConfiguration.defaults
+                configuration.placement = placement; configuration.scale = scale; configuration.chargeBarLength = length
+                configuration.customPosition = OverlayPosition(screenID: 7, x: position.0, y: position.1)
+                let draft = NSPoint(x: screen.minX - 40, y: screen.maxY + 40)
+                let a = OverlayGeometry.editorAnchor(draft: draft, moved: moved, configuration: configuration, screen: screen)
+                let reach = OverlayGeometry.editorReach(anchor: a, screen: screen)
+                bar.append(["kind": "editorAnchor", "screen": rect(screen), "placement": placement.rawValue, "position": [position.0, position.1],
+                            "length": json(length), "scale": scale, "moved": moved, "draft": [Double(draft.x), Double(draft.y)],
+                            "anchor": [Double(a.x), Double(a.y)], "reach": [Double(reach.lowerBound), Double(reach.upperBound)]])
+            }}}
+        }}}
+        for screen in screens { for point in points.prefix(3) {
+            let reach = OverlayGeometry.editorReach(anchor: point, screen: screen)
+            bar.append(["kind": "reach", "screen": rect(screen), "anchor": [Double(point.x), Double(point.y)],
+                        "reach": [Double(reach.lowerBound), Double(reach.upperBound)]])
+        }}
+        for (barFrame, screen) in [(NSRect(x: -18, y: 10, width: 1476, height: 84), NSRect(x: 0, y: 0, width: 1440, height: 900)),
+                                   (NSRect(x: 100, y: 10, width: 300, height: 84), NSRect(x: 0, y: 0, width: 1440, height: 900)),
+                                   (NSRect(x: -1950, y: 10, width: 1990, height: 84), NSRect(x: -1920, y: -200, width: 1920, height: 1055)),
+                                   (NSRect(x: 2000, y: 10, width: 300, height: 84), NSRect(x: 0, y: 0, width: 1440, height: 900))] {
+            bar.append(["kind": "panel", "bar": rect(barFrame), "screen": rect(screen), "frame": rect(OverlayGeometry.panelFrame(bar: barFrame, screen: screen))])
+        }
+        for (reported, shown) in [(37.0, 37.0), (38, 37), (100, nil), (14, 100)] as [(Double, Double?)] {
+            bar.append(["kind": "draftLength", "reported": reported, "shown": json(shown), "draft": json(OverlayGeometry.draftLength(reported: reported, shown: shown))])
+        }
+        for size in [CGSize(width: 554, height: 112), CGSize(width: 520, height: 161)] {
+            let room = OverlayGeometry.editorStripSize(size)
+            bar.append(["kind": "stripSize", "size": [Double(size.width), Double(size.height)], "room": [Double(room.width), Double(room.height)]])
+        }
+        result["bar"] = ["rows": bar, "classicBarWidth": Double(OverlayGeometry.classicBarWidth), "minimumBarWidth": Double(OverlayGeometry.minimumBarWidth),
+                         "barMargin": Double(OverlayGeometry.barMargin), "scaleRange": [OverlayGeometry.scaleRange.lowerBound, OverlayGeometry.scaleRange.upperBound],
+                         "editorStripScale": Double(OverlayGeometry.editorStripScale)]
 
         // H. Event recorder battery transitions; I. device readings.
         let sequence: [(String, BatterySnapshot)] = [snapshots[2], snapshots[1], snapshots[0], snapshots[4], snapshots[6], snapshots[2],

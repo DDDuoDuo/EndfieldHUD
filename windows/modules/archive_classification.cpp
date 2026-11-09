@@ -14,7 +14,7 @@
 #include <CommonCrypto/CommonKeyDerivation.h>
 #include <CommonCrypto/CommonRandom.h>
 #else
-#include "core/migration/mac_import_sha256.hpp"
+#include "core/data/sha256.hpp"
 #include <cstring>
 #include <sys/random.h>
 #endif
@@ -23,7 +23,7 @@ namespace endfield::modules {
 namespace {
 using ehud::data::StoreError;using ehud::data::StoreErrorCode;using J=ArchiveJson;
 void need(bool value,const char*message){if(!value)throw StoreError(StoreErrorCode::invalid,message);}
-[[noreturn]]void unavailable(){throw StoreError(StoreErrorCode::unavailable,"The archive could not be saved.");}
+[[noreturn]]void unavailable(){throw StoreError(StoreErrorCode::unavailable,"The archive could not be saved");}
 std::string upper(std::string_view value){std::string out(value);for(auto&c:out)if(c>='a'&&c<='z')c=static_cast<char>(c-'a'+'A');return out;}
 bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 #ifdef _WIN32
@@ -38,11 +38,11 @@ bool randomBytes(std::string&out,std::size_t count){out.assign(count,'\0');
 void wipeBytes(void*bytes,std::size_t count)noexcept{volatile auto*p=static_cast<unsigned char*>(bytes);for(std::size_t i=0;i<count;++i)p[i]=0;}
 // RFC 8018 PBKDF2-HMAC-SHA256 for the portable build (Linux CI), where
 // neither CommonCrypto nor BCrypt exists: the shared FIPS 180-4 SHA-256
-// (core/migration/mac_import_sha256), keyed inner/outer states computed once
+// (core/data/sha256), keyed inner/outer states computed once
 // and copied per round, every intermediate wiped. Same bytes as the platform
 // derivations (archive-classification-source.json Mac records).
 std::optional<std::string>portablePBKDF2(std::string_view password,std::string_view salt,std::uint32_t iterations,std::size_t length){
-    using ehud::migration::Sha256;std::uint8_t key[64]{},pad[64];
+    using ehud::data::Sha256;std::uint8_t key[64]{},pad[64];
     if(password.size()>sizeof key){Sha256 h;h.update(password);auto digest=h.finish();std::memcpy(key,digest.data(),digest.size());wipeBytes(digest.data(),digest.size());wipeBytes(&h,sizeof h);}
     else if(!password.empty())std::memcpy(key,password.data(),password.size());
     Sha256 inner,outer;for(int i=0;i<64;++i)pad[i]=key[i]^0x36;inner.update(pad,64);for(int i=0;i<64;++i)pad[i]=key[i]^0x5c;outer.update(pad,64);wipeBytes(key,sizeof key);wipeBytes(pad,sizeof pad);
@@ -73,14 +73,14 @@ void archiveWipe(std::string&value)noexcept{
 ArchiveClassificationError::ArchiveClassificationError(ArchiveClassificationErrorCode code):std::runtime_error(archiveClassificationErrorText(code,core::Language::english)),code_(code){}
 std::string archiveClassificationErrorText(ArchiveClassificationErrorCode code,core::Language language){
     using L=core::Language;
-    if(code==ArchiveClassificationErrorCode::cancelled)return "Recovery was cancelled.";
+    if(code==ArchiveClassificationErrorCode::cancelled)return "Recovery was cancelled";
     const bool missing=code==ArchiveClassificationErrorCode::passwordMissing;
     switch(language){
-    case L::simplifiedChinese:return missing?"你的 Windows 账户受保护存储中缺少此文档的密码，文档仍保持机密。":"无法读取你的 Windows 账户受保护存储，文档仍保持机密。";
-    case L::traditionalChinese:return missing?"你的 Windows 帳戶受保護儲存區中缺少此文件的密碼，文件仍保持機密。":"無法讀取你的 Windows 帳戶受保護儲存區，文件仍保持機密。";
-    case L::japanese:return missing?"この文書のパスワードが Windows アカウントの保護されたストレージにありません。文書は機密のままです。":"Windows アカウントの保護されたストレージを読み取れませんでした。文書は機密のままです。";
-    case L::korean:return missing?"Windows 계정의 보호된 저장소에 이 문서의 암호가 없습니다. 문서는 기밀로 유지됩니다.":"Windows 계정의 보호된 저장소를 읽을 수 없습니다. 문서는 기밀로 유지됩니다.";
-    default:return missing?"This document's password is missing from your Windows account's protected storage. It stays classified.":"Your Windows account's protected storage could not be read. The document stays classified.";
+    case L::simplifiedChinese:return missing?"你的 Windows 账户受保护存储中缺少此文档的密码，文档仍保持机密":"无法读取你的 Windows 账户受保护存储，文档仍保持机密";
+    case L::traditionalChinese:return missing?"你的 Windows 帳戶受保護儲存區中缺少此文件的密碼，文件仍保持機密":"無法讀取你的 Windows 帳戶受保護儲存區，文件仍保持機密";
+    case L::japanese:return missing?"この文書のパスワードが Windows アカウントの保護されたストレージにありません。文書は機密のままです":"Windows アカウントの保護されたストレージを読み取れませんでした。文書は機密のままです";
+    case L::korean:return missing?"Windows 계정의 보호된 저장소에 이 문서의 암호가 없습니다. 문서는 기밀로 유지됩니다":"Windows 계정의 보호된 저장소를 읽을 수 없습니다. 문서는 기밀로 유지됩니다";
+    default:return missing?"This document's password is missing from your Windows account's protected storage. It stays classified":"Your Windows account's protected storage could not be read. The document stays classified";
     }
 }
 std::optional<ArchivePasswordIssue>archivePasswordIssue(std::string_view password,const std::optional<std::string>&confirmation,const ArchiveTextRules&rules){
@@ -97,7 +97,7 @@ std::string archivePasswordAccount(std::string_view document,std::string_view ke
 std::string archiveBase64(std::string_view bytes){return ehud::data::base64Encode(bytes);}
 // Foundation Data(base64Encoded:) (JSONDecoder's Data strategy): no
 // whitespace, padding required, unused tail bits tolerated.
-std::optional<std::string>archiveBase64Decoded(std::string_view text){return ehud::data::base64Decode(text,false,false);}
+std::optional<std::string>archiveBase64Decoded(std::string_view text){return ehud::data::base64Decode(text,false);}
 std::optional<std::string>archivePBKDF2(std::string_view password,std::string_view salt,std::uint32_t iterations,std::size_t length){
     std::string out(length,'\0');if(!iterations||!length)return {};
 #ifdef _WIN32

@@ -6,7 +6,7 @@
 // routes of the other modules, refused virtual-file drops, stale-path renewal
 // saved by refresh, the properties reads on the utility worker, Open and Reveal
 // through the host's action message, the copy-only drag payload, the UI
-// Automation tree, the import ledger relink, localized platform text and error
+// Automation tree, the relink ledger relink, localized platform text and error
 // descriptions, and what the Shelf keeps resident (the Shell icon worker only
 // while shown, no artwork once the HUD closed on another module). No user
 // file, clipboard, Explorer window or application of the user is touched; the
@@ -17,7 +17,7 @@
 #include "app/utility_executor.hpp"
 #include "native/file_shelf_files.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
 #include <ole2.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
@@ -131,10 +131,13 @@ struct Hud {
     core::source::DesktopChromeSettings chrome;
     double time{};
     bool released{};
-    Hud(HWND h, gpu::Renderer& r, tools::ShelfServiceOptions options, core::Language language = core::Language::english) : hwnd(h), renderer(r) {
+    // `utility`: the shared executor handed over before the owner starts (the
+    // module-coverage host's order); otherwise the test hands it over later.
+    Hud(HWND h, gpu::Renderer& r, tools::ShelfServiceOptions options, core::Language language = core::Language::english, app::UtilityExecutor* utility = nullptr) : hwnd(h), renderer(r) {
         tools::DesignOverlayOptions o; o.raster.pixelsPerPoint = 1; o.window = hwnd;
         overlay = std::make_unique<tools::DesignOverlayOwner>(raster, o);
         shelf = std::make_unique<tools::ShelfService>(hwnd, std::move(options));
+        if (utility) shelf->setUtility(utility);
         tools::DesignOwnerOptions ownerOptions; ownerOptions.name = "fileShelf"; ownerOptions.routing = tools::ShelfService::routing(); ownerOptions.raster.pixelsPerPoint = 1;
         ownerOptions.now = [this] { return time; };
         owner = shelf->makeOwner(raster, overlay->context(), std::move(ownerOptions));
@@ -186,11 +189,11 @@ struct Hud {
 void text() {
     using T = mod::ShelfText; using L = core::Language;
     const auto error = [](data::StoreErrorCode code, const char* what, Failure failure, L language) { return tools::shelfErrorText(data::StoreError(code, what), failure, language); };
-    check(error(data::StoreErrorCode::unavailable, "Item is no longer on the shelf", Failure::action, L::english) == "This item is no longer on the shelf.", "Missing items use the source text");
-    check(error(data::StoreErrorCode::unavailable, "Original shelf item is unavailable; a different item occupies its former location", Failure::action, L::simplifiedChinese) == "原始项目不可用，其他项目已占用了原来的位置。",
+    check(error(data::StoreErrorCode::unavailable, "Item is no longer on the shelf", Failure::action, L::english) == "This item is no longer on the shelf", "Missing items use the source text");
+    check(error(data::StoreErrorCode::unavailable, "Original shelf item is unavailable; a different item occupies its former location", Failure::action, L::simplifiedChinese) == "原始项目不可用，其他项目已占用了原来的位置",
           "A replaced original uses the source text");
-    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 5)", Failure::importing, L::english) == "Choose a file or folder that is available on this PC.", "Import failures ask for an available item");
-    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 2)", Failure::action, L::english) == "This item is unavailable: the original may have been deleted, or it is not accessible.",
+    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 5)", Failure::importing, L::english) == "Choose a file or folder that is available on this PC", "Import failures ask for an available item");
+    check(error(data::StoreErrorCode::unavailable, "Cannot acquire shelf file metadata (Windows error 2)", Failure::action, L::english) == "This item is unavailable: the original may have been deleted, or it is not accessible",
           "Action failures explain the missing original");
     check(error(data::StoreErrorCode::changedOnDisk, "Saved data changed in another instance", Failure::changing, L::japanese) == mod::shelfText(T::changedOnDisk, L::japanese), "External changes use the Windows wording");
     check(error(data::StoreErrorCode::tooLarge, "Shelf metadata exceeds the explicit archive byte bound", Failure::importing, L::korean) == mod::shelfText(T::tooManyReferences, L::korean), "An oversized archive is explained");
@@ -249,7 +252,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     effect = DROPEFFECT_COPY; ok(target->DragEnter(virtualSource.Get(), MK_LBUTTON, point, &effect), "Virtual drag enters");
     effect = DROPEFFECT_COPY; ok(target->Drop(virtualSource.Get(), MK_LBUTTON, point, &effect), "Virtual drop");
     check(effect == DROPEFFECT_NONE, "Virtual files are refused"); hud.pump();
-    check(hud.toast() == "Notice|This item isn't a file on disk. Save it to a folder first, then add it.", "The refusal is a Notice toast");
+    check(hud.toast() == "Notice|This item isn't a file on disk. Save it to a folder first, then add it", "The refusal is a Notice toast");
     check(hud.canvas().itemCount() == 3, "No reference was added for virtual files");
     // An external route (another module's drop) takes the target while it is set.
     std::vector<std::string> routed;
@@ -324,7 +327,7 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     // A failure is the canvas's notice; a choice the user cancelled (S_FALSE) shows nothing.
     { std::lock_guard lock(shell.mutex); shell.result = E_ACCESSDENIED; }
     shelf.open(reportID, hud.time); settleOpen();
-    check(hud.toast() == "Notice|This item could not be opened.", "A failed Open shows the notice");
+    check(hud.toast() == "Notice|This item could not be opened", "A failed Open shows the notice");
     { std::lock_guard lock(shell.mutex); shell.result = S_FALSE; }
     {   const auto shown = toasts();
         shelf.open(reportID, hud.time); settleOpen();
@@ -350,7 +353,8 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
         for (int k = 0; k < 3; ++k) hud.frame();
         check(hud.canvas().isActive(), "Back on the Shelf"); }
     {   std::uint64_t shown{};
-        gated([&] { hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time); shown = toasts(); });
+        // The host's close: overlayClosing, then the hidden HUD (no setOverlayVisible(false)).
+        gated([&] { hud.owner->overlayClosing(hud.time); hud.frame(); (void)hud.owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, hud.time); shown = toasts(); });
         check(toasts() == shown, "An Open whose HUD closed before the Shell returned shows no toast");
         hud.owner->setOverlayVisible(true, hud.time); for (int k = 0; k < 3; ++k) hud.frame();
         check(hud.canvas().isActive(), "The HUD shown again on the Shelf"); }
@@ -377,7 +381,71 @@ void services(HWND hwnd, gpu::Renderer& renderer) {
     check(RevokeDragDrop(hwnd) == DRAGDROP_E_NOTREGISTERED && !IsWindowVisible(hwnd), "Teardown revokes the drop target; nothing was shown");
 }
 
-// Mac-imported Shelf items (Migration/relink.json written by the import area):
+// The relink ledger is read as the owner starts (EndfieldHUD.exe makes the
+// owner, then hands it the shared executor), so the first showing lists the
+// imported rows and is not rebuilt when its own refresh read lands.
+void relinksAtStart(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp;
+    const auto root = temp.root / "data";
+    constexpr UINT utilityNotice = WM_APP + 301;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); });
+    Hud hud(hwnd, renderer, tools::ShelfServiceOptions{root, false, false});
+    auto& shelf = *hud.shelf;
+    const auto settle = [&] { utility.waitIdle(); utility.drain(); MSG m{}; while (PeekMessageW(&m, hwnd, utilityNotice, utilityNotice, PM_REMOVE)) {} hud.pump(); };
+    const auto reportID = std::string("BBBBBBBB-0000-4000-8000-000000000001");
+    std::filesystem::create_directories(root / "Migration"); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({imported(reportID, "Report.pdf", false, 700000000.5)}));
+    check(shelf.pendingRelinks() == 0, "Without the shared executor the owner has read nothing yet");
+    shelf.setUtility(&utility); settle();
+    check(shelf.pendingRelinks() == 1, "Handed the executor, the owner reads the ledger before the Shelf is shown");
+    auto& context = hud.overlay->context();
+    hud.frame();
+    const auto built = context.pagesBuilt();
+    check(hud.canvas().itemCount() == 1 && hud.item("Report.pdf") && hud.item("Report.pdf")->awaitingRelink, "The first showing already lists the imported row");
+    settle(); hud.frame();
+    check(context.pagesBuilt() == built && hud.canvas().itemCount() == 1, "The showing's own read lands with the same rows: no rebuild");
+}
+// The executor handed over before the owner starts (the module-coverage
+// host): makeOwner reads. The start read only reads: a row whose record is
+// already on the shelf (the app stopped between the two writes) stays
+// unresolved until the showing's read repairs it, so launching writes nothing.
+void relinksAtOwnerStart(HWND hwnd, gpu::Renderer& renderer) {
+    Temp temp;
+    const auto root = temp.root / "data";
+    constexpr UINT utilityNotice = WM_APP + 302;
+    app::UtilityExecutor utility([hwnd] { PostMessageW(hwnd, utilityNotice, 0, 0); });
+    const auto drainUtility = [&] { utility.waitIdle(); utility.drain(); MSG m{}; while (PeekMessageW(&m, hwnd, utilityNotice, utilityNotice, PM_REMOVE)) {} };
+    const auto kept = temp.root / "Kept.txt"; write(kept, "kept");
+    std::string keptID;
+    {
+        Hud first(hwnd, renderer, tools::ShelfServiceOptions{root, false, false}, core::Language::english, &utility);
+        first.frame();
+        check(first.shelf->importFiles(std::vector<std::string>{utf8(kept)}, first.time), "A Windows reference is on the shelf");
+        drainUtility(); first.pump();
+        check(first.canvas().itemCount() == 1, "The reference is listed");
+        keptID = first.canvas().items()[0].id;
+    }
+    const auto reportID = std::string("BBBBBBBB-0000-4000-8000-000000000002");
+    const auto stopped = imported(keptID, "Kept.txt", false, 700000000.25);
+    std::filesystem::create_directories(root / "Migration");
+    write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({imported(reportID, "Report.pdf", false, 700000000.5), stopped}));
+    const auto unresolved = [&] { const mig::MacRelinkLedger ledger(root); const auto* row = ledger.find(stopped.id); return row && row->state == mig::RelinkState::unresolved; };
+    tools::ShelfServiceOptions relaunch{root, false, false}; relaunch.persistentDataRoot = true; // the next launch opens the same root
+    Hud hud(hwnd, renderer, std::move(relaunch), core::Language::english, &utility);
+    auto& shelf = *hud.shelf;
+    drainUtility(); hud.pump();
+    check(shelf.pendingRelinks() == 1, "Started with the executor, the owner reads the ledger before the Shelf is shown; the row on the shelf is not listed");
+    check(unresolved(), "The start read writes nothing to the ledger");
+    auto& context = hud.overlay->context();
+    hud.frame();
+    const auto built = context.pagesBuilt();
+    check(hud.canvas().itemCount() == 2 && hud.item("Report.pdf") && hud.item("Report.pdf")->awaitingRelink && hud.item("Kept.txt") && !hud.item("Kept.txt")->awaitingRelink,
+          "The first showing already lists the imported row beside the reference");
+    drainUtility(); hud.pump(); hud.frame();
+    check(context.pagesBuilt() == built && hud.canvas().itemCount() == 2, "The showing's own read lands with the same rows: no rebuild");
+    check(!unresolved(), "The showing's read resolves the row whose record is on the shelf");
+}
+
+// Mac-imported Shelf items (Migration/relink.json written by an earlier import):
 // unavailable tiles until the user picks the file on this PC.
 void relink(HWND hwnd, gpu::Renderer& renderer) {
     Temp temp; std::vector<Recorded> events;
@@ -563,7 +631,8 @@ void resident(HWND hwnd, gpu::Renderer& renderer) {
     std::cout << "cost: switching back to the Shelf inside the open HUD " << back << " ms\n";
     hud.frame(core::Module::fileShelf, core::Module::clipboard);
     hud.frame(core::Module::clipboard);
-    hud.owner->overlayClosing(hud.time); hud.owner->setOverlayVisible(false, hud.time);
+    hud.owner->overlayClosing(hud.time);
+    for (int k = 0; k < 3; ++k) hud.frame(core::Module::clipboard);
     (void)hud.owner->hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, hud.time);
     hud.frame(core::Module::clipboard);
     const auto closed = shelf.resources();
@@ -625,6 +694,8 @@ int wmain(int argc, wchar_t** argv) {
         gpu::Renderer renderer; renderer.initialize(window.hwnd, 1280, 800, {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
         text();
         services(window.hwnd, renderer);
+        relinksAtStart(window.hwnd, renderer);
+        relinksAtOwnerStart(window.hwnd, renderer);
         relink(window.hwnd, renderer);
         deferredSaves(window.hwnd, renderer);
         openAfterShutdown(window.hwnd, renderer);

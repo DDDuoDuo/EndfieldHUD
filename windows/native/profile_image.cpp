@@ -115,14 +115,28 @@ std::string importProfileImageBytes(std::span<const std::uint8_t>encoded,m::Prof
     const auto bytes=kind==m::ProfileImageKind::avatar?std::vector<std::uint8_t>(encoded.begin(),encoded.end()):png(*s.factory.Get(),oriented(std::move(thumbnail),s.orientation));
     const auto name=managedName(kind);atomicWrite(directory,name,bytes);return name;
 }
-ProfileDecodedImage decodeProfileImage(const std::filesystem::path&managed,m::ProfileImageKind kind,unsigned maximum){
-    const Apartment com;auto s=open(managed);ProfileDecodedImage out;out.sourceWidth=s.width;out.sourceHeight=s.height;
+namespace {
+ProfileDecodedImage decodedSource(Source&s,m::ProfileImageKind kind,unsigned maximum){
+    ProfileDecodedImage out;out.sourceWidth=s.width;out.sourceHeight=s.height;
     if(kind==m::ProfileImageKind::avatar){
         if(!portraitDimensions(s.width,s.height))fail(m::ProfileFailure::imageDimensions);
         const auto[w,h]=bounded(s.width,s.height,std::clamp(maximum,256u,16384u));out.image=pixels(s,w,h);out.orientation=s.orientation;
     }else{const auto[w,h]=bounded(s.width,s.height,2048);out.image=oriented(pixels(s,w,h),s.orientation);out.orientation=1;}
     return out;
 }
+// The crop working copy of an avatar decode (at most profileAvatarWorkingPixels).
+ProfileDecodedImage reducedToWorking(ProfileDecodedImage out){
+    if(std::max(out.image.width,out.image.height)>m::profileAvatarWorkingPixels)out.image=m::profileWorkingCopy(out.image,m::profileAvatarWorkingPixels);
+    return out;
+}
+}
+ProfileDecodedImage decodeProfileImage(const std::filesystem::path&managed,m::ProfileImageKind kind,unsigned maximum){
+    const Apartment com;auto s=open(managed);return decodedSource(s,kind,maximum);
+}
+ProfileDecodedImage decodeProfileImageBytes(std::span<const std::uint8_t>encoded,m::ProfileImageKind kind,unsigned maximum){
+    const Apartment com;auto s=open(encoded);return decodedSource(s,kind,maximum);
+}
+ProfileDecodedImage decodeProfileAvatarWorking(std::span<const std::uint8_t>encoded){return reducedToWorking(decodeProfileImageBytes(encoded,m::ProfileImageKind::avatar));}
 std::shared_ptr<const m::ProfileImage>profileAvatarWorking(const std::shared_ptr<const ProfileDecodedImage>&decoded){
     if(!decoded)return nullptr;
     if(std::max(decoded->image.width,decoded->image.height)<=m::profileAvatarWorkingPixels)return std::shared_ptr<const m::ProfileImage>(decoded,&decoded->image);
@@ -157,8 +171,7 @@ struct ProfileImageService::Impl:std::enable_shared_from_this<Impl> {
                 auto decoded=decodeProfileImage(path,job.second);
                 // Only the crop working copy stays: no owner-thread consumer
                 // resamples a large photo, and the full decode is freed here.
-                if(job.second==m::ProfileImageKind::avatar&&std::max(decoded.image.width,decoded.image.height)>m::profileAvatarWorkingPixels)
-                    decoded.image=m::profileWorkingCopy(decoded.image,m::profileAvatarWorkingPixels);
+                if(job.second==m::ProfileImageKind::avatar)decoded=reducedToWorking(std::move(decoded));
                 *result=std::make_shared<const ProfileDecodedImage>(std::move(decoded));},[weak,job,result](std::exception_ptr error){
                 auto i=weak.lock();if(!i||!i->alive)return;i->decoding.erase(job.first);
                 if(error){if(i->callbacks.decodeFailed)i->callbacks.decodeFailed(job.first,classify(error).first);}

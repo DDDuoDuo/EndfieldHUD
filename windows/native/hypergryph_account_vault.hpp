@@ -68,6 +68,14 @@ void writeOwnerOnlyFile(const std::filesystem::path&,const std::string& bytes);
 // false when the file does not exist.
 bool restrictToOwner(const std::filesystem::path&);
 std::optional<std::string> readBoundedFile(const std::filesystem::path&,std::size_t maximum);
+// Account\profile-cache.json's name and its one bounded read (1 MiB), shared
+// by both cache files and the hidden-Sanity migration's check.
+inline constexpr wchar_t accountCacheName[]=L"profile-cache.json";
+std::optional<std::string> readAccountCache(const std::filesystem::path& file);
+// Mac HypergryphAccountController.storedHeaderIsHidden(at:) for the cache in
+// `accountDirectory`: false when it is missing, unreadable, over 1 MB, not a
+// version 1 cache or not hiding the header.
+bool storedHeaderIsHidden(const std::filesystem::path& accountDirectory);
 bool ownerOnly(const std::filesystem::path&);
 // Current-user DPAPI (CRYPTPROTECT_UI_FORBIDDEN, the caller's entropy, no
 // machine scope), shared by the account vault and the Archive password vault

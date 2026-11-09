@@ -1,5 +1,4 @@
 #include "native/volume_snapshot.hpp"
-#include "native/system_services.hpp"
 #include "core/data/json.hpp"
 #include <cmath>
 #include <cstdint>
@@ -30,13 +29,10 @@ void validateVolumeSnapshot(const VolumeSnapshot&s){
     if(s.volume)need(std::isfinite(*s.volume)&&*s.volume>=0&&*s.volume<=1,"Invalid output volume");if(s.balance)need(std::isfinite(*s.balance)&&*s.balance>=-1&&*s.balance<=1,"Invalid output balance");
 }
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&audio){VolumeSnapshot s;s.outputID=utf8(audio.defaultOutputID);s.inputID=utf8(audio.defaultInputID);
-    for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});
+    for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones});
     if(audio.available&&!audio.paused){s.volume=audio.volume?std::optional<double>(*audio.volume):std::nullopt;s.muted=audio.muted;s.balance=audio.balance?std::optional<double>(*audio.balance):std::nullopt;s.canSetVolume=audio.canSetVolume&&s.volume.has_value();s.canSetMute=audio.canSetMute&&s.muted.has_value();s.canSetBalance=audio.canSetBalance&&s.balance.has_value();}
-    s.applicationActivitySupported=audio.applicationsSupported&&!audio.applicationsPaused&&!audio.paused;s.routingStopped=audio.routesStoppedByDeviceChange;
-    for(const auto&a:audio.applications){VolumeApplication app;app.id=a.id;app.name=utf8(a.name);app.pid=a.pid;app.available=a.available&&s.applicationActivitySupported;app.state=a.state==AudioApplicationRouteState::active?VolumeAppState::active:a.state==AudioApplicationRouteState::failed?VolumeAppState::failed:VolumeAppState::direct;if(a.gain)app.gain=*a.gain;app.executable=a.executable;s.applications.push_back(std::move(app));}return s;}
-AudioEndpointSnapshot audioEndpointSnapshotFromSystem(const AudioSnapshot&audio){AudioEndpointSnapshot e;e.paused=audio.paused;e.available=audio.available;
-    for(const auto&d:audio.devices)e.outputs.push_back({d.id,d.name,d.headphones,false});for(const auto&d:audio.inputs)e.inputs.push_back({d.id,d.name,d.headphones,false});
-    e.defaultOutputID=audio.controlled_device_id.empty()?audio.default_device_id:audio.controlled_device_id;e.defaultInputID=audio.default_input_device_id;
-    e.volume=audio.volume;e.muted=audio.muted;e.balance=audio.balance;e.canSetVolume=audio.volume.has_value();e.canSetMute=audio.muted.has_value();e.canSetBalance=audio.can_set_balance&&audio.balance.has_value();
-    e.error=audio.error;e.inputError=audio.input_error;e.applicationsSupported=audio.application_supported;e.applicationsPaused=audio.applications_paused;e.applications=audio.applications;e.applicationError=audio.application_error;return e;}
+    s.applicationActivitySupported=audio.applicationsSupported&&!audio.applicationsPaused&&!audio.paused;
+    for(const auto&a:audio.applications){VolumeApplication app;app.id=a.id;app.name=utf8(a.name);app.pid=a.pid;app.available=a.available&&s.applicationActivitySupported;app.state=a.state==AudioApplicationRouteState::active?VolumeAppState::active:a.state==AudioApplicationRouteState::failed?VolumeAppState::failed:VolumeAppState::direct;if(a.gain)app.gain=*a.gain;
+        // Source ff06692: a helper is drawn with the icon of the app it plays for.
+        app.executable=a.application?a.application:a.executable;s.applications.push_back(std::move(app));}return s;}
 } // namespace endfield::native

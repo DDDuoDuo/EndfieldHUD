@@ -51,11 +51,30 @@ private:
     std::optional<Decision> decision_;
 };
 
+// HUDConfirmBand (Sources/HUDDesignOverlay.swift): the confirm bar's surface,
+// shared by ConfirmBar and PlacementEditor so both read as one family. Band:
+// transparent -> charcoal tone(181818, .97) -> charcoal -> transparent at
+// 0/.06/.94/1 (alert: red .97); hairlines at y 0 and h - 1 over 5...95 %.
+// The 12 x 18 double-bar marker (accentInk at creation; red for danger,
+// white for alert) is made by marker() and positioned by its host. The band
+// layer is animatable (the wipe from the centre). Layer ids in the builder's
+// arena: "band", "hairline.0", "hairline.1" and "marker".
+class ConfirmBand final {
+public:
+    ConfirmBand(Builder&, Size);
+    Layer& layer() const noexcept { return *layer_; }
+    void applyPalette();               // the standard band in the current Theme
+    void setStyle(bool alert);         // the red band (Settings' facility-alert easter egg) or the standard one
+    static Layer& marker(Builder&);
+    static void setMarker(Layer&, Color tone);
+private:
+    Environment* env_; Layer* layer_;
+    std::array<Layer*, 2> hairlines_{};
+};
+
 // HUDConfirmBar (LIB-60, LIB-61, LIB-63): 620 x 112 at box (-15, 370), z 20.
-// Band: transparent -> charcoal tone(181818, .97) -> charcoal -> transparent
-// at 0/.06/.94/1 (alert: red .97); hairlines at y 0 and 111 over 5...95 %;
-// the double-bar marker 12 x 18 (accentInk, red for danger, white for
-// alert); text column at (46, 18), width 620 - 46 - 34 - 16 - max(pill
+// The band, hairlines and marker are a ConfirmBand (see above); text column
+// at (46, 18), width 620 - 46 - 34 - 16 - max(pill
 // widths): title at x 22 - ONE line with a message or countdown, else up to
 // 3 lines at 17 px, and a title wider than (column - 22) x 2.7 steps down to
 // 14 px over 4 lines (line box size x 1.25 x lines); description 12 px up to
@@ -91,13 +110,119 @@ private:
     // opens the next request).
     struct PillSet;
     Environment* env_; LayerArena arena_; ControlSet controls_; Builder builder_;
-    Layer *layer_, *band_, *column_, *marker_, *title_, *message_;
-    std::array<Layer*, 2> hairlines_{};
+    std::unique_ptr<ConfirmBand> band_;
+    Layer *layer_, *column_, *marker_, *title_, *message_;
     std::vector<Control*> pills_;
     std::unique_ptr<PillSet> pillSet_, retiredPills_;
     std::uint64_t pillSerial_{};
     Deadlines::Token hideToken_{};
     std::function<void()> pendingCompletion_;   // the collapse's completion until it ran
+};
+
+// HUDPlacementDrag (Sources/HUDPlacementEditor.swift): the drag maths shared
+// by placement editors. The element keeps its offset from the pointer from
+// where the press began; the host clamps the result.
+class PlacementDrag final {
+public:
+    bool active() const noexcept { return startAnchor_.has_value(); }
+    void begin(Point anchor, Point pointer) noexcept { startAnchor_ = anchor; startPointer_ = pointer; }
+    std::optional<Point> anchor(Point pointer) const noexcept;
+    void end() noexcept { startAnchor_.reset(); startPointer_.reset(); }
+    bool operator==(const PlacementDrag&) const = default;
+private:
+    std::optional<Point> startAnchor_, startPointer_;
+};
+
+// HUDPlacementEditor (Sources/HUDPlacementEditor.swift): the redesign's
+// place-and-confirm strip. The element being placed follows a drag, the strip
+// beside it holds its sliders and the Cancel and Confirm pills, Esc cancels
+// and Return confirms. It is the confirm bar's band and marker (ConfirmBand)
+// with the confirm bar's pills (Pill) and dark Slider rows, so it reads as the
+// same family as every other confirmation.
+//
+// Geometry: a title column at x 46, max(48, widest title) wide, in 13 px
+// medium titleText; sliders 236 wide at x 46 + titleWidth + 14, rows 49 apart
+// centred from y 37; Cancel above Confirm right-aligned at sliderX + 236 + 26
+// (46 without rows), from y 18, 49 apart; the marker at (22, 28). The strip
+// is pillX + pillWidth + 34 by max(112, 49 x rows + 14). Entrance as the
+// confirm bar's: the band wipes open from its centre, the marker and the rows
+// from the left, the pills from the right.
+//
+// The host owns what is being placed and its clamping and composes `layer()`
+// (the battery bar editor hosts it in the alert's own panel at 0.7; placing
+// the HUD's own overlays hosts it on the HUD canvas). A press on the strip goes
+// to its controls, any other press starts dragging the placed element
+// (PlacementDrag). Slider bubbles are hosted in the strip's own layer, so a
+// host keeps bubbleClearance above it. Its layers live in its own arena
+// ("placement.*"); contentRevision() moves with them. No timer.
+class PlacementEditor final {
+public:
+    // One slider row; its id is reported back through onChange.
+    struct SliderSpec {
+        std::string id, title;
+        double value{};
+        Slider::Range range;
+        ValueFormat format{ValueFormat::percent};
+    };
+    static constexpr double bubbleClearance = 8, rowPitch = 49, sliderWidth = 236;
+    static TextStyle titleStyle(const Palette&);   // 13 medium titleText
+    PlacementEditor(Environment&, std::string id, std::vector<SliderSpec>);
+    ~PlacementEditor();
+    PlacementEditor(const PlacementEditor&) = delete;
+    PlacementEditor& operator=(const PlacementEditor&) = delete;
+    Layer& layer() const noexcept { return *layer_; }
+    Size size() const noexcept { return layer_->bounds(); }
+    const std::vector<Slider*>& sliders() const noexcept { return sliders_; }
+    Pill& cancel() const noexcept { return *cancel_; }
+    Pill& confirm() const noexcept { return *confirm_; }
+    std::vector<Control*> controls() const;          // sliders, then Cancel and Confirm
+    // A strip control holds the pointer (a host keeps the strip still meanwhile).
+    bool adjusting() const noexcept { return router_.tracking(); }
+    bool dragging() const noexcept { return drag_.active(); }
+    bool isOpen() const noexcept { return state_.isOpen(); }
+    // (slider id, value, final): final on release and on keyboard or accessibility steps.
+    std::function<void(const std::string& id, double value, bool final)> onChange;
+    std::function<void(ConfirmState::Decision)> onDecision;
+    void show(const motion::Clock&);
+    // Values: setValue / setRange change a slider without a callback (another
+    // slider, a display change).
+    std::optional<double> value(std::string_view id) const;
+    void setValue(double, std::string_view id);
+    void setRange(Slider::Range, double value, std::string_view id);
+    // Esc cancels and Return / keypad Enter confirm, once; other keys are left to the host.
+    bool key(const KeyInput&);
+    // `point` is in `root`, the layer the strip sits in; `pointer` and `anchor`
+    // are in the host's placement space (desktop pixels for the alert panel).
+    void pointerDown(Point point, const Layer& root, Point pointer, Point anchor);
+    // The placed element's proposed anchor while dragging; nullopt otherwise.
+    std::optional<Point> pointerDragged(Point point, const Layer& root, Point pointer);
+    void pointerUp(Point point, const Layer& root);
+    // Ends any gesture without committing it (the editor closes, focus leaves).
+    void cancelPointer();
+    bool stripContains(Point, const Layer& root) const;
+    // Hover and press feedback for the strip's controls only.
+    void updateHighlights(const Layer& root, std::optional<Point>, bool pressed = false);
+    void accessibilityItems(const Layer& root, std::vector<AccessibilityItem>&) const;
+    void perform(std::string_view id);               // an accessibility press on a pill
+    void adjust(std::string_view id, double value);  // an accessibility slider value (reported as final)
+    // Where the strip goes beside `target` (the visible element), y down:
+    // centred `gap` below it, or above it when only that fits, kept inside
+    // `bounds` (centred on it when the strip is wider).
+    static Rect frame(Size, Rect target, Rect bounds, double gap) noexcept;
+    std::uint64_t contentRevision() const noexcept { return arena_.revision(); }
+private:
+    Environment* env_; LayerArena arena_; ControlSet controls_; Builder builder_;
+    std::unique_ptr<ConfirmBand> band_;
+    Layer *layer_, *marker_;
+    std::vector<Layer*> titles_;
+    std::vector<Slider*> sliders_;
+    Pill *cancel_, *confirm_;
+    Router router_;
+    ConfirmState state_;
+    PlacementDrag drag_;
+    Slider* slider(std::string_view id) const noexcept;
+    void decide(ConfirmState::Decision);
+    void finish(ConfirmState::Decision);
 };
 
 // HUDToastRequest / HUDToastState (LIB-65, LIB-66).
@@ -183,6 +308,11 @@ public:
     // Motion); the router empties at once; only the first decision counts.
     bool decide(ConfirmState::Decision);
     void dismissConfirm();             // no decision, no callback (module change, HUD close)
+    // HUDCenterOverlay.suspendInput (:505-511): the bar stays drawn but
+    // decides nothing more, no handler and no control (the HUD's close, which
+    // hides it with the module; reset() at the end). A hosted PlacementEditor
+    // keeps its own router.
+    void suspendInput();
     // A toast while a confirm bar is open is DROPPED and its completion never
     // runs; a new toast replaces the current one (the previous completion runs
     // at once); the 1.5 s timer ends only the toast it started; the

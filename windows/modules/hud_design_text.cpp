@@ -137,7 +137,7 @@ Json textNode(std::string id, const TextBlock& b, const TextServices& s) {
         {"alignment", alignmentName(b.alignment)}, {"lineHeight", first.lineHeight}, {"maximumLines", b.maximumLines},
         {"minimumScale", b.minimumScale}, {"truncation", b.truncates ? "end" : "none"}, {"language", tag}, {"runs", std::move(runs)}};
     auto node = frameNode(std::move(id), b.lineFrame, "text");
-    node["contentsScale"] = textContentsScale(s.boxScale);
+    node["contentsScale"] = textContentsScale(s.boxScale, s.magnification);
     node["text"] = std::move(text);
     return node;
 }

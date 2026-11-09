@@ -58,7 +58,7 @@ public:
         if((flow==eRender||flow==eCapture)&&role==eConsole)return changed();return S_OK;
     }
     HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR,const PROPERTYKEY key)override{
-        if(sameKey(key,friendlyNameKey)||sameKey(key,formFactorKey)||sameKey(key,enumeratorNameKey))return changed();return S_OK;
+        if(sameKey(key,friendlyNameKey)||sameKey(key,formFactorKey))return changed();return S_OK;
     }
 };
 class VolumeEvents final:public IAudioEndpointVolumeCallback {
@@ -166,6 +166,7 @@ AudioNameOrder nativeAudioNameOrder(){
 }
 AudioServiceOptions nativeAudioServiceOptions(std::optional<std::filesystem::path>dataRoot){
     AudioServiceOptions o;o.endpoints=nativeAudioEndpointBackendFactory();o.sessions=nativeAudioSessionBackendFactory();o.order=nativeAudioNameOrder();
+    o.defaults=[]{return std::make_unique<AudioDefaultDeviceSelector>(nativeAudioDefaultDeviceAccess());};
     if(dataRoot)o.journal=*dataRoot/L"Audio"/L"RouteJournal.json";
     return o;
 }

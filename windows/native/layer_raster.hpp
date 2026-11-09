@@ -2,6 +2,7 @@
 
 #include "core/data/json.hpp"
 #include "core/scene.hpp"
+#include "core/render_scale.hpp"
 #include "core/notes_rich_text.hpp"
 #include "native/font_resources.hpp"
 #include <cstdint>
@@ -18,6 +19,20 @@ namespace endfield::native {
 class PaintedTextLayout;
 class LayerImageSource;
 class LayerRasterizer;
+class Renderer;
+// A retained module page in the shared cache that can give its artwork back
+// while its module is switched away (DesignOwnerCore's pages): the crowd
+// relief (LayerRasterizer::relieve) parks the one left longest ago first.
+class LayerRasterTenant {
+public:
+    enum class State { shown, held, empty }; // shown or composed; away holding artwork; away holding none
+    virtual State tenancy() const noexcept = 0;
+    // Gives every raster of the page back (it rasterizes again when shown).
+    // False when refused (a part still composed) or nothing was held.
+    virtual bool park(Renderer&) noexcept = 0;
+protected:
+    ~LayerRasterTenant() = default;
+};
 namespace detail { struct LayerRasterRecipe; }
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
@@ -52,6 +67,14 @@ struct LayerRasterOptions {
     // stay in points, so only the pixel count grows. Other callers' exported
     // source JSON carries contentsScale on every layer: off by default.
     bool textContentsScale{};
+    // HUDRenderScale's magnification: a transform above the rastered layer
+    // enlarges it on screen (a Display > HUD elements size; non-finite or not
+    // above 0 reads as 1). Its text leaves then carry textContentsScale(s, m)
+    // up to 4 x m, and the text density's cap follows (4 x m pixels per point,
+    // still 4 per on-screen point). pixelsPerPoint stays the caller's: a
+    // magnified surface passes layerContentsScale(s, m), so it may reach
+    // 4 x m too (0.25 ... 4 x m).
+    double magnification{1};
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };
@@ -153,6 +176,9 @@ struct LayerRasterStats {
     // repainted for an upload; a repaint counts no raster, layout or node.
     std::size_t releasedPixelBytes{}, repaintSourceBytes{};
     std::uint64_t pixelReleases{}, pixelRepaints{};
+    // Memory images a layer named after their provider released (an icon
+    // retired or evicted): drawn as the empty placeholder.
+    std::uint64_t missingMemoryImages{};
 };
 // Diagnostics (memory trace): the module owner on whose behalf the calling
 // thread rasterizes. ModuleRegistry holds one around every owner call, so a
@@ -303,6 +329,55 @@ public:
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;
+    // Past three quarters of a shared bound: entries (maximumEntries), held
+    // pixel bytes (maximumResourceBytes), retained editor text metadata
+    // (maximumTextMetadataBytes) or typography descriptors
+    // (maximumTypographyDescriptorBytes). The pages of modules switched away
+    // give their artwork back then (relieve), so the shown module's next page
+    // fits unless what cannot park fills the cache on its own. Counters only
+    // (stats() walks every entry).
+    bool crowded() const;
+    // Crowd relief. Every module visited in one HUD opening keeps its page
+    // (a quick return), so their entries add up across all owners sharing
+    // this cache until the HUD closes. Owners enlist their pages once (and
+    // withdraw them before they go) and stamp a page when it stops being
+    // shown after the user saw it (left: a monotonic count shared by every
+    // owner, no clock), so a page shown but never seen (an incoming screen a
+    // superseding switch skipped, a prewarm never presented) is not newer
+    // than the page the user was looking at.
+    void enlist(LayerRasterTenant&);
+    void withdraw(LayerRasterTenant&) noexcept;
+    void left(LayerRasterTenant&) noexcept;
+    // After every owner collected its retired scenes (one composition
+    // change; Application, after ModuleOwner::collected): when crowded, the
+    // pages switched away park one at a time, the one left longest ago
+    // first, until every bound is at or below five eighths or none is left.
+    // The page left most recently (the module just left) parks only when the
+    // cache is still past seven eighths of a bound once every older page
+    // parked: between three quarters and seven eighths a return to it stays
+    // warm (the cache keeps at most that one page beyond what cannot park,
+    // and the close parks it); near the hard bounds it parks too, so the
+    // shown page's next rasters fit. A page parks once (it then holds
+    // nothing). At or below seven eighths, a park that gives back nothing of
+    // the bounds that are over (held pixels of renderer resources, intrinsic
+    // images or editors) ends the pass, and no page parks for those bounds
+    // again while they stay past five eighths, until a bound outside them
+    // passes five eighths or one passes seven eighths. Of the held pixels,
+    // under a sixty-fourth of the bound counts as nothing: a design page
+    // keeps a few pixels held after upload (its scroll bar's), and parking
+    // it for those frees nothing that matters. The other bounds have no such
+    // leftovers (a park gives back a page's entries, text metadata and
+    // typography descriptors whole), so any decrease of those counts: a page
+    // of a few entries parks for an entries crowd, and the pass goes on.
+    // Page switches keep what was learnt (cycling modules over such a crowd
+    // parks and rebuilds nothing after its first park, as in 1.3.0). A page
+    // away holding a share of such a bound waits as well, until the bound
+    // falls to five eighths, another passes it or one passes seven eighths
+    // (the pages keep no per-bound accounting to find it without a park). Past
+    // seven eighths every away page is tried, the page left last included.
+    // Not crowded, or crowded only by those bounds: counter comparisons
+    // only, no walk. Returns the pages parked.
+    std::size_t relieve(Renderer&);
     // Diagnostics only (memory trace; never on the frame path): every
     // retained entry with its creating owner and resident bytes, and the
     // decoded intrinsic image cache.

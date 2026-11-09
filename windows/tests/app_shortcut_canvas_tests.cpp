@@ -142,7 +142,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     w.show(canvas);
     check(!control(canvas, "apps:add")->enabled() && w.toast() && w.toast()->caption == "Synthetic failure", "Without a store Add App is disabled and the error toasts");
     const std::array one{std::string("C:\\A.exe")};
-    check(!canvas.importPaths(one) && owner.requests.empty() && w.toast()->caption == "Shortcut storage is unavailable.", "importURLs without a store (:73)");
+    check(!canvas.importPaths(one) && owner.requests.empty() && w.toast()->caption == "Shortcut storage is unavailable", "importURLs without a store (:73)");
     w.context.overlay().clearToast(); canvas.setActive(false, w.now);
     // A store: header, rows (:99-145).
     canvas.setStore(fileOf({record("A", "Alpha", "original"), record("B", "Bravo", "camera"), record("M", "Mac import", "star", false)}));
@@ -188,19 +188,19 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     check(!canvas.chooserOpen(), "A chooser that cannot open leaves the screen interactive");
     // importURLs (:71-95): exactly one application; the answer toasts.
     const std::array two{std::string("C:\\A.exe"), std::string("C:\\B.exe")};
-    check(!canvas.importPaths(two) && w.toast()->caption == "Choose one application to customize.", "Two applications ask for one (:74-76)");
+    check(!canvas.importPaths(two) && w.toast()->caption == "Choose one application to customize", "Two applications ask for one (:74-76)");
     w.context.overlay().clearToast();
     const std::array gamma{std::string("C:\\Gamma.exe")};
     check(canvas.importPaths(gamma) && owner.requests.back().kind == m::AppShortcutRequest::Kind::add && owner.requests.back().id.empty(), "One application is added");
     auto added = fileOf({record("A", "Alpha Prime", "original"), record("B", "Bravo", "camera"), record("M", "Mac import", "star"), record("G", "Gamma", "original")});
     canvas.requestFinished(owner.requests.back(), added, std::nullopt);
-    check(w.toast() && w.toast()->title == "App added" && w.toast()->caption.empty() && saved.back() == "Gamma" && canvas.header().counterText() == "04",
-          "A saved app toasts App added and notifies the shell (:78-85)");
+    check(w.toast() && w.toast()->title == "App added" && w.toast()->caption == "Click the icon to change it" && saved.back() == "Gamma" && canvas.header().counterText() == "04",
+          "A saved app toasts App added with how to change its icon, and notifies the shell (:93-98)");
     w.context.overlay().clearToast();
     owner.requests.clear();
     // A failed request toasts its error (:85, :224-226).
     check(canvas.importPaths(gamma), "A duplicate is asked");
-    canvas.requestFinished(owner.requests.back(), std::nullopt, std::string("This application is already saved. Edit its existing shortcut instead."));
+    canvas.requestFinished(owner.requests.back(), std::nullopt, std::string("This application is already saved. Edit its existing shortcut instead"));
     check(w.toast() && w.toast()->title == "Notice" && w.toast()->caption.starts_with("This application"), "The store error toasts Notice");
     w.context.overlay().clearToast(); owner.requests.clear();
     // Ctrl+V (:277-284): application files only; none leaves the key alone.
@@ -220,7 +220,7 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     // Remove (:224-237): the confirm bar, then the store; Esc sends nothing.
     control(canvas, "apps:G:remove")->activate();
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->id == "apps:remove" && request->title == "Remove Gamma?" && request->message == "The app itself stays installed." && request->danger &&
+    check(request && request->id == "apps:remove" && request->title == "Remove Gamma?" && request->message == "The app itself stays installed" && request->danger &&
           request->glyph() == d::Icon::trash && request->confirmTitle == "Remove", "Remove asks through the confirm bar");
     d::KeyInput escape; escape.virtualKey = d::key::escape;
     w.context.overlay().handleKey(escape);
@@ -236,6 +236,215 @@ void canvasRules(const m::AppShortcutArtwork& art) {
     control(canvas, "apps:add")->activate();
     canvas.setActive(false, w.now);
     check(!canvas.chooserOpen() && owner.cancels == 1, "Leaving the module closes the chooser");
+}
+
+// The grip (Mac 345340f, 1f23efd, 2ca2482, d32a5bf): the item menu, Move up /
+// Move down, the drag reorder through the shared ListReorder, its refusals,
+// the cursor and the change-icon caret chip on the tile.
+std::vector<d::AccessibilityItem> menuItems(m::AppShortcutCanvas& canvas) {
+    std::vector<d::AccessibilityItem> all, out; canvas.accessibilityItems(all);
+    for (auto& item : all) if (item.role == d::AccessibilityRole::menuItem) out.push_back(std::move(item));
+    return out;
+}
+const d::AccessibilityItem* menuItem(const std::vector<d::AccessibilityItem>& items, std::string_view label) {
+    for (const auto& item : items) if (item.label == label) return &item;
+    return nullptr;
+}
+std::vector<std::string> ids(const m::AppShortcutCanvas& canvas) { std::vector<std::string> out; for (const auto& v : canvas.items()) out.push_back(v.id); return out; }
+const d::Layer* child(const d::Layer& layer, std::string_view suffix) {
+    for (const auto* c : layer.children()) if (c->id().ends_with(suffix)) return c;
+    return nullptr;
+}
+void reorderRules(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner;
+    m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    unsigned reordered{};
+    canvas.onReordered = [&] { ++reordered; };
+    const auto abc = fileOf({record("A", "Alpha", "original"), record("B", "Bravo", "camera"), record("C", "Charlie", "star")});
+    canvas.setStore(abc);
+    w.show(canvas);
+    // The grip (:151-158, :184-193): 14 x 56 at x 0 in the row's left padding, nothing else moved.
+    auto* grip = canvas.rowGrip("A");
+    check(grip && grip == control(canvas, "apps:A:grip") && grip->layer().frame() == d::Rect{0, 0, 14, 56} && grip->label == "App options, Alpha"
+          && grip->accessibilityRole() == d::AccessibilityRole::button, "The grip: 14 x 56 at the row's left edge, App options, <name>");
+    check(control(canvas, "apps:A:icon")->layer().frame().x == 16 && control(canvas, "apps:A:icon")->label == "Change icon, Alpha", "The tile stays at x 16, labelled Change icon, <name>");
+    // The change-icon chip (:442-480): 14 x 14 on the tile's lower right, the dropdowns' 8 x 5 caret.
+    const auto& tileLayer = canvas.iconTile("B")->layer();
+    const auto* badge = child(tileLayer, ".badge");
+    const auto* caret = badge ? child(*badge, ".caret") : nullptr;
+    check(badge && badge->frame() == d::Rect{26, 26, 14, 14} && caret && caret->bounds() == d::Size{8, 5} && caret->position() == d::Point{7.5, 7.5}, "The caret chip sits on the tile's corner");
+    check(dynamic_cast<d::MenuAnchor*>(canvas.iconTile("B")) && caret->value(d::Channel::rotation) == 0, "The tile is a menu anchor; its caret rests");
+    canvas.iconTile("B")->activate();
+    check(canvas.menuOpen() && dynamic_cast<d::MenuAnchor*>(canvas.iconTile("B"))->isOpen() && caret->value(d::Channel::rotation) > 3.14,
+          "The caret turns while the icon menu is open");
+    canvas.closeMenu();
+    check(!dynamic_cast<d::MenuAnchor*>(canvas.iconTile("B"))->isOpen() && caret->value(d::Channel::rotation) == 0, "Closing the menu turns it back");
+    // The item menu (:198-217): Change icon; Move up (not at the top), Move down (not at the bottom); Remove.
+    grip->activate();
+    auto entries = menuItems(canvas);
+    check(canvas.menuOpen() && entries.size() == 4 && entries[0].label == "Change icon" && entries[1].label == "Move up" && !entries[1].enabled
+          && entries[2].label == "Move down" && entries[2].enabled && entries[3].label == "Remove", "The first row's item menu: Move up disabled");
+    grip->activate();
+    check(!canvas.menuOpen(), "Pressing the grip again closes it");
+    canvas.rowGrip("C")->activate();
+    entries = menuItems(canvas);
+    check(entries.size() == 4 && entries[1].enabled && !entries[2].enabled, "The last row's item menu: Move down disabled");
+    canvas.performAccessibilityAction(menuItem(entries, "Change icon")->id, w.now);
+    check(canvas.menuOpen() && dynamic_cast<d::MenuAnchor*>(canvas.iconTile("C"))->isOpen(), "Change icon opens the icon grid on the tile");
+    canvas.closeMenu();
+    // Move up / Move down (:219-230): one move request; the answer reloads, notifies and reveals.
+    canvas.rowGrip("C")->activate();
+    canvas.performAccessibilityAction(menuItem(menuItems(canvas), "Move up")->id, w.now);
+    check(owner.requests.size() == 1 && owner.requests[0].kind == m::AppShortcutRequest::Kind::move && owner.requests[0].id == "C" && owner.requests[0].index == 1,
+          "Move up asks the store to move the shortcut one slot up");
+    // Until the owner answers, the shown order is the old one: no second move starts from it.
+    canvas.rowGrip("C")->activate();
+    entries = menuItems(canvas);
+    check(entries.size() == 4 && !entries[1].enabled && !entries[2].enabled && entries[0].enabled && entries[3].enabled,
+          "While a move is unanswered Move up and Move down are disabled");
+    canvas.closeMenu();
+    canvas.dragRow("A", 2);
+    check(owner.requests.size() == 1 && !canvas.reordering(), "Nothing lifts while a menu move is unanswered");
+    canvas.requestFinished(owner.requests[0], fileOf({record("A", "Alpha", "original"), record("C", "Charlie", "star"), record("B", "Bravo", "camera")}), std::nullopt);
+    check(ids(canvas) == std::vector<std::string>{"A", "C", "B"} && reordered == 1 && canvas.rowGrip("C")->rect(canvas.root()).y < canvas.rowGrip("B")->rect(canvas.root()).y,
+          "The list follows the move and the right-hand order is told");
+    owner.requests.clear();
+    canvas.rowGrip("A")->activate();
+    canvas.performAccessibilityAction(menuItem(menuItems(canvas), "Remove")->id, w.now);
+    check(w.context.overlay().confirmState().isOpen() && w.context.overlay().confirmState().request()->title == "Remove Alpha?", "Remove asks through the confirm bar");
+    w.context.overlay().dismissConfirm(); w.now += 1; w.context.advance(w.now);
+    // A refused move (:229, :256-258): the error toasts and the rows are rebuilt in the saved order.
+    canvas.rowGrip("B")->activate();
+    canvas.performAccessibilityAction(menuItem(menuItems(canvas), "Move up")->id, w.now);
+    const auto pages = w.context.pagesBuilt();
+    canvas.requestFinished(owner.requests.back(), std::nullopt, std::string("The shortcuts file changed on disk."));
+    check(w.toast() && w.toast()->caption == "The shortcuts file changed on disk." && w.context.pagesBuilt() == pages + 1 && ids(canvas) == std::vector<std::string>{"A", "C", "B"} && reordered == 1,
+          "A refused move toasts its error and shows the saved order");
+    w.context.overlay().clearToast(); owner.requests.clear();
+    // The cursor (d32a5bf): the open hand over a grip only with more than one item and the chooser closed.
+    const auto gripCentre = centre(*canvas.rowGrip("A"), canvas.root());
+    check(canvas.cursor(gripCentre) == d::Cursor::openHand && !canvas.cursor(centre(*canvas.iconTile("A"), canvas.root())), "The open hand over a grip, the normal cursor over the tile");
+    // The drag (:232-273): lift, follow, the others glide, one move request on the drop.
+    d::PointerInput press; press.point = gripCentre;
+    check(canvas.pointerDown(gripCentre, press, w.now), "The grip takes the press");
+    canvas.pointerDragged({gripCentre.x, gripCentre.y + 5}, w.now);
+    const auto& rowA = control(canvas, "apps:A")->layer();
+    check(canvas.reordering() && rowA.zPosition() == 10 && canvas.cursor(std::nullopt) == d::Cursor::closedHand, "Past 3 points the row lifts and the hand closes");
+    canvas.pointerDragged({gripCentre.x, gripCentre.y + 2 * m::AppShortcutCanvas::pitch}, w.now);
+    check(std::abs(rowA.value(d::Channel::translateY) - 2 * m::AppShortcutCanvas::pitch) < 1e-9 && std::abs(control(canvas, "apps:B")->layer().value(d::Channel::translateY) + m::AppShortcutCanvas::pitch) < 1e-9,
+          "The lifted row follows the pointer and the others close up");
+    canvas.pointerUp({gripCentre.x, gripCentre.y + 2 * m::AppShortcutCanvas::pitch}, w.now);
+    check(!canvas.reordering() && rowA.zPosition() == 0 && owner.requests.size() == 1 && owner.requests[0].kind == m::AppShortcutRequest::Kind::move
+          && owner.requests[0].id == "A" && owner.requests[0].index == 2, "The drop is one move request to the new slot");
+    // The rows show the dropped order before the answer: the item menu sends no move indexed on the old one.
+    canvas.rowGrip("A")->activate();
+    entries = menuItems(canvas);
+    check(entries.size() == 4 && !entries[1].enabled && !entries[2].enabled, "While the dropped order is unanswered Move up and Move down are disabled");
+    canvas.closeMenu();
+    check(owner.requests.size() == 1, "The item menu sent nothing");
+    canvas.dragRow("C", 0);
+    check(owner.requests.size() == 1 && !canvas.reordering(), "Nothing lifts while the dropped order is unanswered");
+    const auto before = w.context.pagesBuilt();
+    canvas.requestFinished(owner.requests[0], fileOf({record("C", "Charlie", "star"), record("B", "Bravo", "camera"), record("A", "Alpha", "original")}), std::nullopt);
+    check(ids(canvas) == std::vector<std::string>{"C", "B", "A"} && reordered == 2 && w.context.pagesBuilt() == before, "The answer keeps the landed rows and tells the right-hand order");
+    w.now += .25; w.context.advance(w.now);
+    check(w.context.pagesBuilt() == before + 1 && canvas.rowGrip("A")->rect(canvas.root()).y > canvas.rowGrip("B")->rect(canvas.root()).y, "Once landed, the page is rebuilt in the new order");
+    owner.requests.clear();
+    // A drag the owner refuses at once (store work cannot start) puts the rows back.
+    owner.refuse = true;
+    const auto refusedPages = w.context.pagesBuilt();
+    canvas.dragRow("C", 2);
+    check(owner.requests.empty() && w.context.pagesBuilt() == refusedPages + 1 && ids(canvas) == std::vector<std::string>{"C", "B", "A"}, "A refused drop shows the saved order");
+    owner.refuse = false;
+    // A drop the store refuses: the error, then the saved order.
+    canvas.dragRow("C", 1);
+    check(owner.requests.size() == 1 && owner.requests[0].index == 1, "A drop to the next slot asks the store");
+    canvas.requestFinished(owner.requests[0], std::nullopt, std::string("Refused"));
+    check(w.toast() && w.toast()->caption == "Refused" && ids(canvas) == std::vector<std::string>{"C", "B", "A"} && reordered == 2, "A refused drop toasts and shows the saved order");
+    w.context.overlay().clearToast(); owner.requests.clear();
+    // A drag dropped where it started writes nothing.
+    canvas.dragRow("B", 1);
+    check(owner.requests.empty() && !canvas.reordering(), "Dropping on its own slot writes nothing");
+    // Leaving or deactivating mid-drag (2ca2482): the row goes back, nothing is written.
+    const auto startB = centre(*canvas.rowGrip("B"), canvas.root());
+    press.point = startB;
+    canvas.pointerDown(startB, press, w.now);
+    canvas.pointerDragged({startB.x, startB.y + m::AppShortcutCanvas::pitch}, w.now);
+    check(canvas.reordering(), "B is lifted");
+    canvas.setActive(false, w.now);
+    const auto& rowB = control(canvas, "apps:B")->layer();
+    check(!canvas.reordering() && owner.requests.empty() && rowB.value(d::Channel::translateY) == 0 && rowB.zPosition() == 0, "Deactivating mid-drag puts the row back and writes nothing");
+    w.show(canvas);
+    const auto startC = centre(*canvas.rowGrip("C"), canvas.root());
+    press.point = startC;
+    canvas.pointerDown(startC, press, w.now);
+    canvas.pointerDragged({startC.x, startC.y + m::AppShortcutCanvas::pitch}, w.now);
+    canvas.prepareToLeave(w.now);
+    check(!canvas.reordering() && owner.requests.empty(), "Leaving mid-drag puts the row back and writes nothing");
+    canvas.setActive(false, w.now);
+    w.show(canvas);
+    // The HUD's close stops input with the canvas still active (48584b5,
+    // Canvas::suspendInput): a lifted row goes back and nothing is written;
+    // the release that follows does nothing.
+    {
+        const auto startA = centre(*canvas.rowGrip("A"), canvas.root());
+        press.point = startA;
+        canvas.pointerDown(startA, press, w.now);
+        canvas.pointerDragged({startA.x, startA.y + m::AppShortcutCanvas::pitch}, w.now);
+        check(canvas.reordering(), "A is lifted");
+        canvas.suspendInput();
+        canvas.pointerUp({startA.x, startA.y + 2 * m::AppShortcutCanvas::pitch}, w.now);
+        check(!canvas.reordering() && owner.requests.empty() && canvas.isActive(), "The close's input stop puts the row back and writes nothing");
+    }
+    // Nothing lifts while the chooser is open or during a file drop; the hand stays normal with the chooser.
+    control(canvas, "apps:add")->activate();
+    check(canvas.chooserOpen() && !canvas.cursor(centre(*canvas.rowGrip("A"), canvas.root())), "With the chooser open a grip shows the normal cursor");
+    canvas.dragRow("A", 0);
+    check(owner.requests.empty() && !canvas.reordering(), "Nothing lifts while the chooser is open");
+    canvas.chooserFinished(std::nullopt);
+    canvas.setDropTarget(true);
+    canvas.dragRow("A", 0);
+    check(owner.requests.empty() && !canvas.reordering(), "Nothing lifts during a file drop");
+    canvas.setDropTarget(false);
+    canvas.setActive(false, w.now);
+    // One item: no lift and no hand.
+    canvas.setStore(fileOf({record("A", "Alpha", "original")}));
+    w.show(canvas);
+    check(!canvas.cursor(centre(*canvas.rowGrip("A"), canvas.root())), "With one item a grip shows the normal cursor");
+    canvas.dragRow("A", 1);
+    check(owner.requests.empty() && !canvas.reordering(), "Nothing lifts with one item");
+    canvas.rowGrip("A")->activate();
+    const auto single = menuItems(canvas);
+    check(single.size() == 4 && !single[1].enabled && !single[2].enabled, "One item: Move up and Move down are both disabled");
+    canvas.closeMenu();
+    canvas.setActive(false, w.now);
+}
+
+// An icon the owner publishes after the page was built (still extracting
+// when the module opened): its tile takes the picture and colour in place,
+// with no rebuild (the entrance keeps running).
+void lateIcons(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner;
+    m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    canvas.setStore(fileOf({record("A", "Alpha", "original"), record("B", "Bravo", "camera")}));
+    w.show(canvas);
+    const auto picture = [&](std::string_view id) -> std::string {
+        for (const auto* layer : control(canvas, "apps:" + std::string(id) + ":icon")->layer().children())
+            if (layer->id().ends_with(".icon")) return layer->content() ? layer->content()->encode() : std::string();
+        throw std::runtime_error("no icon layer");
+    };
+    const auto camera = picture("B");
+    check(picture("A").find("icon.A") == std::string::npos, "Before its extraction the App icon tile shows the fallback");
+    const auto* page = &canvas.page();
+    const auto pages = w.context.pagesBuilt();
+    owner.icons["A"] = true; owner.colors["A"] = d::rgb(0x336699);
+    canvas.iconsChanged();
+    check(&canvas.page() == page && w.context.pagesBuilt() == pages, "A published icon rebuilds no page");
+    check(picture("A").find("icon.A") != std::string::npos && picture("B") == camera, "The tile shows the published icon; a preset tile is unchanged");
+    owner.icons["A"] = false; canvas.iconsChanged();
+    check(&canvas.page() == page && w.context.pagesBuilt() == pages && picture("A").find("icon.A") == std::string::npos, "A released icon goes back to the fallback in place");
 }
 
 // --- The Mac oracle -------------------------------------------------------------------------
@@ -326,6 +535,9 @@ void canvasOracle(Oracle& o, const m::AppShortcutArtwork& art) {
     control(canvas, "apps:" + items[1].id + ":icon")->activate();
     o.scene("iconMenu", canvas, w);
     canvas.closeMenu();
+    canvas.rowGrip(items[1].id)->activate();
+    o.scene("itemMenu", canvas, w);
+    canvas.closeMenu();
     canvas.setDropTarget(true); o.scene("dropTarget", canvas, w); canvas.setDropTarget(false);
     control(canvas, "apps:" + items[2].id + ":open")->activate();
     o.scene("opening", canvas, w);
@@ -348,6 +560,19 @@ void canvasOracle(Oracle& o, const m::AppShortcutArtwork& art) {
     (void)canvas.importPaths(two);
     o.scene("twoApps", canvas, w);
     w.context.overlay().clearToast();
+    // Move down from the item menu of the second-last row: the store moves it, the list follows.
+    unsigned reordered{};
+    canvas.onReordered = [&] { ++reordered; };
+    const auto& moved = (*o.row("movedDown"))["moved"].string();
+    check(canvas.items()[canvas.items().size() - 2].id == moved, "The oracle moves the second-last row");
+    canvas.rowGrip(moved)->activate();
+    std::vector<d::AccessibilityItem> menu; canvas.accessibilityItems(menu);
+    const auto down = std::find_if(menu.begin(), menu.end(), [](const auto& i) { return i.role == d::AccessibilityRole::menuItem && i.label == "Move down"; });
+    check(down != menu.end() && canvas.performAccessibilityAction(down->id, w.now), "Move down is in the item menu");
+    check(owner.requests.back().kind == m::AppShortcutRequest::Kind::move && owner.requests.back().id == moved, "Move down asks the store");
+    canvas.requestFinished(owner.requests.back(), o.file("movedDown", owner), std::nullopt);
+    check(reordered == unsigned((*o.row("movedDown"))["reordered"].integer()), "The right-hand order is told once");
+    o.scene("movedDown", canvas, w);
     canvas.setActive(false, w.now);
 }
 }
@@ -358,6 +583,8 @@ int main(int argc, char** argv) {
         if (argc < 3) throw std::runtime_error("usage: app_shortcut_canvas_tests ORACLE RESOURCES");
         const auto packaged = assets(argv[2]);
         canvasRules(packaged->artwork());
+        reorderRules(packaged->artwork());
+        lateIcons(packaged->artwork());
         if (const auto data = loadOracle(argv[1], {"states"}, {"text", "layerDefaults", "presets", "glyphFrames", "trim"})) {
             artworkOracle(*data, packaged->artwork(), argv[2]);
             Oracle oracle(*data);

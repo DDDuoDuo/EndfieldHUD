@@ -3,11 +3,10 @@ import AppKit
 /// Exports behaviour of the UNCHANGED Mac sources for the Windows audio port:
 ///  - SystemEventRecorder.receiveAudioDevices / recordTopology ordering;
 ///  - AudioVolumeMath.balance and AudioVolumeMath.stereo;
-///  - localizedStandardCompare ordering of endpoint/app names (en);
-///  - the Volume accessibility contract (HUDVolumeInteraction projected
-///    buttons/sliders: labels, help, values) for synthetic controller states.
-/// Synthetic fixtures only: in-memory event log, AudioDeviceController(snapshot:)
-/// and PerAppAudioController.fixture(); no HAL, window, file or audio access.
+///  - localizedStandardCompare ordering of endpoint/app names (en).
+/// The redesigned Volume canvas (HUDVolumeInteraction was removed by the 1.3.0
+/// redesign) is exported by utility_canvases_reference.swift instead.
+/// Synthetic fixtures only: an in-memory event log; no HAL, window, file or audio access.
 @main enum AudioReference {
     static func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
         if !value() { throw HUDSourceError.invalid(message) }
@@ -62,75 +61,17 @@ import AppKit
         return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    static func accessibility(state snapshot: AudioDeviceSnapshot, name: String, prepare: (VolumeCanvas) -> Void = { _ in }) throws -> [String: Any] {
-        let controller = AudioDeviceController(snapshot: snapshot), perApp = PerAppAudioController.fixture()
-        let canvas = VolumeCanvas(controller: controller, perAppAudio: perApp)
-        defer { canvas.deactivate(); perApp.stopAll() }
-        _ = canvas.makeContent(for: .volume, style: HUDModuleContentStyle(dark: true, accent: HUDRuntimeAppearance.configuration.accentColor, contentsScale: 2))
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 334))
-        let interaction = HUDVolumeInteraction(canvas: canvas, host: host)
-        interaction.setActive(true)
-        prepare(canvas)
-        interaction.layoutAccessibility()
-        var buttons: [[String: Any]] = [], sliders: [[String: Any]] = []
-        for view in host.subviews where !view.isHidden {
-            if let slider = view as? NSSlider {
-                let value = slider.accessibilityValue()
-                sliders.append(["label": slider.accessibilityLabel() ?? "", "help": slider.accessibilityHelp() ?? "", "enabled": slider.isEnabled,
-                                "minimum": slider.minValue, "maximum": slider.maxValue,
-                                "value": (value as? NSNumber).map { $0.doubleValue as Any } ?? NSNull(), "valueText": (value as? String) ?? NSNull()])
-            } else if let button = view as? NSButton {
-                buttons.append(["label": button.accessibilityLabel() ?? "", "help": button.accessibilityHelp() ?? "", "enabled": button.isEnabled])
-            }
-        }
-        let actionOrder = canvas.accessibleActions.map(\.label), sliderOrder = canvas.accessibleSliders.map(\.label)
-        buttons.sort { actionOrder.firstIndex(of: $0["label"] as! String)! < actionOrder.firstIndex(of: $1["label"] as! String)! }
-        sliders.sort { sliderOrder.firstIndex(of: $0["label"] as! String)! < sliderOrder.firstIndex(of: $1["label"] as! String)! }
-        try require(buttons.count == actionOrder.count && sliders.count == sliderOrder.count, "Every projected control is exported")
-        return ["state": name, "status": canvas.accessibilityStatus, "buttons": buttons, "sliders": sliders]
-    }
-
-    static func base() -> AudioDeviceSnapshot {
-        var state = AudioDeviceSnapshot()
-        state.outputs = [AudioDeviceInfo(id: 10, name: "Speakers", outputChannels: 2),
-                         AudioDeviceInfo(id: 11, name: "Headphones", outputChannels: 2, isHeadphones: true),
-                         AudioDeviceInfo(id: 12, name: "Buds", outputChannels: 2, isBluetooth: true)]
-        state.inputs = [AudioDeviceInfo(id: 20, name: "Microphone", inputChannels: 1)]
-        state.defaultOutputID = 10; state.defaultInputID = 20
-        state.outputVolume = 0.55; state.canSetOutputVolume = true; state.outputMuted = false; state.canSetOutputMute = true
-        state.balance = -0.25; state.canSetBalance = true
-        // Windows has no public default-device API: the chooser stays disabled.
-        state.canSetDefaultOutput = false; state.canSetDefaultInput = false
-        state.applicationActivitySupported = true
-        state.availableApplications = [AudioApplicationInfo(id: 40, pid: 1000, name: "Player", outputDeviceIDs: [10]),
-                                       AudioApplicationInfo(id: 41, pid: 1001, name: "PID 1001", outputDeviceIDs: [10])]
-        state.activeApplications = state.availableApplications
-        return state
-    }
-
     static func run() throws {
-        try require(Thread.isMainThread && CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--output", "Use isolated audio_reference.sh")
+        let arguments = CommandLine.arguments
+        try require(Thread.isMainThread && arguments.count >= 5 && arguments[1] == "--output" && arguments[3] == "--source-authority",
+                    "Use isolated audio_reference.sh")
         try require(ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil, "Temporary home is required")
-        let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+        let output = URL(fileURLWithPath: arguments[2], isDirectory: true)
         NSApplication.shared.setActivationPolicy(.prohibited)
-        var configuration = AppConfiguration.defaults
-        configuration.language = .english; configuration.theme = .dark; configuration.ambientAnimation = false
-        configuration.reduceMotion = true; configuration.launchAtLogin = false
-        HUDRuntimeAppearance.configuration = configuration; L10n.language = .english
+        L10n.language = .english
 
-        var states: [[String: Any]] = []
-        states.append(try accessibility(state: base(), name: "main"))
-        states.append(try accessibility(state: base(), name: "app-active") { _ = $0.setSlider(id: "app:40", value: 0.5) })
-        var fixed = base(); fixed.canSetOutputVolume = false; fixed.balance = nil; fixed.canSetBalance = false
-        states.append(try accessibility(state: fixed, name: "fixed"))
-        var centered = base(); centered.balance = 0.004
-        states.append(try accessibility(state: centered, name: "centered"))
-        var right = base(); right.balance = 0.6; right.outputVolume = nil; right.canSetOutputVolume = false
-        states.append(try accessibility(state: right, name: "right-unavailable"))
-        states.append(try accessibility(state: base(), name: "headphones") { $0.perform(actionID: "audio:headphones") })
-
-        let document: [String: Any] = ["schemaVersion": 1, "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
-            "topology": topology(), "balance": balance(), "stereo": stereo(), "ordering": ordering(), "accessibility": states,
+        let document: [String: Any] = ["schemaVersion": 1, "sourceAuthority": arguments[4],
+            "topology": topology(), "balance": balance(), "stereo": stereo(), "ordering": ordering(),
             "windowCreated": !NSApp.windows.isEmpty, "realAudioActivated": false]
         try require(NSApp.windows.isEmpty, "Detached export must not create windows")
         try json(document).write(to: output.appendingPathComponent("audio-endpoint-source.json"), options: .atomic)

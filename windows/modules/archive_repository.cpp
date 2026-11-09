@@ -25,7 +25,7 @@ namespace {
 using namespace ehud::data;using J=ArchiveJson;
 constexpr std::size_t thumbnailLimit=2*1024*1024;
 void need(bool value,const char*m){if(!value)throw StoreError(StoreErrorCode::invalid,m);}
-[[noreturn]]void unavailable(sqlite3*db){throw StoreError(StoreErrorCode::unavailable,db?sqlite3_errmsg(db):"The archive could not be saved.");}
+[[noreturn]]void unavailable(sqlite3*db){throw StoreError(StoreErrorCode::unavailable,db?sqlite3_errmsg(db):"The archive could not be saved");}
 void checked(int value,sqlite3*db){if(value!=SQLITE_OK)unavailable(db);}
 struct Query {
     sqlite3*db{};sqlite3_stmt*statement{};

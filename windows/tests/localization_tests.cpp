@@ -1,7 +1,9 @@
 #include "core/localization.hpp"
+#include "tests/interface_text_rules.hpp"
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 using namespace endfield::core;
 namespace {
@@ -23,9 +25,9 @@ int main(){try{
     check(!renderTranslation("{999999999999999999999999999}",args),"Reject overflowing placeholder index");
     check(renderTranslation("{x} {01}",args)==std::nullopt,"Missing zero index stays an error");
     check(renderTranslation("{x} {} {-1}",{})=="{x} {} {-1}","Non-numeric braces remain literal");
-    // Mac 1.3.0: 830 core + 453 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift); no
+    // Mac 1.3.1 (79bc665): 818 core + 485 redesign rows (LocalizationCatalog.swift + LocalizationCatalogRedesign.swift); no
     // Windows-kept v1.2.0 pair is left (tools/localization_windows_kept.json). Adding a kept row changes this count.
-    const auto catalog=translationCatalog();check(catalog.size()==1284,"Full pinned five-language catalog");
+    const auto catalog=translationCatalog();check(catalog.size()==1303,"Full pinned five-language catalog");
     using Row=std::array<std::string_view,5>;
     const auto five=[&](const Row&r,const char*why){const auto*e=translationEntry(r[0],r[1]);check(e&&e->traditionalChinese==r[2]&&e->japanese==r[3]&&e->korean==r[4],why);};
     for(const auto&r:std::array<Row,6>{{
@@ -52,13 +54,13 @@ int main(){try{
     // Windows-kept v1.2.0 pairs beside the Mac 1.3.0 pair that replaced them on the Mac.
     five({"Mainland China","国服","中國伺服器","中国サーバー","중국 서버"},"Mac 1.3.0 region title (MODS-850)");
     // The shared media picker: Notes' Mac 1.3.0 title and button; the v1.2.0 title is gone (LIB-L4).
-    five({"Add image/video notes","添加图片/视频便笺","新增圖片／影片便箋","画像・動画メモを追加","이미지/동영상 메모 추가"},"Notes media picker title");
+    five({"Add image/video notes","添加图片/视频便笺","新增圖片／影片便箋","画像/動画メモを追加","이미지/동영상 메모 추가"},"Notes media picker title");
     five({"Add media","添加媒体","新增媒體","メディアを追加","미디어 추가"},"Notes media picker button");check(!translationEntry("Add image/video","添加图片/视频"),"Pruned picker title is gone");
     // Settings > Hotkeys registration status (GlobalShortcutController.statusDescription, LIB-L13): the Mac row with
     // the notification area for the menu bar, in every language.
     const std::array<std::string_view,1>chord{"Ctrl + `"};
-    check(renderTranslation(translated(summonShortcutUnavailable,Language::korean),chord)=="Ctrl + ` 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요."&&
-        renderTranslation(translated(summonShortcutUnavailable,Language::system),chord)=="Ctrl + ` is unavailable or in use. Open from the notification area."&&
+    check(renderTranslation(translated(summonShortcutUnavailable,Language::korean),chord)=="Ctrl + ` 사용 불가 또는 이미 사용 중입니다. 알림 영역에서 여세요"&&
+        renderTranslation(translated(summonShortcutUnavailable,Language::system),chord)=="Ctrl + ` is unavailable or in use. Open from the notification area"&&
         !translationEntry(summonShortcutUnavailable.english,summonShortcutUnavailable.simplifiedChinese),"Hotkey status names the notification area");
     for(unsigned n=0;n<6;++n)check(renderTranslation(translated(summonShortcutUnavailable,static_cast<Language>(n)),chord).has_value(),"Hotkey status renders its chord in every language");
     // The redesigned minigame, Reader and Archive call the Mac 1.3.0 pairs only.
@@ -92,6 +94,39 @@ int main(){try{
         const std::array originals{e.english,e.simplifiedChinese,e.traditionalChinese,e.japanese,e.korean};
         for(unsigned n=0;n<5;++n){const auto expected=renderTranslation(originals[n],values);check(expected.has_value(),"Original catalog has complete argument coverage");check(localized(e.english,e.simplifiedChinese,static_cast<Language>(n+1),values)==*expected,"Every original translation round-trips");}
     }
+    // Interface text keeps no final full stop and no middle dot between phrases in any language (Mac 0b94c8e,
+    // ec418d5): every catalog row and every Windows-only row.
+    for(const auto&e:catalog)for(const auto t:{e.english,e.simplifiedChinese,e.traditionalChinese,e.japanese,e.korean})
+        check(endfield::tests::followsInterfaceTextRules(t),"Catalog rows have no final full stop and no dot separator");
+    for(const auto*row:{&chooseInFileExplorer,&filePickerBusy,&selectedFilesUnopened,&imageFilesFilter,&summonShortcutUnavailable})
+        for(const auto t:{row->english,row->simplifiedChinese,row->traditionalChinese,row->japanese,row->korean})
+            check(endfield::tests::followsInterfaceTextRules(t),"Windows-only rows have no final full stop and no dot separator");
+    // The rules themselves: stops in three scripts, an ellipsis, the dot characters, and the katakana name dot.
+    check(endfield::tests::endsWithFullStop("Done.")&&endfield::tests::endsWithFullStop("完成。")&&endfield::tests::endsWithFullStop("完了．")&&
+        !endfield::tests::endsWithFullStop("Wait...")&&!endfield::tests::endsWithFullStop("Wait…")&&!endfield::tests::endsWithFullStop(".")&&
+        !endfield::tests::endsWithFullStop("v1.3"),"The final full stop rule");
+    check(endfield::tests::hasDotSeparator("A \u00B7 B")&&endfield::tests::hasDotSeparator("A\u2022")&&endfield::tests::hasDotSeparator("\u2027")&&
+        endfield::tests::hasDotSeparator("\uFF65")&&endfield::tests::hasDotSeparator("\u753B\u50CF\u30FB\u52D5\u753B")&&
+        endfield::tests::hasDotSeparator("\u30EC\u30E0\u30FB")&&endfield::tests::hasDotSeparator("\u30FB\u30EC")&&
+        endfield::tests::hasDotSeparator("\u30EC\u30FB\u30FB\u30EC")&&
+        !endfield::tests::hasDotSeparator("\u30EC\u30E0\u30FB\u30D3\u30EA\u30C8\u30F3")&&!endfield::tests::hasDotSeparator("A / B"),"The dot separator rule");
+    // ec418d5: the Japanese dot separators became "/" or "、"; the katakana names keep their dot.
+    for(const auto&r:std::array<Row,6>{{
+        {"Choose a PDF, EPUB or TXT book","请选择 PDF、EPUB 或 TXT 书籍","請選擇 PDF、EPUB 或 TXT 書籍","PDF、EPUB、TXTの書籍を選択してください","PDF, EPUB 또는 TXT 책을 선택하세요"},
+        {"Image/Video","图片/视频","圖片／影片","画像/動画","이미지/동영상"},
+        {"IMAGE/VIDEO","图片/视频","圖片／影片","画像/動画","이미지/동영상"},
+        {"BUG Report/Suggestions","BUG报告及反馈","BUG回報及意見回饋","バグ報告/ご意見","버그 신고 및 제안"},
+        {"Rhodes Island","罗德岛","羅德島","\u30ED\u30C9\u30B9\u30FB\u30A2\u30A4\u30E9\u30F3\u30C9","로도스 아일랜드"},
+        {"Rim Billiton","雷姆必拓","雷姆必拓","\u30EC\u30E0\u30FB\u30D3\u30EA\u30C8\u30F3","림 빌리턴"}}})five(r,"Japanese separators without a dot, katakana names with theirs");
+    // The rows the Mac removed with their dots (ec418d5) and with the headset refusal (1874456) are gone.
+    for(const auto&[english,simplified]:std::array<std::pair<std::string_view,std::string_view>,12>{{
+        {"No internal battery \u00B7 Preview available","无内置电池 \u00B7 可预览效果"},{"Image \u00B7 ","图片 \u00B7 "},
+        {"{0} / {1} items \u00B7 Click to copy","{0} / {1} 项 \u00B7 点击复制"},{" \u00B7 Pinned"," \u00B7 已固定"},
+        {"{0} selected \u00B7 Drag to copy","已选 {0} 项 \u00B7 拖出以复制"},{"{0} items \u00B7 Shift-click to select","{0} 项 \u00B7 Shift 点击多选"},
+        {"Disconnected \u00B7 using pointer display","未连接 \u00B7 暂用鼠标所在显示器"},{"Press up to 3 keys \u00B7 Esc to cancel","最多同时按 3 个键 \u00B7 Esc 取消"},
+        {"Check failed \u2014 retry","检查失败 \u00B7 重试"},{" \u00B7 Not adjustable on this device"," \u00B7 此设备不支持调整"},{" \u00B7 Output"," \u00B7 输出"},
+        {"App volume needs an output device without a microphone or other input","应用音量需要不带麦克风或其他输入的输出设备"}}})
+        check(!translationEntry(english,simplified),"Rows removed with their dot separators are gone");
     // The Windows-only File Explorer chooser row (Media Assembly, Reader, Archive, Notes, Projection).
     for(unsigned n=0;n<6;++n){const auto label=translated(chooseInFileExplorer,static_cast<Language>(n));check(!label.empty()&&label.find("Finder")==std::string_view::npos,"The chooser names File Explorer");}
     check(translated(chooseInFileExplorer,Language::simplifiedChinese)=="从文件资源管理器选择"&&translated(chooseInFileExplorer,Language::traditionalChinese)=="從檔案總管選擇"&&

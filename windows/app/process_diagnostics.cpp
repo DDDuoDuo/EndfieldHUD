@@ -58,6 +58,20 @@ template <class F> F kernelProcedure(const wchar_t* module, const char* name) {
     const auto handle = GetModuleHandleW(module);
     return handle ? reinterpret_cast<F>(reinterpret_cast<void*>(GetProcAddress(handle, name))) : nullptr;
 }
+// The one test of an OS thread-pool worker (capturePoolWorkers,
+// countPoolWorkers, captureThreadActivity): its start address lies in ntdll's
+// image, where the pool's worker routine is.
+bool startsInNtdll(std::uintptr_t start) {
+    using Range = std::pair<std::uintptr_t, std::uintptr_t>;
+    static const Range image = [] {
+        MODULEINFO info{};
+        const auto handle = GetModuleHandleW(L"ntdll.dll");
+        if (!handle || !GetModuleInformation(GetCurrentProcess(), handle, &info, sizeof(info))) return Range{};
+        const auto base = reinterpret_cast<std::uintptr_t>(info.lpBaseOfDll);
+        return Range{base, base + info.SizeOfImage};
+    }();
+    return start >= image.first && start < image.second;
+}
 std::vector<ThreadGroup> threadGroups() {
     std::vector<ThreadGroup> groups;
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -181,7 +195,8 @@ Json integer(std::uint64_t value) { return Json(static_cast<std::int64_t>(value)
 // packaging/perf_probe.cpp reads them for the section 9 gate).
 using QuerySystem = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
 constexpr std::size_t processThreadCount = 0x04, processIdentifier = 0x50, processHeader = 0x100;
-constexpr std::size_t threadEntrySize = 0x50, threadKernelTime = 0x00, threadUserTime = 0x08, threadIdentifier = 0x30, threadSwitchCount = 0x40;
+constexpr std::size_t threadEntrySize = 0x50, threadKernelTime = 0x00, threadUserTime = 0x08, threadIdentifier = 0x30, threadSwitchCount = 0x40,
+                      threadState = 0x44, threadWaitReason = 0x48;
 template <class T> T field(const std::vector<std::uint8_t>& buffer, std::size_t at) {
     T value{}; std::memcpy(&value, buffer.data() + at, sizeof(T)); return value;
 }
@@ -210,6 +225,7 @@ std::vector<ThreadActivity> captureThreadActivity() {
                     ThreadActivity row;
                     row.id = static_cast<std::uint32_t>(field<std::uintptr_t>(buffer, entry + threadIdentifier));
                     row.contextSwitches = field<ULONG>(buffer, entry + threadSwitchCount);
+                    row.state = field<ULONG>(buffer, entry + threadState); row.waitReason = field<ULONG>(buffer, entry + threadWaitReason);
                     row.cpuSeconds = double(field<std::int64_t>(buffer, entry + threadKernelTime) + field<std::int64_t>(buffer, entry + threadUserTime)) * 1e-7;
                     result.push_back(std::move(row));
                 }
@@ -226,11 +242,14 @@ std::vector<ThreadActivity> captureThreadActivity() {
     auto describe = kernelProcedure<ReadDescription>(L"kernelbase.dll", "GetThreadDescription");
     if (!describe) describe = kernelProcedure<ReadDescription>(L"kernel32.dll", "GetThreadDescription");
     for (auto& row : result) {
+        // KTHREAD_STATE Terminated: ended, its object only still referenced.
+        constexpr std::uint32_t terminated = 4;
         const auto thread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, row.id);
-        if (!thread) continue;
+        if (!thread || row.state == terminated) { row.exited = true; if (thread) CloseHandle(thread); continue; }
         std::uintptr_t start{};
         constexpr ULONG threadQuerySetWin32StartAddress = 9;
         if (queryThread) (void)queryThread(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr);
+        row.poolWorker = startsInNtdll(start);
         if (describe) {
             PWSTR text{};
             if (SUCCEEDED(describe(thread, &text)) && text) {
@@ -242,6 +261,46 @@ std::vector<ThreadActivity> captureThreadActivity() {
         auto [module, offset] = moduleOf(start);
         row.module = std::move(module); row.offset = offset;
     }
+    return result;
+}
+bool idlePoolWorker(const ThreadActivity& thread) noexcept {
+    constexpr std::uint32_t waiting = 5, wrQueue = 15; // KTHREAD_STATE Waiting, KWAIT_REASON WrQueue
+    return thread.poolWorker && !thread.exited && thread.state == waiting && thread.waitReason == wrQueue;
+}
+std::vector<std::pair<std::string, std::uint32_t>> captureHandleTypes() {
+    std::vector<std::pair<std::string, std::uint32_t>> result;
+    static const auto process = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationProcess");
+    static const auto object = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryObject");
+    if (!process || !object) return result;
+    // PROCESS_HANDLE_SNAPSHOT_INFORMATION (ProcessHandleInformation, Windows 8
+    // and later): the count, then one PROCESS_HANDLE_TABLE_ENTRY_INFO each.
+    constexpr ULONG processHandleInformation = 51, objectTypeInformation = 2;
+    constexpr LONG lengthMismatch = static_cast<LONG>(0xC0000004L);
+    struct Entry { HANDLE value; SIZE_T handleCount, pointerCount; ULONG access, type, attributes, reserved; };
+    std::vector<std::uint8_t> buffer(1u << 16);
+    for (int attempt = 0;; ++attempt) {
+        ULONG needed{};
+        const auto status = process(GetCurrentProcess(), processHandleInformation, buffer.data(), static_cast<ULONG>(buffer.size()), &needed);
+        if (status == lengthMismatch && attempt < 8) { buffer.resize(std::max<std::size_t>(needed + 4096, buffer.size() * 2)); continue; }
+        if (status < 0) return result;
+        break;
+    }
+    const auto count = field<ULONG_PTR>(buffer, 0);
+    // PUBLIC_OBJECT_TYPE_INFORMATION starts with the type name's UNICODE_STRING.
+    struct Name { USHORT length, maximum; PWSTR text; };
+    alignas(8) std::array<std::uint8_t, 1024> type{};
+    std::map<std::string, std::uint32_t> counted;
+    for (ULONG_PTR n = 0; n < count && 2 * sizeof(ULONG_PTR) + (n + 1) * sizeof(Entry) <= buffer.size(); ++n) {
+        const auto entry = field<Entry>(buffer, 2 * sizeof(ULONG_PTR) + n * sizeof(Entry));
+        std::string name = "(unknown)";
+        if (object(entry.value, objectTypeInformation, type.data(), static_cast<ULONG>(type.size()), nullptr) >= 0) {
+            Name text{}; std::memcpy(&text, type.data(), sizeof(text));
+            if (text.text) name = narrow(text.text, text.length / sizeof(wchar_t));
+        }
+        ++counted[name];
+    }
+    for (auto& [name, n] : counted) result.emplace_back(name, n);
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
     return result;
 }
 Json threadActivityJSON(const std::vector<ThreadActivity>& before, const std::vector<ThreadActivity>& after, double seconds, std::size_t top) {
@@ -370,9 +429,6 @@ bool afterCall(std::uintptr_t address) {
 PoolWorkers capturePoolWorkers() {
     PoolWorkers result;
     const auto modules = codeModules();
-    const auto ntdll = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"ntdll.dll"));
-    const auto ntdllModule = std::find_if(modules.begin(), modules.end(), [&](const CodeModule& m) { return m.base == ntdll; });
-    if (!ntdll || ntdllModule == modules.end()) return result;
     const auto query = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationThread");
     if (!query) return result;
     const auto everywhere = [&](std::string_view name) {
@@ -397,7 +453,7 @@ PoolWorkers capturePoolWorkers() {
         (void)query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr);
         // THREAD_BASIC_INFORMATION: ExitStatus, TebBaseAddress, ClientId, ...
         struct { LONG exitStatus; PVOID teb; std::uintptr_t client[2]; KAFFINITY affinity; LONG priority, basePriority; } basic{};
-        const bool pool = start >= ntdllModule->base && start < ntdllModule->end;
+        const bool pool = startsInNtdll(start);
         const bool known = pool && query(thread, threadBasicInformation, &basic, sizeof(basic), nullptr) >= 0 && basic.teb;
         PoolWorker worker; worker.id = entry.th32ThreadID;
         FILETIME created, exited, kernel, user;
@@ -440,11 +496,8 @@ PoolWorkers capturePoolWorkers() {
     return result;
 }
 std::uint32_t countPoolWorkers() {
-    MODULEINFO ntdll{};
-    const auto handle = GetModuleHandleW(L"ntdll.dll");
     const auto query = kernelProcedure<QueryThread>(L"ntdll.dll", "NtQueryInformationThread");
-    if (!handle || !query || !GetModuleInformation(GetCurrentProcess(), handle, &ntdll, sizeof(ntdll))) return 0;
-    const auto base = reinterpret_cast<std::uintptr_t>(ntdll.lpBaseOfDll), end = base + ntdll.SizeOfImage;
+    if (!query) return 0;
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return 0;
     std::uint32_t count{};
@@ -455,7 +508,7 @@ std::uint32_t countPoolWorkers() {
         if (!thread) continue;
         std::uintptr_t start{};
         constexpr ULONG threadQuerySetWin32StartAddress = 9;
-        if (query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr) >= 0 && start >= base && start < end) ++count;
+        if (query(thread, threadQuerySetWin32StartAddress, &start, sizeof(start), nullptr) >= 0 && startsInNtdll(start)) ++count;
         CloseHandle(thread);
     }
     CloseHandle(snapshot);

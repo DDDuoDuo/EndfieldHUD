@@ -266,6 +266,22 @@ bool Layer::animating(double now) const noexcept {
 }
 void Layer::removeMotion(MotionSlot s) noexcept { if (tracks_) tracks_->slots[std::size_t(s)] = {}; }
 void Layer::removeAllMotion() noexcept { tracks_.reset(); }
+void Layer::removeAllMotion(MotionKeep keep) noexcept {
+    if (!tracks_) return;
+    auto& t = *tracks_;
+    const auto ends = [&](double end) noexcept { return keep.finite && std::isfinite(end); };
+    bool any{};
+    for (auto& track : t.property) { if (!ends(track.end())) track = {}; any |= track.present(); }
+    for (std::size_t s = 0; s < t.slots.size(); ++s) {
+        const bool whole = keep.slots.contains(MotionSlot(s));
+        for (auto& track : t.slots[s]) { if (!whole && !ends(track.end())) track = {}; any |= track.present(); }
+    }
+    for (ColorTrack* track : {&t.tintTrack, &t.tintEffect}) {
+        if (!ends(track->start + track->duration * track->repeat)) *track = {};
+        any |= track->keys > 0;
+    }
+    if (!any) tracks_.reset();
+}
 
 // ---------------------------------------------------------------------------
 // LayerArena
@@ -333,8 +349,8 @@ void enter(Layer& l, Point offset, const Clock& clock, double duration, double d
     }
 }
 // HUDMotion.stagger (:82-84).
-void stagger(std::span<Layer* const> layers, Point offset, const Clock& clock) {
-    for (std::size_t i = 0; i < layers.size(); ++i) enter(*layers[i], offset, clock, duration::entrance, staggerDelay(int(std::min<std::size_t>(i, 1 << 20))));
+void stagger(std::span<Layer* const> layers, Point offset, const Clock& clock, double delay) {
+    for (std::size_t i = 0; i < layers.size(); ++i) enter(*layers[i], offset, clock, duration::entrance, delay + staggerDelay(int(std::min<std::size_t>(i, 1 << 20))));
 }
 // HUDMotion.leave (:88-102): from the presented opacity, holds its end.
 void leave(Layer& l, Point toward, const Clock& clock) {
@@ -377,6 +393,17 @@ void wipe(Layer& l, WipeOrigin origin, double duration, const Clock& clock, core
     }
 }
 void removeWipe(Layer& l) { l.removeMotion(MotionSlot::fade); l.removeMotion(MotionSlot::wipe); }
+void crossFade(Layer& incoming, Layer* outgoing, double duration, const Clock& clock) {
+    requireAnimatable(incoming); if (outgoing) requireAnimatable(*outgoing); requireTime(clock);
+    const auto fade = [&](Layer& l, double from, double to) {
+        l.removeMotion(MotionSlot::fade);
+        l.setValue(Channel::opacity, to);
+        if (clock.reduceMotion || !(duration > 0) || from == to) return;
+        entry(l, MotionSlot::fade, 0, Channel::opacity) = timed(Track::basic(from, to, 0, duration, easing::easeInOut), clock.now, 0);
+    };
+    if (outgoing) fade(*outgoing, outgoing->presented(Channel::opacity, clock.now), 0);
+    fade(incoming, 0, 1);
+}
 // HUDMotion.grow (:161-169).
 void grow(Layer& l, double duration, const Clock& clock, double delay, core::CubicTiming timing) {
     requireAnimatable(l); requireTime(clock);
@@ -441,6 +468,11 @@ void after(Layer& l, double time, const Clock&, std::function<void()> work) {
     if (!deadlines) throw std::logic_error("Completions need an arena created with the context's deadlines: " + l.id());
     deadlines->after(time, l.arena().token(), std::move(work));
 }
+void removeMotion(Layer& root, MotionKeep keep) {
+    root.removeAllMotion(keep);
+    for (Layer* child : root.children()) removeMotion(*child, keep);
+}
+void stopLoops(Layer& root) { removeMotion(root, closeKeep); }
 } // namespace motion
 
 // ---------------------------------------------------------------------------
@@ -532,8 +564,8 @@ private:
     // two densities agree (box density 4).
     bool oversampled(const Layer& l, const Run& run) const {
         if (!l.text() || l.hidden() || !options_.text) return false;
-        const double s = options_.text->boxScale;
-        if (!(textContentsScale(s) > layerContentsScale(s))) return false;
+        const double s = options_.text->boxScale, m = options_.text->magnification;
+        if (!(textContentsScale(s, m) > layerContentsScale(s, m))) return false;
         return std::none_of(run.levels.begin(), run.levels.end(), [](const Level& v) { return v.layer->hidden(); });
     }
     // Before `l`'s own drawing joins the run: closes it on a density change.

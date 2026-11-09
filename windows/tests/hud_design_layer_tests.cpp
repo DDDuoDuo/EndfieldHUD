@@ -209,6 +209,37 @@ void verbs() {
     // grow and pop.
     m::grow(row, .42, {90, false, &deadlines}, .05);
     check(row.presented(C::scaleX, 90.02) == 0 && near(row.presented(C::scaleX, 90.26), E.value(.5)), "ruleIn: scaleX 0 -> 1 after its delay");
+    // A negative delay resumes an entrance that began that long ago (Mac
+    // d03d5b9: a page rebuilt mid-entrance carries on in phase): enter, wipe
+    // with its fade, grow and the stagger start in the past, with no
+    // backwards fill, and show what a track started then shows now.
+    {
+        const auto slot = [](const d::Layer& l, d::MotionSlot s) -> const d::Track& { return l.tracks().slots[std::size_t(s)][0]; };
+        auto& resumed = arena.make("resumed"); resumed.setAnimatable(); root.add(resumed);
+        auto& started = arena.make("started"); started.setAnimatable(); root.add(started);
+        resumed.setFrame({0, 0, 200, 50}); started.setFrame({0, 0, 200, 50});
+        const m::Clock now{95, false, &deadlines}, then{94.9, false, &deadlines};
+        m::enter(resumed, {0, 24}, now, d::duration::entrance, -.1);
+        m::enter(started, {0, 24}, then);
+        check(near(slot(resumed, d::MotionSlot::enter).start, 94.9) && !slot(resumed, d::MotionSlot::enter).fillBackwards
+            && near(resumed.presented(C::opacity, 95), started.presented(C::opacity, 95)) && near(resumed.presented(C::translateY, 95.05), started.presented(C::translateY, 95.05)),
+            "enter with delay -.1 is the entrance started .1 s ago");
+        m::wipe(resumed, d::WipeOrigin::left, .45, now, E, -.1, 0.0);
+        m::wipe(started, d::WipeOrigin::left, .45, then, E, 0, 0.0);
+        check(near(slot(resumed, d::MotionSlot::wipe).start, 94.9) && !slot(resumed, d::MotionSlot::wipe).fillBackwards && near(slot(resumed, d::MotionSlot::fade).start, 94.9)
+            && !slot(resumed, d::MotionSlot::fade).fillBackwards && near(resumed.presented(C::wipe, 95), started.presented(C::wipe, 95))
+            && near(resumed.presented(C::opacity, 95.1), started.presented(C::opacity, 95.1)), "wipe and its fade with delay -.1 resume in phase");
+        m::grow(resumed, .42, now, -.1);
+        m::grow(started, .42, then);
+        check(near(slot(resumed, d::MotionSlot::grow).start, 94.9) && !slot(resumed, d::MotionSlot::grow).fillBackwards && near(resumed.presented(C::scaleX, 95), started.presented(C::scaleX, 95)),
+            "grow with delay -.1 resumes in phase");
+        d::Layer* rows[]{&resumed, &started, &second};
+        m::stagger(rows, {0, 24}, now, -.2);
+        for (std::size_t i = 0; i < 3; ++i)
+            check(near(slot(*rows[i], d::MotionSlot::enter).start, 95 - .2 + d::staggerDelay(int(i)))
+                && slot(*rows[i], d::MotionSlot::enter).fillBackwards == (slot(*rows[i], d::MotionSlot::enter).start > 95), "stagger with -.2: row i at t - .2 + staggerDelay(i)");
+        resumed.removeAllMotion(); started.removeAllMotion(); second.removeAllMotion();
+    }
     row.setValue(C::opacity, .8);
     m::pop(row, {100, false, &deadlines});
     const double s = d::easing::snap.value(.5);
@@ -490,6 +521,90 @@ void lifetime() {
     check(deadlines.empty() && !deadlines.advance(5) && ran == 0, "Its completions are cancelled with it");
 }
 
+// The one recursive strip (motion::removeMotion with a MotionKeep): Now
+// Playing's stop keeps whole slots (entranceSlots + leave), the HUD close's
+// stopLoops every finite track; an endless loop goes and its channel
+// presents the model, and storage left empty is given back.
+void strips() {
+    d::Deadlines deadlines;
+    d::LayerArena arena("strip", &deadlines);
+    auto& root = arena.make("root");
+    auto& row = arena.make("row");
+    auto& dot = arena.make("dot");
+    root.add(row); row.add(dot);
+    for (auto* l : {&root, &row, &dot}) l->setAnimatable();
+    const m::Clock at0{0, false, &deadlines};
+    const auto play = [&] {
+        m::enter(row, {0, 24}, at0);
+        m::leave(root, {24, 0}, at0);
+        m::wipe(row, d::WipeOrigin::left, .38, at0, d::easing::standard, 0, .2);
+        m::grow(row, .3, at0);
+        m::pop(dot, at0);
+        m::hold(root);
+        m::animate(dot, C::translateY, 6, .3, at0);
+        const double blink[]{1, .2, 1};
+        m::keyframes(dot, C::opacity, blink, {}, 1, at0, d::easing::linear, std::numeric_limits<double>::infinity());
+        const double shake[]{0, -3, 3, 0};
+        m::keyframes(row, C::translateX, shake, {}, .3, at0, d::easing::linear, 1, true);
+        const d::Color glow[]{d::white(1), d::rgb(0x8CE03C)};
+        m::colorKeyframes(dot, glow, {}, 2.4, at0, d::easing::easeInOut, std::numeric_limits<double>::infinity());
+        m::animateTint(row, d::rgb(0xE9CF12), .22, at0);
+    };
+    const auto present = [](const d::Layer& l, d::MotionSlot s) { for (const auto& t : l.tracks().slots[std::size_t(s)]) if (t.present()) return true; return false; };
+    play();
+    // stopLoops (the close's keep, L-D1): every finite track stays, the endless blink and glow go.
+    m::stopLoops(root);
+    check(present(row, d::MotionSlot::enter) && present(root, d::MotionSlot::leave) && present(row, d::MotionSlot::wipe) && present(row, d::MotionSlot::fade)
+        && present(row, d::MotionSlot::grow) && present(dot, d::MotionSlot::pop) && present(root, d::MotionSlot::hold) && present(row, d::MotionSlot::effect),
+        "The close's strip keeps the entrance, leave, wipe, fade, grow, pop, hold and a one-shot shake");
+    check(dot.tracks().property[std::size_t(C::translateY)].present() && row.tracks().tintTrack.keys > 0, "A finite property and tint animation finish");
+    check(!present(dot, d::MotionSlot::effect) && dot.tracks().tintEffect.keys == 0, "An endless loop and colour effect stop");
+    check(dot.presented(C::opacity, 5) == 1 && dot.presentedTint(5) == dot.tint() && !dot.animating(1e6) && !row.animating(1e6), "Its channels present the model; nothing runs forever");
+    root.removeAllMotion(); row.removeAllMotion(); dot.removeAllMotion();
+    play();
+    // Now Playing's stop: the entrance slots and the leave stay whole, the rest goes.
+    m::removeMotion(root, {d::entranceSlots | d::MotionSlots{d::MotionSlot::leave}, false});
+    check(present(row, d::MotionSlot::enter) && present(root, d::MotionSlot::leave) && present(row, d::MotionSlot::wipe) && present(row, d::MotionSlot::fade)
+        && present(row, d::MotionSlot::grow), "The kept slots stay");
+    check(!present(dot, d::MotionSlot::pop) && !present(root, d::MotionSlot::hold) && !present(row, d::MotionSlot::effect) && !present(dot, d::MotionSlot::effect)
+        && !dot.tracks().property[std::size_t(C::translateY)].present() && row.tracks().tintTrack.keys == 0 && dot.tracks().tintEffect.keys == 0,
+        "Pop, hold, effects and property and tint tracks go");
+    check(dot.presented(C::translateY, .1) == 6 && &dot.tracks() != &row.tracks(), "A stripped property presents its model end state");
+    m::removeMotion(root, {});
+    check(!row.animating(0) && !root.animating(0) && root.presented(C::opacity, .05) == 1, "An empty keep strips everything");
+    // Storage left empty is given back: tracks() is the shared empty set again.
+    d::LayerArena other("other", &deadlines);
+    auto& a = other.make("a"); auto& b = other.make("b");
+    a.setAnimatable(); b.setAnimatable();
+    const double blink[]{1, 0};
+    m::keyframes(a, C::opacity, blink, {}, 1, at0, d::easing::linear, std::numeric_limits<double>::infinity());
+    a.removeAllMotion(d::MotionKeep{{}, true});
+    check(&a.tracks() == &b.tracks(), "A layer stripped of its only (endless) track keeps no storage");
+}
+
+// HUDMotion.crossFade (b8cc1df) on the fade slot (X-D1).
+void crossFades() {
+    d::Deadlines deadlines;
+    d::LayerArena arena("fade", &deadlines);
+    auto& incoming = arena.make("in"); auto& outgoing = arena.make("out"); auto& plain = arena.make("plain");
+    incoming.setAnimatable(); outgoing.setAnimatable();
+    const auto io = d::easing::easeInOut;
+    m::crossFade(incoming, &outgoing, .22, {10, false, &deadlines});
+    check(incoming.value(C::opacity) == 1 && outgoing.value(C::opacity) == 0, "Models are set at once");
+    check(incoming.presented(C::opacity, 10) == 0 && near(incoming.presented(C::opacity, 10.11), io.value(.5)) && incoming.presented(C::opacity, 10.22) == 1, "Incoming 0 -> 1 ease-in-out");
+    check(outgoing.presented(C::opacity, 10) == 1 && near(outgoing.presented(C::opacity, 10.11), 1 - io.value(.5)) && outgoing.presented(C::opacity, 10.3) == 0, "Outgoing from what it shows to 0");
+    m::crossFade(outgoing, &incoming, .22, {10.11, false, &deadlines});
+    check(near(incoming.presented(C::opacity, 10.11), io.value(.5)) && outgoing.presented(C::opacity, 10.11) == 0, "A reversal starts the outgoing side from its presented value");
+    m::crossFade(incoming, nullptr, .2, {20, true, &deadlines});
+    check(incoming.presented(C::opacity, 20) == 1 && !incoming.animating(20), "Reduce Motion: no track");
+    rejects([&] { m::crossFade(plain, nullptr, .2, {30, false, &deadlines}); }, "A static layer cannot cross-fade");
+    m::crossFade(incoming, nullptr, .2, {40, false, &deadlines});
+    m::removeMotion(incoming, {d::entranceSlots, false});
+    check(incoming.animating(40.1), "The entrance keep list keeps a cross-fade (the wipe's fade slot)");
+    incoming.setValue(C::opacity, 1);
+    check(incoming.animating(40.1), "setValue cancels only property tracks: an instant path removes the fade slot itself");
+}
+
 // TODO(lead): when the L3 oracle fixture lands, compare emitted trees of the
 // fixture's component scenes node by node here (frames, colours, z order)
 // and its recorded allowsGroupOpacity flags (Q3). Until then the vectors
@@ -502,7 +617,7 @@ void oracle(const char* path) {
 int main(int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: hud_design_layer_tests <hud-design-source.json>");
-        affine(); model(); verbs(); emission(); poses(); hits(); lifetime(); oracle(argv[1]);
+        affine(); model(); verbs(); strips(); crossFades(); emission(); poses(); hits(); lifetime(); oracle(argv[1]);
         std::cout << "hud_design_layer contracts: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {

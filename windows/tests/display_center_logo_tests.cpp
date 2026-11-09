@@ -85,7 +85,7 @@ void portable(const Json& fixture) {
     const auto art = m::centerLogoArtwork(image);
     check(art.has_value() && art->texturePixels.size() == std::size_t(art->width) * art->height * 4, "The synthetic logo has artwork");
     compare(*art, oracleCase(fixture, "synthetic"), 3, .3, "synthetic");
-    check(m::centerLogoErrorText(m::CenterLogoError::imageTooLarge, endfield::core::Language::english) == "Choose an image no larger than 32 MB." &&
+    check(m::centerLogoErrorText(m::CenterLogoError::imageTooLarge, endfield::core::Language::english) == "Choose an image no larger than 32 MB" &&
           m::centerLogoErrorText(m::CenterLogoError::persistence, endfield::core::Language::simplifiedChinese, "x") == "无法保存中心标志：x", "HUDCenterLogoError descriptions");
 }
 #ifdef _WIN32

@@ -103,6 +103,11 @@ std::optional<std::string> readBoundedFile(const std::filesystem::path& path,std
     while(offset<bytes.size()) {DWORD count{};if(!ReadFile(input.value,bytes.data()+offset,static_cast<DWORD>(bytes.size()-offset),&count,nullptr)||!count) fail("Account file read failed");offset+=count;}
     return bytes;
 }
+std::optional<std::string> readAccountCache(const std::filesystem::path& file) {return readBoundedFile(file,h::maximumCacheBytes);}
+bool storedHeaderIsHidden(const std::filesystem::path& accountDirectory) {
+    try {const auto bytes=readAccountCache(accountDirectory/accountCacheName);return h::cacheHeaderIsHidden(bytes?std::optional<std::string_view>(*bytes):std::nullopt);}
+    catch(const std::exception&) {return false;} // unreadable or over 1 MB
+}
 bool ownerOnly(const std::filesystem::path& path) {
     PACL dacl{};PSECURITY_DESCRIPTOR descriptor{};
     if(GetNamedSecurityInfoW(path.c_str(),SE_FILE_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&descriptor)!=ERROR_SUCCESS) return false;
@@ -173,7 +178,7 @@ void DpapiAccountVault::remove(h::Region region) {
 OwnerOnlyAccountCacheFile::OwnerOnlyAccountCacheFile(std::filesystem::path path):path_(std::move(path)) {
     if(path_.empty()||!path_.is_absolute()||path_.lexically_normal()!=path_) fail("An explicit absolute account cache path is required");
 }
-std::optional<std::string> OwnerOnlyAccountCacheFile::read() {return readBoundedFile(path_,h::maximumCacheBytes);}
+std::optional<std::string> OwnerOnlyAccountCacheFile::read() {return readAccountCache(path_);}
 bool OwnerOnlyAccountCacheFile::exists() {return GetFileAttributesW(path_.c_str())!=INVALID_FILE_ATTRIBUTES;}
 void OwnerOnlyAccountCacheFile::write(const std::string& bytes) {if(bytes.size()>h::maximumCacheBytes) fail("Account cache is too large");writeOwnerOnlyFile(path_,bytes);}
 
@@ -211,7 +216,7 @@ QueuedAccountCacheFile::~QueuedAccountCacheFile() {
     if(i.pending) {if(i.inFlight) i.executor.waitIdle();try {writeOwnerOnlyFile(i.path,*i.pending);} catch(const std::exception&) {}}
     i.executor.invalidate(i.route,false);
 }
-std::optional<std::string> QueuedAccountCacheFile::read() {return readBoundedFile(impl_->path,h::maximumCacheBytes);}
+std::optional<std::string> QueuedAccountCacheFile::read() {return readAccountCache(impl_->path);}
 void QueuedAccountCacheFile::secureExisting() {
     auto& i=*impl_;const auto file=i.path;
     // One FIFO worker: this runs before any later write on the queue. A full

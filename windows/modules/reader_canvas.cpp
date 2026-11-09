@@ -25,42 +25,16 @@ std::string extension(const ReaderBook& book) {
 }
 std::string lowercase(std::string v) { for (auto& c : v) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return v; }
 d::Menu::Item item(std::string id, std::string title) { d::Menu::Item i; i.id = std::move(id); i.title = std::move(title); return i; }
-std::string tr(const d::Environment& env, std::string_view english, std::string_view simplified) { return core::localized(english, simplified, env.language); }
 std::string key(const ReaderBook& b) { return b.id + (b.platform == ReaderReferencePlatform::windows ? "|w|" : "|m|") + std::string(readerReferencePath(b)); }
 }
 
 // --- ReaderBookTile (:1016-1119) ------------------------------------------------
-class ReaderBookTile::More final : public d::Control {
-public:
-    More(d::Builder& b, std::string id, std::string label) : Control(b.env, id, std::move(label), b.layer(id)) {
-        layer().setAnimatable();                                    // hover scale 1.08
-        layer().setBounds({22, 22});
-        plate_ = &b.layer(sub(this->id(), "plate"));
-        plate_->setFrame({0, 0, 22, 22});
-        // backgroundColor #141414 .8 -> .95 on hover: a tinted white circle.
-        d::setTintedBackground(*plate_, d::rgb(0x141414, .8), 11);
-        layer().add(*plate_);
-        layer().add(d::makeText(b, sub(this->id(), "dots"), "⋯", d::TextStyle{12, d::FontWeight::black, d::white(1)}, {0, 5, 22, 12}, d::TextAlignment::center));
-        setTarget({0, 0, 22, 22}, d::PathBuilder().ellipse({0, 0, 22, 22}));
-    }
-    void hoverChanged() override {
-        const bool on = hovered() && enabled();
-        const auto c = clock();
-        d::motion::animateTint(*plate_, d::rgb(0x141414, on ? .95 : .8), d::duration::hover, c, d::easing::ease);
-        d::motion::animate(layer(), Channel::scaleX, on ? 1.08 : 1, d::duration::hover, c);
-        d::motion::animate(layer(), Channel::scaleY, on ? 1.08 : 1, d::duration::hover, c);
-    }
-private:
-    d::Layer* plate_;
-};
-
 ReaderBookTile::ReaderBookTile(d::Builder& b, std::string id, int number, const ReaderBook& book, d::Color cover, bool missing, double width)
     : Control(b.env, id, book.title, b.layer(id)) {
     const Rect bounds{0, 0, width, wellHeight + 24};
     d::Layer& l = layer();
     l.setBounds({width, wellHeight + 24});
-    auto& more = b.make<More>(this->id() + ":more", tr(b.env, "More", "更多") + ", " + book.title);
-    more_ = &more;
+    more_ = &b.make<d::TileMoreButton>(this->id() + std::string(d::TileMoreButton::suffix), d::TileMoreButton::label(b.env, book.title));
     well_ = &b.layer(sub(this->id(), "well"));
     well_->setAnimatable();                                         // -2 px on hover
     well_->setFrame({0, 0, width, wellHeight});
@@ -114,8 +88,6 @@ ReaderBookTile::ReaderBookTile(d::Builder& b, std::string id, int number, const 
     label_ = &d::makeText(b, sub(this->id(), "label.text"), book.title, d::TextStyle{11.5, d::FontWeight::medium, d::fixed::nearBlack},
         {6, 6.25, width - 12, 11.5}, d::TextAlignment::center);
     strip_->add(*label_);
-    more.layer().setFrame({width - 4 - 22, 8, 22, 22});
-    more.layer().setZPosition(2);
     // The selection brackets: the .1 s fade on the container, the inset -5 ->
     // -4 path change (.16 s) as two prepared insets cross-faded (G2).
     brackets_ = &b.layer(sub(this->id(), "brackets"));
@@ -126,11 +98,11 @@ ReaderBookTile::ReaderBookTile(d::Builder& b, std::string id, int number, const 
     d::setPath(*bracketsSelected_, d::ArchiveTile::bracketPath(bounds, -4), palette().yellow());
     brackets_->add(*bracketsRest_); brackets_->add(*bracketsSelected_);
     brackets_->setValue(Channel::opacity, 0);
-    for (d::Layer* layer : {well_, strip_, &more.layer(), brackets_}) l.add(*layer);
+    for (d::Layer* layer : {well_, strip_, brackets_}) l.add(*layer);
+    more_->attach(l, width, brackets_);
     renderSelection(false);
     setTarget(bounds);
 }
-d::Control& ReaderBookTile::more() const noexcept { return *more_; }
 void ReaderBookTile::setSelected(bool selected, bool animated) { if (selected != selected_) { selected_ = selected; renderSelection(animated); } }
 void ReaderBookTile::renderSelection(bool animated) {
     const auto c = clock();
@@ -159,6 +131,7 @@ ReaderCanvas::ReaderCanvas(d::Context& context, ReaderState& state, ReaderCanvas
 ReaderCanvas::~ReaderCanvas() { *alive_ = false; }
 
 void ReaderCanvas::didActivate() {
+    deactivatedRevision_.reset();
     state_->setActive(true);
     refreshMissing();
 }
@@ -167,7 +140,10 @@ void ReaderCanvas::didDeactivate() {
     panStart_.reset();
     cancel(detailTimer_);
     settleTurn();
+    // The page leaves as drawn: the state empties its rendered column here,
+    // and that change must not recycle the neighbouring pages first (Mac e0ae44b).
     state_->setActive(false);
+    deactivatedRevision_ = state_->revision();
 }
 void ReaderCanvas::willLeave() { closePanel(); }
 void ReaderCanvas::resetSession() {
@@ -238,6 +214,8 @@ void ReaderCanvas::controllerChanged() {
     // The library loaded after this canvas was made: reopen the book that was being read.
     if (!tabSettled_ && book) { if (state_->reading()) setTab(Tab::reading); tabSettled_ = true; }
     if (!renderedLanguage()) return;
+    // The notice of the deactivation's own change (ReaderCanvas.swift:143, `deactivating`).
+    if (deactivatedRevision_ && state_->revision() == *deactivatedRevision_) return;
     // The Mac skips a change while a sub-page swap runs because it builds the
     // next page when the swap lands; Windows built it when the swap started
     // (LIBRARY-DESIGN Q4), so a changed structure rebuilds that pending page
@@ -374,7 +352,7 @@ void ReaderCanvas::buildLibrary(d::Page& page) {
         auto& more = tile.more();
         more.onActivate = [this, id, &more] {
             if (menuOpen()) { closeMenu(); return; }
-            for (const auto& b : state_->library().books) if (b.id == id) { openBookMenu(b, more); return; }
+            for (const auto& b : state_->library().books) if (b.id == id) { openBookMenu(b, more.rect(root()), &more); return; }
         };
         tile.layer().setOrigin({4 + double(index % 4) * (tileWidth + 12), 4 + double(index / 4) * (tileHeight + 12)});
         scroll.content().add(tile.layer());
@@ -523,6 +501,9 @@ ReaderCanvas::Column ReaderCanvas::column(const ReaderPage& current) const {
     }
     return out;
 }
+bool ReaderCanvas::holdsPage(const ReaderLocation& location) const {
+    return std::any_of(slots_.begin(), slots_.end(), [&](const Slot& slot) { return slot.location && *slot.location == location; });
+}
 ReaderCanvas::Slot& ReaderCanvas::pageLayer(const ReaderPage& page) {
     for (auto& slot : slots_) if (slot.location && *slot.location == page.location) return slot;
     Slot* spare = nullptr;
@@ -554,6 +535,11 @@ void ReaderCanvas::layoutPages() {
     const d::Size size{pageViewport.width, pageViewport.height};
     if (preferences.vertical() && !zoomed) {
         pendingTurn_.reset();
+        // Reopening the book shown (the module shown again) empties the
+        // rendered column until its render returns: the drawn pages and the
+        // scroll stay as they are until then (Mac dc1bf1b). This also covers a
+        // change that coalesces into the deactivation's revision.
+        if (state_->pages().empty() && !state_->error() && columnLocation_ == current->location && holdsPage(current->location)) return;
         if (columnLocation_ != current->location) { columnLocation_ = current->location; scrollOffset_ = 0; }
         clampOffset();
         current = state_->current();
@@ -571,11 +557,15 @@ void ReaderCanvas::layoutPages() {
         const double inset = columnInset();
         clip_->setFrame({pageViewport.x, pageViewport.y + inset, pageViewport.width, pageViewport.height - 2 * inset});
         column_->setFrame({0, 0, clip_->bounds().width, clip_->bounds().height});
+        // A neighbour rendered after the column is on screen fades in (Mac e0ae44b).
+        const bool shown = isActive() && column_ && d::isVisible(*column_, root());
         for (const auto& [p, top] : placed) {
+            const bool arriving = shown && !(p->location == current->location) && !holdsPage(p->location);
             auto& slot = pageLayer(*p);
             slot.pixels = p->pixels;
             slot.cropTop = inset / size.height; slot.cropHeight = columnHeight(*p) / size.height;
             slot.layer->setFrame({0, top, size.width, columnHeight(*p)});
+            if (arriving) d::motion::enter(*slot.layer, {0, 0}, clock());
         }
         publishViews();
         return;
@@ -781,12 +771,12 @@ void ReaderCanvas::openBook(const ReaderBook& book) {
     setTab(Tab::reading);
     navigate(1);
 }
-void ReaderCanvas::openBookMenu(const ReaderBook& book, const d::Control& anchor) {
+void ReaderCanvas::openBookMenu(const ReaderBook& book, Rect anchorRect, const d::Control* anchor) {
     auto open = item("open", text("Open", "打开")), relinkItem = item("relink", text("Relink…", "重新链接…")),
         remove = item("remove", text("Remove from library", "从书库移除"));
     remove.danger = true; remove.separatorBefore = true;
     const std::string id = book.id;
-    openMenu("bookMenu", {open, relinkItem, remove}, anchor, 170.0, [this, id](const d::Menu::Item& item) {
+    openMenu("bookMenu", {open, relinkItem, remove}, anchorRect, anchor, 170.0, [this, id](const d::Menu::Item& item) {
         const auto& books = state_->library().books;
         const auto found = std::find_if(books.begin(), books.end(), [&](const ReaderBook& b) { return b.id == id; });
         if (found == books.end()) return;
@@ -801,7 +791,7 @@ void ReaderCanvas::confirmRemove(const ReaderBook& book) {
     d::ConfirmRequest request;
     request.id = "readerRemove";
     request.title = text("Remove {0} from the library?", "从书库移除 {0}？", arguments);
-    request.message = text("The file itself stays on disk.", "文件本身仍保留在磁盘上。");
+    request.message = text("The file itself stays on disk", "文件本身仍保留在磁盘上");
     request.confirmTitle = text("Remove", "移除");
     request.danger = true; request.icon = d::Icon::trash;
     const std::string id = book.id;
@@ -1076,6 +1066,17 @@ void ReaderCanvas::handlePointerDragged(Point point) {
     setImageView(view);
 }
 void ReaderCanvas::handlePointerUp(Point) { panStart_.reset(); }
+// A right-click on a Library book (or its ⋯) opens the menu its ⋯ opens (:976-984).
+bool ReaderCanvas::handleRightPointerDown(Point point) {
+    if (tab_ != Tab::library || transitioning()) return false;
+    const auto* hit = control(point);
+    if (!hit) return false;
+    const auto id = d::TileMoreButton::tileID(hit->id());
+    if (!id.starts_with("book:")) return false;
+    for (const auto& book : state_->library().books)
+        if (book.id == id.substr(5)) { openBookMenu(book, Rect{point.x, point.y, 1, 1}, nullptr); return true; }
+    return false;
+}
 
 // --- Keys (:975-997) ------------------------------------------------------------
 // Esc first resets a zoomed page.

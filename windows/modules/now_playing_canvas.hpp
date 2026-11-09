@@ -20,7 +20,10 @@
 // the art layers' sampled poses): the canvas lays out two content-less art
 // layers and cross-fades them (.2 s ease-in-out, the CATransition fade)
 // whenever the cover changes, which keeps the NetEase thumbnail -> catalog
-// cover cross-fade.
+// cover cross-fade. A cover that fills the slot is drawn aspect-filled; a
+// small one (Mac 1.3.1, 45f75dc: one with a backdrop) is drawn whole at its
+// own pixels, centred over its blurred backdrop, which fills the slot and
+// fades with its cover (coverFrame).
 //
 // Windows differences (C9 report): GSMTC capabilities gate the transport and
 // the seek bar besides the Mac's rules; the elapsed time runs at the
@@ -34,15 +37,13 @@
 #include "modules/now_playing_model.hpp"
 #include <map>
 
-namespace endfield::native { struct NotesImageFrame; }
 namespace endfield::modules {
-using NowPlayingCover = std::shared_ptr<const native::NotesImageFrame>;
 struct NowPlayingCanvasServices {
     std::function<const NowPlayingViewInput&()> input;   // controller.snapshot (+ lyrics, volume, cover state)
-    std::function<NowPlayingCover()> artwork;            // controller.artworkImage (identity only here)
+    std::function<NowPlayingCoverArt()> artwork;         // controller.artwork (the image is its identity)
     std::function<void(bool)> setPresented;               // controller.activate / deactivate + the audio watch
     std::function<bool(const NowPlayingIntent&)> perform; // transport, seek, app volume
-    std::function<void(unsigned)> setArtworkPixels;       // controller.artworkPixelSize
+    std::function<void(NowPlayingCoverSlot)> setArtworkPixels; // controller.artworkPixelSize
 };
 
 class NowPlayingCanvas final : public design::Canvas {
@@ -60,8 +61,15 @@ public:
         static constexpr design::Rect popup{518, 364, 44, 150};
         static constexpr design::Rect hitBounds{-36, -84, 632, 654};
     };
-    // One cover the owner draws: an art layer and the image it shows.
-    struct CoverView { const design::Layer* layer{}; NowPlayingCover image; };
+    // One cover the owner draws: an art layer, the image it shows at `frame`
+    // (in the layer's bounds) and the backdrop that fills the layer under it.
+    struct CoverView { const design::Layer* layer{}; NowPlayingCover image, backdrop; design::Rect frame{}; };
+    // Where a width x height pixel cover is drawn in the 480 px slot
+    // (showArt, :325-347): without a backdrop aspect-filled (cropped by the
+    // cover's mask); with one at its own pixels (px / boxScale, the Mac's
+    // contentsScale = renderScale with .center), centred and, should it
+    // exceed the slot, fitted inside it.
+    static design::Rect coverFrame(unsigned width, unsigned height, bool backdrop, double boxScale) noexcept;
 
     NowPlayingCanvas(design::Context&, NowPlayingCanvasServices);
     ~NowPlayingCanvas() override;
@@ -74,8 +82,12 @@ public:
     bool showsLyrics() const noexcept { return showsLyrics_; }
     bool clockActive() const noexcept { return clockDeadline_.has_value(); }
     // The covers to draw (bottom first) and the cover layer (their clip).
+    // While a track change's page swap runs (or a module leave settled it
+    // concealed), these are the leaving page's: its cover leaves with it
+    // (OPEN-B5-5: d6370b0's departing page keeps its cover). The next page's
+    // own cover is drawn from its landing.
     std::array<CoverView, 2> coverViews(double now) const noexcept;
-    const design::Layer* coverLayer() const noexcept { return cover_; }
+    const design::Layer* coverLayer() const noexcept { return leavingCover_ ? leavingCover_->plate : cover_; }
     static std::string time(std::optional<double>);   // NowPlayingCanvas.time (:395-398)
     // previous, playPause, next, volume, lyrics (perform(actionID:), :588).
     bool perform(std::string_view actionID, double now) { return performAccessibilityAction(actionID, now); }
@@ -101,6 +113,9 @@ public:
     class LyricWindow;
 private:
     struct Structure { core::Language language{}; bool playing{}; bool operator==(const Structure&) const = default; };
+    // NowPlayingCanvas.finiteKeys (:144): what the stop keeps on the hidden
+    // page, the entrance slots (the cover cross-fade included) and the leave.
+    static constexpr design::MotionSlots finiteKeys = design::entranceSlots | design::MotionSlots{design::MotionSlot::leave};
     NowPlayingCanvasServices services_;
     bool presented_{}, volumeOpen_{}, showsLyrics_{true}, lyricsVisible_{};
     std::optional<Structure> renderedStructure_;
@@ -111,8 +126,17 @@ private:
     std::optional<std::pair<std::uint64_t, NowPlayingTrack>> seekGesture_;
     std::optional<std::pair<std::uint64_t, std::string>> volumeGesture_;
     NowPlayingCover displayed_;
-    std::array<NowPlayingCover, 2> covers_{};    // what the two art layers show (bottom, top)
+    std::array<NowPlayingCoverArt, 2> covers_{}; // what the two art layers show (bottom, top)
     double fadeEnd_{};               // the cross-fade's end: the old cover drops then
+    // The shown page's cover when a swap builds the next page (buildPage
+    // overwrites cover_, art_ and covers_ for it), until that page lands.
+    struct LeavingCover {
+        design::Layer* plate{};
+        std::array<design::Layer*, 2> art{};
+        std::array<NowPlayingCoverArt, 2> covers{};
+        double fadeEnd{};
+    };
+    std::optional<LeavingCover> leavingCover_;
     // Elements of the current page, updated in place between rebuilds.
     design::Layer *cover_{}, *placeholder_{}, *titleText_{}, *artistText_{}, *elapsedText_{}, *durationText_{};
     std::array<design::Layer*, 2> art_{};
@@ -132,6 +156,7 @@ private:
     void update(bool animated);
     bool canSeek() const;
     void showArt(bool animated);
+    void didInstall(design::Page&) override;
     void setLyricsVisible(bool visible, bool animated);
     std::optional<double> displayedElapsed() const;
     void updateClock(bool animated);
@@ -147,7 +172,10 @@ private:
     bool setAppVolume(double value);
     void toggleVolume();
     void openVolume();
-    void closeVolume();
+    // `keepingDrawn` (the module leaving, NowPlayingCanvas.swift:584): the
+    // pop-up stops taking input but stays drawn to leave with the page until
+    // the next showing (Canvas::retirePopup).
+    void closeVolume(bool keepingDrawn = false);
     void adjustVolume(double value, bool final);
     void renderPopup();
     std::string trackStatus() const;

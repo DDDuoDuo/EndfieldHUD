@@ -15,7 +15,7 @@
 #include <typeinfo>
 #include <vector>
 
-namespace ehud::data { struct Settings; struct ModuleLayout; }
+namespace ehud::data { struct Settings; struct ModuleLayout; struct OverlayLayout; }
 namespace endfield::core { class ApplicationEventRecorder; }
 namespace endfield::modules { class WorkModeController; }
 namespace endfield::modules::design { class Context; }
@@ -57,8 +57,10 @@ struct ApplicationFileResult {
 // accountGauge.dismiss(); return }`. The area that owns the header sanity
 // wallet publishes one QuitPreemption under quitPreemptionService: called
 // before the quit is asked, true when it closed an open recovery popover
-// (the quit is then not asked; the next press asks).
-using QuitPreemption = std::function<bool(double time)>;
+// (the quit is then not asked; the next press asks). Placing the HUD
+// elements calls it too, with animated false (beginOverlayPlacement:
+// `accountGauge.dismiss(animated: false)`).
+using QuitPreemption = std::function<bool(double time, bool animated)>;
 inline constexpr std::string_view quitPreemptionService = "hud.quitPreemption";
 
 class ApplicationHost {
@@ -157,11 +159,23 @@ public:
     // deploy entrance. Call from the factory, before the HUD first shows.
     // Owners registered as tools::DesignModuleOwner are marked automatically.
     virtual void setDesignScreen(core::Module) {}
-    // The applied preference record's System > Modules layout (order and
+    // The applied preference record's Display > Modules layout (order and
     // hidden set, ehud::data::Settings::moduleLayout), re-read once per
     // applied record; the revision moves only when the layout changed.
     virtual const ehud::data::ModuleLayout* moduleLayout() const noexcept { return nullptr; }
     virtual std::uint64_t moduleLayoutRevision() const noexcept { return 0; }
+    // Display > HUD elements as the HUD shows them (Mac shownOverlayLayout):
+    // the placement editor's draft while placing, else the applied record's
+    // layout (normalized, the text cut by the host's Character rule). The
+    // revision moves whenever it changes. Null without a host layout: read
+    // settings().overlayLayout() instead (shownOverlayLayout below).
+    virtual const ehud::data::OverlayLayout* overlayLayout() const noexcept { return nullptr; }
+    virtual std::uint64_t overlayLayoutRevision() const noexcept { return 0; }
+    ehud::data::OverlayLayout shownOverlayLayout() const; // app/module_registry.cpp
+    // SystemHUDView.allowsInputBesidePlacement: false while the HUD elements
+    // are being placed. The facility tags and banner, the Sanity gauge and
+    // their screen-reader controls take no input meanwhile.
+    virtual bool allowsInputBesidePlacement() const noexcept { return true; }
 
     // --- Area-to-area services -------------------------------------------------
     // Non-owning, exact-type directory: the publisher keeps the object alive

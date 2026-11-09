@@ -5,6 +5,18 @@
 #include <memory>
 
 namespace endfield::native {
+// Display > HUD elements: the ENDFIELDHUD / SYSTEM INTERFACE title as
+// SystemHUDView.applyOverlayLayout draws it: its text (one string for every
+// language), its size (the fonts are 20 x size and 9 x size, so the text stays
+// sharp), its drawn top-left on the core plane (the placement, clamped) and
+// Show title (off hides the title and the subtitle).
+struct DesktopChromeTitle {
+    std::string title{"ENDFIELDHUD"},subtitle{"SYSTEM INTERFACE"};
+    double size{1};
+    core::Point origin{270,2};
+    bool shown{true};
+    bool operator==(const DesktopChromeTitle&)const=default;
+};
 struct DesktopChromeContent {
     core::source::DesktopClockStyle style{core::source::DesktopClockStyle::digital};
     std::optional<core::source::DesktopClockReading> reading;
@@ -14,6 +26,10 @@ struct DesktopChromeContent {
     // The applied record's Recording mode (the clock's status row) and
     // Reduce Motion (the record dot stays steady).
     bool recording{},reduceMotion{};
+    // Display > Close hint (showsCloseHint): off hides only the footer line
+    // (its placement is not drawn); nothing else moves.
+    bool showsCloseHint{true};
+    DesktopChromeTitle title;
     bool operator==(const DesktopChromeContent&)const=default;
 };
 struct DesktopChromeAppearance {
@@ -77,6 +93,11 @@ public:
     bool update(const core::source::SourceWatchFrame&,const core::source::CameraFrame&,
         const core::source::DesktopChromeSettings&,float canvasOpacity=1);
     DesktopChromePresentationStats stats()const noexcept{return stats_;}
+    // overlayNatural(.title): the title's size at 100 % in core-plane points,
+    // ceil(max(title width, subtitle width) / size) x 49, both measured as
+    // they are drawn at `size` (HUDStandardTextLayer.measuredWidth: one line
+    // in the standard faces, the clock's measurement). Content events only.
+    core::Rect titleNatural(std::string_view title,std::string_view subtitle,double size)const; // origin 0
     // SystemHUDView.clockPoint: a logical client point -> the status panel's
     // local point (HUDClockStyleArtwork.hitBounds, 340 x 145) while the panel
     // is placed and visible. `camera` is the renderer's layer camera (pixel
@@ -126,6 +147,7 @@ private:
     std::uint64_t sceneRevision_{};
     std::array<LayerPlacement,4> placements_;
     std::optional<std::array<core::Matrix4,4>> previousWorlds_;
+    core::Matrix4 titleWorld_; // the last frame's centre plane (the title moves on it between frames)
     float previousOpacity_{};
     // The record dot (HUDClockStyleArtwork.recordDot): colour revision, the
     // blink fade (from, to, start) and its pending start on the next frame.
@@ -133,7 +155,15 @@ private:
     std::uint64_t dotRevision_{};std::optional<core::source::ChromeColor> dotColor_;Blink blink_;std::optional<double> blinkTarget_;
     double dotOpacity_{1};float placedDot_{-1};
     void updateArtwork();
+    // One line of chrome text as NSString.size(withAttributes:) measures it.
+    double measureText(std::string_view text,double size,int weight,bool tabular)const;
+    // The header surface for the title (applyOverlayLayout).
+    core::source::Json titleHeader(const DesktopChromeTitle&)const;
+    float headerOpacity(float canvas)const noexcept{return content_&&!content_->title.shown?0.f:canvas;}
     void rasterizeDot();
+    // The footer line's placement opacity: the canvas opacity, or 0 while
+    // the Close hint is off.
+    float footerOpacity(float canvas)const noexcept{return content_&&!content_->showsCloseHint?0.f:canvas;}
     DesktopChromePresentationStats stats_;
     // Clock style push.
     struct Transition {bool forward{};double start{},progress{};};

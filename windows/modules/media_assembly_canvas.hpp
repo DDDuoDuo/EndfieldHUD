@@ -38,7 +38,14 @@ struct MediaAssemblyShelfChoice {
 // released after the import.
 struct MediaAssemblyShelfFile { std::string path; std::shared_ptr<void> lease; };
 struct MediaAssemblyCanvasServices {
-    std::function<double()> now;                    // the host clock (controller notices arrive in the executor's drain)
+    // The host clock (controller notices arrive in the executor's drain),
+    // given to Canvas::catchUpClock. Kept beside the Context's host clock
+    // because the owner folds in its own clocked event time (deadlines and
+    // dialogs, max(event time, design clock)), which its tests drive apart
+    // from the area clock: media_assembly_owner_tests fires a deadline at
+    // the debounce's wake - .01 while the area clock is still behind it,
+    // and layer_switch_probe gives the owner no area clock at all.
+    std::function<double()> now;
     std::function<std::string()> uuid;              // sticker identities
     std::function<std::vector<MediaAssemblyShelfChoice>()> shelfChoices;
     // Throws MediaAssemblyFailure (reported) or returns nullopt (unavailable).
@@ -228,6 +235,7 @@ private:
     const MediaAssemblySticker* selectedItem() const;
     const MediaAssemblySticker* sticker(std::string_view id) const;
     void takePreview();
+    void revealReleasedPreview();
     void layoutStage();
     static design::Point stagePoint(design::Point);
     void zoomStep(double factor);

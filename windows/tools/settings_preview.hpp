@@ -60,7 +60,7 @@ public:
     void setCustomLogo(std::string revision, double time);
     void showImportError(std::string, double time);
     void showBatterySettings(double time);
-    // Host hooks changed (e.g. the macImport area was constructed after Settings).
+    // Host hooks changed (e.g. an area was constructed after Settings).
     void refreshViews(double time);
     std::optional<core::Module> inputModule() const noexcept;
     // Decoded logo artworks held (they are released when the HUD closed).

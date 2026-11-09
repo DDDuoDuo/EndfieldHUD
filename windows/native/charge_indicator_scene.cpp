@@ -330,7 +330,7 @@ bool ChargeIndicatorScene::setContent(const ChargeIndicatorSceneContent& request
     const bool densityChanged = !i.hasContent || next.pixelsPerPoint != i.density;
     const bool darkChanged = !i.hasContent || next.appearance.dark != i.dark;
     auto content = m::prepareChargeIndicatorContent(next.appearance, next.battery, next.metric, next.telemetry, next.preview,
-        [&](std::string_view id, const Json& descriptor) { return i.measure(id, descriptor, options); });
+        [&](std::string_view id, const Json& descriptor) { return i.measure(id, descriptor, options); }, next.barWidth);
     ++i.contentRevision;
     if (densityChanged) {
         ++i.densityRevision;
@@ -385,7 +385,7 @@ void ChargeIndicatorScene::place(const ChargeIndicatorPlacement& p) {
     const std::array<float, 4> white{1, 1, 1, 1};
     // Capsule: the plate/shadow and body share bounds, radius, scale, opacity.
     const double bw = pose.bodyWidth, bh = pose.bodyHeight, br = std::clamp(pose.bodyRadius, 0.0, std::min(bw, bh) / 2);
-    const Matrix bodyToWorld = p.canvasToWorld * Matrix::translation(150, 42) * Matrix::scale(pose.bodyScale, pose.bodyScale) *
+    const Matrix bodyToWorld = p.canvasToWorld * Matrix::translation(pose.center.x, pose.center.y) * Matrix::scale(pose.bodyScale, pose.bodyScale) *
                                Matrix::translation(-bw / 2, -bh / 2);
     auto slices = [&](std::size_t first, const Matrix& toWorld, double w, double h, double r, const SliceSpec& spec, float alpha,
                       const std::array<float, 4>& tint) {
@@ -403,7 +403,7 @@ void ChargeIndicatorScene::place(const ChargeIndicatorPlacement& p) {
     slices(drawBase, bodyToWorld, bw, bh, br, baseSpec, base19Alpha, white);
     slices(drawBase14, bodyToWorld, bw, bh, br, bannerSpec, base14Alpha, white);
     // Ripples are body sublayers: inherit its opacity and clip to its corners.
-    const auto bodyInverse = canvasInverse ? std::optional<Matrix>(inverseAffine(150, 42, pose.bodyScale, -bw / 2, -bh / 2) * *canvasInverse)
+    const auto bodyInverse = canvasInverse ? std::optional<Matrix>(inverseAffine(pose.center.x, pose.center.y, pose.bodyScale, -bw / 2, -bh / 2) * *canvasInverse)
                                            : std::nullopt;
     const auto& rippleImage = i.textures[ripple].bounds;
     for (std::size_t n = 0; n < 3; ++n) {

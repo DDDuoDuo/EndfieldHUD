@@ -48,7 +48,7 @@ if(WIN32 AND TARGET hud_design_native AND TARGET hud_module_registry)
     string(REGEX REPLACE "^v" "" ehud_facility_version "${EHUD_APP_RELEASE}")
     target_compile_definitions(hud_facility_area PRIVATE "EHUD_FACILITY_VERSION=\"${ehud_facility_version}\"")
   endif()
-  target_link_libraries(hud_facility_area PUBLIC hud_facility hud_design_native hud_module_registry hud_utility hud_storage_files
+  target_link_libraries(hud_facility_area PUBLIC hud_facility hud_design_native hud_module_registry hud_utility hud_storage_files hud_overlay_geometry
     hud_event_log_platform hud_work_mode PRIVATE uiautomationcore oleaut32 ole32 user32)
   if(MSVC)
     target_compile_options(hud_facility_area PRIVATE /W4 /permissive- /EHsc)

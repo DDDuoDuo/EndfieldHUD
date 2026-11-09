@@ -7,6 +7,6 @@ namespace endfield::native {
 // provider binding's failure text, reported by the Volume canvas as a
 // Notice toast). "macOS could not complete the audio operation" is reused
 // with the platform name replaced by "Windows" in every language, followed
-// by the source " (code)." suffix.
+// by the source " (code)" suffix.
 VolumeProviderErrorText volumeErrorText(core::Language);
 } // namespace endfield::native

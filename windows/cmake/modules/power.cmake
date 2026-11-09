@@ -7,7 +7,9 @@
 # overlay geometry. Portable, explicit-clock state; no timer or window.
 add_library(hud_charge modules/charge_indicator.cpp modules/charge_badge.cpp modules/charge_overlay.cpp modules/power_policy.cpp)
 target_include_directories(hud_charge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_charge PUBLIC hud_battery hud_event_log hud_motion hud_localization hud_data hud_scene)
+# The bar editor places the design library's place-and-confirm strip
+# (design::PlacementEditor::frame).
+target_link_libraries(hud_charge PUBLIC hud_battery hud_event_log hud_motion hud_localization hud_data hud_scene hud_design)
 
 # Observer of the shared SystemServices battery provider plus the battery
 # class capacity pair (utility worker, one read in flight + one trailing).
@@ -33,12 +35,12 @@ if(WIN32)
   target_link_libraries(hud_charge_badge PUBLIC hud_charge_scene hud_overlay_host)
   target_compile_definitions(hud_charge_badge PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE)
   # Floating desktop charge alert window (its own small device, created for
-  # a presentation and released once ordered out; its own UI Automation root
-  # and the editor buttons' system tool tips) and the Power production owner
-  # (provider observer, alert rules, recorder, tray text).
+  # a presentation and released once ordered out; its own UI Automation root;
+  # the bar editor's place-and-confirm strip through the design scene) and the
+  # Power production owner (provider observer, alert rules, recorder, tray text).
   add_library(hud_charge_panel native/charge_indicator_panel.cpp native/charge_alert_automation.cpp)
   target_include_directories(hud_charge_panel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(hud_charge_panel PUBLIC hud_charge_scene PRIVATE user32 shcore comctl32 uiautomationcore oleaut32 ole32)
+  target_link_libraries(hud_charge_panel PUBLIC hud_charge_scene hud_design_native PRIVATE user32 shcore uiautomationcore oleaut32 ole32)
   target_compile_definitions(hud_charge_panel PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE)
   add_library(hud_power_owner tools/power_owner.cpp)
   target_include_directories(hud_power_owner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -7,12 +7,12 @@
 namespace endfield::modules {
 namespace {
 bool durable(ShortcutTaskKind k) {
-    return k==ShortcutTaskKind::save||k==ShortcutTaskKind::remove||k==ShortcutTaskKind::launch;
+    return k==ShortcutTaskKind::save||k==ShortcutTaskKind::remove||k==ShortcutTaskKind::launch||k==ShortcutTaskKind::move;
 }
 struct Apartment {
 #ifdef _WIN32
     HRESULT result{CoInitializeEx(nullptr,COINIT_MULTITHREADED)};
-    Apartment(){if(FAILED(result))throw std::runtime_error("Application inspection could not start.");}
+    Apartment(){if(FAILED(result))throw std::runtime_error("Application inspection could not start");}
     ~Apartment(){CoUninitialize();}
 #endif
 };
@@ -56,6 +56,13 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
                 repository.save(next);file=std::move(next);r.file=file;relinks(r);break;
             }
             case ShortcutTaskKind::launch:r.launched=service.launch(*t.record,t.launchOwner);break;
+            case ShortcutTaskKind::move:{
+                // AppShortcutStore.move(id:to:): one write, none for the same
+                // slot or an unknown record; a file changed on disk is refused.
+                auto next=file;
+                if(moveShortcut(next,t.record->id,t.index)){repository.save(next);file=std::move(next);}
+                r.file=file;break;
+            }
             }
         }
     };
@@ -73,7 +80,7 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
         if(!queue.submit(route,[state,task,result]{state->perform(*task,*result);},[weak,result](std::exception_ptr error){
             const auto self=weak.lock();if(!self)return;
             const bool discard=self->cancelled;self->running=0;self->cancelled=false;
-            if(error){try{std::rethrow_exception(error);}catch(const ShortcutError&e){result->error=e.what();result->code=e.code();}catch(const std::exception&e){result->error=e.what();}catch(...){result->error="Application action failed.";}}
+            if(error){try{std::rethrow_exception(error);}catch(const ShortcutError&e){result->error=e.what();result->code=e.code();}catch(const std::exception&e){result->error=e.what();}catch(...){result->error="Application action failed";}}
             if(!discard)self->completed(std::move(*result));
         }))return;
         running=task->token;runningKind=task->kind;pending.reset();
@@ -87,9 +94,9 @@ AppShortcutTasks::AppShortcutTasks(app::UtilityExecutor&q,std::filesystem::path 
 AppShortcutTasks::~AppShortcutTasks(){if(impl_)impl_->queue.invalidate(impl_->route,false);}
 bool AppShortcutTasks::submit(ShortcutTask t){
     auto&i=*impl_;if(i.pending||i.running)return false;
-    if(!t.token||t.token<=i.lastToken||t.kind<ShortcutTaskKind::load||t.kind>ShortcutTaskKind::launch)throw std::invalid_argument("Application request token must advance and kind must be valid");
+    if(!t.token||t.token<=i.lastToken||t.kind<ShortcutTaskKind::load||t.kind>ShortcutTaskKind::move)throw std::invalid_argument("Application request token must advance and kind must be valid");
     if((t.kind==ShortcutTaskKind::inspect&&!t.selection)||
-       ((t.kind==ShortcutTaskKind::edit||t.kind==ShortcutTaskKind::remove||t.kind==ShortcutTaskKind::launch)&&!t.record)||
+       ((t.kind==ShortcutTaskKind::edit||t.kind==ShortcutTaskKind::remove||t.kind==ShortcutTaskKind::launch||t.kind==ShortcutTaskKind::move)&&!t.record)||
        (t.kind==ShortcutTaskKind::save&&!t.candidate))throw std::invalid_argument("Application request lacks its explicit input");
     i.lastToken=t.token;i.pending=std::move(t);i.pump();return true;
 }

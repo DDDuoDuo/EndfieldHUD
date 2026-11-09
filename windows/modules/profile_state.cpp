@@ -51,17 +51,17 @@ template<std::size_t N>std::optional<std::array<std::int64_t,N>>dateParts(std::s
 
 std::string profileFailureMessage(ProfileFailure failure,core::Language language,std::string_view detail){
     switch(failure){
-    case ProfileFailure::name:return L("Enter a name of 1–20 characters without line breaks.","请输入 1–20 个字符的名称，不含换行。",language);
-    case ProfileFailure::tag:return L("Enter a tag of 1–10 characters without spaces or #.","请输入 1–10 个字符的编号，不含空格或 #。",language);
-    case ProfileFailure::value:return L("Enter a number within the allowed range.","请输入允许范围内的数字。",language);
-    case ProfileFailure::image:return L("Choose a readable image file.","请选择可读取的图片文件。",language);
-    case ProfileFailure::imageTooLarge:return L("Choose an image smaller than 128 MB.","请选择小于 128 MB 的图片。",language);
-    case ProfileFailure::imageDimensions:return L("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side.","请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像。",language);
-    case ProfileFailure::record:return L("The personal card could not be read. The saved data has been preserved.","无法读取个人名片，已保留原始数据。",language);
-    case ProfileFailure::newerVersion:return L("This personal card was saved by a newer version of EndfieldHUD.","此个人名片由较新版本的 EndfieldHUD 保存。",language);
-    case ProfileFailure::changedOnDisk:return L("The personal card changed in another app instance. Restart before editing.","个人名片已由另一个应用实例更改，请重启后编辑。",language);
+    case ProfileFailure::name:return L("Enter a name of 1–20 characters without line breaks","请输入 1–20 个字符的名称，不含换行",language);
+    case ProfileFailure::tag:return L("Enter a tag of 1–10 characters without spaces or #","请输入 1–10 个字符的编号，不含空格或 #",language);
+    case ProfileFailure::value:return L("Enter a number within the allowed range","请输入允许范围内的数字",language);
+    case ProfileFailure::image:return L("Choose a readable image file","请选择可读取的图片文件",language);
+    case ProfileFailure::imageTooLarge:return L("Choose an image smaller than 128 MB","请选择小于 128 MB 的图片",language);
+    case ProfileFailure::imageDimensions:return L("Choose a portrait no larger than 128 megapixels or 32,768 pixels on either side","请选择不超过 1.28 亿像素、且单边不超过 32,768 像素的头像",language);
+    case ProfileFailure::record:return L("The personal card could not be read. The saved data has been preserved","无法读取个人名片，已保留原始数据",language);
+    case ProfileFailure::newerVersion:return L("This personal card was saved by a newer version of EndfieldHUD","此个人名片由较新版本的 EndfieldHUD 保存",language);
+    case ProfileFailure::changedOnDisk:return L("The personal card changed in another app instance. Restart before editing","个人名片已由另一个应用实例更改，请重启后编辑",language);
     case ProfileFailure::persistence:return L("The personal card could not be saved: ","无法保存个人名片：",language)+std::string(detail.substr(0,1024));
-    case ProfileFailure::unavailable:return L("Profile storage is unavailable.","个人名片存储不可用。",language);
+    case ProfileFailure::unavailable:return L("Profile storage is unavailable","个人名片存储不可用",language);
     }
     return {};
 }
@@ -96,7 +96,7 @@ bool profileGeometryField(ProfileField f)noexcept{return f>=ProfileField::backgr
 bool profileNumericField(ProfileField f)noexcept{return f>=ProfileField::permissionLevel&&f<=ProfileField::archivesCount;}
 std::optional<std::size_t>profileTextLimit(ProfileField f)noexcept{
     switch(f){
-    case ProfileField::name:return 20;case ProfileField::tag:return 11;case ProfileField::playerID:return 64;case ProfileField::introduction:return 150;
+    case ProfileField::name:return ehud::data::Profile::nameLimit;case ProfileField::tag:return 11;case ProfileField::playerID:return 64;case ProfileField::introduction:return 150;
     case ProfileField::awakeningDate:case ProfileField::birthday:return 10;case ProfileField::permissionLevel:case ProfileField::explorationLevel:return 2;
     case ProfileField::operatorsCount:case ProfileField::weaponsCount:case ProfileField::archivesCount:return 5;
     default:return std::nullopt;
@@ -179,8 +179,15 @@ std::optional<double>swiftDouble(std::string_view s)noexcept{
     // an overflow is infinite (rejected later as non-finite), not nil.
     return negative?-value:value;
 }
+std::string profileCappedName(std::string_view raw,const ProfileTextRules&r){return r.prefix(r.trim(raw,true),ehud::data::Profile::nameLimit);}
+ehud::data::SystemAccount normalizedSystemAccount(ehud::data::SystemAccount a,const ProfileTextRules&r){
+    if(!r.prefix||!r.trim||!r.removeNewlines||!r.removeControl)throw std::invalid_argument("Profile Unicode rules are required");
+    if(a.name){auto clean=r.trim(profileCappedName(r.removeControl(r.removeNewlines(*a.name)),r),false);a.name=clean.empty()?std::nullopt:std::optional(std::move(clean));}
+    if(a.uid&&(a.uid->empty()||!std::all_of(a.uid->begin(),a.uid->end(),[](char c){return c>='0'&&c<='9';})))a.uid.reset();
+    return a;
+}
 bool sameProfileValues(const PersonalProfile&a,const PersonalProfile&b)noexcept{
-    return a.name==b.name&&a.tag==b.tag&&a.introduction==b.introduction&&a.uid==b.uid&&a.awakeningDate==b.awakeningDate&&a.gamePlayerID==b.gamePlayerID&&
+    return a.name==b.name&&a.autoName==b.autoName&&a.autoAvatar==b.autoAvatar&&a.tag==b.tag&&a.introduction==b.introduction&&a.uid==b.uid&&a.awakeningDate==b.awakeningDate&&a.gamePlayerID==b.gamePlayerID&&
         a.playerIDOverride==b.playerIDOverride&&a.hasManualAwakeningDate==b.hasManualAwakeningDate&&a.showsBirthday==b.showsBirthday&&a.birthdayMonth==b.birthdayMonth&&
         a.birthdayDay==b.birthdayDay&&a.permissionLevel==b.permissionLevel&&a.explorationLevel==b.explorationLevel&&a.operatorsCount==b.operatorsCount&&
         a.weaponsCount==b.weaponsCount&&a.archivesCount==b.archivesCount&&a.avatarFilename==b.avatarFilename&&a.backgroundFilename==b.backgroundFilename&&
@@ -191,7 +198,7 @@ bool sameProfileValues(const PersonalProfile&a,const PersonalProfile&b)noexcept{
 PersonalProfile normalizedProfile(PersonalProfile p,const ProfileTextRules&r){
     if(!r.characters||!r.prefix||!r.trim||!r.removeNewlines||!r.hasControl||!r.hasWhitespace||!r.uppercase)throw std::invalid_argument("Profile Unicode rules are required");
     if(p.playerIDOverride){auto v=r.prefix(r.trim(r.removeNewlines(*p.playerIDOverride),false),64);p.playerIDOverride=v.empty()?std::nullopt:std::optional(std::move(v));}
-    p.name=r.prefix(r.trim(p.name,true),20);p.tag=r.prefix(r.trim(p.tag,true),10);p.introduction=r.prefix(p.introduction,150);
+    p.name=profileCappedName(p.name,r);p.tag=r.prefix(r.trim(p.tag,true),10);p.introduction=r.prefix(p.introduction,150);
     p.permissionLevel=std::clamp(p.permissionLevel,1,60);p.explorationLevel=std::clamp(p.explorationLevel,1,7);
     p.birthdayMonth=std::clamp(p.birthdayMonth,1,12);p.birthdayDay=std::clamp(p.birthdayDay,1,maximumBirthdayDay(p.birthdayMonth));
     p.themeColorHex=p.themeColorHex?themeHex(*p.themeColorHex,r):std::nullopt;
@@ -202,7 +209,7 @@ PersonalProfile normalizedProfile(PersonalProfile p,const ProfileTextRules&r){
     return p;
 }
 void validatePersonalProfile(const PersonalProfile&p,const ProfileTextRules&r){
-    if(p.name.empty()||r.characters(p.name)>20||r.hasControl(p.name))throw ProfileError(ProfileFailure::name);
+    if(p.name.empty()||r.characters(p.name)>ehud::data::Profile::nameLimit||r.hasControl(p.name))throw ProfileError(ProfileFailure::name);
     if(p.tag.empty()||r.characters(p.tag)>10||r.hasControl(p.tag)||r.hasWhitespace(p.tag)||p.tag.find('#')!=std::string::npos)throw ProfileError(ProfileFailure::tag);
     const auto within=[](double v,double lo,double hi){return v>=lo&&v<=hi;};
     if(r.characters(p.introduction)>150||p.permissionLevel<1||p.permissionLevel>60||p.explorationLevel<1||p.explorationLevel>7||
@@ -239,7 +246,9 @@ void profileApplyGeometry(ProfileField f,double v,PersonalProfile&p)noexcept{swi
     default:break;}}
 std::string profileValue(ProfileField f,const PersonalProfile&p,const ProfileDateRules&dates){
     switch(f){
-    case ProfileField::name:return p.name;case ProfileField::tag:return p.tag;case ProfileField::playerID:return p.displayedUID();
+    // The shown name (the account's while the card follows it): the editor
+    // starts from it and an unchanged Return stores nothing.
+    case ProfileField::name:return p.displayedName();case ProfileField::tag:return p.tag;case ProfileField::playerID:return p.displayedUID();
     case ProfileField::introduction:return p.introduction;case ProfileField::awakeningDate:return dates.format(p.awakeningDate);
     case ProfileField::birthday:{char s[32]{};std::snprintf(s,sizeof s,"%02d/%02d",p.birthdayMonth,p.birthdayDay);return s;}
     case ProfileField::permissionLevel:return std::to_string(p.permissionLevel);case ProfileField::explorationLevel:return std::to_string(p.explorationLevel);
@@ -249,17 +258,19 @@ std::string profileValue(ProfileField f,const PersonalProfile&p,const ProfileDat
     }
 }
 
-ProfileState::ProfileState(PersonalProfile p,ProfileTextRules rules,ProfileDateRules dates,ProfilePersistence io)
-    :profile_(normalizedProfile(std::move(p),rules)),text_(std::move(rules)),dates_(std::move(dates)),persistence_(std::move(io)){
+ProfileState::ProfileState(PersonalProfile p,ProfileTextRules rules,ProfileDateRules dates,ProfilePersistence io,ProfileAccountSource source)
+    :profile_(normalizedProfile(std::move(p),rules)),text_(std::move(rules)),dates_(std::move(dates)),persistence_(std::move(io)),source_(std::move(source)){
     if(!dates_.noon||!dates_.format)throw std::invalid_argument("Profile Gregorian date rules are required");
     validatePersonalProfile(profile_,text_);
+    profile_.systemAccount={};
 }
+ProfileState::~ProfileState(){*alive_=false;}
 void ProfileState::notify(){
     ++revision_;
     // A copy: an observer may add or remove observers.
     const auto list=observers_;for(const auto&[id,fn]:list)if(fn)fn();
 }
-void ProfileState::adopt(PersonalProfile next){profile_=std::move(next);notify();}
+void ProfileState::adopt(PersonalProfile next){next.systemAccount.value=shownAccount();profile_=std::move(next);notify();}
 void ProfileState::setSyncLocked(ehud::data::ProfileSyncFields v){if(v==locked_)return;locked_=v;notify();}
 void ProfileState::refresh(PersonalProfile p){
     p=normalizedProfile(std::move(p),text_);validatePersonalProfile(p,text_);
@@ -284,6 +295,7 @@ bool ProfileState::commit(PersonalProfile next){
        (locked(S::counts)&&(next.operatorsCount!=p.operatorsCount||next.weaponsCount!=p.weaponsCount||next.archivesCount!=p.archivesCount)))
         throw ProfileError(ProfileFailure::value);
     if(sameProfileValues(next,profile_))return false; // UserProfileStore skips an identical record
+    next.systemAccount={}; // runtime only: the persistence never sees the account
     auto saved=persistence_.commit(next);
     saved=normalizedProfile(std::move(saved),text_);validatePersonalProfile(saved,text_);
     if(saved.uid!=profile_.uid)throw ProfileError(ProfileFailure::record);
@@ -291,7 +303,7 @@ bool ProfileState::commit(PersonalProfile next){
 }
 bool ProfileState::removeImage(ProfileImageKind kind){
     return update([&](PersonalProfile&p){
-        if(kind==ProfileImageKind::avatar){p.avatarFilename.reset();p.avatarZoom=1;p.avatarOffsetX=p.avatarOffsetY=0;}
+        if(kind==ProfileImageKind::avatar){p.avatarFilename.reset();p.avatarZoom=1;p.avatarOffsetX=p.avatarOffsetY=0;p.autoAvatar=false;}
         else{p.backgroundFilename.reset();p.backgroundWidth=600;p.backgroundZoom=p.thumbnailZoom=1;p.backgroundOffsetX=p.backgroundOffsetY=p.thumbnailOffsetX=p.thumbnailOffsetY=0;}});
 }
 bool ProfileState::imageImported(ProfileImageKind kind,std::string filename,bool preserveAvatarCrop){
@@ -302,6 +314,42 @@ bool ProfileState::imageImported(ProfileImageKind kind,std::string filename,bool
 bool ProfileState::setWorkSeconds(double seconds){
     if(!std::isfinite(seconds)||seconds<profile_.accumulatedWorkSeconds||!persistence_.commit)return false;
     try{return update([&](PersonalProfile&p){p.accumulatedWorkSeconds=seconds;});}catch(const std::exception&){return false;}
+}
+void ProfileState::refreshSystemAccount(double now,double ifOlderThan){
+    if(!source_.read||!std::isfinite(now))return;
+    if(accountReadAt_&&now-*accountReadAt_<ifOlderThan)return;
+    accountReadAt_=now;
+    // The Mac reads the name and UID again at every open the throttle lets
+    // through, even while its picture read is pending. Here they share one
+    // read off the owner thread, so an open during a read reads once more
+    // after it answers (several such opens: one more read).
+    if(readingAccount_){accountRereadWanted_=true;return;}
+    readSystemAccount();
+}
+void ProfileState::readSystemAccount(){
+    readingAccount_=true;accountRereadWanted_=false;
+    const std::weak_ptr<bool>alive=alive_;
+    source_.read([this,alive](ehud::data::SystemAccount reading){
+        const auto token=alive.lock();if(!token||!*token)return;
+        readingAccount_=false;
+        ehud::data::SystemAccount next;
+        try{next=normalizedSystemAccount(std::move(reading),text_);}catch(const std::exception&){next={};} // unreadable: the stored defaults
+        account_=next.empty()?std::nullopt:std::optional(std::move(next));
+        publishSystemAccount();
+        if(*token&&accountRereadWanted_&&!readingAccount_)readSystemAccount(); // an observer may have destroyed the state
+    });
+}
+void ProfileState::setHidesSystemAccount(bool hides){if(hides==hides_)return;hides_=hides;publishSystemAccount();}
+void ProfileState::publishSystemAccount(){
+    auto shown=shownAccount();
+    if(profile_.systemAccount.value==shown)return;
+    profile_.systemAccount.value=std::move(shown);notify();
+}
+bool ProfileState::useSystemAccount(bool name,bool playerID){
+    return update([&](PersonalProfile&p){
+        if(name){p.name=std::string(ehud::data::Profile::defaultName);p.autoName=true;}
+        if(playerID)p.playerIDOverride.reset();
+        p.avatarFilename.reset();p.avatarZoom=1;p.avatarOffsetX=p.avatarOffsetY=0;p.autoAvatar=true;});
 }
 std::uint64_t ProfileState::observe(std::function<void()>fn){const auto id=nextObserver_++;observers_.emplace_back(id,std::move(fn));return id;}
 void ProfileState::removeObserver(std::uint64_t id)noexcept{std::erase_if(observers_,[id](const auto&o){return o.first==id;});}

@@ -1,62 +1,62 @@
 {
- "authority": "4fda15a03ba50675e0b12d69a83efdb6526c19f6",
+ "authority": "79bc6651959977d3c6aa89c8faeedb155a15f20d",
  "contract": "errors: HUDCalendarError.errorDescription in Mac case order; permission: HUDCalendarController.reminderStatus. Each row is the text Mac L10n renders per language from LocalizationCatalog.",
  "errors": [
   {
    "case": "invalidData",
-   "english": "Calendar data could not be read. Your file was preserved.",
-   "japanese": "カレンダーデータを読み込めませんでした。元のファイルは保持されています。",
-   "korean": "달력 데이터를 읽을 수 없습니다. 원본 파일은 보존됩니다.",
-   "simplifiedChinese": "无法读取日历数据，原文件已保留。",
-   "traditionalChinese": "無法讀取日曆資料，原始檔案已保留。"
+   "english": "Calendar data could not be read. Your file was preserved",
+   "japanese": "カレンダーデータを読み込めませんでした。元のファイルは保持されています",
+   "korean": "달력 데이터를 읽을 수 없습니다. 원본 파일은 보존됩니다",
+   "simplifiedChinese": "无法读取日历数据，原文件已保留",
+   "traditionalChinese": "無法讀取日曆資料，原始檔案已保留"
   },
   {
    "case": "changedOnDisk",
-   "english": "Calendar changed outside this app. Restart before saving.",
-   "japanese": "カレンダーファイルが別のアプリで変更されました。保存する前に再起動してください。",
-   "korean": "다른 앱에서 달력 파일을 변경했습니다. 저장하기 전에 앱을 다시 시작하세요.",
-   "simplifiedChinese": "日历文件已被其他程序修改，请重启后再保存。",
-   "traditionalChinese": "日曆檔案已被其他程式修改，請重新啟動後再儲存。"
+   "english": "Calendar changed outside this app. Restart before saving",
+   "japanese": "カレンダーファイルが別のアプリで変更されました。保存する前に再起動してください",
+   "korean": "다른 앱에서 달력 파일을 변경했습니다. 저장하기 전에 앱을 다시 시작하세요",
+   "simplifiedChinese": "日历文件已被其他程序修改，请重启后再保存",
+   "traditionalChinese": "日曆檔案已被其他程式修改，請重新啟動後再儲存"
   },
   {
    "case": "capacity",
-   "english": "The calendar can keep up to 256 events.",
-   "japanese": "カレンダーには最大256件の予定を保存できます。",
-   "korean": "달력에는 최대 256개의 일정을 저장할 수 있습니다.",
-   "simplifiedChinese": "日历最多可保存 256 个事项。",
-   "traditionalChinese": "日曆最多可儲存 256 個事項。"
+   "english": "The calendar can keep up to 256 events",
+   "japanese": "カレンダーには最大256件の予定を保存できます",
+   "korean": "달력에는 최대 256개의 일정을 저장할 수 있습니다",
+   "simplifiedChinese": "日历最多可保存 256 个事项",
+   "traditionalChinese": "日曆最多可儲存 256 個事項"
   },
   {
    "case": "upcomingCapacity",
-   "english": "Keep up to 30 upcoming events so every reminder can be scheduled.",
-   "japanese": "すべてのリマインダーを登録できるよう、今後の予定は30件以内にしてください。",
-   "korean": "모든 알림을 예약할 수 있도록 예정된 일정은 최대 30개로 유지하세요.",
-   "simplifiedChinese": "最多保留 30 个待办日期事项，以确保每条提醒都能安排。",
-   "traditionalChinese": "最多保留 30 個待辦日期事項，以確保每條提醒都能安排。"
+   "english": "Keep up to 30 upcoming events so every reminder can be scheduled",
+   "japanese": "すべてのリマインダーを登録できるよう、今後の予定は30件以内にしてください",
+   "korean": "모든 알림을 예약할 수 있도록 예정된 일정은 최대 30개로 유지하세요",
+   "simplifiedChinese": "最多保留 30 个待办日期事项，以确保每条提醒都能安排",
+   "traditionalChinese": "最多保留 30 個待辦日期事項，以確保每條提醒都能安排"
   },
   {
    "case": "invalidDate",
-   "english": "Enter a valid date as YYYY-MM-DD.",
-   "japanese": "有効な日付をYYYY-MM-DD形式で入力してください。",
-   "korean": "올바른 날짜를 YYYY-MM-DD 형식으로 입력하세요.",
-   "simplifiedChinese": "请输入有效日期，格式为 YYYY-MM-DD。",
-   "traditionalChinese": "請輸入有效日期，格式為 YYYY-MM-DD。"
+   "english": "Enter a valid date as YYYY-MM-DD",
+   "japanese": "有効な日付をYYYY-MM-DD形式で入力してください",
+   "korean": "올바른 날짜를 YYYY-MM-DD 형식으로 입력하세요",
+   "simplifiedChinese": "请输入有效日期，格式为 YYYY-MM-DD",
+   "traditionalChinese": "請輸入有效日期，格式為 YYYY-MM-DD"
   },
   {
    "case": "missing",
-   "english": "This event is no longer available.",
-   "japanese": "この予定はもう利用できません。",
-   "korean": "이 일정은 더 이상 사용할 수 없습니다.",
-   "simplifiedChinese": "此事项已不存在。",
-   "traditionalChinese": "此事項已不存在。"
+   "english": "This event is no longer available",
+   "japanese": "この予定はもう利用できません",
+   "korean": "이 일정은 더 이상 사용할 수 없습니다",
+   "simplifiedChinese": "此事项已不存在",
+   "traditionalChinese": "此事項已不存在"
   },
   {
    "case": "notifications",
-   "english": "Reminders could not be scheduled. Try again.",
-   "japanese": "リマインダーを登録できませんでした。もう一度お試しください。",
-   "korean": "알림을 예약할 수 없습니다. 다시 시도하세요.",
-   "simplifiedChinese": "无法安排提醒，请重试。",
-   "traditionalChinese": "無法安排提醒，請重試。"
+   "english": "Reminders could not be scheduled. Try again",
+   "japanese": "リマインダーを登録できませんでした。もう一度お試しください",
+   "korean": "알림을 예약할 수 없습니다. 다시 시도하세요",
+   "simplifiedChinese": "无法安排提醒，请重试",
+   "traditionalChinese": "無法安排提醒，請重試"
   }
  ],
  "permission": {
@@ -91,8 +91,8 @@
  },
  "sourcePins": {
   "Sources/HUDCalendarController.swift": "7e68f0586e15ceb09d1e1ec1f763819cfb78cd999562017261fa9eb56e437d56",
-  "Sources/HUDCalendarStore.swift": "37335abe7c88759c99ce32cad0f796f15bf096141f48003e69bd332ff0b4ea78",
-  "Sources/LocalizationCatalog.swift": "7162d43a038a84e34cc94c6d432e659994fa087fcbcd7fb5f04c00de6ef067c3",
-  "Sources/LocalizationCatalogRedesign.swift": "6ef8779e0ef708581927ab11f44e8c122e868a5dc6e2ba76fae3647d608e5436"
+  "Sources/HUDCalendarStore.swift": "1dc43e1a653335396bab6529c112d8e496fc0c94f593b673c2791504e86f8fc7",
+  "Sources/LocalizationCatalog.swift": "d64b9da94f04d61d1e7253bb5d75d7c9e5b216762425d7398d03cf522c045b79",
+  "Sources/LocalizationCatalogRedesign.swift": "e9c05273a33b54d7e4f89a0201e619ffbb74ac844e0f83ecab2a26c406253631"
  }
 }

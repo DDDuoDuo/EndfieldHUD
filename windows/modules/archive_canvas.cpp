@@ -21,7 +21,7 @@ std::optional<std::size_t> indexOf(std::span<const ArchiveSummary> entries, std:
     return std::nullopt;
 }
 std::string failureMessage(std::exception_ptr failure) {
-    try { if (failure) std::rethrow_exception(failure); } catch (const std::exception& e) { return e.what(); } catch (...) { return "The archive could not be saved."; }
+    try { if (failure) std::rethrow_exception(failure); } catch (const std::exception& e) { return e.what(); } catch (...) { return "The archive could not be saved"; }
     return {};
 }
 // A disabled control around a static layer (HUDControl(id:env:layer:), the
@@ -434,7 +434,8 @@ ArchiveCanvas::ArchiveCanvas(d::Context& context, ArchiveState& state, ArchiveCa
     state_->lockSelected();
     posters_->decode = services_.posters;
     posters_->release = services_.releasePoster;
-    posters_->onChange = [this](const std::string& id, const std::optional<d::ImageSource>& image) { if (auto* t = tile(id)) t->setPoster(image); };
+    // A poster that arrives on a drawn tile cross-fades with its glyph (Mac 63d257a).
+    posters_->onChange = [this](const std::string& id, const std::optional<d::ImageSource>& image) { if (auto* t = tile(id)) t->setPoster(image, true); };
     openingTimer_ = timerGroup();
     soonTimer_ = timerGroup();
     if (services_.media) {
@@ -457,6 +458,8 @@ void ArchiveCanvas::show(double now) {
     if (renderedLanguage() && renderedLanguage() == env().language && (needsRefresh_ || !renderedStructure_ || structure() != *renderedStructure_)) rerender();
     Canvas::show(now);
     if (body_ && documentID_) body_->attach();
+    // The list's posters load from now, not from the end of the entrance (Mac 63d257a).
+    loadVisibleThumbnails();
 }
 void ArchiveCanvas::willEndInteraction() { if (isActive()) if (auto focus = currentFocus()) focusMemory_ = std::move(focus); }
 void ArchiveCanvas::didActivate() {
@@ -475,16 +478,22 @@ void ArchiveCanvas::didDeactivate() {
     finishOpening(false);
     unlocking_.reset();
     if (body_) body_->suspend();
-    clearMedia();
+    // The presentation stays through the leave (ArchiveCanvas.swift:183-186):
+    // the owner's hide that follows keeps the picture or frame shown for the
+    // leave and releases it 0.6 s later, and a return finds the same key.
     ++thumbnailGeneration_; metadataRequests_.clear(); posters_->clear();
     panel_ = false;
     if (services_.cancelMedia) services_.cancelMedia();
     ++mediaGeneration_;
+    // A video or audio item comes back paused, as a new presentation did; a
+    // GIF keeps the playback it had (:183-185). After the generation bump, so
+    // an import that finishes now is not received; before the owner's hide.
+    if (services_.media && presentationVideo_) services_.media->pause();
     reportEdits();
     state_->flush();
     // Leaving the module relocks a classified document; its text leaves memory with the editor.
     if (state_->selectedClassification() != ArchiveClassificationStatus::unclassified && !state_->isSelectedLocked()) {
-        discardDocument();
+        discardDocument(); clearMedia();
         state_->lockSelected();
     }
 }
@@ -723,6 +732,7 @@ void ArchiveCanvas::layoutTiles(d::Page& page, bool stagger) {
         if (kept) { ++it; continue; }
         it->second->layer().removeFromParent();
         page.remove(*it->second);
+        if (auto* more = it->second->more()) page.remove(*more);
         it = tiles_.erase(it); changed = true;
     }
     const auto entries = state_->entries();
@@ -735,8 +745,13 @@ void ArchiveCanvas::layoutTiles(d::Page& page, bool stagger) {
         auto& t = page.make<d::ArchiveTile>("doc:" + summary.id, int(number ? *number + 1 : index + 1), title, d::ArchiveTile::Extension::txt,
             std::optional<std::string>("DOC"), std::nullopt, date, tileWidth_, 96.0, false,
             summary.isClassified ? d::ArchiveTile::Style::classified : d::ArchiveTile::Style::standard);
-        t.label = (summary.isClassified ? text("Classified document", "机密文档") : title) + ", " + date;
+        t.label = documentLabel(summary);
         t.onActivate = [this, id = summary.id] { openDocument(id); };
+        auto& more = t.attachMore(t.id() + std::string(d::TileMoreButton::suffix), d::TileMoreButton::label(env(), t.label));
+        more.onActivate = [this, id = summary.id, &more] {
+            if (menuOpen()) { closeMenu(); return; }
+            openDocumentMenu(id, more.rect(root()), &more);
+        };
         if (!summary.isClassified) {
             const ArchiveJson* reference = summary.thumbnail ? &*summary.thumbnail : Posters::find(thumbnailReferences_, summary.id);
             t.setPoster(posters_->image(summary.id, reference));
@@ -744,7 +759,7 @@ void ArchiveCanvas::layoutTiles(d::Page& page, bool stagger) {
         t.layer().setOrigin({4 + double(index % 3) * (tileWidth_ + 12), 4 + double(index / 3) * pitch});
         area.content().add(t.layer());
         t.layer().setPartRoot(true);
-        page.add(t); tiles_.emplace_back(summary.id, &t); changed = true;
+        page.add(std::vector<d::Control*>{&t, &more}); tiles_.emplace_back(summary.id, &t); changed = true;
         if (stagger) page.stagger(t.layer());
     }
     if (changed && &page == &this->page()) { refreshRouter(); if (context().onInputStateChange) context().onInputStateChange(); }
@@ -775,7 +790,7 @@ void ArchiveCanvas::confirmRemoveCategory() {
     d::ConfirmRequest request;
     request.id = "removeCategory";
     request.title = text("Remove {0}?", "删除{0}？", names);
-    request.message = text("Its documents move to Uncategorized.", "其中的文档将移至未分类。");
+    request.message = text("Its documents move to Uncategorized", "其中的文档将移至未分类");
     request.confirmTitle = text("Remove", "删除");
     request.danger = true; request.icon = d::Icon::trash;
     confirm(std::move(request), [this, id] {
@@ -906,7 +921,7 @@ void ArchiveCanvas::buildEditor(d::Page& page) {
     footer.add(protect.layer()); footer.add(remove.layer());
     page.layer().add(footer);
     protect.onActivate = [this, classified, &protect] { if (classified) confirmDeclassify(); else openClassify(protect); };
-    remove.onActivate = [this] { confirmDelete(); };
+    remove.onActivate = [this] { if (const auto& selected = state_->selected()) confirmDelete(selected->id); };
     binders_.push_back([this, &protect, &remove] {
         const bool busy = state_->isClassificationBusy();
         protect.setEnabled(!busy); remove.setEnabled(!busy);
@@ -1021,16 +1036,21 @@ void ArchiveCanvas::applyFormat(const core::notes::FormatChange& change) {
     updateFormatBar();
 }
 
-// --- Header category menu (:708-722) --------------------------------------------------------------
+// --- Header category menu (:717-737) --------------------------------------------------------------
+// Uncategorized plus the categories, `current` marked (the header dropdown
+// and a gallery document's Move to…).
+std::vector<d::Menu::Item> ArchiveCanvas::categoryMenuItems(const std::optional<std::string>& current) const {
+    std::vector<d::Menu::Item> items;
+    d::Menu::Item none; none.id = "uncategorized"; none.title = text("Uncategorized", "未分类"); none.selected = !current;
+    items.push_back(std::move(none));
+    for (const auto& c : state_->categories()) { d::Menu::Item item; item.id = c.id; item.title = c.name; item.selected = c.id == current; items.push_back(std::move(item)); }
+    return items;
+}
 void ArchiveCanvas::openCategoryMenu(const d::Control& anchor) {
     const auto& selected = state_->selected();
     if (!selected) return;
     const std::string document = selected->id;
-    std::vector<d::Menu::Item> items;
-    d::Menu::Item none; none.id = "uncategorized"; none.title = text("Uncategorized", "未分类"); none.selected = !selected->categoryID;
-    items.push_back(std::move(none));
-    for (const auto& c : state_->categories()) { d::Menu::Item item; item.id = c.id; item.title = c.name; item.selected = c.id == selected->categoryID; items.push_back(std::move(item)); }
-    openMenu("moveTo", std::move(items), anchor, std::nullopt, [this, document](const d::Menu::Item& item) {
+    openMenu("moveTo", categoryMenuItems(selected->categoryID), anchor, std::nullopt, [this, document](const d::Menu::Item& item) {
         const auto& current = state_->selected();
         if (!current || current->id != document) return;
         const std::optional<std::string> target = item.id == "uncategorized" ? std::nullopt : std::optional(item.id);
@@ -1042,22 +1062,68 @@ void ArchiveCanvas::openCategoryMenu(const d::Control& anchor) {
     });
 }
 
-// --- Delete and classify (:724-847) ----------------------------------------------------------------
-void ArchiveCanvas::confirmDelete() {
+// --- Gallery document menu: a right-click or the tile's ⋯ (:739-777) -------------------------------
+// The tile's and ⋯'s label; a classified title stays hidden.
+std::string ArchiveCanvas::documentLabel(const ArchiveSummary& summary) const {
+    const auto title = summary.isClassified ? text("Classified document", "机密文档") : (summary.title.empty() ? text("Untitled", "未命名") : summary.title);
+    return title + ", " + (services_.dotted ? services_.dotted(summary.date) : std::string{});
+}
+// Open / Move to… / Delete. Move to… opens the category list at the same
+// spot; a locked or busy document can only be opened.
+void ArchiveCanvas::openDocumentMenu(const std::string& id, Rect anchorRect, const d::Control* anchor) {
+    const auto summary = std::find_if(shownDocuments_.begin(), shownDocuments_.end(), [&](const auto& s) { return s.id == id; });
+    if (summary == shownDocuments_.end()) return;
+    const bool modifiable = state_->canModify(id);
+    const std::optional<std::string> shownCategory = summary->categoryID;
+    d::Menu::Item open; open.id = "open"; open.title = text("Open", "打开");
+    d::Menu::Item move; move.id = "move"; move.title = text("Move to…", "移动到…"); move.enabled = modifiable && (!state_->categories().empty() || shownCategory);
+    d::Menu::Item remove; remove.id = "delete"; remove.title = text("Delete", "删除"); remove.danger = true; remove.separatorBefore = true; remove.enabled = modifiable;
+    openMenu("doc.menu", {open, move, remove}, anchorRect, anchor, 170.0, [this, id, anchorRect, shownCategory](const d::Menu::Item& item) {
+        if (item.id == "open") { openDocument(id); return; }
+        if (item.id != "move") { confirmDelete(id); return; }
+        const auto entries = state_->entries();
+        const auto stored = std::find_if(entries.begin(), entries.end(), [&](const auto& s) { return s.id == id; });
+        const auto current = stored != entries.end() ? stored->categoryID : shownCategory;
+        openMenu("doc.moveTo", categoryMenuItems(current), anchorRect, nullptr, 170.0, [this, id, current](const d::Menu::Item& pick) {
+            const std::optional<std::string> target = pick.id == "uncategorized" ? std::nullopt : std::optional(pick.id);
+            if (target == current) return;
+            state_->moveEntry(id, target, services_.foundationNow(), ownerTime(), [this, target, alive = posters_->alive](bool moved) {
+                if (!*alive || !moved) return;
+                toast(d::Icon::folder, "Moved", "已移动", categoryName(target));
+            });
+            stateChanged();
+        });
+    });
+}
+
+// --- Delete and classify (:779-902) ----------------------------------------------------------------
+// The open document's Delete returns to the gallery; a gallery document's
+// (its menu) stays on it.
+void ArchiveCanvas::confirmDelete(const std::string& id) {
     const auto& selected = state_->selected();
-    if (!selected) return;
-    const std::string id = selected->id;
+    std::optional<std::string> title;
+    if (selected && selected->id == id) title = selected->title;
+    else for (const auto& s : state_->entries()) if (s.id == id) { title = s.title; break; }
+    if (!title) return;
     d::ConfirmRequest request;
     request.id = "deleteDocument";
     request.title = text("Delete this document?", "删除此文档？");
-    request.message = selected->title.empty() ? text("Untitled", "未命名") : selected->title;
+    request.message = title->empty() ? text("Untitled", "未命名") : *title;
     request.confirmTitle = text("Delete", "删除");
     request.danger = true; request.icon = d::Icon::trash;
     confirm(std::move(request), [this, id] {
-        if (!state_->selected() || state_->selected()->id != id) return;
-        edited_ = false;
-        holding([&] { state_->deleteSelected(); stateChanged(); });
-        navigate(-1);
+        const auto listed = [&] { const auto e = state_->entries(); return std::any_of(e.begin(), e.end(), [&](const auto& s) { return s.id == id; }); };
+        if (renderedStructure_ && renderedStructure_->page.kind == PageKind::list) {
+            if (!listed()) return;
+            state_->deleteEntry(id);
+            stateChanged();
+            if (listed()) return;
+        } else {
+            if (!state_->selected() || state_->selected()->id != id) return;
+            edited_ = false;
+            holding([&] { state_->deleteSelected(); stateChanged(); });
+            navigate(-1);
+        }
         toast(d::Icon::trash, "Document deleted", "文档已删除");
     });
 }
@@ -1066,7 +1132,7 @@ void ArchiveCanvas::confirmDeclassify() {
     d::ConfirmRequest request;
     request.id = "declassify";
     request.title = text("Remove classification?", "取消机密？");
-    request.message = text("The password is deleted and the text stays readable.", "密码将被删除，文本保持可读。");
+    request.message = text("The password is deleted and the text stays readable", "密码将被删除，文本保持可读");
     request.confirmTitle = text("Declassify", "取消机密");
     request.icon = d::Icon::unlock;
     confirm(std::move(request), [this] {
@@ -1341,7 +1407,7 @@ void ArchiveCanvas::recover(const std::string& id, std::optional<std::string> pa
 void ArchiveCanvas::openMediaMenu(const d::Control& anchor) {
     const auto& selected = state_->selected();
     if (!selected || selected->media.size() >= maximumMedia) {
-        toast(d::Icon::warn, "Media not added", "未添加媒体", text("A document holds up to 16 items.", "每个文档最多 16 项。"));
+        toast(d::Icon::warn, "Media not added", "未添加媒体", text("A document holds up to 16 items", "每个文档最多 16 项"));
         return;
     }
     const auto choices = services_.shelfChoices ? services_.shelfChoices() : std::vector<NotesShelfChoice>{};
@@ -1403,7 +1469,7 @@ bool ArchiveCanvas::receiveMedia(const ArchiveMediaRequest& request, std::vector
         const auto path = references.front()["windowsPath"].isString() ? references.front()["windowsPath"].string() : std::string{};
         entry.media[request.index] = std::move(references.front());
         const auto id = entry.id;
-        // Record first (saved at once), then the Mac import relink ledger row.
+        // Record first (saved at once), then the relink ledger row.
         if (state_->update(std::move(entry), services_.foundationNow(), ownerTime()) && !path.empty()) { edited_ = true; (void)state_->mediaRelinked(id, std::move(mac), path); }
         presentationKey_.reset();
         stateChanged();
@@ -1485,10 +1551,12 @@ void ArchiveCanvas::syncMedia(const ArchiveEntry& entry) {
     const auto key = entry.id + ":" + std::to_string(index) + ":" + reference.encode(1 << 20);
     if (presentationKey_ == key) return;
     presentationKey_ = key;
+    presentationVideo_ = reference["kind"] == ArchiveJson("video");
     services_.media->show(entry.id, index, reference);
 }
 void ArchiveCanvas::clearMedia() {
     presentationKey_.reset();
+    presentationVideo_ = false;
     if (services_.media) services_.media->clear();
 }
 // Loading reports from show(): coalesced outside the build (:1118-1127).
@@ -1562,9 +1630,9 @@ bool ArchiveCanvas::handleKey(const d::KeyInput& key) {
     return true;
 }
 
-// --- Accessibility (:1213-1231) ----------------------------------------------------------------------
+// --- Accessibility (:1279-1305) ----------------------------------------------------------------------
 // Documents scrolled out of the grid have no tile; the screen reader still
-// lists them (at the grid's frame) and can open them.
+// lists them and their ⋯ (at the grid's frame) and can open them or their menu.
 void ArchiveCanvas::accessibilityItems(std::vector<d::AccessibilityItem>& out) const {
     const auto before = out.size();
     Canvas::accessibilityItems(out);
@@ -1572,18 +1640,39 @@ void ArchiveCanvas::accessibilityItems(std::vector<d::AccessibilityItem>& out) c
     const auto frame = d::convert(d::localBounds(gridArea_->layer()), gridArea_->layer(), root());
     for (const auto& summary : shownDocuments_) {
         if (tile(summary.id)) continue;
-        const auto date = services_.dotted ? services_.dotted(summary.date) : std::string{};
-        const auto title = summary.isClassified ? text("Classified document", "机密文档") : (summary.title.empty() ? text("Untitled", "未命名") : summary.title);
         d::AccessibilityItem item;
-        item.id = "doc:" + summary.id; item.label = title + ", " + date; item.role = d::AccessibilityRole::button; item.rect = frame;
-        out.push_back(std::move(item));
+        item.id = "doc:" + summary.id; item.label = documentLabel(summary); item.role = d::AccessibilityRole::button; item.rect = frame;
+        d::AccessibilityItem more = item;
+        more.id += d::TileMoreButton::suffix; more.label = d::TileMoreButton::label(env(), item.label);
+        out.push_back(std::move(item)); out.push_back(std::move(more));
     }
 }
 bool ArchiveCanvas::accessibilityAction(std::string_view id) {
+    const auto tileID = d::TileMoreButton::tileID(id);
+    if (!tileID.starts_with("doc:")) return false;
+    const std::string document(tileID.substr(4));
+    if (tile(document) || std::none_of(shownDocuments_.begin(), shownDocuments_.end(), [&](const auto& s) { return s.id == document; })) return false;
+    if (tileID == id) openDocument(document);
+    else if (menuOpen()) closeMenu();
+    else if (gridArea_) {
+        // At the grid's top-left, like a right-click's point, so the menu
+        // (and Move to…) opens inside the box below the header (7f8ed37).
+        const auto grid = d::convert(d::localBounds(gridArea_->layer()), gridArea_->layer(), root());
+        openDocumentMenu(document, Rect{grid.x, grid.y, 1, 1}, nullptr);
+    }
+    return true;
+}
+// A right-click on a gallery document (or its ⋯) opens its menu at the point (:1316-1325).
+bool ArchiveCanvas::handleRightPointerDown(Point point) {
+    if (!renderedStructure_ || renderedStructure_->page.kind != PageKind::list || transitioning()) return false;
+    const auto* hit = control(point);
+    if (!hit) return false;
+    const auto id = d::TileMoreButton::tileID(hit->id());
     if (!id.starts_with("doc:")) return false;
     const std::string document(id.substr(4));
-    if (tile(document) || std::none_of(shownDocuments_.begin(), shownDocuments_.end(), [&](const auto& s) { return s.id == document; })) return false;
-    openDocument(document);
+    if (std::none_of(shownDocuments_.begin(), shownDocuments_.end(), [&](const auto& s) { return s.id == document; })) return false;
+    if (rename_) endEditing(true);
+    openDocumentMenu(document, Rect{point.x, point.y, 1, 1}, nullptr);
     return true;
 }
 // UIA Value on the body (Windows: the v1.2.0 field peers' SetValue): the
@@ -1597,8 +1686,10 @@ bool ArchiveCanvas::accessibilityText(std::string_view id, std::string_view valu
 }
 
 // --- Gallery thumbnails (:1233-1254) -------------------------------------------------------------
+// From the module's showing until it leaves (ArchiveCanvas.swift:1329: not
+// gated on activation since 63d257a).
 void ArchiveCanvas::loadVisibleThumbnails() {
-    if (!isActive() || !renderedStructure_ || renderedStructure_->page.kind != PageKind::list) { posters_->setWanted({}); return; }
+    if (leaving_ || !renderedLanguage() || !renderedStructure_ || renderedStructure_->page.kind != PageKind::list) { posters_->setWanted({}); return; }
     std::vector<const ArchiveSummary*> visible;
     for (const auto& s : shownDocuments_) if (tile(s.id) && !s.isClassified && s.mediaCount > 0 && visible.size() < Posters::wantedLimit) visible.push_back(&s);
     std::erase_if(thumbnailReferences_, [&](const auto& r) { return std::none_of(visible.begin(), visible.end(), [&](const auto* s) { return s->id == r.first; }); });
@@ -1636,11 +1727,11 @@ std::string archiveErrorText(std::string_view message, core::Language language) 
     // unreadable archive "The archive ..." where the Mac says "This archive ...".
     struct Pair { std::string_view windows, english, chinese; };
     static constexpr std::array<Pair, 5> pairs{{
-        {"The archive could not be read. The original was preserved.", "This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。"},
-        {"This archive could not be read. The original was preserved.", "This archive could not be read. The original was preserved.", "无法读取档案，原始数据已保留。"},
-        {"The archive could not be saved.", "The archive could not be saved.", "无法保存档案。"},
-        {"This archive needs a newer app version.", "This archive needs a newer app version.", "此档案需要更新版本的应用。"},
-        {"The archive is full.", "The archive is full.", "档案库已满。"}}};
+        {"The archive could not be read. The original was preserved", "This archive could not be read. The original was preserved", "无法读取档案，原始数据已保留"},
+        {"This archive could not be read. The original was preserved", "This archive could not be read. The original was preserved", "无法读取档案，原始数据已保留"},
+        {"The archive could not be saved", "The archive could not be saved", "无法保存档案"},
+        {"This archive needs a newer app version", "This archive needs a newer app version", "此档案需要更新版本的应用"},
+        {"The archive is full", "The archive is full", "档案库已满"}}};
     for (const auto& p : pairs) if (message == p.windows) return core::localized(p.english, p.chinese, language);
     for (const auto code : {ArchiveClassificationErrorCode::passwordMissing, ArchiveClassificationErrorCode::vaultUnavailable})
         if (message == archiveClassificationErrorText(code, core::Language::english)) return archiveClassificationErrorText(code, language);

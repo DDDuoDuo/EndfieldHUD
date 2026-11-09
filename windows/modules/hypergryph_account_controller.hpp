@@ -14,7 +14,9 @@
 namespace endfield::modules::hypergryph {
 struct AccountPresentation {
     enum class RegionChoice {china,global};
-    enum class HeaderMode {workMode,endfield,arknights,hidden};
+    // Hiding the gauge is Display > HUD elements > Show Sanity (1.3.1); a
+    // cache that still says hiddenHeader (the cache codec) reads as endfield.
+    enum class HeaderMode {workMode,endfield,arknights};
     enum class Status {disconnected,connecting,connected,refreshing,failed};
     struct RoleRow {std::string id,title,subtitle;bool operator==(const RoleRow&) const=default;};
     RegionChoice region{RegionChoice::china};
@@ -162,7 +164,7 @@ public:
     // controller started): recorded as known, never treated as an edit.
     void profileAvatarBaseline(const std::optional<std::string>& filename);
     // An asynchronous cache file reports a failed write (Mac: the synchronous
-    // write's "Profile cache could not be saved." status).
+    // write's "Profile cache could not be saved" status).
     void cacheWriteFailed();
 
     AccountPresentation presentation() const;
@@ -172,6 +174,12 @@ public:
     Region region() const noexcept;
     const RegionRecord& record() const;
     AccountPresentation::HeaderMode headerMode() const noexcept;
+    // Display > HUD elements > Show Sanity (HypergryphAccountController.
+    // showsHeaderGauge): off, the gauge presents nothing, no header role is
+    // fetched and only the open Account module refreshes; turning it on
+    // resets the refresh deadline and ticks at once.
+    bool showsHeaderGauge() const noexcept;
+    void setShowsHeaderGauge(bool);
     bool gameSyncActive() const;
     // Mac syncFields / gameSyncedFields: the card fields an enabled Endfield
     // sync writes, and those it owns right now (the card editor locks them).

@@ -15,9 +15,9 @@ template<class F>m::MediaAssemblyError failure(F&&f){try{f();}catch(const m::Med
 void errors(){
     for(auto l:{c::Language::english,c::Language::simplifiedChinese,c::Language::traditionalChinese,c::Language::japanese,c::Language::korean})
         for(int e=0;e<=int(m::MediaAssemblyError::sourceUnavailable);++e)check(!m::mediaAssemblyErrorMessage(m::MediaAssemblyError(e),l).empty(),"Every source error is localized");
-    check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::english)=="The original changed. Open it again before exporting.","Original wording");
-    check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::english)=="The original media file is unavailable. Choose it again to restore access."&&
-          m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::simplifiedChinese)=="原始媒体文件不可用，请重新选择以恢复访问。","A missing original uses the source NotesMediaError.unavailable wording");
+    check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::english)=="The original changed. Open it again before exporting","Original wording");
+    check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::english)=="The original media file is unavailable. Choose it again to restore access"&&
+          m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::simplifiedChinese)=="原始媒体文件不可用，请重新选择以恢复访问","A missing original uses the source NotesMediaError.unavailable wording");
     check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::japanese)!=m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::english),"Catalog languages resolve");
     const auto windows=m::mediaAssemblyErrorMessage(m::MediaAssemblyError::unsupportedExport,c::Language::english);
     check(windows.find("Mac")==std::string::npos&&windows.find("MOV")==std::string::npos&&windows.find("MP4")!=std::string::npos,"Export capability message names this platform and its real formats");

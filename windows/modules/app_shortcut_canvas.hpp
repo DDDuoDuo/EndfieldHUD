@@ -5,8 +5,10 @@
 // app_shortcut_presentation, app_shortcut_motion, app_shortcut_trace,
 // native/app_shortcut_scene, native/app_shortcut_automation,
 // native/app_shortcut_field_text, tools/app_shortcut_preview): no edit page any
-// more. The screen lists the saved shortcuts (56 px rows: the icon tile that
-// opens the preset grid, the inline name field, Open and Remove); Add App,
+// more. The screen lists the saved shortcuts (56 px rows: the grip that
+// reorders them by a drag and opens the item menu on a press, the icon tile
+// with its chooser caret that opens the preset grid, the inline name field,
+// Open and Remove; the list order is the right-hand order); Add App,
 // a dropped application or Ctrl+V adds one at once with its own name and the
 // App icon preset; Remove asks through the shared confirm bar.
 //
@@ -15,6 +17,11 @@
 // asks its owner (Services::request) and the owner reports the committed
 // file (requestFinished): the same toasts, reloads and notices follow then.
 // Windows adaptations (recorded in the port report):
+//  - A reorder (a grip drop, Move up / Move down) is one move request; the
+//    dropped row has already settled when the owner answers, and the page is
+//    re-rendered once it has landed. While any move is unanswered no other
+//    row lifts and Move up / Move down are disabled (the Mac's write is
+//    synchronous, so its order is never stale).
 //  - Applications are Windows targets (.exe / .lnk, or a packaged application
 //    "shell:AppsFolder\<AUMID>" from the chooser); the owner says which paths
 //    are applications (Services::isApplication) and inspects them.
@@ -34,10 +41,12 @@ struct AppShortcutRequest {
     enum class Kind : std::uint8_t {
         add,    // importURLs: inspect `path`, save it with its own name and the App icon preset (`id`: relink that record)
         save,   // rename / Choose icon: reinspect record `id`, save `name` and `icon`
-        remove  // the confirmed Remove of record `id`
+        remove, // the confirmed Remove of record `id`
+        move    // record `id` to slot `index` (clamped): a grip drag or Move up / Move down
     };
     Kind kind{Kind::add};
     std::string path, id, name, icon;
+    std::ptrdiff_t index{};
     bool operator==(const AppShortcutRequest&) const = default;
 };
 struct AppShortcutCanvasServices {
@@ -61,12 +70,16 @@ struct AppShortcutCanvasServices {
 
 class AppShortcutCanvas final : public design::Canvas {
 public:
-    static constexpr double rowHeight = 56;
+    static constexpr double rowHeight = 56, pitch = rowHeight + design::metric::rowGap;
     static constexpr std::size_t nameLimit = 24;
     AppShortcutCanvas(design::Context&, const AppShortcutArtwork&, AppShortcutCanvasServices);
     ~AppShortcutCanvas() override;
-    std::function<void(const ShortcutRecord&)> onSaved;   // the shell list re-binds
+    // The shell list re-binds. In the app the owner's committed-list notice
+    // re-binds the right-hand list after every save, removal and move (the
+    // same path for all three); these mirror the Mac canvas's callbacks.
+    std::function<void(const ShortcutRecord&)> onSaved;
     std::function<void(const std::string& name)> onRemoved;
+    std::function<void()> onReordered;    // the order changed (a grip drag or Move up / Move down)
 
     // The store: its committed file once loaded, or its failure (the Mac's
     // AppShortcutCanvas(store: nil, error:)): Add App disabled, every
@@ -99,13 +112,23 @@ public:
     // or relink survives (the committed records stay).
     void resetSession() override;
     // A published icon changed (the owner extracted, released or replaced
-    // one): the rows re-render in place.
+    // one): each row's tile takes its artwork in place (no rebuild).
     void iconsChanged();
+
+    // Verification (the Mac's ...ForTesting): a row's grip and icon tile, a
+    // whole grip drag of `id` to `slot`, and whether a row is lifted.
+    design::DragGrip* rowGrip(std::string_view id) const;
+    design::Control* iconTile(std::string_view id) const;
+    void dragRow(const std::string& id, int slot);
+    bool reordering() const noexcept { return reorder_.has_value(); }
 
     void buildPage(design::Page&) override;
     void didActivate() override;
     void didDeactivate() override;
-    void willLeave() override { closeChooser(); }
+    void willLeave() override { cancelReorder(); closeChooser(); }
+    // The open hand over a grip only while active with more than one item and
+    // the chooser closed; the closed hand while a row is lifted.
+    std::optional<design::Cursor> cursor(std::optional<design::Point>) const override;
     bool handleKey(const design::KeyInput&) override;
     bool presentingPanel() const override { return chooser_; }
     bool inputLocked() const override { return Canvas::inputLocked() || chooser_ || dropTarget_; }
@@ -118,10 +141,25 @@ private:
     std::vector<AppShortcutRequest> pending_;
     std::optional<std::string> relink_;     // the imported record the open chooser relinks
     bool chooser_{}, dropTarget_{}, revealsEnd_{}, built_{};
+    std::vector<std::function<void()>> binders_; // each row's tile artwork (iconsChanged)
+    std::vector<std::pair<std::string, design::RowPlate*>> rows_;   // list order
+    std::vector<std::pair<std::string, design::Control*>> tiles_;
+    std::vector<design::DragGrip*> grips_;
+    design::ScrollArea* list_{};
+    std::optional<design::ListReorder> reorder_;
+    std::optional<AppShortcutRequest> landing_;  // a dropped order the owner has not answered
+    design::Deadlines::Token timers_{};
     design::Menu::IconTile artwork(std::string_view preset, const ShortcutRecord&) const;
     design::Color originalColor(const ShortcutRecord&) const;
     design::RowPlate& makeRow(const ShortcutRecord&, double width, design::Page&);
     void openIconMenu(const ShortcutRecord&, const design::Control& anchor);
+    void openItemMenu(const std::string& id, const design::Control* anchor);
+    void moveRow(const std::string& id, std::ptrdiff_t index);
+    void dragRow(const std::string& id, design::DragGrip::Phase, design::Point rootPoint);
+    void cancelReorder();
+    design::ListReorder::Rows reorderRows() const;
+    std::vector<std::string> itemIDs() const;
+    bool moving() const;
     void rename(const std::string& id, const std::string& text, design::TextField&);
     void save(const std::string& id, std::string name, std::string preset);
     void confirmRemove(const ShortcutRecord&);

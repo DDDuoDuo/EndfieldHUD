@@ -316,7 +316,7 @@ void lifecycle() {
     d::Context context(measurer, d::asciiUppercase);
     context.update(d::geometry::baseUnit, 2 / d::geometry::baseUnit, 1);
     m::MapState state;
-    m::MapCanvas canvas(context, state, std::string("The saved map could not be read. The original data has been preserved."));
+    m::MapCanvas canvas(context, state, std::string("The saved map could not be read. The original data has been preserved"));
     int prepared{}, released{};
     canvas.onPrepare = [&] { ++prepared; };
     canvas.onRelease = [&] { ++released; };
@@ -325,7 +325,7 @@ void lifecycle() {
     canvas.setActive(true, 1);
     check(prepared == 2 && state.active(), "Activation prepares again and activates the surface (pins may pulse)");
     const auto& toast = context.overlay().toastState().current();
-    check(toast && toast->title == "Notice" && toast->caption == "The saved map could not be read. The original data has been preserved.", "The store error is a notice once");
+    check(toast && toast->title == "Notice" && toast->caption == "The saved map could not be read. The original data has been preserved", "The store error is a notice once");
     context.overlay().clearToast();
     canvas.setActive(false, 2); canvas.setActive(true, 2);
     check(!context.overlay().toastState().current() && released == 1, "Not again on a later activation; deactivation releases the working set");

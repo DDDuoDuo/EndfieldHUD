@@ -6,13 +6,17 @@
 // directories only; no real profile is read.
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace ehud::data;
 namespace fs = std::filesystem;
@@ -176,6 +180,72 @@ void edges() {
     check(!normalizedEditableProfile(blank).playerIDOverride, "A blank override becomes nil");
 }
 
+// Issue #17's saved flags and the runtime account (Mac UserProfile
+// autoName / autoAvatar / systemAccount): absent keys take the Mac defaults,
+// loading writes nothing, both flags are always written, and the account is
+// never written nor compared.
+void accountFlags131() {
+    const auto flags = [](const Json& record) {
+        Temporary root; writeProfile(root.path, record);
+        const auto before = detail::readFile(root.path / "Profile" / "profile.json", 1024 * 1024);
+        const ProfileStore store(root.path);
+        check(detail::readFile(store.path(), 1024 * 1024) == before, "Loading a record writes nothing back");
+        return std::pair{store.value().autoName, store.value().autoAvatar};
+    };
+    auto record = baseline();
+    check(flags(record) == std::pair{true, true}, "A 1.3.0 card with the default name follows the account");
+    record["name"] = "Endmin";
+    check(flags(record) == std::pair{false, true}, "A 1.3.0 card with a typed name keeps it; its picture still follows");
+    record["name"] = " Endministrator ";
+    check(flags(record) == std::pair{false, true}, "The default-name rule reads the name as stored, before trimming");
+    record = baseline(); record["autoName"] = false; record["autoAvatar"] = false;
+    check(flags(record) == std::pair{false, false}, "Saved flags are kept (also those an earlier Import from Mac wrote)");
+    record["autoName"] = nullptr; record["autoAvatar"] = nullptr;
+    check(flags(record) == std::pair{true, true}, "An explicit null means the Mac decodeIfPresent default");
+    record["autoName"] = "yes";
+    {
+        Temporary root; writeProfile(root.path, record);
+        rejects([&] { ProfileStore store(root.path); }, "A non-Boolean flag is invalid, as Bool decoding is on the Mac");
+    }
+
+    Temporary root; writeProfile(root.path, baseline());
+    ProfileStore store(root.path);
+    auto value = store.value();
+    value.systemAccount.value = SystemAccount{"Ada Lovelace", "1001", "system-1"};
+    check(value == store.value() && !store.update(value), "The runtime account is left out of equality: nothing to save");
+    value.introduction = "Edited";
+    check(store.update(value), "An edit saves");
+    const auto bytes = *detail::readFile(store.path(), 1024 * 1024);
+    const auto saved = Json::parse(bytes)["profile"];
+    check(saved["autoName"].isBool() && saved["autoName"].boolean() && saved["autoAvatar"].isBool() && saved["autoAvatar"].boolean(),
+          "Both flags are always written, defaults included");
+    check(bytes.find("Ada Lovelace") == std::string::npos && bytes.find("1001") == std::string::npos && bytes.find("system-1") == std::string::npos
+          && !saved.contains("systemAccount"), "The account is never written");
+    check(!ProfileStore(root.path).value().systemAccount.value, "A reload has no account");
+
+    // Shown values: chosen or synced, then the account, then the stored defaults.
+    Profile p = store.value();
+    p.systemAccount.value = SystemAccount{"Ada Lovelace", "1001", "system-1"};
+    check(p.followsSystemName() && p.displayedName() == "Ada Lovelace" && p.displayedUID() == "1001" && p.avatarKey() == std::optional<std::string>("system-1"),
+          "The default card shows the account's name, UID and picture");
+    p.gamePlayerID = "778899";
+    check(p.displayedUID() == "778899", "A game UID wins over the account's");
+    p.playerIDOverride = "42";
+    check(p.displayedUID() == "42", "The Player ID override wins over both");
+    p.autoName = false;
+    check(!p.followsSystemName() && p.displayedName() == "Endministrator", "A chosen default name is kept");
+    p.autoName = true; p.name = "Kal'tsit";
+    check(!p.followsSystemName() && p.displayedName() == "Kal'tsit", "Any other stored name wins");
+    p.autoAvatar = false;
+    check(!p.avatarKey(), "Restored default picture: the drawn portrait");
+    p.autoAvatar = true; p.avatarFilename = "00000000-0000-4000-8000-000000000001.image";
+    check(p.avatarKey() == p.avatarFilename, "A chosen picture wins");
+    Profile none = store.value();
+    check(none.displayedName() == "Endministrator" && none.displayedUID() == none.uid && !none.avatarKey(), "Without an account: the stored defaults");
+    none.systemAccount.value = SystemAccount{std::nullopt, std::nullopt, std::nullopt};
+    check(none.displayedName() == "Endministrator" && none.displayedUID() == none.uid, "An empty reading keeps the stored defaults");
+}
+
 // Settings record schema for the Windows battery-alert additions (no Mac
 // oracle). displayMode and alertMetric are open string choices: "never"
 // (Don't display) and "gpu" persist and reload verbatim, as does another
@@ -309,6 +379,33 @@ void settingsVersion130() {
         value.setModuleLayout(ModuleLayout{});
         check(!value.fields.contains("hudModuleOrder") && !value.fields.contains("hudHiddenModules"), "The default layout leaves no keys behind");
     }
+    // Display > Modules > Arrange on HUD (HUDModuleLayout.arranging(_:over:)).
+    {
+        check(ModuleLayout::listsTarget("") && ModuleLayout::listsTarget("addApp") && ModuleLayout::listsTarget("map") &&
+              !ModuleLayout::listsTarget("system") && !ModuleLayout::listsTarget("storage") && !ModuleLayout::listsTarget("clock"),
+              "The right-hand list's tiles: modules, saved apps and Add App");
+        ModuleLayout layout;
+        const auto overModule = layout.arranging("map", std::string_view("fileShelf"));
+        check(overModule && overModule->order[1] == "map" && overModule->order[2] == "fileShelf" && overModule->order.size() == 17,
+              "Over another module the dragged module takes its place");
+        const auto down = layout.arranging("notes", std::string_view("archive"));
+        check(down && down->order[2] == "archive" && down->order[3] == "notes", "Dragged down it lands where the target was");
+        const auto overApp = layout.arranging("notes", std::string_view(""));
+        check(overApp && overApp->order.back() == "notes" && overApp->hidden.empty(), "Over a saved app it goes after the last visible module");
+        const auto overAdd = layout.arranging("map", std::string_view("addApp"));
+        check(overAdd && overAdd->order.back() == "map", "Over Add App it goes after the last visible module");
+        check(!layout.arranging("power", std::string_view("addApp")) && !layout.arranging("power", std::string_view("")),
+              "The last visible module over an app or Add App changes nothing");
+        check(!layout.arranging("map", std::nullopt) && !layout.arranging("map", std::string_view("map")) &&
+              !layout.arranging("map", std::string_view("system")) && !layout.arranging("addApp", std::string_view("map")) &&
+              !layout.arranging("clock", std::string_view("map")), "Nothing under the pointer, itself, a fixed module or no module: no change");
+        layout.setHidden("power", true);layout.setHidden("archive", true);
+        const auto pastHidden = layout.arranging("notes", std::string_view("addApp"));
+        check(pastHidden && pastHidden->order[15] == "notes" && pastHidden->order[16] == "power" && pastHidden->hidden == std::vector<std::string>{"archive", "power"},
+              "After the last visible module, ahead of a hidden one; the hidden set is unchanged");
+        check(!layout.arranging("archive", std::string_view("map")) && !layout.arranging("map", std::string_view("archive")),
+              "Hidden modules never move or act as targets");
+    }
     // Daily boot log: consumed once per local day; Restore Defaults keeps the day.
     {
         Settings value = Settings::defaults();
@@ -316,9 +413,9 @@ void settingsVersion130() {
               value.dailyBootLogLastDay() == std::optional<std::string>("2026-10-23"), "The boot log plays on the first open of each day");
         value.set("orbipom.bestScore.v1", std::int64_t{42});value.set("storageVolume", "C:");value.set("recordingMode", true);
         value.setProjection({0x22A6F2, 30, true, false});
-        const auto restored = Settings::restoredDefaults(value);
+        const auto restored = value.restoring(Settings::Scope::system).restoring(Settings::Scope::display);
         check(restored.dailyBootLogLastDay() == value.dailyBootLogLastDay() && restored.orbipomBestScore() == 42 && restored.string("storageVolume") == "C:" &&
-              restored.projection() == value.projection() && !restored.recordingMode(), "Restore Defaults resets AppConfiguration and keeps the keys outside it");
+              restored.projection() == value.projection() && !restored.recordingMode(), "System and Display Restores reset AppConfiguration and keep the keys outside it");
     }
     // Battery alert method: false shows as Don't display; any choice turns alerts back on.
     {
@@ -350,6 +447,364 @@ void settingsVersion130() {
         check(reloaded.value() == next && reloaded.value().moduleLayout() == next.moduleLayout(), "Every 1.3.0 key reloads unchanged");
     }
 }
+// Mac 1.3.1 settings keys (Sources/Models.swift, HUDOverlayLayout.swift,
+// HUDApplicationIcon.swift at 2c047e0). Hand-written records; the typed
+// accessors read a missing or wrong-typed value as its default and only a save
+// rewrites what the Mac's next save rewrites.
+Json settingsFile(const fs::path& root) { return Json::parse(*detail::readFile(root / "settings.json", 1024 * 1024)); }
+// A stand-in for String(prefix(n)) counting UTF-8 scalars (the owner passes
+// the ICU grapheme rule; these strings have one scalar per Character).
+std::string scalarPrefix(std::string_view text, std::size_t count) {
+    std::size_t end = 0;
+    for (std::size_t seen = 0; end < text.size() && seen < count; ++seen)
+        do ++end; while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80);
+    return std::string(text.substr(0, end));
+}
+// HUDSettingsScope and AppConfiguration.restoring / the controllers' isDefault
+// (Mac Tests/SettingsTests.swift's scoped Restore and Mirror checks).
+void restoreScopes131() {
+    using S = Settings::Scope;
+    // Every saved key belongs to exactly one of System, Display (HUD elements
+    // inside it) or no Restore. The record is a JSON bag, so there is no
+    // struct to count (the Mac Mirror check): the keys come from the code
+    // instead. defaults() gives the keys always written, and every typed
+    // setter is run with a value that writes its key, so a new default key or
+    // a setter's new key fails here. Keys the Windows owners write by name
+    // through set() alone are the only ones listed by hand.
+    const auto defaults = Settings::defaults();
+    Settings written = defaults;
+    written.setChargeBarLength(.5);
+    OverlayLayout placed;placed.showsSanity = false;placed.openModule = "map";written.setOverlayLayout(placed);
+    auto hiddenModules = written.moduleLayout();hiddenModules.move(hiddenModules.order[0], 1);hiddenModules.setHidden("archive", true);written.setModuleLayout(hiddenModules);
+    written.setProjection({0x22A6F2, 30, true, false});
+    written.consumeDailyBootLog("2026-11-07");
+    written.setBatteryAlertMethod("always");
+    for (const auto key : {"windowsDisplayID", "windowsDisplayName", "windowsSummonShortcut", "storageVolume", "orbipom.bestScore.v1"}) written.set(key, "set by name");
+    const auto listed = [](std::string_view key) { return std::count_if(scopedSettings.begin(), scopedSettings.end(), [&](const ScopedSetting& s) { return s.key == key; }); };
+    for (const auto& [key, value] : written.fields.object()) check(listed(key) == 1, "Every written key is in exactly one scope row: " + key);
+    check(scopedSettings.size() == written.fields.object().size(),
+          "Every scope row is a key defaults(), a typed setter or a by-name Windows owner writes (no stale rows)");
+    for (const auto scope : {S::system, S::display, S::hudElements}) check(defaults.isDefault(scope) && defaults.restoring(scope) == defaults, "The defaults are at the defaults in every scope");
+
+    // Everything changed (Mac "everything"), plus the Windows-only keys.
+    Settings everything = defaults;
+    for (const auto& [key, value] : std::vector<std::pair<std::string, Json>>{{"displayMode", "never"}, {"displayDuration", 9}, {"accentHex", "6EDFE8"},
+             {"theme", "light"}, {"scale", 1.2}, {"placement", "custom"}, {"customScreenID", 5}, {"customPositionX", .2}, {"customPositionY", .3},
+             {"language", "english"}, {"hudScale", 1.5}, {"hudOffsetX", .1}, {"hudOffsetY", .1}, {"parallaxIntensity", .5}, {"perspectiveIntensity", .5},
+             {"backgroundDarkness", .2}, {"blurAmount", .1}, {"reduceMotion", true}, {"ambientAnimation", false}, {"closeOnFocusLost", false},
+             {"openOnActiveDisplay", false}, {"hudDisplayUUID", makeUUID()}, {"hudDisplayName", "Fixture"}, {"launchAtLogin", false},
+             {"batteryAlertsEnabled", false}, {"lowPowerVisualMode", true}, {"applicationIcon", "babel"}, {"clockFormat", "twelveHour"},
+             {"clockStyle", "dial"}, {"centerLogo", "custom"}, {"centerLogoRevision", makeUUID()}, {"alertMetric", "gpu"}, {"recordingMode", true},
+             {"dailyBootLog", false}, {"facilityAlerts", false}, {"showsCloseHint", false}, {"summonShortcut", Json::Object{{"keyCode", 12}, {"modifiers", 3}}},
+             {"summonHotkeyEnabled", false}, {"devicePopupEnabled", false}, {"windowsDisplayID", "DISPLAY-B"}, {"windowsDisplayName", "Studio"},
+             {"windowsSummonShortcut", Json::Object{{"virtualKey", 0x77}, {"modifiers", 3}}}, {"storageVolume", "D:"}, {"orbipom.bestScore.v1", 71},
+             {"dailyBootLogLastDay", "2026-11-07"}, {"futurePrivatePreference", 42}})
+        everything.set(key, value);
+    everything.setChargeBarLength(.7);everything.setProjection({0x22A6F2, 30, true, false});
+    auto modules = everything.moduleLayout();modules.move(modules.order[0], 1);everything.setModuleLayout(modules);
+    auto overlay = everything.overlayLayout();overlay.showsSanity = false;overlay.openModule = "hotkeys";overlay.title = {30, 4, 1.2};everything.setOverlayLayout(overlay);
+    for (const auto scope : {S::system, S::display, S::hudElements}) check(!everything.isDefault(scope), "Each scope reports settings to restore");
+    // Restoring a scope never touches a key outside it.
+    for (const auto scope : {S::system, S::display, S::hudElements}) {
+        const auto restored = everything.restoring(scope);
+        for (const auto& [key, owner] : scopedSettings) {
+            const bool inside = owner && (*owner == scope || (scope == S::display && *owner == S::hudElements));
+            if (!inside) check(restored.fields[key] == std::as_const(everything.fields)[key], "A Restore keeps every key outside its scope: " + std::string(key));
+        }
+        check(restored.isDefault(scope) && restored.fields["futurePrivatePreference"] == Json(42), "A restored scope is at its defaults; an unknown key is kept");
+    }
+    auto keptOnly = defaults;
+    for (const auto key : {"summonShortcut", "summonHotkeyEnabled", "devicePopupEnabled", "windowsSummonShortcut", "storageVolume", "projection.settings.v1",
+                           "orbipom.bestScore.v1", "dailyBootLogLastDay", "futurePrivatePreference"}) keptOnly.set(key, std::as_const(everything.fields)[key]);
+    check(everything.restoring(S::system).restoring(S::display) == keptOnly,
+          "System and Display together restore every setting except the hotkey, the device popup and the keys outside AppConfiguration");
+    const auto system = everything.restoring(S::system), display = everything.restoring(S::display), elements = everything.restoring(S::hudElements);
+    check(system.string("language") == "system" && system.fields["windowsDisplayID"].isNull() && !system.fields.contains("windowsDisplayName") &&
+          system.fields["hudDisplayUUID"].isNull() && system.moduleLayout() == everything.moduleLayout() && system.string("theme") == "light",
+          "System resets the System page and the Windows display, and keeps Modules and Display");
+    OverlayLayout openOnKept;openOnKept.openModule = "hotkeys";
+    check(elements.overlayLayout() == openOnKept && elements.facilityAlerts() && elements.moduleLayout() == everything.moduleLayout() &&
+          elements.string("theme") == "light" && elements.chargeBarLength() == std::optional(.7) && !elements.showsCloseHint() &&
+          elements.restoring(S::display) == display, "HUD elements keeps Open on, Modules and the rest of Display; it is part of Display");
+    check(!display.fields.contains("hudOverlayLayout") && !display.fields.contains("chargeBarLength") && display.moduleLayout().isDefault() &&
+          !display.fields.contains("hudModuleOrder") && display.applicationIcon() == "endfield" && display.showsCloseHint() && display.facilityAlerts() &&
+          display.string("language") == "english" && display.string("windowsDisplayID") == "DISPLAY-B" &&
+          display.fields["customScreenID"].isNull(), "Display resets Open on, Modules, HUD elements, the bar, the icon and the close hint; System stays");
+    auto onlyOpenOn = defaults;OverlayLayout chosen;chosen.openModule = "map";onlyOpenOn.setOverlayLayout(chosen);
+    check(onlyOpenOn.isDefault(S::hudElements) && !onlyOpenOn.isDefault(S::display), "Open on alone is a Display change, not a HUD elements change");
+
+    // isDefault compares typed values, never JSON tokens.
+    Temporary root;
+    const auto bytes = std::string(R"({"version":1,"settings":{"hudScale":1.0,"backgroundDarkness":0.630,"blurAmount":7.5e-1,"displayDuration":3.00,)"
+                                   R"("customPositionX":5E-1,"scale":1.0,"accentHex":"fad41f","applicationIcon":"endfield","language":"system",)"
+                                   R"("hudModuleOrder":["notes","fileShelf","clipboard","archive","mediaAssembly","minigame","nowPlaying","volume",)"
+                                   R"("projection","reader","workMode","calendar","map","eventLog","profile","account","power"],"hudHiddenModules":[],)"
+                                   R"("hudOverlayLayout":{"title":{"x":0.0,"y":-0,"size":1.00},"titleText":"  ","openModule":"addApp"}}})");
+    std::ofstream(root.path / "settings.json", std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    {
+        const SettingsStore store(root.path);
+        check(store.value().fields["hudScale"] != defaults.fields["hudScale"] && store.value().fields["backgroundDarkness"] != defaults.fields["backgroundDarkness"],
+              "The saved tokens differ from the default tokens");
+        check(store.value().isDefault(S::display) && store.value().isDefault(S::system) && store.value().isDefault(S::hudElements),
+              "Numbers saved as 1.0, 0.630 or 7.5e-1, a lower-case accent, empty module lists and a default layout are at the defaults");
+    }
+    Settings battery = defaults;battery.set("applicationIcon", "battery");
+    check(!battery.isDefault(S::display), "The watch read from \"battery\" is not the default icon");
+    battery.set("applicationIcon", "watch");Settings saved = defaults;saved.set("applicationIcon", "battery");
+    check(battery.restoring(S::display) == defaults && saved.restoring(S::display).string("applicationIcon") == "endfield", "Display restores the Endfield icon");
+    Settings length = defaults;length.set("chargeBarLength", -2);
+    check(length.isDefault(S::display), "An unusable length reads as nil, which is the default");
+    // Values the readers show as the defaults compare as the defaults, as the
+    // Mac decoders and AppConfiguration.normalized read them.
+    Settings shown = defaults;
+    for (const auto& [key, value] : std::vector<std::pair<std::string, Json>>{{"clockStyle", "futureStyle"}, {"centerLogo", "futureLogo"},
+             {"alertMetric", "futureMetric"}, {"displayMode", "futureMode"}, {"accentHex", "fad41f"}, {"centerLogoRevision", "not a revision"},
+             {"showsCloseHint", "on"}})
+        shown.set(key, value);
+    check(shown.isDefault(S::display), "Unknown choices read as the defaults, as do an invalid revision and a non-Boolean close hint");
+    shown.set("clockStyle", "dial");check(!shown.isDefault(S::display), "A known choice that is not the default is a change");
+    shown = defaults;shown.set("centerLogoRevision", "0f9e8d7c-6b5a-4938-a7b6-c5d4e3f2a1b0");
+    check(!shown.isDefault(S::display), "A valid revision is a change");
+    Settings monitor = defaults;monitor.set("hudDisplayUUID", "not a display");monitor.set("hudDisplayName", "Studio");
+    check(monitor.isDefault(S::system), "An invalid display UUID is nil, and its name with it");
+    monitor.set("hudDisplayUUID", "0f9e8d7c-6b5a-4938-a7b6-c5d4e3f2a1b0");
+    check(!monitor.isDefault(S::system), "A valid display UUID is a change");
+    monitor.set("hudDisplayUUID", nullptr);monitor.set("hudDisplayName", nullptr);check(monitor.isDefault(S::system), "No display is the default");
+}
+// HUDOverlayLayout: Stored decoding, normalization, the default removal.
+void overlayLayout131(const std::function<void(const Json&)>& writeSettings, const fs::path& root) {
+    using L = OverlayLayout;
+    check(ModuleLayout::openable.size() == 23 && ModuleLayout::openable[0] == "system" && ModuleLayout::openable[5] == "activityMonitor" &&
+          ModuleLayout::openable[6] == "notes" && ModuleLayout::openable.back() == "power" && !ModuleLayout::isOpenable("addApp") &&
+          ModuleLayout::isModule("addApp") && ModuleLayout::isOpenable("hotkeys") && !ModuleLayout::isModule("clock"),
+          "Openable modules: the fixed six, then the configurable list; Add App is a module but never openable");
+    const L defaults;
+    check(Settings::defaults().overlayLayout() == defaults && defaults.isDefault() && !Settings::defaults().fields.contains("hudOverlayLayout") &&
+          defaults.shownTitle() == "ENDFIELDHUD" && defaults.shownSubtitle() == "SYSTEM INTERFACE" && !defaults.openModule &&
+          defaults.title == L::Placement{0, 0, 1} && defaults.showsTitle && defaults.showsSanity, "The layout's defaults; no key");
+    // cleanText: one line, trimmed, at most 24 Characters.
+    check(L::cleanText("  Rhodes \n\n\t Island  \r\n") == "Rhodes Island" && L::cleanText(" \n \u3000") == "" &&
+          L::cleanText("a\xE2\x80\xA8" "b\xC2\x85" "c") == "a b c" && L::cleanText("\xC2\xA0x\xC2\xA0") == "x",
+          "Lines split on Swift newlines, trimmed of Swift whitespace, joined by one space");
+    check(L::cleanText("ABCDEFGHIJKLMNOPQRSTUVWXYZ", scalarPrefix) == "ABCDEFGHIJKLMNOPQRSTUVWX" &&
+          L::cleanText("ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "ABCDEFGHIJKLMNOPQRSTUVWXYZ" &&
+          L::cleanText("\xE7\xBB\x88\xE6\x9C\xAB\xE5\x9C\xB0\n\xE5\x9C\xB0", [](std::string_view t, std::size_t n) { return scalarPrefix(t, n == 24 ? 2 : n); }) == "\xE7\xBB\x88\xE6\x9C\xAB",
+          "The 24-Character cut goes through the owner's prefix rule");
+    // Decoding mirrors JSONDecoder: missing and null read as defaults.
+    Settings value = Settings::defaults();
+    const auto read = [&](const Json& stored) { value.set("hudOverlayLayout", stored); return value.overlayLayout(scalarPrefix); };
+    auto expected = defaults;expected.title = {12, -8, 1};expected.sanity = {0, 0, 1.5};expected.showsSanity = false;expected.titleText = "Talos II";expected.openModule = "hotkeys";
+    check(read(Json::Object{{"title", Json::Object{{"x", 12}, {"y", -8}}}, {"sanity", Json::Object{{"size", 1.5}, {"x", nullptr}}}, {"alerts", nullptr},
+                             {"showsSanity", false}, {"showsTitle", nullptr}, {"titleText", " Talos II "}, {"openModule", "hotkeys"}, {"future", 7}}) == expected,
+          "Missing and null fields read as defaults; unknown members are ignored; text is cleaned");
+    check(read(Json::Object{{"title", Json::Object{{"x", 5000}, {"y", -4000}, {"size", .1}}}, {"alerts", Json::Object{{"size", 9}}}}).title == L::Placement{1000, -1000, .5} &&
+          value.overlayLayout().alerts.size == 2, "Offsets clamp to 1000 and sizes to 0.5...2");
+    check(!read(Json::Object{{"openModule", "addApp"}}).openModule && !read(Json::Object{{"openModule", "teleporter"}}).openModule &&
+          read(Json::Object{{"openModule", "activityMonitor"}}).openModule == std::optional<std::string>("activityMonitor"),
+          "Open on keeps an openable module; Add App and unknown names read as Last opened");
+    for (const auto& bad : {Json(Json::Object{{"showsTitle", 1}}), Json(Json::Object{{"title", Json::Object{{"x", "4"}}}}), Json(Json::Object{{"sanity", 2}}),
+                            Json(Json::Object{{"titleText", Json::Array{}}}), Json(Json::Object{{"openModule", 3}}), Json("layout"), Json(Json::Array{})}) {
+        auto mixed = bad;if (mixed.isObject()) mixed["showsSanity"] = false;
+        check(read(mixed) == defaults, "A wrong-typed field drops the whole layout to the defaults");
+    }
+    // Writing: normalized; removed while it holds the defaults.
+    auto layout = defaults;layout.alerts = {-20, 30, 3};layout.subtitleText = "\n  RHODES  ";layout.openModule = "addApp";
+    value.setOverlayLayout(layout);
+    check(value.fields["hudOverlayLayout"] == Json(Json::Object{{"title", Json::Object{{"x", 0}, {"y", 0}, {"size", 1}}}, {"sanity", Json::Object{{"x", 0}, {"y", 0}, {"size", 1}}},
+              {"alerts", Json::Object{{"x", -20}, {"y", 30}, {"size", 2}}}, {"showsTitle", true}, {"showsSanity", true}, {"titleText", ""}, {"subtitleText", "RHODES"}}),
+          "Every field is written normalized, except a nil Open on");
+    layout.openModule = "map";value.setOverlayLayout(layout);
+    check(value.fields["hudOverlayLayout"]["openModule"] == Json("map"), "Open on is written when chosen");
+    auto blank = defaults;blank.titleText = " \n ";blank.title.size = std::nan("");
+    value.setOverlayLayout(blank);
+    check(!value.fields.contains("hudOverlayLayout"), "A layout that normalizes to the defaults leaves no key");
+    // A wrong-typed layout leaves the rest of settings.json loading; the
+    // next save removes it (the Mac saves the defaults it read).
+    writeSettings(Json::Object{{"theme", "light"}, {"hudOverlayLayout", Json::Object{{"showsSanity", "off"}}}});
+    {
+        SettingsStore store(root);
+        check(store.value().string("theme") == "light" && store.value().overlayLayout() == defaults &&
+              settingsFile(root)["settings"]["hudOverlayLayout"]["showsSanity"] == Json("off"), "A bad layout reads as the defaults and loads the record unchanged");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && !settingsFile(root)["settings"].contains("hudOverlayLayout") && !store.value().fields.contains("hudOverlayLayout"),
+              "The next save removes the unusable layout");
+        next = store.value();auto placed = defaults;placed.sanity = {40, 10, 1.25};placed.showsTitle = false;next.setOverlayLayout(placed);
+        check(store.update(next) && SettingsStore(root).value().overlayLayout() == placed, "A layout round-trips through the store");
+    }
+    // The store's Character rule cuts the text on every save, as the Mac
+    // HUDOverlayLayout.save stores cleanText's 24 Characters.
+    const std::string longTitle = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
+    writeSettings(Json::Object{{"hudOverlayLayout", Json::Object{{"titleText", longTitle}, {"subtitleText", " Rhodes \n Island "}}}});
+    {
+        SettingsStore store(root, scalarPrefix);
+        check(settingsFile(root)["settings"]["hudOverlayLayout"]["titleText"] == Json(longTitle), "Loading a long title writes nothing");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root)["settings"]["hudOverlayLayout"]["titleText"] == Json("ABCDEFGHIJKLMNOPQRSTUVWX") &&
+              settingsFile(root)["settings"]["hudOverlayLayout"]["subtitleText"] == Json("Rhodes Island") &&
+              store.value().overlayLayout().titleText == "ABCDEFGHIJKLMNOPQRSTUVWX", "The next save stores the title cut to 24 Characters");
+    }
+}
+void settingsVersion131() {
+    Temporary root;
+    const auto writeSettings = [&](const Json& settings) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", settings}}).encode();
+        std::ofstream file(root.path / "settings.json", std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        check(bool(file), "Write the synthetic settings record");
+    };
+    // chargeBarLength: absent is the classic bar; finite > 0 reads min(1, v).
+    {
+        const auto defaults = Settings::defaults();
+        check(!defaults.fields.contains("chargeBarLength") && !defaults.chargeBarLength() && defaults.showsCloseHint() &&
+              defaults.fields["showsCloseHint"] == Json(true), "Defaults: the classic bar (no key) and the close hint on");
+        Settings value = defaults;
+        const auto read = [&](const Json& stored) { value.set("chargeBarLength", stored); return value.chargeBarLength(); };
+        check(read(.5) == std::optional(.5) && read(1) == std::optional(1.) && read(7.25) == std::optional(1.) && !read(0) && !read(-.2) &&
+              !read("0.5") && !read(true) && !read(nullptr), "A length reads min(1, v) when finite and above 0, otherwise nil");
+        value.setChargeBarLength(.4);check(value.fields["chargeBarLength"] == Json(.4), "A length is written when set");
+        value.setChargeBarLength(3);check(value.fields["chargeBarLength"] == Json(1), "A length is written normalized");
+        for (const double bad : {0., -1., std::nan(""), std::numeric_limits<double>::infinity()}) {
+            value.setChargeBarLength(.4);value.setChargeBarLength(bad);
+            check(!value.fields.contains("chargeBarLength"), "A length that is not finite and above 0 removes the key");
+        }
+        value.setChargeBarLength(.4);value.setChargeBarLength(std::nullopt);
+        check(!value.fields.contains("chargeBarLength"), "nil removes the key");
+        value.set("showsCloseHint", false);check(!value.showsCloseHint(), "The close hint switches off");
+        value.fields.erase("showsCloseHint");check(value.showsCloseHint(), "A missing close hint reads as on");
+    }
+    // A 1.3.0 record (no 1.3.1 keys) reads the defaults; a bad length loads
+    // unchanged and the next save of any setting stores it normalized.
+    writeSettings(Json::Object{{"theme", "light"}, {"chargeBarLength", 4}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().showsCloseHint() && store.value().chargeBarLength() == std::optional(1.) &&
+              settingsFile(root.path)["settings"]["chargeBarLength"] == Json(4), "Loading reads the length as 1 and writes nothing");
+        check(!store.update(store.value()), "An update that changes nothing writes nothing");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root.path)["settings"]["chargeBarLength"] == Json(1) &&
+              store.value().fields["chargeBarLength"] == Json(1), "The next save stores the length normalized");
+    }
+    writeSettings(Json::Object{{"chargeBarLength", "wide"}, {"showsCloseHint", false}});
+    {
+        SettingsStore store(root.path);
+        check(!store.value().chargeBarLength() && !store.value().showsCloseHint() && settingsFile(root.path)["settings"]["chargeBarLength"] == Json("wide"),
+              "A wrong-typed length reads as the classic bar and the rest of the record loads");
+        auto next = store.value();next.set("theme", "light");
+        check(store.update(next) && !settingsFile(root.path)["settings"].contains("chargeBarLength") && !settingsFile(root.path)["settings"]["showsCloseHint"].boolean(),
+              "The next save removes the unusable length and keeps the close hint off");
+    }
+    // A non-Boolean close hint reads as on and the record loads (its typed
+    // reader handles it; validateSettings does not reject 1.3.1 keys). The
+    // next save stores the Boolean read.
+    writeSettings(Json::Object{{"showsCloseHint", "no"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().showsCloseHint() && store.value().string("theme") == "light" && settingsFile(root.path)["settings"]["showsCloseHint"] == Json("no"),
+              "A non-Boolean close hint reads as on, the record loads and nothing is written");
+        check(!store.update(store.value()), "An update that changes nothing keeps the saved value");
+        auto next = store.value();next.set("recordingMode", true);
+        check(store.update(next) && settingsFile(root.path)["settings"]["showsCloseHint"] == Json(true) && store.value().fields["showsCloseHint"] == Json(true),
+              "The next save stores the close hint as on");
+    }
+    overlayLayout131(writeSettings, root.path);
+    // applicationIcon: a saved "battery" reads as the watch, loads unchanged
+    // and is stored as "watch" by the next save of any key.
+    {
+        Settings value = Settings::defaults();
+        check(value.applicationIcon() == "endfield", "The default app icon");
+        value.set("applicationIcon", "battery");check(value.applicationIcon() == "watch", "The retired battery icon reads as the watch");
+        value.set("applicationIcon", "babel");check(value.applicationIcon() == "babel", "Other icons read as saved");
+        value.fields.erase("applicationIcon");check(value.applicationIcon() == "endfield", "A missing icon reads as Endfield");
+    }
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        check(store.value().applicationIcon() == "watch" && store.value().string("applicationIcon") == "battery" &&
+              settingsFile(root.path)["settings"]["applicationIcon"] == Json("battery"), "Loading reads the watch and rewrites nothing");
+        check(!store.update(store.value()), "An update that changes nothing keeps \"battery\" on disk");
+        auto next = store.value();next.set("closeOnFocusLost", false);
+        check(store.update(next) && settingsFile(root.path)["settings"]["applicationIcon"] == Json("watch") && store.value().string("applicationIcon") == "watch",
+              "The next update of any key stores \"watch\" in the file and in the store's value");
+        const SettingsStore reloaded(root.path);
+        check(reloaded.value().string("applicationIcon") == "watch" && !reloaded.value().boolean("closeOnFocusLost"), "The watch reloads");
+    }
+    // hudLastOpenedModule and hudOverlaySanityMigrated live beside the record
+    // (like hasLaunched): saving them changes no setting.
+    writeSettings(Json::Object{{"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        const auto record = store.value();
+        check(store.lastOpenedModule() == "map" && !store.sanityMigrated(), "The first open shows Map; the migration has not run");
+        check(store.saveLastOpenedModule("calendar") && !store.saveLastOpenedModule("calendar") && store.lastOpenedModule() == "calendar" &&
+              store.value() == record, "The last module is written only when it changes, beside the record");
+        check(store.saveLastOpenedModule("addApp") && store.saveLastOpenedModule("hotkeys"), "Any module can be the last one");
+        rejects([&] { store.saveLastOpenedModule("teleporter"); }, "A name that is not a module is refused");
+        check(store.markSanityMigrated() && !store.markSanityMigrated() && store.sanityMigrated() && store.value() == record, "The migration flag is set once");
+        const auto file = settingsFile(root.path);
+        check(file["hudLastOpenedModule"] == Json("hotkeys") && file["hudOverlaySanityMigrated"] == Json(true) && !file["settings"].contains("hudLastOpenedModule") &&
+              !file["settings"].contains("hudOverlaySanityMigrated") && file["settings"]["theme"] == Json("light"), "Both keys sit in the envelope, outside the record");
+        auto next = store.value();next.set("theme", "dark");check(store.update(next), "A settings save");
+        const SettingsStore reloaded(root.path);
+        check(reloaded.lastOpenedModule() == "hotkeys" && reloaded.sanityMigrated() && reloaded.value().string("theme") == "dark", "A settings save keeps both keys");
+    }
+    // Saving one of them sets only that key (the Mac sets one defaults key):
+    // the stored record is written back as stored, never through the save
+    // transforms (no watch for "battery", no layout cut, no hotkey mirror,
+    // no defaults added). The next ordinary save still applies them.
+    {
+        const auto longText = std::string(30, 'A');
+        const Json record = Json::Object{{"applicationIcon", "battery"}, {"windowsSummonHotkeyDisabled", false}, {"hudScale", Json::parse("1.0")},
+            {"hudOverlayLayout", Json::Object{{"titleText", longText}}}};
+        writeSettings(record);
+        SettingsStore store(root.path, scalarPrefix);
+        check(store.saveLastOpenedModule("calendar") && store.markSanityMigrated() && store.markLaunched(), "Three keys beside the record");
+        const auto file = settingsFile(root.path);
+        check(file["settings"] == record && file["hudLastOpenedModule"] == Json("calendar") && file["hudOverlaySanityMigrated"] == Json(true) &&
+              file["hasLaunched"] == Json(true), "Closing the HUD leaves the stored record exactly as it was");
+        auto next = store.value();next.set("closeOnFocusLost", false);check(store.update(next), "An ordinary save");
+        const auto saved = settingsFile(root.path);
+        check(saved["settings"]["applicationIcon"] == Json("watch") && saved["hudLastOpenedModule"] == Json("calendar") && saved["hasLaunched"] == Json(true),
+              "The next ordinary save stores the watch and keeps the keys beside it");
+    }
+    {   // No file yet: the first key beside the record writes the record as a first save does.
+        Temporary fresh;
+        SettingsStore store(fresh.path);
+        check(store.saveLastOpenedModule("notes") && settingsFile(fresh.path)["settings"].isObject() && SettingsStore(fresh.path).lastOpenedModule() == "notes",
+              "A first last-module save creates a loadable record");
+    }
+    for (const auto& stored : {Json("teleporter"), Json(4), Json(nullptr)}) {
+        const auto bytes = Json(Json::Object{{"version", 1}, {"settings", Json::Object{}}, {"hudLastOpenedModule", stored}, {"hudOverlaySanityMigrated", "yes"}}).encode();
+        std::ofstream(root.path / "settings.json", std::ios::binary | std::ios::trunc).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        SettingsStore store(root.path);
+        check(store.lastOpenedModule() == "map" && store.sanityMigrated() && store.saveLastOpenedModule("map"), "An unknown last module reads as Map and saving Map replaces it; any migration value counts");
+    }
+    // ConfigurationStore.migrateHiddenSanity: once, the flag first; a hidden
+    // 1.3.0 header turns Show Sanity off through an ordinary update (which
+    // also stores the watch for a saved battery icon).
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        int asked{};
+        check(store.migrateHiddenSanity([&] { ++asked; return true; }) && asked == 1 && store.sanityMigrated() && !store.value().overlayLayout().showsSanity,
+              "A hidden header turns Show Sanity off once");
+        const auto file = settingsFile(root.path);
+        check(file["hudOverlaySanityMigrated"] == Json(true) && file["settings"]["hudOverlayLayout"]["showsSanity"] == Json(false) &&
+              file["settings"]["applicationIcon"] == Json("watch") && file["settings"]["theme"] == Json("light"), "The migration saves like any update");
+        check(!store.migrateHiddenSanity([&] { ++asked; return true; }) && asked == 1, "The migration never runs twice");
+        const SettingsStore reloaded(root.path);
+        check(!reloaded.value().overlayLayout().showsSanity && reloaded.sanityMigrated(), "Show Sanity stays off after a restart");
+    }
+    writeSettings(Json::Object{{"applicationIcon", "battery"}, {"theme", "light"}});
+    {
+        SettingsStore store(root.path);
+        const auto record = store.value();
+        check(!store.migrateHiddenSanity([] { return false; }) && store.sanityMigrated() && store.value() == record &&
+              settingsFile(root.path)["settings"]["applicationIcon"] == Json("battery"), "A shown header only sets the flag; the record is not saved");
+        auto next = store.value();auto layout = next.overlayLayout();layout.showsSanity = false;next.setOverlayLayout(layout);check(store.update(next), "Hide the gauge later");
+        check(!store.migrateHiddenSanity([] { return true; }), "A later launch never migrates again");
+    }
+    restoreScopes131();
+}
 }
 
 int main(int argc, char** argv) {
@@ -357,8 +812,10 @@ int main(int argc, char** argv) {
         if (argc != 2) throw std::runtime_error("Usage: data_store_tests profile-state-source.json");
         oracle(argv[1]);
         edges();
+        accountFlags131();
         settingsSchema();
         settingsVersion130();
+        settingsVersion131();
         std::cout << checks << " profile store normalization checks passed; temporary roots only\n";
         return 0;
     } catch (const std::exception& e) {

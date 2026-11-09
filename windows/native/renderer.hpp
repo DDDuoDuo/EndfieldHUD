@@ -86,6 +86,10 @@ struct PlaneMask {
     // Circular source corner radius in the mask's own logical coordinates.
     // Zero preserves the exact rectangle path; no per-frame mask texture.
     double cornerRadius{};
+    // Clips the OUTSIDE of the bounds instead: the content shows only where
+    // the point is not inside them (Arrange on HUD: the raised tile's outline
+    // cut out of its neighbours' captions, icons and marks). Rectangle only.
+    bool exclude{};
     bool operator==(const PlaneMask&)const=default;
 };
 // The two original mask topologies share a fixed-size retained value. A

@@ -11,7 +11,6 @@ using d::Point;
 using d::Rect;
 namespace {
 bool contains(Rect r, Point p) noexcept { return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height; }
-void removeMotion(d::Layer& layer) { layer.removeAllMotion(); for (auto* child : layer.children()) removeMotion(*child); }
 // Hatch-L (spec section 1.6) as one vector path: 1 px stripes 3.5 px apart at -45 degrees (:277-288).
 d::PathBuilder hatch(d::Size size) {
     d::PathBuilder path;
@@ -354,10 +353,38 @@ std::optional<std::string> NowPlayingCanvas::identity() const {
 // the owner asks every frame it draws).
 std::array<NowPlayingCanvas::CoverView, 2> NowPlayingCanvas::coverViews(double now) const noexcept {
     std::array<CoverView, 2> out{};
-    if (!art_[0]) return out;
-    if (covers_[0] && now < fadeEnd_) out[0] = {art_[0], covers_[0]};
-    if (covers_[1]) out[1] = {art_[1], covers_[1]};
+    const auto& art = leavingCover_ ? leavingCover_->art : art_;
+    const auto& covers = leavingCover_ ? leavingCover_->covers : covers_;
+    const double fadeEnd = leavingCover_ ? leavingCover_->fadeEnd : fadeEnd_;
+    if (!art[0]) return out;
+    const auto view = [&](std::size_t n) {
+        const auto& c = covers[n];
+        return CoverView{art[n], c.image, c.backdrop, coverFrame(c.width, c.height, bool(c.backdrop), env().text.boxScale)};
+    };
+    if (covers[0].image && now < fadeEnd) out[0] = view(0);
+    if (covers[1].image) out[1] = view(1);
     return out;
+}
+// The leaving page's cover stays until that page left the tree (a swap
+// landed, a concealed settle landed or was dropped): every such path installs.
+void NowPlayingCanvas::didInstall(d::Page&) {
+    if (leavingCover_ && !leavingCover_->plate->isDescendant(root())) leavingCover_.reset();
+}
+Rect NowPlayingCanvas::coverFrame(unsigned width, unsigned height, bool backdrop, double boxScale) noexcept {
+    const double side = Layout::cover.width;
+    if (!width || !height) return {0, 0, side, side};
+    double w, h;
+    if (!backdrop) {
+        // resizeAspectFill: the image covers the slot, centred.
+        const double scale = std::max(side / width, side / height);
+        w = width * scale; h = height * scale;
+    } else {
+        const double scale = std::isfinite(boxScale) && boxScale > 0 ? boxScale : 1;
+        w = width / scale; h = height / scale;
+        const double fit = std::min({1., side / w, side / h});
+        w *= fit; h *= fit;
+    }
+    return {(side - w) / 2, (side - h) / 2, w, h};
 }
 
 // --- Presentation (:114-167) -------------------------------------------------------------
@@ -369,14 +396,19 @@ void NowPlayingCanvas::setPresented(bool value, double now) {
         if (services_.setPresented) services_.setPresented(true);
         refresh(now);
     } else {
-        stopClock(); closeVolume(); if (seek_) seek_->cancelDrag();
-        // Nothing keeps running on the hidden page (bar runs, lyric slides, fades).
-        if (renderedLanguage()) removeMotion(page().layer());
+        // The volume pop-up stays drawn to leave with the page.
+        stopClock(); closeVolume(true); if (seek_) seek_->cancelDrag();
+        // Nothing keeps running on the hidden page (bar runs, lyric slides,
+        // fades); a finite entrance finishes under the module's leave, and a
+        // track change's page swap in flight finishes leaving (finiteKeys,
+        // :144-148: the entrance and exit keys and the cover cross-fade,
+        // which motion::crossFade plays in the entrance's fade slot).
+        if (renderedLanguage()) d::motion::removeMotion(page().layer(), {finiteKeys, false});
         if (services_.setPresented) services_.setPresented(false);
     }
 }
 void NowPlayingCanvas::renderScaleChanged() { closeVolume(); Canvas::renderScaleChanged(); }
-void NowPlayingCanvas::closePopups() { Canvas::closePopups(); closeVolume(); }
+void NowPlayingCanvas::closePopups() { Canvas::closePopups(); closeVolume(keepsClosingPopupsDrawn()); }
 void NowPlayingCanvas::refresh(double now) {
     env().now = std::max(env().now, now);
     if (!presented_) return;
@@ -402,7 +434,13 @@ double NowPlayingCanvas::takeDirection() {
 // --- Page (:169-288) -------------------------------------------------------------------------
 void NowPlayingCanvas::buildPage(d::Page& page) {
     renderedStructure_ = structure();
-    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverPixelSize(Layout::cover.width, env().text.boxScale));
+    // The Mac decodes at its unquantised render scale; Windows names the
+    // slot at the quantised boxScale for the layout and half a density step
+    // more for decoding a cover that is not small (nowPlayingCoverSlot).
+    if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverSlot(Layout::cover.width, env().text.boxScale));
+    // A swap's next page: the shown page keeps its cover until it left (a
+    // rebuild of that next page keeps the one recorded first).
+    if (buildingStagedPage() && cover_ && !leavingCover_ && cover_->isDescendant(root())) leavingCover_ = LeavingCover{cover_, art_, covers_, fadeEnd_};
     volumeOpen_ = false; volumeGesture_.reset(); displayed_.reset(); covers_ = {}; lyricsVisible_ = false; art_ = {};
     parts_.clear();
     const auto& track = input().track;
@@ -557,28 +595,36 @@ void NowPlayingCanvas::update(bool animated) {
     if (playButton_->label != playLabel && context().onInputStateChange) context().onInputStateChange();
 }
 bool NowPlayingCanvas::canSeek() const { return nowPlayingControls(input()).seek; }
-// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes: the
-// new cover over the old one, which is dropped once the fade ends.
+// Art cross-fades (.2 s ease-in-out) whenever the decoded cover changes, with
+// its backdrop (drawn at its art layer's opacity): the new cover over the
+// old one, which is dropped once the fade ends.
 void NowPlayingCanvas::showArt(bool animated) {
     if (!art_[0]) return;
     const auto& in = input();
-    NowPlayingCover image = in.coverAvailable && services_.artwork ? services_.artwork() : nullptr;
-    if (image == displayed_) return;
-    displayed_ = image;
+    NowPlayingCoverArt art = in.coverAvailable && services_.artwork ? services_.artwork() : NowPlayingCoverArt{};
+    if (!art.image) art = {};
+    if (art.image == displayed_) return;
+    displayed_ = art.image;
     const auto clock = env().clock();
     if (animated && !clock.reduceMotion) {
+        // HUDMotion.crossFade (:339): one ease-in-out fade, finite, so a close
+        // or a switch away lets it end. A new cover fades in over the old one,
+        // which stays opaque underneath until fadeEnd_ (new x e + old x (1 - e),
+        // the CATransition's mix for opaque covers, with no dip through the
+        // two); with no new cover the old one fades out.
         const auto old = covers_[1];
-        covers_ = {old, image};
+        covers_ = {old, art};
         fadeEnd_ = clock.now + .2;
-        art_[0]->setValue(Channel::opacity, old ? 1 : 0);
-        if (image) { art_[1]->setValue(Channel::opacity, 0); d::motion::animate(*art_[1], Channel::opacity, 1, .2, clock, d::easing::easeInOut); }
-        else d::motion::animate(*art_[0], Channel::opacity, 0, .2, clock, d::easing::easeInOut);
+        art_[0]->removeMotion(d::MotionSlot::fade);
+        art_[0]->setValue(Channel::opacity, old.image ? 1 : 0);
+        d::motion::crossFade(*art_[1], art.image ? nullptr : art_[0], .2, clock);
     } else {
-        covers_ = {nullptr, image};
+        covers_ = {NowPlayingCoverArt{}, art};
         fadeEnd_ = 0;
+        for (auto* layer : art_) layer->removeMotion(d::MotionSlot::fade);
         art_[0]->setValue(Channel::opacity, 0); art_[1]->setValue(Channel::opacity, 1);
     }
-    if (placeholder_) placeholder_->setHidden(image != nullptr);
+    if (placeholder_) placeholder_->setHidden(art.image != nullptr);
 }
 // The whole lyric block fades (.24 s) when lyrics are toggled, arrive or end.
 void NowPlayingCanvas::setLyricsVisible(bool visible, bool animated) {
@@ -694,14 +740,15 @@ void NowPlayingCanvas::openVolume() {
     refreshRouter();
     if (context().onInputStateChange) context().onInputStateChange();
 }
-void NowPlayingCanvas::closeVolume() {
+void NowPlayingCanvas::closeVolume(bool keepingDrawn) {
     if (!volumeOpen_) return;
     volumeOpen_ = false; volumeGesture_.reset();
     if (popup_) {
         popup_->clearInteractionState();
         page().remove(*popup_);
-        d::motion::removeWipe(popup_->layer());
-        popup_->layer().setHidden(true);
+        // Through `this` only: the page (and its pop-up) may be rebuilt before
+        // a kept pop-up goes; one that opened again meanwhile stays.
+        retirePopup([this] { if (volumeOpen_ || !popup_) return; d::motion::removeWipe(popup_->layer()); popup_->layer().setHidden(true); }, keepingDrawn);
     }
     if (volumeButton_) volumeButton_->setOn(false);
     refreshRouter();

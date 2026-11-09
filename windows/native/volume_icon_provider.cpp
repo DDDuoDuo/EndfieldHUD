@@ -80,12 +80,16 @@ struct VolumeQueuedIconProvider::Impl:std::enable_shared_from_this<Impl>{
     LayerImageSource images;VolumeIconPlan plan;
     // Requests answered at their revision (success, no icon or failure): not
     // extracted again until a retry or a new process advances the revision.
-    std::map<std::string,std::uint64_t,std::less<>>answered;
+    // The answer is kept, so a request asked for again (its row back in view,
+    // Volume shown again) binds it even when it landed while the plan did not
+    // list it (an answer without pixels lives nowhere else).
+    struct Answer{std::uint64_t revision{};std::int32_t result{};bool typeFallback{};};
+    std::map<std::string,Answer,std::less<>>answered;
     bool inFlight{},waiting{};VolumeQueuedIconStats counts;
     Impl(Submit s,std::function<void()>c,Extractor e):submit(std::move(s)),changed(std::move(c)),extractor(e?std::move(e):Extractor(volumeExecutableIcon)){need(bool(submit),"Volume icons need the shared queue");}
     void onThread()const{need(owner==GetCurrentThreadId(),"Volume icons belong to their creating thread");}
     std::vector<ShelfIconRequest>missing(){std::vector<ShelfIconRequest>out;out.reserve(plan.requests().size());
-        for(const auto&r:plan.requests()){const auto found=answered.find(r.imageKey);if(found!=answered.end()&&found->second==r.revision)continue;if(images.acquire(r.imageKey,r.revision))continue;out.push_back(r);}
+        for(const auto&r:plan.requests()){const auto found=answered.find(r.imageKey);if(found!=answered.end()&&found->second.revision==r.revision)continue;if(images.acquire(r.imageKey,r.revision))continue;out.push_back(r);}
         return out;}
     void pump(){
         if(inFlight||!plan.active())return;auto wanted=missing();if(wanted.empty()){waiting=false;return;}
@@ -105,11 +109,12 @@ struct VolumeQueuedIconProvider::Impl:std::enable_shared_from_this<Impl>{
     }
     void complete(const std::vector<ShelfIconRequest>&requests,std::vector<ShelfIconPixels>&results,bool failed){
         onThread();inFlight=false;std::vector<VolumeIconResult>out;out.reserve(requests.size());
-        for(std::size_t n=0;n<requests.size();++n){const auto&r=requests[n];auto&p=results[n];++counts.extractions;answered.insert_or_assign(r.imageKey,r.revision);
+        for(std::size_t n=0;n<requests.size();++n){const auto&r=requests[n];auto&p=results[n];++counts.extractions;
             VolumeIconResult v{r.imageKey,r.itemID,r.revision,{},failed&&SUCCEEDED(p.result)?E_FAIL:p.result,p.typeFallback};
             if(!failed&&SUCCEEDED(p.result)&&!p.typeFallback&&p.width==LayerImageSource::shelfRequestedPixels&&p.height==LayerImageSource::shelfRequestedPixels&&p.straightRGBA.size()==std::size_t(p.width)*p.height*4){
                 try{v.image=images.publish(r.imageKey,r.revision,p.width,p.height,p.straightRGBA);++counts.published;}catch(const std::bad_alloc&){throw;}catch(...){v.image.reset();v.result=E_INVALIDARG;}}
             if(!v.image){++counts.unavailable;if(SUCCEEDED(v.result))v.result=E_FAIL;}
+            answered.insert_or_assign(r.imageKey,Answer{r.revision,v.image?S_OK:v.result,v.typeFallback});
             p={};out.push_back(std::move(v));}
         // Bounded: answers are kept for the plan's visible requests and the
         // most recent others (a process that left keeps none for long).
@@ -131,7 +136,13 @@ bool VolumeQueuedIconProvider::setVisible(std::span<const VolumeIconApplication>
     std::vector<VolumeIconResult>known;known.reserve(next.requests().size());
     for(const auto&r:next.requests()){
         if(auto image=i.images.acquire(r.imageKey,r.revision)){known.push_back({r.imageKey,r.itemID,r.revision,std::move(image),S_OK,false});continue;}
-        for(const auto&b:next.bindings())if(b.imageKey==r.imageKey&&b.image){known.push_back({r.imageKey,r.itemID,r.revision,{},E_PENDING,false});i.answered.erase(r.imageKey);break;}
+        const auto bound=std::find_if(next.bindings().begin(),next.bindings().end(),[&](const auto&b){return b.imageKey==r.imageKey;});
+        if(bound!=next.bindings().end()&&bound->image){known.push_back({r.imageKey,r.itemID,r.revision,{},E_PENDING,false});i.answered.erase(r.imageKey);continue;}
+        // Answered at this revision: no icon (or a failure) binds now; pixels
+        // the cache no longer holds are asked for again.
+        const auto answer=i.answered.find(r.imageKey);if(answer==i.answered.end()||answer->second.revision!=r.revision)continue;
+        if(FAILED(answer->second.result))known.push_back({r.imageKey,r.itemID,r.revision,{},answer->second.result,answer->second.typeFallback});
+        else i.answered.erase(answer);
     }
     if(!known.empty())(void)next.receive(known);
     i.plan=std::move(next);i.pump();return true;

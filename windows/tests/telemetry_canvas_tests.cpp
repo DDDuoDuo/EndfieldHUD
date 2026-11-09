@@ -11,6 +11,7 @@
 #include "modules/battery_canvas.hpp"
 #include "modules/storage_canvas.hpp"
 #include "modules/telemetry_format.hpp"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -147,6 +148,9 @@ void appIcons() {
     icons.schedule();
     check(batches.size() == 1 && batches[0].first.size() == m::ActivityAppIcons::batch && batches[0].first[0].pixels == 40 && icons.queued() == 2,
         "Four per pass at 20 px x the render scale; one pass at a time");
+    // A row rebound while its app's icon loads (a scroll, a RAM re-sort) asks
+    // again: it stays pending and is not requested a second time.
+    check(icons.icon(app("a1", "key1")).kind == Kind::pending && icons.queued() == 2, "An icon in the batch in flight is not queued again");
     auto image = [](std::string key) { return std::optional(d::ImageSource{d::ImageSource::Kind::memory, std::move(key), {}, 1}); };
     check(batches[0].second({image("i0"), std::nullopt, image("i2"), image("i3")}), "The cache takes a finished pass");
     check(loaded.size() == 4 && batches.size() == 2 && batches[1].first.size() == 2, "Loaded ids are reported; the next pass follows");
@@ -165,8 +169,12 @@ void appIcons() {
     check(small.cached() == m::ActivityAppIcons::capacity, "256 entries fill the cache");
     (void)small.icon(app("over", "k"));
     small.schedule();
+    std::vector<std::string> changed;
+    small.onLoad = [&](const std::vector<std::string>& ids) { changed = ids; };
     (void)batches.back().second({image("y")});
     check(small.cached() == 1, "On overflow the whole cache is cleared");
+    check(changed.size() == m::ActivityAppIcons::capacity + 1 && std::count(changed.begin(), changed.end(), "c0") == 1 && changed.back() == "over",
+        "The overflow reports every released icon with the loaded one, so rows drawing them take their icon again");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +255,91 @@ void activity() {
     canvas.resetSession();
     check(!canvas.isShowingApps() && canvas.sortKey() == m::ActivitySort::cpu && canvas.sortDescending(), "A new HUD session shows Overview sorted by CPU");
 }
+// Mac 08cd96a: the Apps tab is built while the run's first sample waits;
+// the rows that fill the empty table, or a newly shown empty state, stagger in
+// from (0, 12) as a sort does, and an empty state built with the page joins
+// the page's stagger. Samples arrive outside a frame, so the canvas clock
+// first catches up to the host clock (the Context hook, OPEN-B5-1).
+void activityArrivals() {
+    const auto enterOf = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)]; };
+    const auto rowsOf = [](const d::Canvas& canvas) {
+        std::vector<const d::Layer*> rows;
+        for (int n = 0; n < 9; ++n) if (const auto* row = find(canvas.root(), "activity.app." + std::to_string(n)); row && !row->hidden()) rows.push_back(row);
+        return rows;
+    };
+    {
+        World w;
+        double host = w.now;
+        w.context.setHostClock([&] { return host; });
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2); host = w.now;
+        check(!canvas.transitioning() && rowsOf(canvas).empty() && !find(canvas.root(), "activity.apps.empty.1"), "Apps built while the first sample waits: no rows, no empty state");
+        // The first sample, delivered with the host clock 1 s past the canvas clock.
+        host = w.now + 1;
+        state.receiveApps(apps(5, 3));
+        const auto rows = rowsOf(canvas);
+        check(rows.size() == 3 && near(w.context.env().now, host), "The first sample fills the table and catches the clock up to the host");
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const auto& slot = enterOf(*rows[i]);
+            check(slot[0].present() && near(slot[0].start, host + d::staggerDelay(int(i))) && near(slot[0].duration, d::duration::entrance)
+                && slot[1].present() && near(slot[1].offset, 12), "Row " + std::to_string(i) + " enters from (0, 12) at host time + staggerDelay(i)");
+        }
+        const double first = enterOf(*rows[0])[0].start;
+        host += .5; state.receiveApps(apps(6, 3));
+        check(near(enterOf(*rows[0])[0].start, first), "A sample to a table that has rows staggers nothing");
+        host += .5; state.receiveApps(apps(7, 0));
+        const auto* empty = find(canvas.root(), "activity.apps.empty.1");
+        check(empty && enterOf(*empty)[0].present() && near(enterOf(*empty)[0].start, host + d::staggerDelay(0)) && near(enterOf(*empty)[1].offset, 12),
+            "A newly shown empty state enters as a row does");
+    }
+    {
+        // The first sample is empty: the empty state enters.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2);
+        state.receiveApps(apps(w.now, 0));
+        const auto* empty = find(canvas.root(), "activity.apps.empty.1");
+        check(empty && near(enterOf(*empty)[0].start, w.now + d::staggerDelay(0)), "An empty first sample: the empty state enters (no host clock: the canvas clock)");
+    }
+    {
+        // A page built empty: the empty state is in the page's stagger.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        state.receiveApps(apps(1, 0));
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2);
+        const auto staggered = canvas.page().staggered();
+        check(!staggered.empty() && staggered.back()->id().find("activity.apps.empty.") != std::string::npos && enterOf(*staggered.back())[0].present(),
+            "An empty state built with the page joins its stagger and enters with it");
+    }
+    {
+        // A sample during the Overview-to-Apps swap: the staged page is built
+        // again, so the rows enter with the landing and the counter is current.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now) && canvas.transitioning(), "Apps swaps in");
+        w.advance(.05);
+        state.receiveApps(apps(w.now, 4));
+        check(canvas.transitioning(), "A sample does not land the swap");
+        w.advance(.1);
+        check(!canvas.transitioning() && canvas.header().counterText() == "04", "At the landing the header counts the sample's apps");
+        const auto staggered = canvas.page().staggered();
+        const auto rows = rowsOf(canvas);
+        check(rows.size() == 4 && staggered.size() == 6, "Tabs, columns and the four rows are the page's stagger");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(staggered[i + 2] == rows[i] && near(enterOf(*rows[i])[0].start, w.now + d::staggerDelay(int(i + 2))), "Row " + std::to_string(i) + " enters with the landing");
+    }
+}
 void activityState() {
     // Threads (AppActivityMonitor.swift:99-104) and the GPU gating (:124-130).
     m::ActivityAppsRaw before, after;
@@ -311,7 +404,7 @@ void storage() {
     controller.refresh(w.now); read = *controller.takeCapacityRequest();
     controller.completeCapacity(read.token, {}, w.now); canvas.controllerChanged(w.now);
     check(w.context.overlay().toastState().current() && w.context.overlay().toastState().current()->title == "Storage unavailable"
-        && w.context.overlay().toastState().current()->caption == "Storage capacity is unavailable.", "A new error toasts Storage unavailable");
+        && w.context.overlay().toastState().current()->caption == "Storage capacity is unavailable", "A new error toasts Storage unavailable");
     w.advance(2); canvas.controllerChanged(w.now);
     check(!w.context.overlay().toastState().current(), "The same error does not toast again");
     // The disk menu: names only, the current one selected; choosing re-enters from below.
@@ -336,8 +429,13 @@ void storage() {
     for (int n = 0; n < 9; ++n) many.push_back(volume("v" + std::to_string(n), "V", 10, 5, n == 0));
     const auto limited = m::limitedStorageVolumes(many, std::string("v8"));
     check(limited.size() == 7 && limited.back().id == "v8" && m::limitedStorageVolumes(many, std::string("v2")).back().id == "v6", "A chosen disk beyond seven takes the last place (MODS-432)");
-    check(m::StorageCanvas::localizedError(std::nullopt, Language::simplifiedChinese) == "无法读取存储容量。"
-        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable."), Language::english) == "The startup filesystem is unavailable.", "Error strings (MODS-453)");
+    check(m::StorageCanvas::localizedError(std::nullopt, Language::simplifiedChinese) == "无法读取存储容量"
+        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable"), Language::english) == "The startup filesystem is unavailable", "Error strings (MODS-453)");
+    // The controller's two sentinels still match their catalog sentences once both lost the final stop (Mac 0b94c8e).
+    check(m::StorageCanvas::localizedError(std::string("Storage capacity is unavailable"), Language::japanese) == endfield::core::localized("Storage capacity is unavailable", "无法读取存储容量", Language::japanese)
+        && m::StorageCanvas::localizedError(std::string("Storage capacity is unavailable"), Language::japanese) != "Storage capacity is unavailable"
+        && m::StorageCanvas::localizedError(std::string("The startup filesystem is unavailable"), Language::japanese) != "The startup filesystem is unavailable",
+        "Storage errors still match their catalog sentences");
 }
 // ---------------------------------------------------------------------------
 // Battery
@@ -764,6 +862,7 @@ int main(int argc, char** argv) {
         graphPaths();
         appIcons();
         activity();
+        activityArrivals();
         activityState();
         storage();
         battery();

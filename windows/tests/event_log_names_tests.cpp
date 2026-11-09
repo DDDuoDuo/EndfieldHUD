@@ -13,7 +13,7 @@ template<class F>void rejects(F&&f,const char*why){bool rejected{};try{f();}catc
 int main(int argc,char**argv){try{
     check(argc==2,"Pass the original Swift event-log-names.json fixture");std::ifstream input(argv[1],std::ios::binary);check(bool(input),"Open explicit Unicode oracle");
     const std::string bytes((std::istreambuf_iterator<char>(input)),{});check(bytes.size()<=2*1024*1024,"Unicode oracle is bounded");const auto reference=Json::parse(bytes,2*1024*1024);
-    check(reference["provenance"]["source"].string()=="Sources/SystemEventLog.swift"&&reference["provenance"]["sha256"].string()=="10085570f86bca00eaa011f1dda4c3436b41c2252d0d18ff3c6650d3bff64b9e","Fixture carries the exact original source provenance used by the scalar tables");
+    check(reference["provenance"]["source"].string()=="Sources/SystemEventLog.swift"&&reference["provenance"]["sha256"].string()=="c91e00dc62c35b941ddbb6694eee2a8f5e7140cac1ae29a3063db36530ff68be","Fixture carries the exact original source provenance used by the scalar tables");
     native::NativeEventNameCompactor names;std::size_t caseNumber{};
     for(const auto&row:reference["cases"].array()){
         const auto value=names.compact(row["input"].string());

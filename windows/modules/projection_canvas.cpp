@@ -206,7 +206,7 @@ void ProjectionCanvas::confirmClear() {
     d::ConfirmRequest request;
     request.id = "projectionClear";
     request.title = text("Clear the projection canvas?", "清空投影画布？");
-    request.message = text("Source files stay intact.", "源文件保持不变。");
+    request.message = text("Source files stay intact", "源文件保持不变");
     request.confirmTitle = text("Clear all", "全部清除");
     request.danger = true; request.icon = d::Icon::trash;
     confirm(std::move(request), [this] {

@@ -37,13 +37,13 @@ struct WindowsText {std::string_view english,simplified,traditional,japanese,kor
 std::string windowsText(const WindowsText& t,core::Language l){switch(l){case core::Language::simplifiedChinese:return std::string(t.simplified);case core::Language::traditionalChinese:return std::string(t.traditional);
     case core::Language::japanese:return std::string(t.japanese);case core::Language::korean:return std::string(t.korean);default:return std::string(t.english);}}
 // One paragraph exceeds the painted editor leaf (the record itself is valid).
-constexpr WindowsText paragraphCapacity{"A paragraph in this note is too long to edit. The note is unchanged and can still be viewed and scrolled.",
-    "这条便笺中有一段文字过长，无法编辑。内容已保留，仍可查看和滚动。","這則便箋中有一段文字過長，無法編輯。內容已保留，仍可檢視和捲動。",
-    "このメモには長すぎて編集できない段落があります。内容はそのまま保持され、表示とスクロールは引き続き可能です。","이 메모에 편집하기에 너무 긴 단락이 있습니다. 내용은 그대로 유지되며 계속 보고 스크롤할 수 있습니다."};
+constexpr WindowsText paragraphCapacity{"A paragraph in this note is too long to edit. The note is unchanged and can still be viewed and scrolled",
+    "这条便笺中有一段文字过长，无法编辑。内容已保留，仍可查看和滚动","這則便箋中有一段文字過長，無法編輯。內容已保留，仍可檢視和捲動",
+    "このメモには長すぎて編集できない段落があります。内容はそのまま保持され、表示とスクロールは引き続き可能です","이 메모에 편집하기에 너무 긴 단락이 있습니다. 내용은 그대로 유지되며 계속 보고 스크롤할 수 있습니다"};
 // HUDNotesInteraction's field help ("Escape or Command-Return saves...") with
 // the Windows finish keys this owner implements (Escape, Ctrl+Enter).
-constexpr WindowsText editHelp{"Escape or Ctrl+Enter saves. Text notes support multiple lines.","按 Esc 或 Ctrl+Enter 保存。文字便笺支持多行。","按 Esc 或 Ctrl+Enter 儲存。文字便箋支援多行。",
-    "Esc または Ctrl+Enter で保存します。テキストメモは複数行に対応しています。","Esc 또는 Ctrl+Enter를 누르면 저장됩니다. 텍스트 메모는 여러 줄을 지원합니다."};
+constexpr WindowsText editHelp{"Escape or Ctrl+Enter saves. Text notes support multiple lines","按 Esc 或 Ctrl+Enter 保存。文字便笺支持多行","按 Esc 或 Ctrl+Enter 儲存。文字便箋支援多行",
+    "Esc または Ctrl+Enter で保存します。テキストメモは複数行に対応しています","Esc 또는 Ctrl+Enter를 누르면 저장됩니다. 텍스트 메모는 여러 줄을 지원합니다"};
 // UTF-8 from an automation client (UIA ValuePattern) as UTF-16; none if invalid.
 std::optional<std::u16string> automationUTF16(std::string_view s){
     if(s.empty())return std::u16string{};if(s.size()>static_cast<std::size_t>(INT_MAX))return std::nullopt;
@@ -51,7 +51,7 @@ std::optional<std::u16string> automationUTF16(std::string_view s){
     std::u16string out(static_cast<std::size_t>(n),u'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),n)!=n)return std::nullopt;return out;
 }
 // The Windows store's explicit record bound (NotesStore 10,000 records).
-constexpr WindowsText recordLimit{"Notes can hold at most 10,000 notes.","便笺最多可保存 10,000 条。","便箋最多可儲存 10,000 則。","メモは最大10,000件まで保存できます。","메모는 최대 10,000개까지 저장할 수 있습니다."};
+constexpr WindowsText recordLimit{"Notes can hold at most 10,000 notes","便笺最多可保存 10,000 条","便箋最多可儲存 10,000 則","メモは最大10,000件まで保存できます","메모는 최대 10,000개까지 저장할 수 있습니다"};
 std::string sourceText(mod::NotesSourceText t,core::Language l){return core::localized(t.english,t.simplifiedChinese,l);}
 // Source NotesCanvas media captions and NotesMediaError descriptions.
 void localizeMedia(gpu::NativeNotesWorkspaceStyle& s,core::Language l){
@@ -147,14 +147,14 @@ struct NotesPreview::Impl {
         store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
         }
         dataRoot=root;
-        // Mac import relink rows of Notes media (Migration/relink.json beside
+        // Relink ledger rows of Notes media (Migration/relink.json beside
         // Notes/): repair a relink or deletion whose ledger write was lost.
         // Nothing is read or written without a ledger (no Mac import).
         if(persistentDataRoot)(void)mod::notesMediaReconcile(dataRoot,store->notes());
         // Source NotesStore.delete: a managed image no remaining note uses is removed with its last note.
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){
             std::optional<std::string> image;for(const auto&n:store->notes())if(n.id==id){image=n.imageName;break;}store->remove(id);
-            // Record first, then its Mac import relink row (if any) is dismissed.
+            // Record first, then its relink ledger row (if any) is dismissed.
             ledger([root=dataRoot,note=std::string(id)]{(void)mod::notesMediaRemoved(root,note);});
             if(image&&std::none_of(store->notes().begin(),store->notes().end(),[&](const data::Note&n){return n.imageName==image;}))gpu::removeNotesManagedImage(dataRoot,*image);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
@@ -181,7 +181,7 @@ struct NotesPreview::Impl {
     ~Impl(){try{cancelImport();}catch(...){}
         // Accepted ledger writes still finish (their closures own copies); no completion runs.
         if(utility&&ledgerRoute)try{utility->invalidate(ledgerRoute,false);}catch(...){}}
-    // Mac import relink ledger upkeep after Notes' own (synchronous) record
+    // Relink ledger upkeep after Notes' own (synchronous) record
     // write: on the shared UtilityExecutor in submission order once the host
     // handed it over, else here. A full queue runs it here as well (the
     // ledger API serializes its in-process writers), so it is never dropped.
@@ -223,7 +223,7 @@ struct NotesPreview::Impl {
         if(state->notes().size()>=10000){setMediaError(windowsText(recordLimit,language()));return true;}
         gpu::NotesManagedImage image;
         try{image=gpu::notesManagedImageFromData(bytes);}catch(const gpu::NotesMediaFailure& failure){
-            setMediaError(failure.error==mod::NotesMediaError::imageTooLarge?core::localized("Choose an image smaller than 128 MB.","请选择小于 128 MB 的图片。",language()):core::localized("This file could not be opened as an image.","无法将此文件作为图片打开。",language()));return true;}
+            setMediaError(failure.error==mod::NotesMediaError::imageTooLarge?core::localized("Choose an image smaller than 128 MB","请选择小于 128 MB 的图片",language()):core::localized("This file could not be opened as an image","无法将此文件作为图片打开",language()));return true;}
         std::string name;try{name=gpu::writeNotesManagedImage(dataRoot,image.png);}catch(const std::exception& e){setMediaError(core::localized("Notes could not be saved or opened: ","无法保存或打开便笺：",language())+e.what());return true;}
         const auto id=data::makeUUID();bool created{};
         try{created=workspace->createManagedImage(id,data::foundationNow(),name,image.pixelWidth,image.pixelHeight,point);}catch(...){gpu::removeNotesManagedImage(dataRoot,name);throw;}
@@ -249,7 +249,7 @@ struct NotesPreview::Impl {
             const auto filename=std::filesystem::u8path(v.path).filename().u8string();const std::string name(reinterpret_cast<const char*>(filename.data()),filename.size());
             const auto reference=data::makeWindowsMediaReference(v.path,name,static_cast<int>(info.pixelWidth),static_cast<int>(info.pixelHeight),info.kind==mod::NotesMediaKind::video?"video":info.kind==mod::NotesMediaKind::gif?"gif":"image",info.kind==mod::NotesMediaKind::image?std::nullopt:std::optional<double>(info.duration),static_cast<int>(info.frameCount));
             if(workspace->relinkMedia(*target,reference,v.lease)){
-                // The relinked note is stored; its Mac import relink row resolves.
+                // The relinked note is stored; its relink ledger row resolves.
                 ledger([root=dataRoot,note=*target,path=std::string(v.path)]{(void)mod::notesMediaRelinked(root,note,path);});
                 if(const auto token=workspace->cardToken(*target))track(*token,TrackKind::mutation,time);changed=true;}else if(state->error())changed|=setMediaError(state->error());
             return changed;}
@@ -276,6 +276,22 @@ struct NotesPreview::Impl {
     // HUDNotesInteraction.finishEditing / closeFormatting: the pop-up closes,
     // the field commits, gestures and a pending deletion end.
     bool finish(){closePopup(currentTime);if(workspace->editor()&&!workspace->finishEditing().finished)return false;pendingFocus=false;editorDrag=false;workspace->cancelInteraction();workspace->cancelDeletion();confirmationVisible=false;return true;}
+    // The one notes motion settle (HUDNotesInteraction / NotesWorkspace
+    // stopMotionForConcealment and the Reduce Motion switch): the mutation
+    // pulse, the deletion confirmation's rise and the media progress end at
+    // once; with `cards` the section and card tracks too (a deletion releases
+    // its card, a section leave settles the outgoing generation).
+    bool settleMotion(bool cards){
+        bool changed{};
+        for(auto it=tracks.begin();it!=tracks.end();){
+            if(!cards&&it->kind!=TrackKind::mutation){++it;continue;}
+            if(it->kind==TrackKind::remove)workspace->settleDeletion(it->token);else{const std::array patch{gpu::NativeNotesCardMotion{it->token,{}}};workspace->setCardMotions(patch);}
+            it=tracks.erase(it);changed=true;
+        }
+        if(cards)workspace->settleOutgoing(outgoingGeneration);
+        desktop->settleMotion();workspace->settleMediaProgress();
+        return changed;
+    }
     void animate(double time){bool settle=false;
         for(auto it=tracks.begin();it!=tracks.end();){mod::NotesMotionSample m;switch(it->kind){
             case TrackKind::sectionIn:case TrackKind::sectionOut:m=mod::notesSectionMotion(it->kind==TrackKind::sectionIn,it->direction,time-it->start);break;
@@ -404,8 +420,12 @@ struct NotesPreview::Impl {
     // editor) and hides 1 s later (ScrollBarVisibility, reset with the editor).
     mod::design::CaretBlink caretBlink;mod::design::ScrollBarVisibility editorBar;
     UINT_PTR chromeField{};core::text::Selection caretSelection;std::uint64_t caretRevision{};double barOffset{},chromeTime{};bool caretShown{};
+    // The blink change editorChromeDue last handed to the host: it waits for
+    // the frame that samples it (a HUD concealed without a frame - a lock,
+    // the display off - would otherwise wake the host continuously).
+    std::optional<double> caretWakeHanded;
     std::pair<float,float> editorChrome(double t){
-        const auto*document=workspace->editorDocument();auto*editor=workspace->editor();const bool reduce=preferences.reduceMotion;chromeTime=t;
+        const auto*document=workspace->editorDocument();auto*editor=workspace->editor();const bool reduce=preferences.reduceMotion;chromeTime=t;caretWakeHanded.reset();
         if(!document||!editor){if(chromeField){chromeField=0;caretShown=false;editorBar.reset();}return {1.f,0.f};}
         if(chromeField!=workspace->editorGeneration()){chromeField=workspace->editorGeneration();caretShown=false;editorBar.reset();barOffset=0;caretSelection=document->selection();caretRevision=document->revision();}
         if(document->revision()!=caretRevision||document->selection()!=caretSelection){caretRevision=document->revision();caretSelection=document->selection();caretBlink.restart(t);}
@@ -416,11 +436,11 @@ struct NotesPreview::Impl {
     bool editorChromeAnimating(double t)const{return chromeField&&((caretShown&&caretBlink.ramping(t,preferences.reduceMotion))||editorBar.animating(t));}
     std::optional<double> editorChromeWake()const{
         if(!chromeField)return std::nullopt;auto next=editorBar.nextDeadline();
-        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion))next=next?std::min(*next,*change):*change;return next;}
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&change!=caretWakeHanded)next=next?std::min(*next,*change):*change;return next;}
     // A ramp begins or the armed hide falls due: one frame (the ramp then asks for its own).
     bool editorChromeDue(double t){
         if(!chromeField)return false;bool due=editorBar.advance(t,preferences.reduceMotion);
-        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&*change<=t)due=true;return due;}
+        if(caretShown)if(const auto change=caretBlink.nextChange(chromeTime,preferences.reduceMotion);change&&*change<=t){due=true;caretWakeHanded=change;}return due;}
     // A press that moves the first responder (SystemHUDView or a note's text
     // view) commits an editing design field (HUDDesignTextField.textDidEndEditing).
     void focusMoved(){if(design)design->editorFocusMoved();}
@@ -464,8 +484,8 @@ struct NotesPreview::Impl {
         catch(const gpu::NativeNotesEditorCapacityError&){setMediaError(windowsText(paragraphCapacity,language()));return false;}
     }
     void drawingStatus(){switch(workspace->drawingIssue()){case gpu::NativeNotesDrawingIssue::none:break;
-        case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError(core::localized("Stroke limit reached. Release to start a new stroke.","笔画长度已满，松开后可开始下一笔。",language()));break;
-        case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError(core::localized("Drawing limit reached. Create another drawing note.","画画容量已满，请新建画画便笺。",language()));break;}}
+        case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError(core::localized("Stroke limit reached. Release to start a new stroke","笔画长度已满，松开后可开始下一笔",language()));break;
+        case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError(core::localized("Drawing limit reached. Create another drawing note","画画容量已满，请新建画画便笺",language()));break;}}
     // The deletion confirmation under a physical point: 0 cancel, 1 confirm.
     std::optional<std::size_t> confirmationAt(core::Point p)const{
         if(!confirmationVisible)return std::nullopt;const auto rects=state->deletionControls();const auto q=workspaceProjection.unproject(p);if(!rects||!q)return std::nullopt;
@@ -591,7 +611,7 @@ std::optional<double>NotesPreview::nextWakeTime()const{const auto&i=*impl_;auto 
 bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const bool chrome=i.editorChromeDue(event.time);return i.workspace->sampleMedia(event.time)||chrome;}
 bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);localizeMedia(p.workspace,p.language);if(i.samePreferences(p)&&i.workspace->fontRevision()==i.raster.fontRevision()){i.pendingPreferences.reset();return true;}if(!i.finish()){i.pendingPreferences=std::move(p);return false;}
     i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();i.reportStatus();
-    if(i.preferences.reduceMotion){for(const auto&track:i.tracks){if(track.kind==Impl::TrackKind::remove)i.workspace->settleDeletion(track.token);else{const std::array patch{gpu::NativeNotesCardMotion{track.token,{}}};i.workspace->setCardMotions(patch);}}i.tracks.clear();i.workspace->settleOutgoing(i.outgoingGeneration);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
+    if(i.preferences.reduceMotion){(void)i.settleMotion(true);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
 }
 bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);need(i.sharedMedia.broker!=nullptr,"Notes shared refresh requires the app media broker");return i.mediaCompletion(event.time);}
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
@@ -606,8 +626,29 @@ bool NotesPreview::dropImage(std::span<const std::uint8_t>data,core::Point logic
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 void NotesPreview::setDesignScreen(core::Module m,bool design){impl_->modules.setDesignScreen(m,design);}
-void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset);}
+bool NotesPreview::isDesignScreen(core::Module m)const noexcept{return impl_->modules.isDesignScreen(m);}
+void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset,double delay){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset,delay);}
 void NotesPreview::setCentreConcealed(bool concealed){impl_->modules.setConcealed(concealed);}
+void NotesPreview::closeCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;
+    // The user's latest pick, deferred while the text service was locked:
+    // the close catches it like any switch (it must not start one mid-close).
+    if(i.pendingModule&&i.finish()){const auto pick=*i.pendingModule;i.pendingModule.reset();const auto chosen=i.modules.select(pick,t,true,i.preferences.reduceMotion);i.change(chosen.change,t);}
+    i.pendingModule.reset();
+    const auto settled=i.modules.settleForClose(t);
+    i.moduleSample=i.preferences.reduceMotion?settled.presentation:i.modules.leaveForClose(t).presentation;
+    i.moduleInput=i.moduleSample.acceptsModuleInput;
+    // Same-value presentations are no-ops: notes entering or leaving keep their tracks (C17).
+    if(i.finish())i.change(settled.change,t);
+    (void)i.settleMotion(false);
+}
+void NotesPreview::revealCentre(){impl_->modules.reveal();}
+bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)event;
+    const bool closing=i.modules.requiresFrames()&&!i.modules.isTransitioning();
+    i.modules.reveal();
+    return i.settleMotion(true)||closing;}
+NotesPreview::MotionTracks NotesPreview::motionTracks()const noexcept{MotionTracks out;for(const auto&t:impl_->tracks)switch(t.kind){
+    case Impl::TrackKind::sectionIn:++out.sectionIn;break;case Impl::TrackKind::sectionOut:++out.sectionOut;break;case Impl::TrackKind::create:++out.create;break;
+    case Impl::TrackKind::remove:++out.remove;break;case Impl::TrackKind::mutation:++out.mutation;break;}return out;}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}

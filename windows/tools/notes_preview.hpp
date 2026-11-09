@@ -74,7 +74,7 @@ public:
     void chooseFiles(core::Point workspace);
     void chooseShelf(core::Point workspace);
     // The shared UtilityExecutor, handed over once by the host after
-    // construction: the Mac import relink ledger writes that follow Notes'
+    // construction: the relink ledger writes that follow Notes'
     // own record writes (a relinked media note resolves its row, a deleted
     // note dismisses it) then run on it in order instead of on the owner
     // thread. Null (the default) keeps them here. The load's reconcile runs
@@ -136,12 +136,34 @@ public:
     // HUD deploys (SystemHUDView.animateEntrance -> beginEntrance; nothing
     // for other modules or under Reduce Motion).
     void setDesignScreen(core::Module,bool design);
+    bool isDesignScreen(core::Module)const noexcept;
     // `offset` (content px) replaces the disc-centre offset: the boot log's
-    // end enters from below (SystemHUDView.finishBootLog).
-    void beginEntrance(double time,std::optional<core::MotionPoint> offset={});
+    // end enters from below (SystemHUDView.finishBootLog). `delay` holds the
+    // entrance back (the open's, until the centre starts to show).
+    void beginEntrance(double time,std::optional<core::MotionPoint> offset={},double delay=0);
     // SystemHUDView.playsBootLogOnOpen: the module host stays transparent
     // while the daily boot log plays (ModulePresentation::setConcealed).
     void setCentreConcealed(bool);
+    // The HUD's close (after the owners' overlayClosing, before the source
+    // session closes; SystemHUDView.cancelAnimations(forRetraction:) and
+    // close): a select the text service deferred (pendingModule) is taken as
+    // the latest pick; a switch in flight lands hidden on its new module, its
+    // old screen finishing its leave (ModulePresentation::settleForClose,
+    // always); the shown design screen leaves (leaveForClose, not under
+    // Reduce Motion); the notes' own motion other than the section and card
+    // tracks settles (N-1: the mutation pulse, the deletion confirmation's
+    // rise, the media progress), so a card at rest stays at rest.
+    void closeCentre(double time);
+    // The next open (or a reopen mid-close) shows the committed module again
+    // (ModulePresentation::reveal; NotesModule::setOverlayVisible(true)).
+    void revealCentre();
+    // The hidden HUD (overlayConcealed, overlayRetracted): what the close
+    // left playing ends (the departing screen, the close leave, every notes
+    // track); true when something changed.
+    bool concealCentre(double time);
+    // The notes' own motion tracks by kind (tests: what the close keeps and settles).
+    struct MotionTracks { std::size_t sectionIn{}, sectionOut{}, create{}, remove{}, mutation{}; };
+    MotionTracks motionTracks()const noexcept;
     core::Module selected()const noexcept;
     const core::ModulePresentationSample& modulePresentation()const noexcept;
     void resize(const app::ClientMetrics&);

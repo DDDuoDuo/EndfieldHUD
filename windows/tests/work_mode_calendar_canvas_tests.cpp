@@ -344,6 +344,71 @@ void workMode(Run& run) {
         }
     };
     for (L language : languages) { WorkWorld w(run.measurer, language); snap("countdownIdle", w, language); }
+    {   // The entrance as the HUD opens into Work Mode (Mac a5d58f1): the inner
+        // title's wipe carries the open's delay, like the header and the column.
+        WorkWorld w(run.measurer);
+        const auto* title = findLayer(w.canvas->root(), "workMode.title");
+        check(title != nullptr, "Work Mode has its inner title group");
+        const auto wipe = [&] { return title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0]; };
+        w.canvas->playEntrance({0, 24}, w.now);
+        check(wipe().present() && wipe().start == w.now && wipe().duration == d::duration::titleWipe, "Without a delay the inner title wipes at once");
+        w.canvas->playEntrance({0, 24}, w.now, .2);
+        check(wipe().present() && std::abs(wipe().start - (w.now + .2)) < 1e-12 && wipe().duration == d::duration::titleWipe
+            && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - (w.now + .2)) < 1e-12, "With the open's delay the inner title wipes and fades .2 s later");
+        const auto staggered = w.canvas->page().staggered();
+        check(!staggered.empty() && std::abs(staggered[0]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (w.now + .2 + d::staggerDelay(0))) < 1e-12, "The column staggers in after the delay too");
+    }
+    {   // The ring enters with the page (Mac c4c2029): the first row of the
+        // stagger, before the tabs, the state, the timer and the rest.
+        WorkWorld w(run.measurer);
+        const auto staggered = w.canvas->page().staggered();
+        const auto suffix = [&](std::size_t i, std::string_view id) { return i < staggered.size() && std::string_view(staggered[i]->id()).ends_with(id); };
+        check(suffix(0, "workMode.ring") && suffix(1, "workMode.kind") && suffix(2, "workMode.state") && suffix(3, "workMode.timer"),
+            "The stagger runs ring, tabs, state, timer");
+        w.canvas->playEntrance({0, 24}, w.now);
+        const auto& ring = *staggered[0];
+        const auto& enter = ring.tracks().slots[std::size_t(d::MotionSlot::enter)][0];
+        check(enter.present() && std::abs(enter.start - (w.now + d::staggerDelay(0))) < 1e-12 && ring.presented(d::Channel::opacity, w.now + d::staggerDelay(0)) == 0
+            && std::abs(ring.presented(d::Channel::translateY, w.now + d::staggerDelay(0)) - (ring.value(d::Channel::translateY) + 24)) < 1e-9
+            && std::abs(ring.presented(d::Channel::opacity, w.now + 1) - 1) < 1e-12, "The ring enters at +.06, sliding from the offset and fading in from 0");
+    }
+    {   // Start pressed while the entrance plays rebuilds the page (Mac d03d5b9):
+        // the ring, the column and the inner title's wipe carry on in phase.
+        WorkWorld w(run.measurer);
+        const double t0 = w.now;
+        w.canvas->playEntrance({0, 24}, t0);
+        w.advance(.2);
+        const auto built = w.harness.context.pagesBuilt();
+        w.canvas->primaryAction();
+        check(w.harness.context.pagesBuilt() == built + 1, "Start rebuilds the Work Mode page");
+        const auto staggered = w.canvas->page().staggered();
+        check(staggered.size() > 3, "The rebuilt column staggers");
+        for (std::size_t i = 0; i < staggered.size(); ++i)
+            check(std::abs(staggered[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                "Rebuilt row " + std::to_string(i) + " enters in phase with the entrance");
+        const auto* title = findLayer(w.canvas->root(), "workMode.title");
+        check(title && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].start - t0) < 1e-9
+            && std::abs(title->tracks().slots[std::size_t(d::MotionSlot::fade)][0].start - t0) < 1e-9, "The rebuilt inner title's wipe and fade carry on in phase");
+        check(staggered.back()->presented(d::Channel::opacity, w.now) < .05, "The last row is still entering");
+    }
+    {   // Reduce Motion switched on mid-entrance re-renders (reduceMotionChanged)
+        // and carries nothing; switched off again inside the entrance's length,
+        // the dropped entrance stays dropped.
+        WorkWorld w(run.measurer);
+        w.canvas->playEntrance({0, 24}, w.now);
+        w.advance(.1);
+        const auto entering = [&] {
+            for (const auto* row : w.canvas->page().staggered()) if (row->tracks().slots[std::size_t(d::MotionSlot::enter)][0].present()) return true;
+            const auto* title = findLayer(w.canvas->root(), "workMode.title");
+            return title && title->tracks().slots[std::size_t(d::MotionSlot::wipe)][0].present();
+        };
+        const auto built = w.harness.context.pagesBuilt();
+        w.harness.reduce(true);
+        check(w.harness.context.pagesBuilt() == built + 1 && !entering(), "Reduce Motion re-renders Work Mode without carrying the entrance");
+        w.advance(.1);
+        w.harness.reduce(false);
+        check(w.harness.context.pagesBuilt() == built + 2 && !entering(), "Motion back on mid-entrance carries nothing either");
+    }
     { WorkWorld w(run.measurer, L::english, "22A6F2", true); snap("countdownIdle", w, L::english, true); }
     {
         WorkWorld w(run.measurer);

@@ -41,11 +41,9 @@ if(BUILD_TESTING)
   target_link_libraries(account_canvas_tests PRIVATE hud_hypergryph_account)
   add_test(NAME account_canvas_contracts COMMAND account_canvas_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/account-canvas-source.json)
-  # Also the Mac import -> restart contract: the import tool's codec
-  # (hud_mac_import_codec, cmake/modules/import.cmake) produces the cache a
-  # fresh controller reads.
+  # Also a fresh controller over a cache an earlier Mac import wrote.
   add_executable(hypergryph_account_controller_tests tests/hypergryph_account_controller_tests.cpp)
-  target_link_libraries(hypergryph_account_controller_tests PRIVATE hud_hypergryph_account hud_mac_import_codec)
+  target_link_libraries(hypergryph_account_controller_tests PRIVATE hud_hypergryph_account)
   add_test(NAME hypergryph_account_controller_contracts COMMAND hypergryph_account_controller_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
   # Profile sync across module areas: pending update/lock replay on attach.
@@ -81,7 +79,8 @@ if(WIN32)
     target_compile_definitions(hypergryph_account_native_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(hypergryph_account_native_tests PRIVATE hud_hypergryph_account_scene ole32)
     add_test(NAME hypergryph_account_native_contracts COMMAND hypergryph_account_native_tests
-      ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account)
+      ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
     add_executable(hypergryph_account_platform_tests tests/hypergryph_account_platform_tests.cpp)
     target_compile_definitions(hypergryph_account_platform_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(hypergryph_account_platform_tests PRIVATE hud_hypergryph_account_native windowscodecs ole32)
@@ -177,13 +176,12 @@ if(WIN32)
     target_link_libraries(hud_hypergryph_account_owner PRIVATE hud_hypergryph_account_webview)
   endif()
   if(BUILD_TESTING)
-    # Also the Mac import -> restart -> Windows sign-in through this owner: the
-    # import tool's codec (hud_mac_import_codec) writes the committed cache and
-    # the hidden-coverage providers (app/areas/account_coverage.cpp, built
+    # Also a Windows sign-in through this owner over a cache an earlier Mac
+    # import wrote: the hidden-coverage providers (app/areas/account_coverage.cpp, built
     # into hud_account_area below) stand in for WinHTTP, DPAPI and WebView2.
     add_executable(hypergryph_account_owner_tests tests/hypergryph_account_owner_tests.cpp)
     target_compile_definitions(hypergryph_account_owner_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(hypergryph_account_owner_tests PRIVATE hud_hypergryph_account_owner hud_account_area hud_mac_import_codec ole32 psapi)
+    target_link_libraries(hypergryph_account_owner_tests PRIVATE hud_hypergryph_account_owner hud_account_area ole32 psapi)
     add_test(NAME hypergryph_account_owner_contracts COMMAND hypergryph_account_owner_tests
       ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-coverage.json)
@@ -196,7 +194,7 @@ if(WIN32)
   add_library(hud_account_area STATIC app/areas/account_module.cpp app/areas/account_coverage.cpp)
   target_include_directories(hud_account_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_account_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_account_area PUBLIC hud_hypergryph_account_owner hud_module_registry hud_utility hud_data PRIVATE user32)
+  target_link_libraries(hud_account_area PUBLIC hud_hypergryph_account_owner hud_module_registry hud_utility hud_data hud_overlay_geometry PRIVATE user32)
   if(MSVC)
     target_compile_options(hud_account_area PRIVATE /W4 /permissive- /EHsc)
   endif()

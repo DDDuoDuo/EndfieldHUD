@@ -10,6 +10,10 @@
 #include "tools/hud_design_overlay_owner.hpp"
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -18,6 +22,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <wincodec.h>
+#include <uiautomation.h>
 #include <wrl/client.h>
 namespace {
 using namespace endfield;namespace m=modules;namespace gpu=native;namespace d=modules::design;using J=ehud::data::Json;using Microsoft::WRL::ComPtr;
@@ -69,6 +74,7 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     tools::ProfileOwnerOptions o;o.appRoot=t.root;o.resources=resources;o.timeZone=u"UTC";
     o.design.name="profile";o.design.raster.pixelsPerPoint=1;o.design.now=[&]{return time;};o.design.changed=[&]{++changes;};
     o.design.routing.pointer=30;o.design.routing.key=30;o.design.routing.message=30;
+    o.design.fields.window=w.hwnd;o.design.fields.ownerMessage=WM_APP+0x48;o.design.fields.raster=o.design.raster; // the inline editors (native, hidden)
     o.requestImage=[&](m::ProfileImageKind,tools::ProfileOwnerOptions::ImageCompletion done){++imageAsks;chooser=std::move(done);return true;};
     o.cancelPicker=[&]{++cancels;if(chooser){auto c=std::exchange(chooser,{});c(std::nullopt);}};
     o.chooseColor=[&](std::array<double,3>initial,const std::function<void(std::array<double,3>)>&live){++colorAsks;colorStarts.push_back(initial);return colorScript?colorScript(live):std::nullopt;};
@@ -118,6 +124,54 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(!core.entries(core::Module::profile).empty()&&canvas.isActive(),"Personal ID is published as the active design page");
     check(canvas.bestText()=="3,262"&&canvas.hoursText()=="1.05","The best plate reads the minigame best once per visit; the hours plate max(stored, live)/3600");
     check(context.nextWakeTime().has_value()&&*context.nextWakeTime()<=time+30,"The 30 s hours refresh is a deadline on the shared clock (the overlay owner runs it)");
+    // 2b. Reopening an inline editor on the native editors (Windows 11: after
+    // editing the name or the bio everything in the dial disappeared). Opened
+    // as UI Automation (and a click) opens them, through the owner; Esc, Enter
+    // on the shown value and another field's invoke, each followed by the same
+    // field again: the page makes "edit:<field>" at the first open and every
+    // later open takes that editor again, building no page.
+    {const auto builds=context.pagesBuilt();
+     const auto invoke=[&](std::string_view id){
+        (void)core.automationRefresh(nullptr);check(core.automationCount()>0,"The page is listed for UI Automation");
+        const std::wstring wanted(id.begin(),id.end());
+        for(std::size_t n=0;n<core.automationCount();++n){
+            ComPtr<IRawElementProviderFragment>element;if(FAILED(core.automationChild(n,&element))||!element)continue;
+            ComPtr<IRawElementProviderSimple>simple;element.As(&simple);VARIANT v;VariantInit(&v);
+            const bool match=simple&&SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId,&v))&&v.vt==VT_BSTR&&wanted==v.bstrVal;VariantClear(&v);
+            if(!match)continue;
+            ComPtr<IUnknown>unknown;ComPtr<IInvokeProvider>provider;
+            const bool done=SUCCEEDED(simple->GetPatternProvider(UIA_InvokePatternId,&unknown))&&unknown&&SUCCEEDED(unknown.As(&provider))&&SUCCEEDED(provider->Invoke());
+            paint();return done;
+        }
+        return false;};
+     const auto press=[&](std::uint32_t vk){app::KeyEvent k;k.kind=app::KeyKind::down;k.value=vk;check(core.key(k,time),"The open editor takes the key");paint();};
+     for(const char*id:{"profile:name","profile:introduction","profile:name","profile:introduction"})for(const std::uint32_t vk:{std::uint32_t(VK_ESCAPE),std::uint32_t(VK_RETURN)}){
+        check(invoke(id)&&canvas.editingField().has_value(),std::string("The native editor opens for ")+id);
+        press(vk);check(!canvas.editingField(),std::string("Esc or Enter closes ")+id);}
+     check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens");
+     check(invoke("profile:introduction")&&canvas.editingField()==m::ProfileField::introduction,"Invoking the bio ends the name and opens the bio");
+     press(VK_ESCAPE);
+     check(invoke("profile:name")&&canvas.editingField()==m::ProfileField::name,"The name opens again after the bio");press(VK_ESCAPE);
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published and nothing was saved");
+     check(context.pagesBuilt()==builds,"Reopening the editors builds no page ("+std::to_string(context.pagesBuilt()-builds)+" built)");
+     // 2c. The same by clicks, the route on which the repeated editor id
+     // reached the module registry and blanked the dial: each press goes
+     // through the owner's pointer routing to the element under it.
+     const auto click=[&](std::string_view id){
+        std::vector<d::AccessibilityItem>items;canvas.accessibilityItems(items);
+        const auto found=std::find_if(items.begin(),items.end(),[&](const d::AccessibilityItem&i){return i.id==id;});
+        if(found==items.end())return false;
+        const auto r=core.clientRect(found->rect);if(!r)return false;
+        const double x=r->x+r->width/2,y=r->y+r->height/2;
+        core.pointer({app::PointerKind::move,app::PointerButton::none,x,y},time);
+        core.pointer({app::PointerKind::down,app::PointerButton::left,x,y},time);
+        core.pointer({app::PointerKind::up,app::PointerButton::left,x,y},time);paint();return true;};
+     for(const char*id:{"profile:name","profile:introduction","profile:name","profile:introduction","profile:name"}){
+        check(click(id)&&canvas.editingField().has_value(),std::string("A click opens the native editor for ")+id);
+        press(VK_ESCAPE);check(!canvas.editingField(),std::string("Esc closes ")+id);}
+     core.pointer({app::PointerKind::leave,app::PointerButton::none,0,0},time);paint();
+     check(!core.entries(core::Module::profile).empty()&&canvas.isActive()&&owner->state()->profile().name=="Endministrator","The page stays published after the clicks");
+     check(context.pagesBuilt()==builds,"Reopening the editors by clicks builds no page ("+std::to_string(context.pagesBuilt()-builds)+" built)");}
     const auto frameImages=owner->stats();
     // 3. Avatar chooser from the ⋯ menu: the host's queued dialog, imported on the worker.
     const auto photo=t.root/"portrait.png";encode(photo,300,200);
@@ -197,7 +251,12 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
     check(saved.name=="Synced"&&saved.gamePlayerID=="1234567890123"&&saved.themeColorHex=="0000FF"&&saved.thumbnailZoom==1&&!saved.backgroundFilename&&saved.avatarFilename==gameAvatar,"profile.json holds the final record (Default reset the thumbnail)");
     check(!std::filesystem::exists(t.root/"Profile"/"Images"/ *avatarName),"The replaced manual avatar file is removed after the commit");
     (void)frameImages;
-    core.overlayClosing(time);owner->setOverlayVisible(false,time);paint();
+    // The area's close (ProfileArea::overlayClosing: the pickers close, then the core's input stop), its frames, then the hidden HUD.
+    const bool shownBeforeClose=canvas.isActive();
+    owner->setOverlayVisible(false,time);core.overlayClosing(time);paint();
+    check(canvas.isActive()==shownBeforeClose&&!core.capturesPointer(),"Through the close the page stays as it was, taking no input");
+    (void)core.hostEvent({app::HostEvent::Kind::overlayConcealed,0},time);paint();
+    check(!canvas.isActive(),"The hidden HUD leaves the page");
     composition.detach(renderer);owner->release(renderer);overlay.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner releases every GPU resource");
     owner.reset();renderer.reset();
     // 9. A record that cannot be read: the source message as the Notice toast, defaults, no writes, no card.
@@ -217,6 +276,62 @@ void run(const std::filesystem::path&shader,const std::filesystem::path&resource
         tools::ProfileOwner early(w.hwnd,executor,raster,context,idle,f);early.setSyncLocked(ehud::data::ProfileSyncFields::all(),0);
         early.acceptFromGame([](m::PersonalProfile&p){p.gamePlayerID="77";p.name="Early";},0);early.start(0);settle();
         check(early.state()->profile().name=="Early"&&early.card()->captions()[1].text=="UID: 77"&&early.core().flush(0)&&ehud::data::ProfileStore(fresh.root).value().name=="Early","A queued account update lands after the load");
+    }
+    // 11. Issue #17: the Windows account through fake calls only (never the
+    // real account): read after the load, the picture decoded on the worker
+    // and kept in memory, Recording mode, the one-minute throttle on opening,
+    // and the read on the host's long-work executor, so a slow name lookup
+    // never holds up a Personal ID save.
+    {
+        Temporary home;seed(home.root,0);m::WorkModeController idle;
+        const auto picturePath=home.root/"account.png";encode(picturePath,120,80);
+        std::atomic<unsigned>reads{};std::optional<std::wstring>picture=picturePath.wstring();std::mutex lock;
+        // The long-work executor (app::longWorkExecutorKey); a held name lookup stands in for a domain controller.
+        app::UtilityExecutor longWork([]{},8);
+        const auto settleAll=[&]{for(int n=0;n<16;++n){longWork.waitIdle();executor.waitIdle();const auto moved=longWork.drain()+executor.drain();if(!moved)break;}};
+        std::mutex gateLock;std::condition_variable gate;bool hold{},heldOut{};std::atomic<bool>released{};
+        gpu::WindowsAccountCalls calls;
+        calls.sid=[]()->std::optional<std::wstring>{return std::wstring(L"S-1-5-21-11-22-33-1001");};
+        calls.displayName=[]()->std::optional<std::wstring>{return std::nullopt;}; // ERROR_NONE_MAPPED on a local account
+        calls.fullName=[&]()->std::optional<std::wstring>{
+            ++reads;std::unique_lock guard(gateLock);
+            if(hold){heldOut=!gate.wait_for(guard,std::chrono::seconds(10),[&]{return !hold;});released=true;}
+            return std::wstring(L"Ada Lovelace");};
+        calls.userName=[]()->std::optional<std::wstring>{return std::wstring(L"ada");};
+        calls.machineString=[&](const std::wstring&,const std::wstring&value)->std::optional<std::wstring>{const std::lock_guard guard(lock);return value==L"Image448"?picture:std::nullopt;};
+        calls.readFile=[](const std::filesystem::path&p,std::uintmax_t limit)->std::optional<std::vector<std::uint8_t>>{
+            const auto bytes=ehud::data::detail::readFile(p,static_cast<std::size_t>(limit));if(!bytes)return std::nullopt;return std::vector<std::uint8_t>(bytes->begin(),bytes->end());};
+        tools::ProfileOwnerOptions a=o;a.appRoot=home.root;a.loaded={};a.account=calls;a.accountExecutor=&longWork;
+        const auto before=read(home.root/"Profile"/"profile.json");
+        tools::ProfileOwner owned(w.hwnd,executor,raster,context,idle,a);owned.start(0);settleAll();
+        const auto shown=[&]{return std::pair{owned.card()->captions()[0].text,owned.card()->captions()[1].text};};
+        check(reads==1&&shown()==std::pair<std::string,std::string>{"Ada Lovelace","UID: 1001"},"After the load the card shows the account's name and RID");
+        check(owned.state()->profile().avatarKey()==std::optional<std::string>("system-1")&&owned.cardTexture(tools::IdCardTextureKind::avatar),"The login picture is decoded and drawn on the card");
+        check(read(home.root/"Profile"/"profile.json")==before&&!std::filesystem::exists(home.root/"Profile"/"Images"),"Reading the account writes nothing");
+        owned.setRecordingMode(true,1);settleAll();
+        check(shown()==std::pair<std::string,std::string>{"Endministrator","UID:"}&&!owned.state()->profile().avatarKey()&&!owned.cardTexture(tools::IdCardTextureKind::avatar),
+              "Recording mode shows Endministrator and the drawn portrait");
+        owned.setRecordingMode(false,2);settleAll();
+        check(shown().first=="Ada Lovelace"&&owned.cardTexture(tools::IdCardTextureKind::avatar),"Leaving Recording mode shows the account again");
+        owned.setOverlayVisible(true,30);settleAll();owned.setOverlayVisible(false,31);
+        check(reads==1,"An opening within a minute of the last read reads nothing");
+        owned.setOverlayVisible(true,61);settleAll();owned.setOverlayVisible(false,62);
+        check(reads==2&&owned.state()->profile().avatarKey()==std::optional<std::string>("system-1"),"A minute later it reads again; an unchanged picture keeps its key");
+        encode(picturePath,160,90);
+        owned.setOverlayVisible(true,130);settleAll();owned.setOverlayVisible(false,131);
+        check(reads==3&&owned.state()->profile().avatarKey()==std::optional<std::string>("system-2")&&owned.cardTexture(tools::IdCardTextureKind::avatar),"A new picture gets a new key");
+        {const std::lock_guard guard(lock);picture.reset();}
+        owned.setOverlayVisible(true,200);settleAll();owned.setOverlayVisible(false,201);
+        check(!owned.state()->profile().avatarKey()&&!owned.cardTexture(tools::IdCardTextureKind::avatar)&&shown().first=="Ada Lovelace","Without a login picture the card draws its portrait");
+        check(owned.core().flush(201)&&read(home.root/"Profile"/"profile.json")==before,"Still nothing written");
+        check(longWork.stats().executed==4,"Every account read ran on the long-work executor");
+        {const std::lock_guard guard(gateLock);hold=true;}
+        owned.setOverlayVisible(true,300); // the read starts and waits on the long-work worker
+        owned.acceptFromGame([](m::PersonalProfile&q){q.gamePlayerID="88";},301);
+        check(owned.core().flush(301)&&ehud::data::ProfileStore(home.root).value().gamePlayerID=="88"&&!released,"A held account read never holds up a Personal ID save");
+        {const std::lock_guard guard(gateLock);hold=false;}gate.notify_all();
+        settleAll();owned.setOverlayVisible(false,302);
+        check(released&&!heldOut&&reads==5&&shown().first=="Ada Lovelace","The held read finishes afterwards");
     }
     executor.shutdown();
 }

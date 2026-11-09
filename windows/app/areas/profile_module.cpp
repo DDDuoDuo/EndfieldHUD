@@ -204,6 +204,12 @@ public:
         o.avatarChanged = [this](const std::optional<std::string>& name) { if (account_) account_->profileAvatarChanged(name); };
 #endif
         o.cardChanged = [this] { publishCard(); };
+        // Issue #17: only EndfieldHUD.exe reads the Windows account; previews
+        // and hidden coverage keep Endministrator and the stored UID.
+        if (mode_ == app::ApplicationAreaMode::production) {
+            o.account = gpu::currentWindowsAccountCalls();
+            o.accountExecutor = host_.find<app::UtilityExecutor>(app::longWorkExecutorKey);
+        }
         owner_ = std::make_unique<tools::ProfileOwner>(hwnd_, *c.utility, c.rasterizer, context, *work_, std::move(o));
         // Work Mode lifetime: every absolute checkpoint of the shared controller.
         listener_ = work_->listenCheckpoints([this](double total) {

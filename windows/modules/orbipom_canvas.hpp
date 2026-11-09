@@ -1,5 +1,5 @@
 #pragma once
-// Merge! OrbiPom! (spec section 3.11): the port of Sources/OrbiPomCanvas.swift
+// OrbiPom! MERGE! (spec section 3.11): the port of Sources/OrbiPomCanvas.swift
 // on the design library. The original session and physics (OrbiPomSession over
 // the bundled Matter 0.20.0 + orbipom.js, modules/orbipom_runtime.hpp) drawn on
 // the redesigned board, with the SCORE / NEXT plates, the SP bar, the four

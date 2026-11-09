@@ -1,4 +1,5 @@
 #include "native/audio_service.hpp"
+#include "native/audio_application_name.hpp"
 #include "native/audio_route_journal.hpp"
 #include "native/system_services.hpp"
 #include <algorithm>
@@ -51,8 +52,10 @@ struct Signal {
 // same endpoint. Lives and runs only on the worker, wrapping the real backend.
 class JournaledSessions final:public AudioSessionBackend {
 public:
-    JournaledSessions(std::unique_ptr<AudioSessionBackend>inner,AudioRouteJournal*journal,std::function<void()>touched,std::atomic<std::uint64_t>&writes)
-        :inner_(std::move(inner)),journal_(journal),touched_(std::move(touched)),writes_(writes){if(!inner_)throw std::invalid_argument("Missing audio session backend");}
+    // `kept` names the process keys whose route outlives their sessions
+    // (source 74a7935: a silent app keeps its route); empty for a recovery pass.
+    JournaledSessions(std::unique_ptr<AudioSessionBackend>inner,AudioRouteJournal*journal,std::function<void()>touched,std::atomic<std::uint64_t>&writes,std::function<bool(std::string_view)>kept={})
+        :inner_(std::move(inner)),journal_(journal),touched_(std::move(touched)),writes_(writes),kept_(std::move(kept)){if(!inner_)throw std::invalid_argument("Missing audio session backend");}
     std::int32_t open(std::wstring_view endpoint,Wake wake)override{endpoint_.assign(endpoint);identities_.clear();return inner_->open(endpoint,std::move(wake));}
     std::int32_t resume(Wake wake)override{return inner_->resume(std::move(wake));}
     void pause()noexcept override{inner_->pause();}
@@ -62,9 +65,12 @@ public:
         if(journal_){
             // Owned sessions that vanished without a restore become recovery
             // entries, so the app's next session in this run is restored too.
-            std::vector<std::string>missing;
-            for(const auto&e:journal_->live())if(e.endpoint==endpoint_&&!identities_.contains(e.session))missing.push_back(e.session);
-            for(const auto&session:missing)if(journal_->demoteSession(session))touched_();
+            std::vector<AudioRouteJournalEntry>missing;
+            for(const auto&e:journal_->live())if(e.endpoint==endpoint_&&!identities_.contains(e.session))missing.push_back(e);
+            for(const auto&e:missing){
+                if(kept_&&kept_(e.processKey)){if(follow(e,out))touched_();continue;}
+                if(journal_->demoteSession(e.session))touched_();
+            }
             recover(out);
         }
         return hr;
@@ -88,11 +94,30 @@ public:
         if(hr<0)return hr;
         return inner_->writeVolume(id,value);
     }
+    bool processRunning(std::string_view processKey)noexcept override{return inner_->processRunning(processKey);}
     void close()noexcept override{inner_->close();identities_.clear();endpoint_.clear();}
     const std::wstring&endpoint()const noexcept{return endpoint_;}
 private:
     std::unique_ptr<AudioSessionBackend>inner_;AudioRouteJournal*journal_;std::function<void()>touched_;std::atomic<std::uint64_t>&writes_;
+    std::function<bool(std::string_view)>kept_;
     std::wstring endpoint_;std::map<std::string,std::pair<std::string,std::string>,std::less<>>identities_;
+    // The entry of a kept route's expired session waits, still live, for the
+    // app's next session with the same persistent identity. At the written
+    // level it takes the entry over, so the route re-joins it from its
+    // remembered baseline with no write at the original level in between;
+    // at any other level that is a later user/app choice and the entry is
+    // dropped without a write, as recover() abandons one. Without a durable
+    // record for the new session it falls back to recovery (a restore, then
+    // the route attenuates again).
+    bool follow(const AudioRouteJournalEntry&e,std::vector<AudioSessionRecord>&records){
+        if(e.persistent.empty())return false;
+        const auto next=std::find_if(records.begin(),records.end(),[&](const auto&r){return r.persistentID==e.persistent&&r.processKey==e.processKey&&r.controllable&&r.volume&&!journal_->liveEntry(r.id);});
+        if(next==records.end())return false;
+        if(!same(*next->volume,e.written))return journal_->release(e.session);
+        auto moved=e;moved.session=next->id;++writes_;
+        if(journal_->record(std::move(moved))>=0)return journal_->release(e.session);
+        return journal_->demoteSession(e.session);
+    }
     void recover(std::vector<AudioSessionRecord>&records){
         for(std::size_t n=journal_->recovered().size();n-->0;){
             const auto entry=journal_->recovered()[n];
@@ -114,7 +139,7 @@ private:
 };
 
 struct Command {
-    enum class Kind {volume,mute,balance,gain,stopApplication,stopApplications,suspend,resume,recover} kind;
+    enum class Kind {volume,mute,balance,gain,stopApplication,stopApplications,suspend,resume,recover,defaultEndpoint} kind;
     std::wstring endpoint;std::string id;float value{};bool flag{};
 };
 }
@@ -150,6 +175,8 @@ public:
                 queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==c.kind;}),queue.end());
             else if(c.kind==K::gain)
                 queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==K::gain&&q.id==c.id;}),queue.end());
+            else if(c.kind==K::defaultEndpoint)
+                queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto&q){return q.kind==K::defaultEndpoint&&q.flag==c.flag;}),queue.end());
             if(queue.size()>=maximumQueue)return false;
             queue.push_back(std::move(c));ensureThread();signal->flags|=commandBit;
         }
@@ -170,6 +197,11 @@ public:
         AudioSessionRoutes routes;std::vector<AudioSessionRecord>records;
         std::optional<AudioRouteJournal>journal;std::optional<Clock::time_point>flushAt,topologyAt;
         std::optional<std::vector<AudioTopologyDevice>>pendingTopology;
+        // Default-device switching (Volume's Output and Input menus): created
+        // here the first time Volume shows and kept for the run. A missing
+        // interface or a failing call switches it off quietly for the rest of
+        // the run: the menus go grey, as without the interface, with no status.
+        std::unique_ptr<AudioDefaultDeviceSelector>defaults;bool defaultsChecked{};
         unsigned demand{};
         explicit Worker(Impl&i):impl(i){
             if(impl.options.journal){
@@ -192,7 +224,9 @@ public:
             if(sessions)return true;
             try{
                 auto inner=impl.options.sessions();if(!inner)throw std::runtime_error("Missing audio session backend");
-                sessions=std::make_unique<JournaledSessions>(std::move(inner),journalPointer(),[this]{touched();},impl.journalWrites);
+                sessions=std::make_unique<JournaledSessions>(std::move(inner),journalPointer(),[this]{touched();},impl.journalWrites,[this](std::string_view key){
+                    const auto&apps=routes.applications();
+                    return std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==key&&a.state==AudioApplicationRouteState::active;});});
                 return true;
             }catch(...){state.applicationsSupported=false;state.applicationError=unexpected;return false;}
         }
@@ -229,15 +263,20 @@ public:
             if(inputStatus>=0&&inputs.size()>maximumAudioEndpoints)inputStatus=overflow;
             if(outputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::output,defaultOutput);})<0)defaultOutput.clear();
             if(inputStatus>=0&&call([&]{return endpoints->defaultEndpoint(AudioFlow::input,defaultInput);})<0)defaultInput.clear();
-            // Raw labels for the Event Log: a missing label is an incomplete
-            // read (source watcher), while the UI shows the opaque identity.
+            // Raw names for the Event Log's device list: a blank name is an
+            // incomplete read (source watcher). Both the Volume rows here and
+            // the Event Log's labels (audioTopology, from these same raw
+            // names) show audioEndpointLabel: the endpoint ID for an empty
+            // name, one past a Volume row's 4096 UTF-8 bytes or one that is
+            // not well-formed UTF-16, so such a name never makes either list
+            // unavailable.
             std::vector<AudioEndpoint>rawOutputs,rawInputs;
             const auto convert=[&](const std::vector<AudioEndpointRecord>&records,std::vector<AudioEndpoint>&raw,std::int32_t&status){
                 std::vector<AudioEndpoint>ui;ui.reserve(records.size());std::set<std::wstring>ids;
                 for(const auto&r:records){
-                    if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!audioUtf8(r.name)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
-                    AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor),audioEndpointBluetooth(r.enumerator)};
-                    raw.push_back(e);if(e.name.empty())e.name=e.id;ui.push_back(std::move(e));
+                    if(!endpointToken(r.id)||r.name.size()>32767||r.name.find(L'\0')!=r.name.npos||!audioUtf8(r.id)||!ids.insert(r.id).second){status=unexpected;return std::vector<AudioEndpoint>{};}
+                    AudioEndpoint e{r.id,r.name,audioEndpointHeadphones(r.formFactor)};
+                    raw.push_back(e);e.name=audioEndpointLabel(e.name,e.id);ui.push_back(std::move(e));
                 }
                 sortAudioEndpoints(ui,impl.options.order);return ui;
             };
@@ -266,9 +305,43 @@ public:
             state.available=c.available;state.volume=c.volume;state.balance=c.balance;state.muted=c.muted;
             state.canSetVolume=c.canSetVolume;state.canSetMute=c.canSetMute;state.canSetBalance=c.canSetBalance;state.error=c.error;
         }
+        void defaultsAvailable(bool value){state.canSetDefaultOutput=state.canSetDefaultInput=value;}
+        void ensureDefaults(){
+            if(defaultsChecked||!impl.options.defaults)return;defaultsChecked=true;
+            bool supported{};
+            try{defaults=impl.options.defaults();supported=defaults&&defaults->capability().supported;}catch(...){}
+            if(!supported)defaults.reset();
+            defaultsAvailable(supported);
+        }
+        // A failed switch that is about the device, not the interface: reported
+        // once as a device change, switching stays on. One rule per line so
+        // each is easy to change.
+        static bool defaultMoved(const AudioDefaultDeviceResult&r){
+            // Another mixer or Windows changed the default between the write
+            // and its readback (or the readback lags); every call succeeded.
+            if(r.raced())return true;
+            // Nothing was written: the device left (not connected, not found)
+            // or changed direction (E_INVALIDARG) first.
+            return !r.writes&&r.rollbackStatus>=0&&(r.status==deviceChanged||r.status==notFound||r.status==invalidValue);
+        }
+        void defaultCommand(const Command&c){
+            if(!defaults)return; // Switched off: the menus are grey already.
+            const auto&devices=c.flag?state.inputs:state.outputs;
+            if(std::none_of(devices.begin(),devices.end(),[&](const auto&d){return d.id==c.endpoint;})){state.commandError=deviceChanged;return;}
+            AudioDefaultDeviceResult result;
+            try{result=defaults->select(c.flag?AudioDefaultFlow::input:AudioDefaultFlow::output,c.endpoint);}catch(...){result.status=unexpected;result.writes=1;}
+            if(result.succeeded())state.commandError=0;
+            else if(defaultMoved(result))state.commandError=deviceChanged;
+            // Any other failing call (a read, a write or a rollback; rolled back
+            // where it could be): the interface is not dependable on this
+            // Windows. Off for the run, without a status (the menus go grey).
+            else{defaults.reset();defaultsAvailable(false);}
+            // Publish the real defaults (Windows also notifies, later).
+            refreshTopology();
+        }
         void syncVolume(bool want){
             const std::wstring target=want&&endpointsOpen?state.defaultOutputID:std::wstring{};
-            if(want&&endpointsOpen)state.paused=false;
+            if(want&&endpointsOpen){state.paused=false;ensureDefaults();}
             if(target==bound&&volumeBound==!target.empty()){if(!want){state.paused=true;clearControls();}return;}
             if(endpointsOpen){
                 const auto hr=call([&]{return endpoints->bind(target,wake(volumeBit));});
@@ -289,6 +362,11 @@ public:
                 ++impl.sessionReads;
                 const auto hr=call([&]{return sessions->read(records);});
                 if(hr<0){state.applicationError=hr;break;}
+                // Labels only, as for endpoints: a name the backend's own
+                // label rule would refuse (an unpaired surrogate, a NUL, past
+                // the Volume rows' 4096 UTF-8 bytes) gets the same PID label
+                // instead of reaching the UTF-8 rows.
+                for(auto&r:records)if(!audioLabelValid(r.name))r.name=audioApplicationLabel({},r.pid);
                 try{routes.update(records,*sessions);}catch(...){state.applicationError=unexpected;break;}
                 if(std::none_of(records.begin(),records.end(),[](const auto&r){return r.exited;}))break;
             }
@@ -297,9 +375,10 @@ public:
         void switchSessions(const std::wstring&target){
             if(!sessions->endpoint().empty()){
                 if(owned()){
-                    // Source: "App routing stopped because the output device changed."
-                    const auto hr=call([&]{return routes.stopAll(*sessions);});
-                    state.routesStoppedByDeviceChange=true;if(hr<0)state.applicationError=hr;
+                    // Another output took over: the routes end quietly, like an
+                    // explicit stop (source 730f4bb), reporting only a failed
+                    // restore. routeError outlives the new endpoint's open.
+                    state.routeError=call([&]{return routes.stopAll(*sessions);});
                 }
                 if(journal)journal->demote(sessions->endpoint());
                 touched();
@@ -347,17 +426,30 @@ public:
         }
         void applicationCommand(const Command&c){
             using K=Command::Kind;
+            // Each command's outcome is the per-app status (source
+            // PerAppAudioController.statusMessage): a start that fails or a
+            // cleanup error is shown, a command that succeeds clears it.
             if(c.kind==K::gain){
-                state.routesStoppedByDeviceChange=false;
-                if(!sessions||!resumed||!state.applicationsSupported){state.applicationError=pending;return;}
-                state.applicationError=call([&]{return routes.setGain(c.id,c.value,*sessions);});
+                // The same guard as the endpoint writes: the process key is the
+                // same on every output, so a stale gain would land on the next.
+                if(c.endpoint!=state.defaultOutputID||(sessions&&!sessions->endpoint().empty()&&sessions->endpoint()!=c.endpoint)){state.commandError=deviceChanged;return;}
+                // Source setGain returns false and leaves statusMessage alone
+                // for a gain it cannot take: sessions not resumed yet (a vote
+                // withdrawn in the same wake) or a route that already failed.
+                // Only a start or write outcome is the status.
+                if(!sessions||!resumed||!state.applicationsSupported)return;
+                const auto&apps=routes.applications();
+                const bool failed=c.value!=1&&std::any_of(apps.begin(),apps.end(),[&](const auto&a){return a.id==c.id&&a.state==AudioApplicationRouteState::failed;});
+                const auto hr=call([&]{return routes.setGain(c.id,c.value,*sessions);});
+                if(!failed)state.routeError=hr;
             }else if(c.kind==K::stopApplication){
-                state.routesStoppedByDeviceChange=false;
-                if(!sessions)return;state.applicationError=call([&]{return routes.stop(c.id,*sessions);});
+                state.routeError=sessions?call([&]{return routes.stop(c.id,*sessions);}):0;
             }else{
-                if(!sessions)return;const auto hr=call([&]{return routes.stopAll(*sessions);});
-                if(c.kind==K::stopApplications)state.routesStoppedByDeviceChange=false;
-                state.applicationError=hr;
+                // stopApplications is the Output menu's quiet stop before it
+                // switches to another device (source VolumeCanvas.openDeviceMenu:
+                // stopAll(), with no status of its own since 730f4bb), and
+                // sleep's stop: only a failed restore is reported.
+                state.routeError=sessions?call([&]{return routes.stopAll(*sessions);}):0;
             }
             touched();
         }
@@ -389,16 +481,16 @@ public:
             for(const auto&c:commands)if(c.kind==K::resume)topology=true;
             if(topology&&endpointsOpen)refreshTopology();
             if(sessions&&!(demand&tierApplications)&&!sessions->endpoint().empty()&&sessions->endpoint()!=state.defaultOutputID&&owned()){
-                const auto hr=call([&]{return routes.stopAll(*sessions);});
-                state.routesStoppedByDeviceChange=true;if(hr<0)state.applicationError=hr;
+                state.routeError=call([&]{return routes.stopAll(*sessions);});
                 touched(); // Failed restores stay owned here and remain retryable.
             }
             syncVolume((demand&tierEndpoints)!=0);
             if((flags&volumeBit)&&volumeBound)readVolume();
             syncSessions((demand&tierApplications)!=0);
-            bool sessionsRead=(flags&sessionsBit)!=0;
+            bool sessionsRead=(flags&sessionsBit)!=0,switched{};
             for(const auto&c:commands){
                 switch(c.kind){
+                case K::defaultEndpoint:defaultCommand(c);switched=true;break;
                 case K::volume:case K::mute:case K::balance:endpointCommand(c);break;
                 case K::gain:case K::stopApplication:case K::stopApplications:applicationCommand(c);sessionsRead=true;break;
                 case K::suspend:{const Command all{K::suspend,{},{},0,false};applicationCommand(all);sessionsRead=true;break;}
@@ -406,6 +498,11 @@ public:
                 case K::recover:recover();sessionsRead=true;break;
                 }
             }
+            // Commands keep their order (the Output menu stops the routes
+            // first); the controls and sessions then follow a new default.
+            // Binding the new output clears stale command errors; the switch's
+            // own outcome (a concurrent change) is kept.
+            if(switched){const auto error=state.commandError;syncVolume((demand&tierEndpoints)!=0);syncSessions((demand&tierApplications)!=0);state.commandError=error;}
             if(sessionsRead&&resumed)readSessions();
             // Nobody shows per-app audio and no route is owned: release the
             // session manager and every session object (an exited app's
@@ -421,6 +518,7 @@ public:
             if(!resumed&&!(demand&tierApplications))state.applicationsSupported=false;
         }
         void shutdown()noexcept{
+            defaults.reset();
             try{
                 if(sessions){sessions->pause();(void)call([&]{return routes.stopAll(*sessions);});sessions->close();sessions.reset();}
                 flush(true);
@@ -474,7 +572,8 @@ unsigned AudioService::votes()const noexcept{return impl_->votes;}
 bool AudioService::setVolume(std::wstring endpoint,float value){if(!endpointToken(endpoint)||!unit(value))return false;return impl_->enqueue({Command::Kind::volume,std::move(endpoint),{},value,false});}
 bool AudioService::setMute(std::wstring endpoint,bool value){if(!endpointToken(endpoint))return false;return impl_->enqueue({Command::Kind::mute,std::move(endpoint),{},0,value});}
 bool AudioService::setBalance(std::wstring endpoint,float value){if(!endpointToken(endpoint)||!std::isfinite(value)||value< -1||value>1)return false;return impl_->enqueue({Command::Kind::balance,std::move(endpoint),{},value,false});}
-bool AudioService::setApplicationGain(std::string id,float value){if(!applicationToken(id)||!unit(value))return false;return impl_->enqueue({Command::Kind::gain,{},std::move(id),value,false});}
+bool AudioService::setDefaultEndpoint(AudioFlow flow,std::wstring endpoint){if(!endpointToken(endpoint)||(flow!=AudioFlow::output&&flow!=AudioFlow::input))return false;return impl_->enqueue({Command::Kind::defaultEndpoint,std::move(endpoint),{},0,flow==AudioFlow::input});}
+bool AudioService::setApplicationGain(std::wstring endpoint,std::string id,float value){if(!endpointToken(endpoint)||!applicationToken(id)||!unit(value))return false;return impl_->enqueue({Command::Kind::gain,std::move(endpoint),std::move(id),value,false});}
 bool AudioService::stopApplication(std::string id){if(!applicationToken(id))return false;return impl_->enqueue({Command::Kind::stopApplication,{},std::move(id),0,false});}
 bool AudioService::stopApplications(){return impl_->enqueue({Command::Kind::stopApplications,{},{},0,false});}
 bool AudioService::powerSuspend(){return impl_->enqueue({Command::Kind::suspend,{},{},0,false});}

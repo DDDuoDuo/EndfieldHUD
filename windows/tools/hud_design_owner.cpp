@@ -46,7 +46,11 @@ double designDensity(const core::Matrix4& boxWorld, double dpiScale, double curr
 }
 
 struct DesignOwnerCore::Impl {
-    struct Slot {
+    // A module's page is a tenant of the shared cache: switched away, the
+    // crowd relief may park it (LayerRasterizer::relieve, the page left
+    // longest ago first, across every owner).
+    struct Slot final : gpu::LayerRasterTenant {
+        gpu::LayerRasterizer& raster;
         std::unique_ptr<d::Canvas> canvas;
         core::Module module;
         std::unique_ptr<gpu::NativeDesignScene> scene;
@@ -55,15 +59,26 @@ struct DesignOwnerCore::Impl {
         core::Projection projection;
         std::optional<gpu::ModuleSurfacePose> pose; // presented this frame (drawn and hit)
         bool shown{}, active{}, input{}, parkWanted{};
+        bool seen{};                                // posed (drawn) since it was last shown
         bool openedPose{};                          // posed since the HUD's opening (its first frame is past)
         std::optional<double> entrance;             // ModuleEntrance::start played
         std::uint64_t synced{};                     // canvas contentRevision the scene holds
         Slot(std::unique_ptr<d::Canvas> c, gpu::LayerRasterizer& r, const gpu::LayerRasterOptions& o, const DesignOwnerOptions& options)
-            : canvas(std::move(c)), module(canvas->module()), geometry(r), surface(prepare(o), module) {
+            : raster(r), canvas(std::move(c)), module(canvas->module()), geometry(r), surface(prepare(o), module) {
             scene = std::make_unique<gpu::NativeDesignScene>(r, o, options.name + "." + std::string(core::moduleIdentifier(module)), options.images);
             scene->keepDeparted(true); // released at the close (hostEvent overlayConcealed)
+            raster.enlist(*this);
         }
+        ~Slot() { raster.withdraw(*this); }
+        Slot(const Slot&) = delete;
+        Slot& operator=(const Slot&) = delete;
         gpu::LayerScene& prepare(const gpu::LayerRasterOptions& o) { geometry.load(blank(), o); return geometry; }
+        // Composed, shown or prewarmed: never parked by the crowd.
+        State tenancy() const noexcept override {
+            if (pose || shown || canvas->isShown()) return State::shown;
+            return scene->holdsArtwork() ? State::held : State::empty;
+        }
+        bool park(gpu::Renderer& r) noexcept override { return scene->park(r); }
     };
     gpu::LayerRasterizer& raster;
     d::Context& context;
@@ -74,6 +89,9 @@ struct DesignOwnerCore::Impl {
     std::unique_ptr<gpu::NativeDesignAutomation> automation;
     app::ClientMetrics metrics;
     bool overlay{true}, focused{true}, pressed{};
+    // The HUD's close began (overlayClosing) and its hide has not run yet
+    // (concealClosed): canvases stay active and drawn, input is off.
+    bool closing{};
     Slot* captured{};
     gpu::Renderer* renderer{};          // the one that holds the scenes (upload / collected)
     std::optional<core::Point> pointer; // logical client
@@ -87,7 +105,13 @@ struct DesignOwnerCore::Impl {
     void clock(double t) { need(std::isfinite(t), "Design owner needs finite time"); time = std::max(time, t); }
     // The context's one editor host follows the owner whose canvas runs.
     void bind() { context.setEditorHost(fields.get()); }
-    Slot* input() const { for (const auto& s : slots) if (s->input && s->pose) return s.get(); return nullptr; }
+    // A slot stops being shown. A page the user saw (posed since it was
+    // shown) becomes the page left most recently, the crowd relief's order;
+    // one shown but never drawn (an incoming screen a superseding switch
+    // skipped, a prewarm the opening did not present) keeps its older place,
+    // so the page the user was looking at is not parked before it.
+    void hide(Slot& s) noexcept { if (s.seen) raster.left(s); s.seen = false; s.shown = false; }
+    Slot* input() const { if (closing) return nullptr; for (const auto& s : slots) if (s->input && s->pose) return s.get(); return nullptr; }
     std::optional<core::Point> local(const Slot& s, core::Point logical) const { return s.projection.unproject({logical.x * metrics.scale, logical.y * metrics.scale}); }
     double density() const { return std::clamp(context.boxScale(), 1., 4.); }
     gpu::LayerRasterOptions raster0() const { auto o = options.raster; o.pixelsPerPoint = density(); return o; }
@@ -132,6 +156,23 @@ struct DesignOwnerCore::Impl {
             if (renderer && s->scene->park(*renderer)) s->parkWanted = false;
         }
     }
+    // The hidden HUD (SystemHUDView's full deactivation once the close is
+    // over; also an explicit hide and a reopen mid-close): the highlights
+    // kept through the close clear, the shown canvas leaves (popups closed,
+    // editing committed, gestures cancelled), the others keep no artwork. A
+    // shown (or prewarmed) canvas that never became active leaves too, as on
+    // the Mac; while closed none is shown again (update), so the next
+    // presentation shows it. No release: the close's start already took the
+    // press without one.
+    void concealClosed() {
+        closing = false;
+        bind();
+        for (auto& s : slots) if (s->canvas->isShown()) s->canvas->pointerMoved(std::nullopt, false, time);
+        pointer.reset();
+        overlay = false;
+        for (auto& s : slots) if (s->active) leave(*s); else { if (s->canvas->isShown()) { bind(); s->canvas->prepareToLeave(time); } hide(*s); }
+        parkHidden();
+    }
 };
 
 DesignOwnerCore::DesignOwnerCore(gpu::LayerRasterizer& r, d::Context& c, DesignOwnerOptions o) : impl_(std::make_unique<Impl>(r, c, std::move(o))) {}
@@ -163,25 +204,41 @@ void DesignOwnerCore::setAppearance(const app::ModuleAppearance& a, double t) {
     i.clock(t);
     if (i.options.appearance) { i.bind(); i.options.appearance(a, i.time); }
 }
+// A hide, or a reopen while a close is pending, ends that close first
+// (concealClosed); an explicit hide outside a close releases a held press as before.
 void DesignOwnerCore::setOverlayVisible(bool value, double t) {
     auto& i = *impl_;
     i.clock(t);
+    if (i.closing) i.concealClosed();
     if (i.overlay == value) return;
-    i.overlay = value;
-    if (value) { for (auto& s : i.slots) { s->parkWanted = false; s->openedPose = false; } return; }
+    if (value) { i.overlay = true; for (auto& s : i.slots) { s->parkWanted = false; s->openedPose = false; } return; }
     i.cancel();
-    i.pointer.reset();
-    // The HUD closes: the shown canvas leaves (popups closed, editing
-    // committed, gestures cancelled); the others keep no artwork.
-    // A shown (or prewarmed) canvas that never became active leaves too, as
-    // on the Mac; while closed none is shown again (update), so the next
-    // presentation shows it.
-    for (auto& s : i.slots) if (s->active) i.leave(*s); else { if (s->canvas->isShown()) { i.bind(); s->canvas->prepareToLeave(i.time); } s->shown = false; }
-    i.parkHidden();
+    i.concealClosed();
 }
+// SystemHUDView.deactivateModuleInput at the close's start (48584b5): input
+// only. The canvases stay active and drawn, their menus, pop-overs and
+// confirm bars included, and finish what they play with the close; editing
+// commits and gestures end (Canvas::suspendInput); a sub-page swap in flight
+// settles concealed. A press held across the close is dropped without a
+// release, so it activates nothing (decision C-D2, Mac parity). The full
+// leave runs once the HUD is hidden (hostEvent overlayConcealed or
+// overlayRetracted, concealClosed).
 void DesignOwnerCore::overlayClosing(double t) {
-    cancelInteraction(t); setOverlayVisible(false, t);
     auto& i = *impl_;
+    i.clock(t);
+    if (i.overlay && !i.closing) {
+        i.closing = true;
+        i.bind();
+        if (i.fields) i.fields->pointerUp();
+        i.captured = nullptr; i.pressed = false;
+        for (auto& s : i.slots) {
+            s->input = false;
+            s->canvas->suspendInput();
+            s->canvas->settleSwap(true);
+            // The loops on a drawn canvas stop; finite motion ends with the close (L-D1).
+            if (s->pose) d::motion::stopLoops(s->canvas->root());
+        }
+    }
     if (i.options.closing) { i.bind(); i.options.closing(i.time); }
 }
 void DesignOwnerCore::update(const app::ModuleFrame& frame) {
@@ -193,27 +250,35 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
     i.fieldSlot = nullptr;
     for (auto& slot : i.slots) {
         auto& s = *slot;
-        const auto* shown = sample.current.module == s.module ? &sample.current : sample.incoming && sample.incoming->module == s.module ? &*sample.incoming : nullptr;
+        // Current, incoming or departing (a switch the close caught leaving).
+        const auto* shown = sample.surface(s.module);
         const bool attached = shown && shown->attached;
-        const bool active = i.overlay && attached && sample.requested == s.module;
+        // While the HUD closes nothing activates or leaves (the hide does).
+        const bool active = i.closing ? s.active : i.overlay && attached && sample.requested == s.module;
         s.pose.reset();
         const bool present = shown && (i.overlay || s.shown); // closed: a slot the close left is not shown again
         if (present && !s.shown) { i.bind(); s.canvas->show(i.time); }
         // Shown (or prewarmed) but never activated, and dropped (a superseding switch skipped
         // it): it leaves, as the Mac's next transition leaves its skipped screen.
         if (!shown && !s.active && s.canvas->isShown()) { i.bind(); s.canvas->prepareToLeave(i.time); }
+        if (s.shown && !present) i.hide(s);
         s.shown = present;
         if (active != s.active) {
             if (active) { i.bind(); s.canvas->setActive(true, i.time); s.active = true; }
             else i.leave(s);
         }
-        s.input = active && sample.acceptsModuleInput;
+        s.input = active && !i.closing && sample.acceptsModuleInput;
         if (!shown) { s.entrance.reset(); continue; }
-        // HUDDirectionalContent.playEntrance(from:) after the swap.
+        // HUDDirectionalContent.playEntrance(from:delay:) after the swap, and
+        // as the HUD opens into the module: its delay counts from the
+        // entrance's start (the open, which also starts the canvas fade), so
+        // the stagger begins with the fade even when this frame lands later.
         if (shown->entrance && s.entrance != shown->entrance->start) {
-            s.entrance = shown->entrance->start;
+            const auto& entrance = *shown->entrance;
+            s.entrance = entrance.start;
             i.bind();
-            s.canvas->playEntrance({shown->entrance->offset.x, shown->entrance->offset.y}, i.time);
+            const double delay = entrance.delay > 0 ? std::max(0.0, entrance.start + entrance.delay - i.time) : 0.0;
+            s.canvas->playEntrance({entrance.offset.x, entrance.offset.y}, i.time, delay);
         }
         i.sync(s);
         s.surface.update(frame.center, frame.chrome, *shown, frame.opacity);
@@ -226,6 +291,7 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
         s.scene->updatePose({p.contentWorld, p.opacity, i.time, p.hostMasks(), p.shutter, s.openedPose && i.overlay && frame.opacity <= 0});
         s.openedPose = true;
         s.pose = p;
+        s.seen |= s.shown;
         s.parkWanted = false;
         if (s.active && i.fields) {
             i.fieldSlot = &s;
@@ -317,7 +383,9 @@ void DesignOwnerCore::collected(gpu::Renderer& r) {
         need(s->scene->collectRetired(r), "Design artwork still published");
         if (s->pose) continue;
         // Not composed: a module switched away keeps its scenes (textures
-        // parked); a module closed elsewhere keeps no artwork at all.
+        // parked); a module closed elsewhere keeps no artwork at all. In a
+        // crowded shared cache the pages switched away park later, once every
+        // owner collected (LayerRasterizer::relieve, from the Application).
         if (s->parkWanted) { if (s->scene->park(r)) s->parkWanted = false; }
         else need(s->scene->releaseResources(r), "Design inactive artwork still published");
     }
@@ -358,7 +426,9 @@ bool DesignOwnerCore::suppressesKeyFilters() const { const auto* s = impl_->inpu
 bool DesignOwnerCore::pointer(const app::PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.overlay) return false;
+    // No input once the close began: a capture loss it delivers synchronously
+    // (host.capturePointer(false) before the session closes) included.
+    if (!i.overlay || i.closing) return false;
     i.pointer = core::Point{e.x, e.y};
     const core::Point physical{e.x * i.metrics.scale, e.y * i.metrics.scale};
     if (e.kind == app::PointerKind::leave || e.kind == app::PointerKind::captureLost) {
@@ -412,7 +482,7 @@ bool DesignOwnerCore::pointer(const app::PointerEvent& e, double t) {
 bool DesignOwnerCore::wheel(const app::WheelEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.overlay) return false;
+    if (!i.overlay || i.closing) return false;
     auto* s = i.input();
     if (!s) return false;
     const core::Point logical{e.x, e.y};
@@ -437,7 +507,7 @@ bool DesignOwnerCore::key(const app::KeyEvent& e, double t) {
 bool DesignOwnerCore::key(const app::KeyEvent& e, std::uint32_t modifiers, double t) {
     auto& i = *impl_;
     i.clock(t);
-    if (!i.overlay) return false;
+    if (!i.overlay || i.closing) return false;
     auto* s = i.input();
     if (!s) return false;
     i.bind();
@@ -485,6 +555,9 @@ bool DesignOwnerCore::flush(double t) {
 bool DesignOwnerCore::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
+    // The hidden HUD (the close finished, or a File Shelf drag's retract hid
+    // it): the full deactivation the close's start left (concealClosed).
+    if ((e.kind == app::HostEvent::Kind::overlayConcealed || e.kind == app::HostEvent::Kind::overlayRetracted) && (i.overlay || i.closing)) i.concealClosed();
     // The close finished: every canvas starts its next session as the Mac's
     // new one would (Canvas::resetSession); canvases not shown keep no
     // artwork (Clipboard).
@@ -502,7 +575,7 @@ bool DesignOwnerCore::hostEvent(const app::HostEvent& e, double t) {
 }
 std::optional<app::ModuleCursor> DesignOwnerCore::cursorAt(core::Point p) const {
     const auto& i = *impl_;
-    if (!i.overlay) return std::nullopt;
+    if (!i.overlay || i.closing) return std::nullopt;
     if (i.fields && i.fields->textCursorAt(p)) return app::ModuleCursor::text;
     const auto* s = i.captured ? i.captured : i.input();
     if (!s) return std::nullopt;
@@ -579,6 +652,10 @@ std::optional<core::Rect> DesignOwnerCore::clientRect(core::Rect box) const {
 std::optional<gpu::NativeDesignSceneStats> DesignOwnerCore::sceneStats(core::Module module) const {
     const auto* s = impl_->slot(module);
     return s ? std::optional(s->scene->stats()) : std::nullopt;
+}
+bool DesignOwnerCore::composes(core::Module module, std::string_view source) const {
+    const auto* s = impl_->slot(module);
+    return s && s->scene->composes(source);
 }
 void DesignOwnerCore::setInsertion(core::Module module, const d::Layer* after, std::optional<gpu::LayerCompositionEntry> entry) {
     auto* s = impl_->slot(module);

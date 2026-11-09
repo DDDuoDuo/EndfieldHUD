@@ -21,11 +21,34 @@ struct NativeClipPlane {
 struct NativeLabelButtonState {
     bool actionBound{},hasHit{},expandFileShelfCaption{}; // Japanese/Korean shelf sizing only
     std::span<const NativeClipPlane> masks;
+    // Display > Modules > Arrange on HUD (HUDSourceWatchView.updateDesktopLabels):
+    // the tile carries corner marks (arrangeMark), set 4 points wider while
+    // it is dragged (liftedMark); `raised`: the tile drawn above the others
+    // (dragged or settling), whose outline is cut out of the other right-hand
+    // tiles' captions, icons and marks. `outline`: the button's own hit (its
+    // graphic's, else its first), as drawn, worldRoot applied.
+    bool arrangeMark{},liftedMark{},raised{};
+    std::optional<NativeClipPlane> outline;
 };
 struct NativeLabelMask {
     Matrix4 worldToLocal;
     Rect bounds;
+    // The content is clipped OUTSIDE the bounds instead (the raised tile's
+    // outline cut out of a neighbour: the Mac's even-odd clip path).
+    bool exclude{};
     bool operator==(const NativeLabelMask&) const = default;
+};
+// An Arrange on HUD corner mark set (HUDArchiveTile.applyArrangeMark): drawn
+// in a box `size` points large mapped onto the projected tile by `world`, in
+// its button's masks.
+struct NativeArrangeMark {
+    std::string buttonID;
+    Matrix4 world;
+    Vec2 size{};
+    bool lifted{};
+    float opacity{};
+    std::vector<NativeLabelMask> masks;
+    bool operator==(const NativeArrangeMark&) const = default;
 };
 struct NativeLabelPlacement {
     std::string surfaceID; // raw native layer ID; resolve renderer surface once
@@ -63,6 +86,9 @@ public:
     bool update(std::span<const ResolvedNode>,std::span<const double> inheritedAlpha,
                 std::span<const NativeLabelButtonState>,const CameraFrame&,const Rect& viewport);
     std::span<const NativeLabelPlacement> placements() const noexcept {return placements_;}
+    // The Arrange on HUD marks of the last update(), one per marked button,
+    // in button order with the raised tile's last (drawn over the others).
+    std::span<const NativeArrangeMark> marks() const noexcept {return marks_;}
     // The visible glyph of the icon bound to `surfaceID` in its 32-point box
     // (HUDSourceWatchView.desktopIconGlyphs: the trimmed artwork's
     // glyphFrame, or the vector path's bounds). A left icon is placed from it:
@@ -81,7 +107,7 @@ public:
 private:
     struct Compiled {std::size_t node,buttonNode,button;std::optional<std::size_t> caption;std::optional<Rect> glyph;std::optional<double> reveal;};
     struct NodeSnapshot {Matrix4 world;std::optional<SourceRect> rect;bool active{};double alpha{};bool operator==(const NodeSnapshot&)const=default;};
-    struct ButtonSnapshot {bool actionBound{},hasHit{},expanded{};std::vector<NativeClipPlane> masks;};
+    struct ButtonSnapshot {bool actionBound{},hasHit{},expanded{},arrangeMark{},liftedMark{},raised{};std::vector<NativeClipPlane> masks;std::optional<NativeClipPlane> outline;};
     struct ClipCache {std::vector<Point> polygon;std::vector<NativeLabelMask> masks;};
     const SceneDefinition* scene_;
     std::vector<NativeLabelBinding> bindings_;
@@ -92,6 +118,9 @@ private:
     std::vector<ButtonSnapshot> previousButtons_;
     std::vector<ClipCache> clips_;
     std::vector<NativeLabelPlacement> placements_,staged_;
+    std::vector<NativeArrangeMark> marks_,previousMarks_;
+    std::vector<unsigned char> rightButtons_; // per button: in the right-hand list (HUDSourceWatchView.desktopRightButtonIDs)
+    std::vector<std::size_t> buttonNodes_;   // per button: its scene node
     std::vector<Point> scratchA_,scratchB_;
     Matrix4 previousViewProjection_,previousWorldRoot_;
     Rect previousViewport_;

@@ -31,7 +31,7 @@ std::optional<native::ActivityIconStats> ActivityService::iconStats() const { if
 app::ModuleRouting ActivityService::routing() noexcept { app::ModuleRouting r; r.pointer = 12; r.wheel = 8; r.key = 9; return r; }
 std::unique_ptr<DesignModuleOwner> ActivityService::makeOwner(native::LayerRasterizer& raster, modules::design::Context& context, DesignOwnerOptions options) {
     auto& i = *impl_;
-    need(!i.canvas, "Activity Monitor has one owner");
+    need(!i.canvas, "Activity Monitor has one owner at a time");
     // App rows draw the published icons as memory images.
     if (i.icons) options.raster.memoryImages = &i.icons->images();
     auto canvas = std::make_unique<modules::ActivityCanvas>(context, i.state,
@@ -40,8 +40,11 @@ std::unique_ptr<DesignModuleOwner> ActivityService::makeOwner(native::LayerRaste
     i.canvas = canvas.get();
     // Readings and icons arrive in the shared executor's drain (the probe,
     // the icon loads): that utility completion presents the changed page.
+    // The owner's options die with it: the service then holds no canvas, so
+    // an owner rebuilt after a failure (Application::repairModule) can follow.
+    std::shared_ptr<void> forget(impl_.get(), [](Impl* gone) { gone->canvas = nullptr; });
     auto previous = std::move(options.hostEvent);
-    options.hostEvent = [this, previous = std::move(previous)](const app::HostEvent& e, double t) {
+    options.hostEvent = [this, previous = std::move(previous), forget](const app::HostEvent& e, double t) {
         bool changed = previous && previous(e, t);
         if (e.kind != app::HostEvent::Kind::utilityCompleted || !impl_->canvas) return changed;
         auto& s = *impl_;

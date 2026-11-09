@@ -55,10 +55,11 @@ Json encodeCache(const AccountCache&);
 // keeps working in memory and never overwrites those original bytes.
 std::optional<AccountCache> decodeCache(const Json&);
 std::optional<AccountCache> decodeCacheBytes(std::string_view);
+// Mac HypergryphAccountController.storedHeaderIsHidden: whether saved cache
+// bytes (1.3.0 and earlier) hide the header gauge, read without loading the
+// rest of the account: a version 1 cache of at most 1 MB whose header is
+// hiddenHeader. Missing, larger or undecodable bytes read as false.
+inline constexpr std::string_view hiddenHeader="hidden";
+bool cacheHeaderIsHidden(std::optional<std::string_view> bytes);
 std::string encodeCacheBytes(const AccountCache&);
-// Offline import of a Mac Account/profile-cache.json (no credentials exist in
-// it; Keychain items are never read). Every linked region is marked
-// requiresReconnect, keeping cached roles, sanity and the profile sync lock
-// while the user signs in again on Windows.
-std::optional<AccountCache> importMacAccountCache(std::string_view bytes);
 }

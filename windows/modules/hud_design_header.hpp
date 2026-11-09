@@ -31,8 +31,13 @@ public:
     Control* back() const noexcept { return back_; }
     std::vector<Control*> controls() const;     // back + actions
     // Title group wipe from the left .45 E with a fade from 0; the rule grows
-    // from the left .42 E after .05.
-    void playEntrance(const motion::Clock&);
+    // from the left .42 E after .05; the extras fade in with them through the
+    // stagger (no offset). `delay` holds all of it back (the HUD's open).
+    void playEntrance(const motion::Clock&, double delay = 0);
+    // The breadcrumb, the code, the hatch tail, Back (when shown) and the
+    // actions: the header's layers besides the title and the rule, in
+    // reading order (HUDModuleHeader.extras).
+    std::vector<Layer*> extras() const;
     // Test hooks (the Mac's ...ForTesting).
     std::pair<std::string, std::string> titleTexts() const;
     std::string counterText() const;

@@ -17,8 +17,9 @@ struct AccountSanityGaugeOptions {
     // has no sanity data opens the Work Mode module through the host.
     std::function<void()> openWorkMode;
 };
-// Header wallet owner (HUDAccountGauge at header position 292,0, i.e. design
-// point 562,2 on the core plane). Borrows the app-owned account controller and
+// Header wallet owner (HUDAccountGauge, authored at header position 292,0,
+// i.e. design point 562,2 on the core plane; Display > HUD elements moves and
+// sizes it through setPlacement). Borrows the app-owned account controller and
 // the shared rasterizer/renderer; owns no timer, window or service. update()
 // receives the same projected centre homography and chrome opacity that the
 // header uses. Hidden header mode removes the gauge completely.
@@ -28,6 +29,17 @@ public:
         const std::filesystem::path& accountResources,AccountSanityGaugeOptions);
     ~AccountSanityGaugePreview();
     void resize(const app::ClientMetrics&);
+    // SystemHUDView.designScale (DesktopChromeLayout::designScale of the
+    // frame's chrome): with the client's DPI scale it is the gauge's base
+    // scale (hudRasterScale). A change redraws the value, icon and recovery
+    // text at once when their render scale changes.
+    void setDesignScale(double,double time);
+    // SystemHUDView.applyOverlayLayout for the gauge: its drawn top-left on
+    // the core plane (the Display > HUD elements placement, clamped), its
+    // size (HUDAccountGauge.sizeFactor: the text and icon redraw at it) and
+    // the recovery menu's direction (popoverDirection). The wallet and the
+    // menu are posed at center x T(origin) x S(size).
+    void setPlacement(core::Point origin,double size,modules::hypergryph::GaugePopoverDirection,double time);
     void setLanguage(core::Language,double time);
     void setReduceMotion(bool) noexcept;
     void setOverlayVisible(bool,double time);
@@ -43,7 +55,8 @@ public:
     bool capturesPointer() const noexcept;   // open recovery popover consumes clicks
     bool pointer(const app::PointerEvent&,double time);
     bool key(const app::KeyEvent&,bool modified,double time); // Esc closes; Return/Enter/Space refresh
-    bool dismiss(double time);
+    // HUDAccountGauge.dismiss(animated:): animated false closes the menu at once.
+    bool dismiss(double time,bool animated=true);
     std::optional<double> nextWakeTime(double hostTime) const;
     bool deadline(double hostTime);
     const modules::hypergryph::SanityGaugeModel& model() const noexcept;
@@ -63,7 +76,10 @@ public:
     // (loaded again when it next opens); the wallet stays. True when parked.
     bool conceal();
     void upload(native::Renderer&);
-    std::span<const native::LayerCompositionEntry> entries();
+    std::span<const native::LayerCompositionEntry> entries();        // the wallet
+    // The recovery menu while it is open or fading out: the HUD's top layer
+    // (SystemHUDView.accountPopoverHost), on the gauge's position and size.
+    std::span<const native::LayerCompositionEntry> popoverEntries();
     void collected(native::Renderer&);
     void release(native::Renderer&);
 private:

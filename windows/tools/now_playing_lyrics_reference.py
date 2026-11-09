@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the unchanged source lyrics/catalog code against synthetic inputs.
 
-Compiles the Mac 1.3.0 Sources/NowPlayingLyrics.swift and Sources/NowPlayingCatalog.swift
+Compiles the Mac 1.3.1 Sources/NowPlayingLyrics.swift and Sources/NowPlayingCatalog.swift
 verbatim, plus exact slices of the source Track/Application/ArtworkKey types,
 the artwork URL allow-list and the controller's lyric precedence methods. A
 scripted in-memory fetch replaces URLSession: no network request is made.
@@ -13,7 +13,7 @@ import hashlib, json, os, subprocess, sys
 root = Path(__file__).resolve().parents[2]
 out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / 'build/scratch-nowplaying-lyrics-reference'
 destination = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / 'windows/tests/fixtures/now-playing-lyrics-source.json'
-authority = '4fda15a03ba50675e0b12d69a83efdb6526c19f6'  # Mac 1.3.0 (origin/main)
+authority = '79bc6651959977d3c6aa89c8faeedb155a15f20d'  # Mac 1.3.1
 paths = ['Sources/NowPlayingController.swift', 'Sources/NowPlayingLyrics.swift', 'Sources/NowPlayingCatalog.swift', 'Sources/NowPlayingArtwork.swift']
 texts = {}
 for path in paths:
@@ -28,14 +28,15 @@ def between(text, start, end):
 
 
 controller, lyrics, catalog, artwork = (texts[p] for p in paths)
-source = 'import Foundation\n'
+# CoreGraphics: the artwork key slice carries NowPlayingArtworkImage (CGImage).
+source = 'import Foundation\nimport CoreGraphics\n'
 source += between(controller, 'enum NowPlayingSource:', '\nenum NowPlayingFailure:') + '\n'
 source += between(artwork, 'struct NowPlayingArtworkKey:', '\nprivate final class NowPlayingArtworkToken') + '\n'
 source += lyrics.replace('import Foundation\n', '', 1) + '\n'
 source += catalog.replace('import Foundation\n', '', 1) + '\n'
 source += 'enum SourceArtworkURL {\n' + between(artwork, "    /// NetEase's image CDN serves any requested square", '    /// Synthetic art for isolated') + '}\n'
 # The loader's static size rules only (NowPlayingCatalog.coverURL / coverPixels read its bounds).
-source += 'enum NowPlayingArtworkLoader {\n' + between(artwork, '    static let maximumBytes = 8 * 1_024 * 1_024', '    private(set) var image: CGImage?') + '}\n'
+source += 'enum NowPlayingArtworkLoader {\n' + between(artwork, '    static let maximumBytes = 8 * 1_024 * 1_024', '    private(set) var artwork: NowPlayingArtworkImage?') + '}\n'
 source += '''
 final class ArtworkStub {
     var provided: [String] = []

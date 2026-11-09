@@ -20,9 +20,11 @@ struct PowerOwnerCallbacks {
     // Battery reading changed: refresh the tray status line/tooltip, the
     // Power page (modules::BatteryCanvas::update) and the HUD badge content.
     std::function<void(const modules::BatteryReading&)> readingChanged;
-    // Position editor confirmed: persist placement=custom, customScreenID,
-    // customPositionX/Y through the settings queue.
-    std::function<void(const modules::ChargePosition&)> savePosition;
+    // Bar editor confirmed (onPositionEditFinished with a layout): persist
+    // scale and chargeBarLength (removed when none), and only when the bar
+    // was dragged placement=custom with customScreenID and customPositionX/Y,
+    // through the settings queue.
+    std::function<void(const modules::ChargeBarLayout&)> saveBarLayout;
     // Editor finished either way: the source reopens the HUD on Display.
     std::function<void()> positionEditFinished;
 };

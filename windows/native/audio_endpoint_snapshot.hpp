@@ -6,13 +6,13 @@
 #include <vector>
 
 namespace endfield::native {
-// One active Windows audio endpoint (render or capture). Traits come only from
-// documented endpoint properties: PKEY_AudioEndpoint_FormFactor for
-// headphones/headsets and PKEY_Device_EnumeratorName for Bluetooth buses.
-// Nothing is inferred from a device or driver name.
+// One active Windows audio endpoint (render or capture). The headphone trait
+// comes only from the documented PKEY_AudioEndpoint_FormFactor; nothing is
+// inferred from a device or driver name. The Mac dropped its unused Bluetooth
+// flag (d060bd2), so no transport trait is kept here.
 struct AudioEndpoint {
     std::wstring id,name;
-    bool headphones{},bluetooth{};
+    bool headphones{};
     bool operator==(const AudioEndpoint&)const=default;
 };
 // Event Log topology entry (source AudioTopologyWatcher: identity -> label).
@@ -36,15 +36,21 @@ struct AudioEndpointSnapshot {
     std::optional<float>volume,balance;
     std::optional<bool>muted;
     bool canSetVolume{},canSetMute{},canSetBalance{};
+    // The default output / input can be switched: the default-device
+    // selector is available and no switch has failed during this run.
+    bool canSetDefaultOutput{},canSetDefaultInput{};
     // HRESULT-shaped: endpoint read, capture enumeration, last explicit command.
     std::int32_t error{},inputError{},commandError{};
     // Application tier.
     bool applicationsSupported{},applicationsPaused{true};
     std::vector<AudioApplicationRoute>applications;
     std::int32_t applicationError{};
-    // Source PerAppAudioController.stopAll(reason:) after an output change.
-    // Cleared by the next explicit per-app command.
-    bool routesStoppedByDeviceChange{};
+    // Source PerAppAudioController.statusMessage, HRESULT-shaped: the outcome
+    // of the last per-app command (a gain, a Stop, the Output menu's stop,
+    // sleep) or of the quiet stop when another output takes over (730f4bb),
+    // so a failed restore is reported. 0 clears it. Kept across the session
+    // switch to the new output, unlike applicationError.
+    std::int32_t routeError{};
     // Topology tier. A failed/incomplete enumeration keeps the previous list:
     // a read error is never reported as a disconnection. The generation
     // advances on the first complete read after the listener opens (the

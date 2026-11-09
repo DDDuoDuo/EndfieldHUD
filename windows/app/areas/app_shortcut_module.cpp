@@ -4,8 +4,8 @@
 #include "app/utility_executor.hpp"
 #include "core/data/file_io.hpp"
 #include "core/localization.hpp"
-#include "core/migration/mac_import_native.hpp"
-#include "core/migration/mac_import_relink.hpp"
+#include "core/migration/relink_ledger.hpp"
+#include "modules/app_shortcut_model.hpp"
 #include "modules/app_shortcut_navigation.hpp"
 #include "modules/app_shortcut_canvas.hpp"
 #include "modules/app_shortcut_tasks.hpp"
@@ -52,15 +52,15 @@ void need(bool value, const char* why) { if (!value) throw std::runtime_error(st
 // the five source languages; every other text comes from the shared catalog.
 struct WindowsText { std::string_view english, simplified, traditional, japanese, korean; };
 constexpr std::array<WindowsText, 7> windowsTexts{{
-    {"Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）。",
-     "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください。", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요."},
-    {"Open this shortcut to choose its Windows application.", "请打开此快捷方式，选择对应的 Windows 应用。", "請開啟此捷徑，選擇對應的 Windows 應用程式。",
-     "このショートカットを開いて、対応するWindowsアプリを選択してください。", "이 바로가기를 열어 해당 Windows 앱을 선택하세요."},
-    {"These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。", "這些捷徑由較新版本的 EndfieldHUD 儲存。",
-     "これらのショートカットは新しいバージョンのEndfieldHUDで保存されています。", "이 앱 바로가기는 더 최신 버전의 EndfieldHUD에서 저장되었습니다."},
-    {"App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯。",
-     "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください。", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요."},
-    {"The application is unavailable.", "应用不可用。", "應用程式不可用。", "アプリを利用できません。", "앱을 사용할 수 없습니다."},
+    {"Choose a Windows application (.exe) or its shortcut (.lnk)", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）",
+     "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요"},
+    {"Open this shortcut to choose its Windows application", "请打开此快捷方式，选择对应的 Windows 应用", "請開啟此捷徑，選擇對應的 Windows 應用程式",
+     "このショートカットを開いて、対応するWindowsアプリを選択してください", "이 바로가기를 열어 해당 Windows 앱을 선택하세요"},
+    {"These app shortcuts were saved by a newer version of EndfieldHUD", "这些快捷方式由较新版本的 EndfieldHUD 保存", "這些捷徑由較新版本的 EndfieldHUD 儲存",
+     "これらのショートカットは新しいバージョンのEndfieldHUDで保存されています", "이 앱 바로가기는 더 최신 버전의 EndfieldHUD에서 저장되었습니다"},
+    {"App shortcuts changed outside this window. Restart EndfieldHUD before editing", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯",
+     "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요"},
+    {"The application is unavailable", "应用不可用", "應用程式不可用", "アプリを利用できません", "앱을 사용할 수 없습니다"},
     {"File picker is unavailable", "文件选择器不可用", "檔案選擇器無法使用", "ファイル選択画面を利用できません", "파일 선택기를 사용할 수 없습니다"},
     {"Applications", "应用程序", "應用程式", "アプリケーション", "응용 프로그램"},
 }};
@@ -76,7 +76,7 @@ std::string text(core::Language l, std::string_view english, std::string_view ch
 }
 // AppShortcutStoreError.invalidApplication for Windows targets.
 std::string invalidApplicationText(core::Language l) {
-    return text(l, "Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。");
+    return text(l, "Choose a Windows application (.exe) or its shortcut (.lnk)", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）");
 }
 std::string lower(std::string value) { for (auto& c : value) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return value; }
 std::string suffix(std::string_view path) { const auto dot = path.rfind('.'); return dot == path.npos ? std::string{} : lower(std::string(path.substr(dot))); }
@@ -98,14 +98,14 @@ std::optional<g::AppShortcutSelection> chosenApplication(std::string_view path) 
 std::string errorText(core::Language l, std::optional<m::ShortcutErrorCode> code, bool osWork, std::string_view detail) {
     using C = m::ShortcutErrorCode;
     if (code) switch (*code) {
-    case C::invalidName: return text(l, "Enter a name of 1–128 characters without line breaks.", "请输入 1–128 个字符的名称，不含换行。");
-    case C::duplicate: return text(l, "This application is already saved. Edit its existing shortcut instead.", "此应用已添加，请编辑现有快捷方式。");
-    case C::missing: return text(l, "This app shortcut is no longer available.", "此应用快捷方式已不存在。");
-    case C::applicationChanged: return text(l, "A different application now occupies this location. Choose the application again.", "此位置的应用已更改，请重新选择应用。");
-    case C::invalidRecord: return text(l, "The saved app shortcuts could not be read. The original data has been preserved.", "无法读取应用快捷方式，原始数据已保留。");
-    case C::newerVersion: return text(l, "These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。");
-    case C::changedOnDisk: return text(l, "App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。");
-    case C::unavailable: return text(l, "The application is unavailable.", "应用不可用。");
+    case C::invalidName: return text(l, "Enter a name of 1–128 characters without line breaks", "请输入 1–128 个字符的名称，不含换行");
+    case C::duplicate: return text(l, "This application is already saved. Edit its existing shortcut instead", "此应用已添加，请编辑现有快捷方式");
+    case C::missing: return text(l, "This app shortcut is no longer available", "此应用快捷方式已不存在");
+    case C::applicationChanged: return text(l, "A different application now occupies this location. Choose the application again", "此位置的应用已更改，请重新选择应用");
+    case C::invalidRecord: return text(l, "The saved app shortcuts could not be read. The original data has been preserved", "无法读取应用快捷方式，原始数据已保留");
+    case C::newerVersion: return text(l, "These app shortcuts were saved by a newer version of EndfieldHUD", "这些快捷方式由较新版本的 EndfieldHUD 保存");
+    case C::changedOnDisk: return text(l, "App shortcuts changed outside this window. Restart EndfieldHUD before editing", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑");
+    case C::unavailable: return text(l, "The application is unavailable", "应用不可用");
     case C::capacity: return text(l, "App shortcuts could not be saved or opened: ", "无法保存或打开应用快捷方式：") + std::string(detail);
     }
     return osWork ? text(l, "The application is unavailable: ", "应用不可用：") + std::string(detail)
@@ -422,7 +422,9 @@ private:
     // two worker steps: inspect / reinspect (a candidate), then save; or remove.
     struct Work { m::AppShortcutRequest request; bool saving{}; std::optional<m::ShortcutCandidate> candidate; };
 
-    static bool durable(m::ShortcutTaskKind k) noexcept { return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch; }
+    static bool durable(m::ShortcutTaskKind k) noexcept {
+        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move;
+    }
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
     // Executor completions run outside the registry's isolation: in
     // production a failure is logged without user content and the owner
@@ -437,7 +439,7 @@ private:
     }
     double now() const { return host_.now(); }
     // The one transaction owner over the repository, the inspector and (with
-    // a relink root) the Mac import ledger.
+    // a relink root) the relink ledger (core/migration/relink_ledger).
     std::unique_ptr<m::AppShortcutTasks> makeTasks() {
         return std::make_unique<m::AppShortcutTasks>(utility_, directory_, g::nativeShortcutTextRules(),
             synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { guarded("completion", [&] { completed(std::move(r)); }); },
@@ -528,8 +530,10 @@ private:
         } else {
             const auto* current = record(w.request.id);
             if (!current) {finishWork(std::nullopt, errorText(language_, m::ShortcutErrorCode::missing, false, {}));return true;}
-            // save: store.inspect(url: store.resolvedURL(for: id)); remove: store.remove(id:).
-            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::edit : m::ShortcutTaskKind::remove;t.record = *current;
+            // save: store.inspect(url: store.resolvedURL(for: id)); remove: store.remove(id:);
+            // move: store.move(id:to:), one write in the right-hand order.
+            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::edit : w.request.kind == K::move ? m::ShortcutTaskKind::move : m::ShortcutTaskKind::remove;
+            t.record = *current;t.index = w.request.index;
         }
         (void)submit(std::move(t), Purpose::request);
         return false;
@@ -598,7 +602,7 @@ private:
             // only after it is relinked to a Windows application: its Open
             // in + Add App (where the error shows) asks for one.
             showLaunchError(text(language_, "The application is unavailable: ", "应用不可用：") +
-                text(language_, "Open this shortcut to choose its Windows application.", "请打开此快捷方式，选择对应的 Windows 应用。"), t);
+                text(language_, "Open this shortcut to choose its Windows application", "请打开此快捷方式，选择对应的 Windows 应用"), t);
             host_.requestFrame();return;
         }
         launch_ = Launch{item, LaunchPhase::verify};
@@ -644,11 +648,13 @@ private:
         } else if (launch_->phase == LaunchPhase::closing) cancelPendingLaunch(t);
     }
     void requestClose() {
-        if (coverageMode()) {++coverageCloseRequests_;return;} // the coverage harness owns the lifecycle
+        if (coverageMode()) {++coverageCloseRequests_;if (coverageCloseNow_) coverageCloseNow_();return;} // the coverage harness owns the lifecycle
         host_.closeOverlay();
     }
     void requestReopen() {
         if (coverageMode()) {++coverageReopenRequests_;return;}
+        // An explicit request (the tray Settings path): a module chosen under
+        // Display > Open on cannot replace Add App.
         host_.openModule(core::Module::addApp);
     }
 
@@ -774,7 +780,7 @@ private:
         if (observer_) observer_();
     }
     void completed(m::ShortcutTaskResult r) {
-        // The import ledger was updated on the worker after the committed
+        // The relink ledger was updated on the worker after the committed
         // file (Windows-only bookkeeping; nothing is shown for it).
         if (r.relink) {++relinkSyncs_;lastRelink_ = *r.relink;}
         if (r.relinkFailed) {
@@ -870,6 +876,7 @@ private:
     unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, coverageSelectRequests_{}, launchesOpened_{};
     unsigned relinkSyncs_{}, relinkFailures_{};
     m::ShortcutRelinkSync lastRelink_;
+    std::function<void()> coverageCloseNow_; // coverage: the host's close finishes inside the request (Reduce Motion)
 };
 
 // One combined module cycle of hidden coverage on the + Add App canvas. Every
@@ -1051,7 +1058,7 @@ struct AppShortcutArea::Driver {
         a.setOverlayVisible(true, t);frames(.4);
         step.check(canvas().isActive() && !a.launch_, "+ Add App is interactive again after the handoff");
     }
-    // Migration/relink.json as the import card reads it, and the rows the
+    // Migration/relink.json as the seed wrote it, and the rows the
     // factory seeded: [0] the imported shortcut, [1] a shortcut the user had
     // already removed, [2] a Reader row with the same record id.
     std::vector<mig::MacRelinkItem> seededRows() const {
@@ -1158,7 +1165,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     const auto seeded = file_;
     step.check(canvas_->isActive() && canvas_->storeAvailable() && !core_->entries(core::Module::addApp).empty() && seeded.items.size() == 1 && !seeded.items[0].native() &&
                d.disk() == seeded && canvas_->items() == seeded.items && canvas_->header().counterText() == "01", "+ Add App shows the seeded imported Mac shortcut from the data root");
-    // The load reconciled the import ledger on the repository worker.
+    // The load reconciled the relink ledger on the repository worker.
     step.check(relinkSyncs_ >= 1 && lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !relinkFailures_, "The load reconciles Migration/relink.json once");
     d.checkLedger(std::nullopt);
     d.checkNavigation();
@@ -1289,7 +1296,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         syntheticClipboard_->files = {Driver::utf8(applications / "Readme.txt")};
         step.check(!canvas_->keyDown(paste, d.t) && syntheticClipboard_->fileReads == reads + 1 && file_.items.size() == 5 && !d.toast(), "Ctrl+V without an application is left unhandled");
         syntheticClipboard_->files = {Driver::utf8(applications / "Gamma.exe"), Driver::utf8(applications / "Delta.lnk")};
-        step.check(canvas_->keyDown(paste, d.t) && d.toast() && d.toast()->caption == text(language_, "Choose one application to customize.", "请选择一个应用进行设置。"),
+        step.check(canvas_->keyDown(paste, d.t) && d.toast() && d.toast()->caption == text(language_, "Choose one application to customize", "请选择一个应用进行设置"),
                    "Pasting two applications asks for one");
         d.clearToast();
         syntheticClipboard_->files = {Driver::utf8(applications / "Delta.lnk")};
@@ -1320,12 +1327,21 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     // 13. A successful close-first launch records the Event Log entry. Only
     //     in the first cycle: the shared Event Log then shows the same rows
     //     in every later cycle (its raster usage must repeat).
-    const unsigned successes = step.cycle == 0 ? 1 : 0;
+    const unsigned successes = step.cycle == 0 ? 2 : 0;
     if (successes) {
         d.click("apps:" + betaID + ":open");
         d.close(false);
         step.check(!launch_ && synthetic_->launched == launched + 1 && launchesOpened_ == opened + 1 && coverageReopenRequests_ == reopened + 1,
                    "The application starts only after the close and is recorded as opened");
+        d.reopen();
+        // Reduce Motion: the host's close finishes inside the verify
+        // completion's request (Impl::close delivers overlayClosing, then
+        // overlayConcealed); the launch still starts once it returns.
+        coverageCloseNow_ = [&d, this] { closing(d.t, true); concealed(d.t); };
+        d.click("apps:" + betaID + ":open");
+        d.settle();coverageCloseNow_ = {};
+        step.check(!launch_ && !overlayVisible_ && synthetic_->launched == launched + 2 && launchesOpened_ == opened + 2 && coverageReopenRequests_ == reopened + 1,
+                   "A close that finishes inside the launch's request (Reduce Motion) still starts the application after it");
         d.reopen();
     }
     d.clearToast();
@@ -1429,13 +1445,22 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
         directory = relinkRoot / "AppShortcuts";
         seed.archive = archive.encode(m::shortcutMaximumBytes);
         ehud::data::detail::replaceFile(directory / "shortcuts.json", std::nullopt, seed.archive, m::shortcutMaximumBytes);
-        // The import's own ledger rows for that archive (validateStagedShortcuts,
-        // as the offline import writes Migration/relink.json), one row whose
-        // shortcut the user already removed and one Reader row with the same
-        // record id, which only the Reader decides.
-        auto rows = mig::validateStagedShortcuts(directory, g::nativeShortcutTextRules());
-        need(rows.size() == 1, "the import lists the seeded Mac shortcut for relinking");
-        rows[0].id = ehud::data::makeUUID();
+        // The ledger rows an earlier Mac import wrote to Migration/relink.json
+        // for that archive (each record without a Windows target, with its
+        // name and opaque Mac locator), one row whose shortcut the user
+        // already removed and one Reader row with the same record id, which
+        // only the Reader decides.
+        std::vector<mig::MacRelinkItem> rows;
+        for (const auto& record : m::ShortcutRepository(directory, g::nativeShortcutTextRules()).load().items) {
+            if (record.native()) continue;
+            mig::MacRelinkItem item;
+            item.id = ehud::data::makeUUID();item.store = std::string(mig::relinkAppShortcut);item.recordID = record.id;
+            item.displayName = record.name;item.kind = "app";item.macReference = record.locator;
+            if (record.locator["lastKnownPath"].isString()) item.lastKnownPath = record.locator["lastKnownPath"].string();
+            if (record.bundleIdentifier) item.macReference["bundleIdentifier"] = *record.bundleIdentifier;
+            rows.push_back(std::move(item));
+        }
+        need(rows.size() == 1, "the seeded Mac shortcut is listed for relinking");
         auto removed = rows[0];removed.id = ehud::data::makeUUID();removed.recordID = "abcdef00-0000-4000-8000-0000000000ff";removed.displayName = "Removed";
         auto book = rows[0];book.id = ehud::data::makeUUID();book.store = std::string(mig::relinkReaderBook);book.kind = "book";
         rows.push_back(std::move(removed));rows.push_back(std::move(book));
@@ -1450,7 +1475,7 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
         synthetic = std::make_shared<SyntheticApplications>();
     } else {
         // AppShortcutStore.applicationDirectory(): <app root>/AppShortcuts;
-        // the import ledger is <app root>/Migration/relink.json.
+        // the relink ledger is <app root>/Migration/relink.json.
         need(!context.dataRoot.empty() && context.dataRoot.is_absolute(), "an absolute data root is required");
         relinkRoot = context.dataRoot.lexically_normal();
         directory = relinkRoot / "AppShortcuts";

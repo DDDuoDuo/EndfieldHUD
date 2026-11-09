@@ -43,10 +43,10 @@ constexpr std::array<NowPlayingKnownPlayer, 11> knownPlayers{{
     {"kugou", "Kugou Music", m::NowPlayingSource::kugou, {"KuGou.exe", ""}, true},
     {"appleMusic", "Apple Music", m::NowPlayingSource::music, {"AppleInc.AppleMusicWin_", ""}, true},
     {"mediaPlayer", "Windows Media Player", m::NowPlayingSource::system, {"Microsoft.ZuneMusic_", ""}, true},
-    {"edge", "Microsoft Edge", m::NowPlayingSource::system, {"MSEdge", "msedge.exe"}, false},
-    {"chrome", "Google Chrome", m::NowPlayingSource::system, {"Chrome", "chrome.exe"}, false},
+    {"edge", "Microsoft Edge", m::NowPlayingSource::system, {"MSEdge", "msedge.exe"}, true},
+    {"chrome", "Google Chrome", m::NowPlayingSource::system, {"Chrome", "chrome.exe"}, true},
     // 308046B0AF4A39CB: the AppUserModelID of a default-location Firefox install.
-    {"firefox", "Mozilla Firefox", m::NowPlayingSource::system, {"firefox.exe", "308046B0AF4A39CB"}, false},
+    {"firefox", "Mozilla Firefox", m::NowPlayingSource::system, {"firefox.exe", "308046B0AF4A39CB"}, true},
 }};
 
 char lower(char c) noexcept { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; }
@@ -506,6 +506,8 @@ struct NowPlayingProbe::Impl {
         std::size_t decodeFailures{}, catalogFailures{}, lyricLines{};
         bool embedded{};
         bool volumeAvailable{}, silentWhilePlaying{};
+        // An explicit identity's Start shortcut named its executable.
+        bool launchTarget{};
         std::size_t matches{};
         std::optional<double> level;
         std::uint32_t pid{};
@@ -544,7 +546,7 @@ struct NowPlayingProbe::Impl {
     }
     Impl(NowPlayingProbeOptions o, NowPlayingProbeServices s)
         : options(std::move(o)), services(std::move(s)), utility(wakeOf(services)),
-          service(utility, services.provider, services.wake, services.clock) {
+          service(utility, services.provider, services.wake, services.clock, 3., services.launch) {
         if (options.lyrics && services.transport)
             web = std::make_shared<n::NowPlayingWeb>(tallied(services.transport), services.wake, services.clock);
         NowPlayingSessionOptions so;
@@ -611,10 +613,10 @@ struct NowPlayingProbe::Impl {
         next.application = std::string(application);
         return &next;
     }
-    std::size_t matching(std::string_view application, const std::vector<m::NowPlayingAudioRoute>& routes) const {
+    std::size_t matching(const m::NowPlayingAudioSource& player, const std::vector<m::NowPlayingAudioRoute>& routes) const {
         std::size_t count{};
         for (const auto& route : routes)
-            if (m::nowPlayingAudioRouteFor(application, std::span(&route, 1), services.volume->processAppUserModelID)) ++count;
+            if (m::nowPlayingAudioRouteMatches(player, route, services.volume->processAppUserModelID)) ++count;
         return count;
     }
 
@@ -686,7 +688,7 @@ struct NowPlayingProbe::Impl {
         progress(*o, s, track);
         cover(*o, s, application);
         lyrics(*o, in, track, application);
-        volume(*o, in, track, application);
+        volume(*o, in, track, *s.media.session);
         command(s, in, track, application); // last: it may republish the session
     }
     // Timeline samples pair only while one player stays presented: during
@@ -788,10 +790,12 @@ struct NowPlayingProbe::Impl {
         emit({{"event", "lyrics"}, {"player", nowPlayingReportIdentity(application)}, {"origin", embedded ? "embedded" : "downloaded"},
             {"lines", static_cast<std::int64_t>(in.lyrics->lines().size())}});
     }
-    void volume(Observed& o, const m::NowPlayingViewInput& in, const m::NowPlayingTrack& track, const std::string& application) {
+    void volume(Observed& o, const m::NowPlayingViewInput& in, const m::NowPlayingTrack& track, const m::NowPlayingSession& player) {
         if (!options.volume || !services.volume || !services.volume->routes) return;
+        const auto& application = player.appUserModelID;
+        o.launchTarget = o.launchTarget || !player.executablePath.empty();
         const auto routes = services.volume->routes();
-        const auto count = matching(application, routes);
+        const auto count = matching({application, player.executablePath, player.executableIdentity}, routes);
         o.matches = std::max(o.matches, count);
         if (!count && track.isPlaying) o.silentWhilePlaying = true;
         if (in.volumeAvailable) {
@@ -955,15 +959,19 @@ struct NowPlayingProbe::Impl {
         else if (!options.lyrics) set(C::lyrics, V::unverified, "no embedded timed lyrics: run with --lyrics for the NetEase catalog and LRCLIB");
         else set(C::lyrics, V::unverified, "no timed lyrics found for " + std::to_string(o->tracks) + " track(s) (" + lookups(o->application) + ")");
 
-        // Packaged identities ("Family!App") and Win32 executables resolve to
-        // one process; other explicit identities (browsers) cannot.
-        const bool expectRoute = k ? k->volume : m::nowPlayingWin32Identity(o->application) || o->application.find('!') != std::string::npos;
+        // Packaged identities ("Family!App") and Win32 executables name their
+        // process; another explicit identity (a browser) does once its Start
+        // shortcut named its executable. An unresolved one (a portable or
+        // per-profile install, a web app) stays a recorded gap.
+        const bool named = m::nowPlayingWin32Identity(o->application) || o->application.find('!') != std::string::npos || o->launchTarget;
+        const bool expectRoute = (k ? k->volume : true) && named;
         if (!options.volume) set(C::volume, V::unverified, "run with --volume to read its per-app audio route");
         else if (o->volumeAvailable)
             set(C::volume, V::pass, "one process route" + (o->pid ? " (pid " + std::to_string(o->pid) + ")" : std::string()) + ", level " + percent(o->level.value_or(1)));
         else if (o->matches > 1)
             set(C::volume, V::gap, std::to_string(o->matches) + " processes match; the unavailable submenu is shown (no single adjustable process)");
         else if (o->matches == 1) set(C::volume, V::fail, "its process route cannot be adjusted (failed route)");
+        else if (!named) set(C::volume, V::gap, "no Start shortcut names this identity's executable (platform gap); the unavailable submenu is shown");
         else if (!expectRoute) set(C::volume, V::gap, "no single process carries this identity (platform gap); the unavailable submenu is shown");
         else if (o->silentWhilePlaying) set(C::volume, V::fail, "no per-app audio session of " + identity + " on the default output while it was playing");
         else set(C::volume, V::unverified, "no per-app audio session while paused: play to verify");
@@ -1240,11 +1248,13 @@ Replay parseReplay(const Json& root) {
         const auto& sessions = s["sessions"];
         if (!sessions.isArray() || sessions.array().size() > 128) malformed("sessions");
         for (const auto& id : sessions.array()) {
-            // "identity", or {"id": "identity", "origin": "mediaSession"|"playerWindow"}.
+            // "identity", or {"id": "identity", "origin": "mediaSession"|"playerWindow",
+            // "executable": the resolved launch target of an explicit identity}.
             auto origin = m::NowPlayingSessionOrigin::mediaSession;
-            std::string identity;
+            std::string identity, executable;
             if (id.isObject()) {
                 identity = text(id["id"], "session identity");
+                if (!id["executable"].isNull()) executable = text(id["executable"], "session executable");
                 const auto kind = id["origin"].isNull() ? std::string("mediaSession") : text(id["origin"], "session origin");
                 if (kind == "playerWindow") origin = m::NowPlayingSessionOrigin::playerWindow;
                 else if (kind != "mediaSession") malformed("session origin " + kind);
@@ -1255,7 +1265,7 @@ Replay parseReplay(const Json& root) {
             const auto token = static_cast<std::uint64_t>(found - identities.begin()) + 1;
             for (const auto& listed : media.sessions)
                 if (listed.token == token) malformed("duplicate session");
-            media.sessions.push_back({token, identity, identity, origin});
+            media.sessions.push_back({token, identity, identity, origin, executable, {}});
         }
         if (!s["current"].isNull()) {
             const auto current = text(s["current"], "current");

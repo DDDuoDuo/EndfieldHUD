@@ -185,6 +185,10 @@ struct ApplicationOptions {
     // and before its first opening (unset: just past the grace, so they
     // measure the released device; shorter: a closed HUD that still keeps it).
     std::optional<double> idleTraceClosedSeconds;
+    // How the idle trace ends: 0 the tray's Quit under Reduce Motion, 1 the
+    // Quit button answered on the confirm bar under Reduce Motion, 2 a lock
+    // during an accepted Quit's close.
+    unsigned idleTraceQuit{};
     // closedGraphicsGraceSeconds, shortened only by hidden traces, tests and
     // the section 9 gate's isolated --data-root runs (isolatedDataRoot).
     double closedGraphicsGrace{closedGraphicsGraceSeconds};
@@ -216,10 +220,6 @@ public:
     int runHiddenVerification();
     // Second-launch activation forwarded by the single-instance guard.
     void activate(std::span<const std::string> arguments);
-    // After run() returned: the work of an accepted DataRootRestart
-    // (app/areas/mac_import_handoff.hpp), returned once; empty otherwise.
-    // The host runs it with this Application destroyed, then a fresh run.
-    std::function<void()> takeRestartWork();
     // After run() returned: set when a lost GPU device ended the run; the
     // module to reopen (the HUD's module when it was open, else none).
     std::optional<std::optional<core::Module>> takeDeviceRecovery();

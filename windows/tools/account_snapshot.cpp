@@ -54,7 +54,9 @@ int wmain(int argc,wchar_t** argv) {
         h::SanityPresentation s{h::Game::endfield,42,360,now,now+49,now+38*3600+193,false,true};
         g.update("42 / 360","Sanity",true,scale,s,now,core::Language::english);g.perform("toggle");gauge.sync(g,core::Language::english,t,true);
         const auto gaugePlace=core::Matrix4::translation(200,40)*core::Matrix4::scale(scale,scale);
-        gauge.updatePose(gaugePlace,1,t);gauge.upload(renderer);composition.setEntries(renderer,gauge.entries());composition.present(renderer);renderer.draw(false);
+        gauge.updatePose(gaugePlace,1,t);gauge.upload(renderer);
+        std::vector<gpu::LayerCompositionEntry> drawn(gauge.entries().begin(),gauge.entries().end());drawn.insert(drawn.end(),gauge.popoverEntries().begin(),gauge.popoverEntries().end());
+        composition.setEntries(renderer,drawn);composition.present(renderer);renderer.draw(false);
         writePNG(renderer.readback(),out/"account-sanity-recovery.png",80,20,480,260);std::wcout<<L"wrote account-sanity-recovery\n";
         composition.setEntries(renderer,{});gauge.collected(renderer);gauge.release(renderer);composition.detach(renderer);renderer.reset();
         if(SUCCEEDED(hr)) CoUninitialize();return 0;

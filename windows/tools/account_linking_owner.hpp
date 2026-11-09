@@ -95,13 +95,17 @@ public:
     // registered first): the controller's and the login's language and accent.
     void setAppearance(const app::ModuleAppearance&,double time);
     void setOverlayVisible(bool,double time);
+    // The close's start (48584b5, C6d): the page keeps drawing with input
+    // suspended, the recovery menu fades out, the sign-in window and the
+    // controller's requests stop; the page's full leave waits for the hidden
+    // HUD (concealed, retracted).
     void overlayClosing(double time);
     // The header wallet uses the same projected centre plane; headerOpacity is
     // the shell chrome opacity (the page uses the frame's).
     void update(const app::ModuleFrame&,float headerOpacity);
     // Launch prewarm (app::ModuleOwner::prewarm), while the HUD is still
     // closed: poses the hidden header wallet at opacity 0 (so the host's
-    // following upload installs its artwork, numerals and group targets) and
+    // following upload installs its artwork, text and group targets) and
     // builds and rasterizes the page when the first opening shows Account.
     // Nothing becomes visible, no request starts and no provider opens.
     void prewarm(const app::ModuleFrame&);
@@ -109,12 +113,22 @@ public:
     // not shown keeps no artwork and a shut recovery popover releases its
     // card (rebuilt when next shown); the wallet stays.
     void concealed(double time);
+    // A File Shelf drag's retract hid the HUD (overlayRetracted): the page
+    // leaves as at concealment, keeping its session and artwork.
+    void retracted(double time);
     bool requiresFrames(double time) const;
     std::optional<double> nextWakeTime(double now) const;
     bool deadline(double time);                         // true: visible content changed
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> moduleEntries();  // Account page
-    std::span<const native::LayerCompositionEntry> headerEntries();  // wallet + recovery popover (above modules)
+    std::span<const native::LayerCompositionEntry> headerEntries();  // the wallet (above modules)
+    std::span<const native::LayerCompositionEntry> recoveryEntries(); // the open recovery menu (the HUD's top layer)
+    // Display > HUD elements for the gauge (SystemHUDView.applyOverlayLayout):
+    // its drawn top-left on the core plane, its size and the menu's direction
+    // (AccountSanityGaugePreview::setPlacement), and Show Sanity
+    // (HypergryphAccountController::setShowsHeaderGauge; the wallet follows).
+    void setHeaderPlacement(core::Point origin,double size,modules::hypergryph::GaugePopoverDirection,double time);
+    void setShowsHeaderGauge(bool,double time);
     void collected(native::Renderer&);
     void release(native::Renderer&);
 
@@ -133,7 +147,7 @@ public:
     std::optional<app::ModuleCursor> cursorAt(core::Point) const;
     // SystemHUDView.presentQuitConfirmation: an open recovery popover closes
     // instead of the quit being asked; true when one was open.
-    bool dismissWalletPopover(double time);
+    bool dismissWalletPopover(double time, bool animated = true);
     bool flush(double time);                            // shutdown barrier: the latest Account cache bytes are written
 
     // Personal Profile observer: an avatar change outside game sync turns

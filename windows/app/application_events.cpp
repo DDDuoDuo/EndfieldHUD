@@ -2,6 +2,7 @@
 // ModuleRegistry chains (app/module_owner.hpp); OS/service/picker messages keep
 // their established WM_APP routes and order.
 #include "app/application_impl.hpp"
+#include "app/application_audio.hpp"
 #include "app/fatal_stage.hpp"
 #include <cmath>
 #include <cstring>
@@ -62,8 +63,15 @@ ModuleCursor Application::Impl::cursorAt(core::Point p){
     using C=ModuleRegistry::Chain;std::optional<ModuleCursor> chosen;
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&){if(!o.capturesPointer())return false;chosen=o.cursorAt(p);return true;},"cursor"))
         return chosen.value_or(ModuleCursor::source);
-    chosen.reset();
-    (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);return chosen.has_value()||o.covers(p);},"cursor");
+    // Arrange on HUD: the closed hand from the press on a module tile until
+    // its release, wherever the pointer goes.
+    if(arrangingModules&&arrangeDrag)return ModuleCursor::closedHand;
+    chosen.reset();bool covered=false;
+    (void)registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&){chosen=o.cursorAt(p);covered=!chosen&&o.covers(p);return chosen.has_value()||covered;},"cursor");
+    // The open hand over a module tile wherever a press would drag it
+    // (rightRowTarget: a pinned note or the charge capsule keeps its cursor)
+    // and no owner answers a cursor (a module's own drag or editor keeps its).
+    if(!chosen&&arrangeableModule(p))return ModuleCursor::openHand;
     return chosen.value_or(ModuleCursor::source);
 }
 
@@ -83,6 +91,10 @@ bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&polic
     bool handled{};
     if(!registry.guard(owner,[&]{handled=owner.pointer(e,hostTime(time));},"pointer"))return false;
     time=hostTime(time);
+    // A release that began placing the HUD elements (Settings' Edit position
+    // and size) re-lit its row after the activation: placing keeps every
+    // other control unlit (SystemHUDView.clearControlHighlights).
+    if(placingOverlay()&&&owner!=hudElements.get())clearControlHighlights(time);
     if(policy.alwaysUpdateEnvironment||handled){if(policy.updatesPointerLock)environment.pointerLocked=pointerLocked();environment.pointer=p;session->setEnvironment(environment,time);}
     if(handled){
         automationChanged();
@@ -106,12 +118,30 @@ bool Application::Impl::onPointer(const PointerEvent&e){
             if(handled&&e.kind!=PointerKind::move)automationChanged();host.capturePointer(locked);refresh(hostTime(time));}return true;
     }
     using C=ModuleRegistry::Chain;
+    // Arrange on HUD: a press Esc or arranging turning off dropped swallows
+    // its drags and its release; any new press starts afresh.
+    if((e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)&&e.button==PointerButton::left)swallowsArrangePress=false;
+    else if(swallowsArrangePress&&e.kind==PointerKind::move&&(e.modifiers&MK_LBUTTON))return true;
+    else if(swallowsArrangePress&&e.kind==PointerKind::up&&e.button==PointerButton::left){swallowsArrangePress=false;host.capturePointer(false);host.refreshCursor();refresh(hostTime(time));return true;}
     // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
-    if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
+    // S-D4 (Mac parity): during the close a move reaches no highlight (Mac
+    // updateHover returns before updateControlHighlights once
+    // interactionEnabled is off), so every highlight kept from its start (the
+    // clock, the Sanity gauge, the HUD elements strip) stays until the
+    // pointer leaves the HUD (mouseExited) or the hide (concealed,
+    // shelfHide). To clear them on the first move instead, call
+    // clearControlHighlights for a move here too.
+    if(e.kind==PointerKind::move||e.kind==PointerKind::leave){
+        if(!closing)clockHover(e);
+        else if(e.kind==PointerKind::leave)clearControlHighlights(hostTime(time));
+    }
     // Exclusive captures (the design confirm bar, the modal Settings card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&r){return o.capturesPointer()&&routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
+    // Arrange on HUD: below pointer captures, above the owners (a pinned note
+    // or the charge capsule over a tile keeps its press: rightRowTarget).
+    if(session->inputEnabled()&&arrangePointer(e,p,hostTime(time)))return true;
     if(registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&r){return routePointer(o,r.pointerPolicy,e,hostTime(time),p);},"pointer"))return true;
     // The clock sits below popovers and workspace notes, beside navigation:
     // a style indicator selects that style, the rest opens Work Mode.
@@ -146,6 +176,8 @@ bool Application::Impl::onWheel(const WheelEvent&e){
     if(!ready)return false;const auto time=now();
     if(projectionShown()){if(projectionHandoff.acceptsInput()){bool handled{};(void)projectionCall("wheel",[&]{handled=projection->wheel(e,hostTime(time));});if(handled)automationChanged();refresh(time);}return true;}
     using C=ModuleRegistry::Chain;
+    // Placing the HUD elements: the wheel neither scrolls nor turns anything.
+    if(placingOverlay())return true;
     if(registry.first(C::wheelCapture,[&](ModuleOwner&o,const ModuleRouting&){return o.capturesWheel()&&session->inputEnabled()&&o.wheel(e,hostTime(time));},"wheel")){automationChanged();refresh(time);return true;}
     if(auto*owner=registry.first(C::wheel,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.wheel(e,hostTime(time));},"wheel")){
         automationChanged();
@@ -171,6 +203,8 @@ bool Application::Impl::onKey(const KeyEvent&e){
     if(ready&&projectionShown()){if(projectionHandoff.acceptsInput()){bool handled{};(void)projectionCall("key",[&]{handled=projection->key(e,now());});if(handled)automationChanged();refresh(now());}return true;}
     if(ready){
         using C=ModuleRegistry::Chain;
+        // Esc during a press on an Arrange on HUD tile, before both key chains.
+        if(arrangeKey(e,now()))return true;
         // A handled key may open or close an editor (Return, Escape) under the pointer.
         if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}
         if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){automationChanged();refresh(now());if(e.kind==KeyKind::down)host.refreshCursor();return true;}
@@ -190,14 +224,17 @@ void Application::Impl::onApplicationActive(bool active){
     if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
     if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
-    if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
+    if(ready&&visibleMode()&&!active)(void)closeForFocusLoss(now());
+}
+bool Application::Impl::closeForFocusLoss(double time){
+    if(!ready||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return false;
     // Source exempts its own file panels and active shelf drag/drop (the drag
     // loop and its retract, hidden and restore presentation: hiding the
     // window hands the foreground to another one). Moving keyboard focus
     // between owned windows is not an application switch.
     const auto picker=mediaPicker?mediaPicker->stats():gpu::ShelfPickerStats{};
-    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return;
-    perform(lifecycle.close(),now());
+    if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss())||lifecycle.shelfDragActive())return false;
+    perform(lifecycle.close(),time);return true;
 }
 
 void Application::Impl::onDisplayChanged(){
@@ -227,8 +264,11 @@ void Application::Impl::onDeadline(double time){
     // so every later hand-off below takes the host time again.
     time=hostTime(time);
     bool artwork=projectionShown()&&projection->dismissalComplete(time);
-    if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
+    // Midnight is taken before the Calendar call: a Calendar owner disabled
+    // by a failure (its call skipped) keeps no past wake for the host.
+    if(calendarNextWake&&*calendarNextWake<=time){calendarNextWake.reset();isolate(calendarModuleOwner,"midnight",[&]{calendarSystemChanged();updateCalendarWake();});artwork=true;}
     if(graphicsIdleAt&&*graphicsIdleAt<=time)releaseIdleGraphics(time);
+    if(transitionDeadline&&*transitionDeadline<=time){transitionDeadlineExpired(time);if(stopping)return;time=hostTime(time);}
     // The tray icon was pointed at but no opening came: the device prepared
     // for it goes again (Renderer::discardPreparedDevice).
     if(preparedGraphicsUntil&&*preparedGraphicsUntil<=time){preparedGraphicsUntil.reset();
@@ -257,14 +297,11 @@ void Application::Impl::onFrame(double time){
         if(phase>=1&&!diagnosticEditing&&phase<3){auto measured=probe.measure(LiveProbe::editTransition);diagnosticEditing=notes->diagnosticEditing(true,time);}
         if(phase==2){environment.pointer=core::Point{metrics.width*.5+200*std::sin(elapsed*2),metrics.height*.5+120*std::cos(elapsed*2)};session->pointerMove(environment.pointer,time);}
         if(phase==3&&diagnosticEditing){auto measured=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
-        if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);}
+        if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);if(stopping)return;}
     }
-    bool active{};
-    // A lost GPU device ends this run; main.cpp starts a fresh owner.
-    const auto frameStart=Clock::now();
-    try{active=present(time,true);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
-    if(startupTrace)startupTrace->frame(frameStart,Clock::now());
-    if(stopping)return;
+    const auto presented=presentFrame(time);
+    if(!presented||stopping)return;
+    const bool active=*presented;
     time=hostTime(time);
     if(projectionShown()){
         if(projection->dismissalComplete(time))if(auto command=projectionHandoff.projectionClosed(projectionHandoff.generation()))projectionCommand(*command,time);
@@ -272,32 +309,86 @@ void Application::Impl::onFrame(double time){
         host.setFrameDemand(demand(now()));scheduleDeadline();return;
     }
     host.setFrameDemand(demand(time));scheduleDeadline();
-    // OverlayController.finishSystemOpening: the source entrance is complete
-    // once the session is visible; a focus loss queued during opening closes now.
-    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
-        if(startupTrace&&startupTrace->complete())writeStartupTrace();
-        if(memoryTrace&&production()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
-        // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
-        automationChanged();refreshAutomation();if(stopping)return;}
+    // A close queued during the opening starts in finishOpening; under Reduce
+    // Motion it also finished there (Impl::close), so this frame is done.
+    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){finishOpening(time);if(stopping||concealedBroadcast)return;}
     if(shelfDragFrame(time,!active)||stopping)return;
-    if(!active&&session->phase()==core::VisibilityPhase::concealed){
-        if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
-        core::SystemOverlayEffects closed;
-        if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
-        if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
-            const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
-            if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt))projectionCommand(*command,now());return;
-        }
-        if(!closed.empty()){perform(closed,time);if(stopping)return;}
-        openAfterConcealed();
-        // A development preview quits with its window; the hidden idle and animation traces keep running closed.
-        if(!production()&&!tray&&!quitRequested&&!realClockTrace())finishQuit(time);else if(!stopping)scheduleDeadline();
+    if(!active&&session->phase()==core::VisibilityPhase::concealed)finishConcealment(time);
+}
+// One frame's present() as the host's frame runs it, and as an opening draws
+// its first pose before the window shows (showOpening). A lost GPU device
+// ends this run (main.cpp starts a fresh owner): nothing is returned then.
+std::optional<bool> Application::Impl::presentFrame(double time){
+    // A module opened from inside an owner call is repaired before this frame.
+    if(pendingRepair&&!registry.routing()){const auto module=*pendingRepair;pendingRepair.reset();(void)repairModule(module,time);}
+    const auto frameStart=Clock::now();bool active{};
+    framePresenting=true;
+    try{active=present(time,true);framePresenting=false;}catch(const std::exception&e){framePresenting=false;if(recoverDevice(e,time))return std::nullopt;throw;}
+    catch(...){framePresenting=false;throw;}
+    if(startupTrace)startupTrace->frame(frameStart,Clock::now());
+    return active;
+}
+// OverlayController.finishSystemOpening: the source entrance is complete
+// once the session is visible; a focus loss queued during opening closes now.
+void Application::Impl::finishOpening(double time){
+    transitionDeadline.reset();
+    const auto token=*lifecycleOpening;lifecycleOpening.reset();traceOpened(time);perform(lifecycle.didOpen(token),time);
+    if(startupTrace&&startupTrace->complete())writeStartupTrace();
+    if(lifecycleTraced()&&memoryTrace->openings<8)recordMemory("opened-"+std::to_string(++memoryTrace->openings),false);
+    // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
+    automationChanged();refreshAutomation();
+}
+// OverlayController.finishSystemClosing: the session is concealed and nothing
+// presents any more; the window hides (keeping the topmost band, as orderOut
+// keeps the panel's level) and the lifecycle's close completes.
+void Application::Impl::finishConcealment(double time,bool inRequest){
+    transitionDeadline.reset();
+    if(notes)notes->setMediaActive(false,hostTime(time));host.hide();concealed(time);
+    core::SystemOverlayEffects closed;
+    if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
+    if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
+        const auto display=projectionDisplay(hudDisplay);if(display)moveProjection(*display);
+        if(auto command=projectionHandoff.hudClosed(projectionHandoff.generation(),display.has_value(),display?std::optional(display->handle):std::nullopt)){
+            // tearDownSystemPresentation's lastSystemModule didSet: the hand-off
+            // saves the module left (Projection) before Projection takes over.
+            core::SystemOverlayEffects remembered;
+            for(const auto&e:closed)if(e.kind==core::SystemOverlayEffect::Kind::rememberModule)remembered.push(e);
+            perform(remembered,time);projectionCommand(*command,now());return;}
+        // No display left: the hand-off ended (OverlayController.cancelProjection),
+        // no Projection is active any more and the close completes as any other.
+        setProjectionActive(false,time);
+    }
+    if(!closed.empty()){perform(closed,time);if(stopping)return;}
+    // A development preview quits with its window; the hidden idle and animation traces keep running closed.
+    const bool previewQuits=!production()&&!tray&&!quitRequested&&!realClockTrace();
+    // A close Reduce Motion finished inside its request (a canvas event:
+    // Storage Settings, a Settings link): the Shell hand-offs, which may
+    // pump messages, run from a posted notice, as a frame's close runs them
+    // after the event. A preview that quits now opens them before it quits.
+    if(inRequest&&!previewQuits&&!afterCloseQueued&&(pendingShelfReveal||pendingStorageSettings||pendingLink))
+        afterCloseQueued=PostMessageW(static_cast<HWND>(host.hwnd()),afterCloseMessage,serviceGeneration,0)!=FALSE;
+    if(!afterCloseQueued)openAfterConcealed();
+    if(previewQuits)finishQuit(time);else if(!stopping)scheduleDeadline();
+}
+// OverlayController.transitionDeadline expired with the transition still
+// running (no frame reached its end): the opening is shown stable and
+// completes (a close queued meanwhile then starts), a close conceals the
+// source and completes, through the same ends a frame reaches.
+void Application::Impl::transitionDeadlineExpired(double time){
+    transitionDeadline.reset();
+    if(lifecycleTraced()&&memoryTrace->deadlines<8)recordMemory("transition-deadline-"+std::to_string(++memoryTrace->deadlines),false);
+    if(lifecycleClosing&&closing&&lifecycle.phase()==core::SystemOverlayPhase::closing){
+        if(session->phase()!=core::VisibilityPhase::concealed)session->conceal(time);
+        host.setFrameDemand(demand(time));finishConcealment(time);
+    }else if(lifecycleOpening&&!closing&&lifecycle.phase()==core::SystemOverlayPhase::opening){
+        if(session->phase()!=core::VisibilityPhase::visible){session->showStable(time,0x5eed);if(focused)session->setInputEnabled(true,time);}
+        finishOpening(time);if(!stopping)refresh(now());
     }
 }
 
 // OverlayController.tearDownSystemPresentation: the hand-offs to other
 // applications wait for the normal close to finish (the panel ordered out;
-// here the window hidden and out of the topmost band), then open in front of
+// here the window hidden), then open in front of
 // the windows the HUD covered; a quit or forced close drops them.
 // OverlayController.performShelfDragAction on this host. The retract is the
 // presentation's own close (owners' overlayClosing, the source exit, the
@@ -310,12 +401,21 @@ void Application::Impl::onFrame(double time){
 // Frames run inside the OLE drag loop's nested dispatch, so the exit plays
 // and the window hides during the drag; should they not, the state resolves
 // on the frames after the loop returns.
+// The Mac hides and restores the same view without prepareToLeave, so the
+// Shelf keeps its scroll across the drag: the hide here (overlayRetracted),
+// or a restore before it (the open ends the retract's close), leaves its
+// canvas, which would then start at the top, so each keeps that scroll.
 void Application::Impl::shelfDragEffect(const core::SystemOverlayEffect&e,double time){
     using K=core::SystemOverlayEffect::Kind;
+    const auto keepShelfScroll=[&]{if(shelf)isolate(shelfModuleOwner,"drag",[&]{if(auto*c=shelf->canvas())c->keepsScrollOnNextShow();});};
     switch(e.kind){
     case K::shelfRetract:shelfRestoring.reset();shelfRetracting=e.token;close(time);break;
-    case K::shelfHide:host.hide();presentationPriority.restore();break; // stopMotionForConcealment + orderOut
-    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);open(time);if(visibleMode())host.show();refresh(time);break;
+    // stopMotionForConcealment + orderOut: the hidden HUD ends what the
+    // retract's close left playing (overlayRetracted; no overlayConcealed)
+    // and clears the highlights kept through it (deactivateModuleInput:
+    // clearControlHighlights).
+    case K::shelfHide:host.hide();presentationPriority.restore();clearControlHighlights(time);broadcast(HostEvent::Kind::overlayRetracted,time);keepShelfScroll();break;
+    case K::shelfRestore:shelfRetracting.reset();shelfRestoring=e.token;prepareGraphics(false);showOpening(time);keepShelfScroll();break;
     case K::shelfClose:shelfRetracting.reset();shelfRestoring.reset();forceConceal(time);break;
     default:break;
     }
@@ -461,8 +561,9 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(m.message==utilityMessage){utilityCompleted();refresh(now());return 0;}
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
-            // publication, feed the Event Log device list and the areas.
-            const FatalStage audioStage("audio");const auto changes=audio->drain();const auto time=now();
+            // publication, feed the Event Log device list and the areas. The
+            // Volume binding republishes under Volume's isolation only.
+            const FatalStage audioStage("audio");const auto changes=drainAudio(registry,volumeModuleOwner.get(),*audio);const auto time=now();
             if(changes.devices&&eventRecorder)if(const auto deviceNames=audio->deviceLabels())eventRecorder->receiveAudioDevices(*deviceNames);
             std::uint32_t flags{};
             if(changes.snapshot)flags|=HostEvent::audioSnapshot;if(changes.volume)flags|=HostEvent::audioVolume;
@@ -477,13 +578,9 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(idCard&&!stopping&&session->phase()==core::VisibilityPhase::concealed)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
             return 0;}
         if(m.message==themeColorMessage){chooseThemeColor();return 0;}
-        if(m.message==restartMessage){
-            // DataRootRestart: the red power button's confirmed quit (close, the
-            // flush chain, every save queue), then a fresh run (main.cpp).
-            if(restartPending&&!stopping&&!quitRequested)perform(lifecycle.requestQuit(),now());
-            return 0;
-        }
-        if(m.message==restartDeclinedMessage){runRestartDeclined();refresh(now());return 0;}
+        // The hand-offs of a close that finished inside its request (finishConcealment);
+        // a summon that opened the HUD again meanwhile keeps them for its close.
+        if(m.message==afterCloseMessage){afterCloseQueued=false;if(hudClosed())openAfterConcealed();return 0;}
         if(m.message==projectionDropMessage){
             auto paths=std::exchange(projectionDrop->paths,{});const auto time=now();
             if(!paths.empty()&&projectionShown()&&projectionHandoff.acceptsInput())(void)projectionCall("drop",[&]{if(const auto token=projection->preview()->prepareImportRequest()){
@@ -669,9 +766,12 @@ void Application::Impl::suspend(Suspension reason,double time){
     if(activityProbe){activityPlan.stop();if(activityCatalog)activityCatalog->invalidate();}
     // AppDelegate.suspend: clipboard capture pauses (ClipboardWatcher.setSuspended).
     if(systemServices)systemServices->set_clipboard_suspended(true);
-    (void)lifecycle.forceClose();forceConceal(time);
+    const auto closed=lifecycle.forceClose();forceConceal(time);
     if(workMode)isolate(workModeModuleOwner,"suspend",[&]{workMode->setSuspended(true,hostTime(time));});
     broadcast(HostEvent::Kind::suspended,time,static_cast<std::uint32_t>(reason));
+    // OverlayController.tearDownSystemPresentation: a Quit accepted before
+    // the forced close still quits once the HUD is hidden (onQuitAfterSystemClose).
+    perform(closed,time);
 }
 void Application::Impl::resume(Suspension reason,double time){
     // Ignore duplicate or unmatched wake notifications.

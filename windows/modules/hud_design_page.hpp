@@ -22,7 +22,7 @@
 //           auto& list = page.scrollArea("clipboard.rows", {0, 125, 590, height});
 //           for (...) { auto& card = page.make<design::ListCard>(...); list.content().add(card.layer());
 //                       page.add(card.controls()); page.stagger(card.layer()); }
-//           list.setContentHeight(contentHeight); page.restoreOffset(list);
+//           list.setContentHeight(contentHeight); page.restoreOffset(list);   // in-place re-renders only
 //       }
 //       bool handleKey(const design::KeyInput& k) override { ... }
 //   };
@@ -100,10 +100,19 @@ public:
     // (TextField::editorFocusLost) and a focused body editor blurs (its
     // textDidEndEditing save); nothing else changes.
     void editorFocusMoved(const Canvas* except = nullptr);
+    // Every canvas's open menu closes (SystemHUDView.beginOverlayPlacement:
+    // `if activeDesignCanvas?.isMenuOpen == true { closeMenu() }`); pop-overs
+    // stay.
+    void closeMenus();
     void toast(ToastRequest, std::function<void()> completion = {});
     // L10n.text / core::localized in the context language.
     std::string text(std::string_view english, std::string_view simplifiedChinese,
         std::span<const std::string_view> arguments = {}) const;
+    // The host clock (OPEN-B5-1, the overlay owner sets it from the host's
+    // area clock): data that reaches a canvas outside a frame (an executor
+    // drain) first catches env().now up to it (Canvas::catchUpClock), so
+    // motion it starts begins now, not at the last frame. Never moves it back.
+    void setHostClock(std::function<double()> clock) { hostClock_ = std::move(clock); }
     // Shared deadlines (overlay timers, scroll bars, canvases' module timers).
     std::optional<double> nextWakeTime() const noexcept;
     bool advance(double now);
@@ -124,6 +133,7 @@ private:
     std::unique_ptr<CenterOverlay> overlay_;
     std::vector<Canvas*> canvases_;
     TextEditorHost* editorHost_{};
+    std::function<double()> hostClock_;
     double unit_{geometry::baseUnit};
     std::uint64_t pagesBuilt_{};
     void registerCanvas(Canvas&);
@@ -163,7 +173,8 @@ public:
     void stagger(Layer&);
     std::span<Layer* const> staggered() const noexcept { return staggered_; }
     ScrollArea& scrollArea(std::string id, Rect frame, Layer* parent = nullptr);
-    // Call after filling an area: a re-render keeps its position.
+    // Call after filling an area: an in-place re-render keeps its position
+    // (a sub-navigation, a Back or a return to the module has none).
     void restoreOffset(ScrollArea&);
     std::span<const std::unique_ptr<ScrollArea>> scrollAreas() const noexcept { return scrolls_; }
     Tabs* tabs{};                              // the first tab bar (Q / E cycle it)
@@ -261,14 +272,29 @@ public:
     Layer& top() const noexcept { return *top_; }     // menus, pop-overs (z 30), the bubble (z 40)
     Page& page() const noexcept { return *page_; }
     bool isActive() const noexcept { return active_; }
+    // HUDDesignCanvas.isCancellingGestures: true while leaving or deactivating
+    // ends the controls' gestures; an `ended` a control reports then is an
+    // interruption, not a drop.
+    bool cancellingGestures() const noexcept { return cancellingGestures_; }
     std::optional<core::Language> renderedLanguage() const noexcept { return renderedLanguage_; }
     double now() const noexcept { return env().now; }
     motion::Clock clock() const noexcept { return env().clock(); }
+    // env().now moves forward to the context's host clock (setHostClock), if
+    // any: a module's data notice that arrives outside a frame calls it before
+    // it starts motion. The second form catches up to a time a canvas's own
+    // owner gives (Media Assembly). Neither moves it back.
+    void catchUpClock();
+    void catchUpClock(double hostTime);
     std::string text(std::string_view english, std::string_view simplifiedChinese, std::span<const std::string_view> arguments = {}) const;
     ModuleTitle title(std::string_view english, std::string_view simplifiedChinese) const;
-    // In-place re-render (LIB-75): no entrance, every scroll area keeps its
-    // offset by id; during a sub-page swap the new page stays held invisible
-    // until the swap lands. Text fields that are not editing are dropped.
+    // In-place re-render (LIB-75): no entrance of its own, every scroll area
+    // keeps its offset by id, except for a module that was left
+    // (showsFromTop), which comes back at the top; during a sub-page swap the
+    // new page starts at the top and stays held invisible until the swap
+    // lands. Text fields that are not editing are dropped. A re-render while
+    // the module entrance still plays (data arriving as the module opens or
+    // switches in) carries that entrance on in phase (playPageEntrance with a
+    // negative delay): rows already shown stay shown, the rest still enter.
     // The new page keeps the replaced page's layer ids unless that page holds
     // an editing field (makePage), so the scene reuses every part whose
     // artwork is unchanged instead of rasterizing the whole page again.
@@ -277,6 +303,12 @@ public:
     void rerenderKeepingIds() { rerender(); }
     // Shown: attached (show() .. prepareToLeave()) or active.
     bool isShown() const noexcept { return attached_ || active_; }
+    // The module was left (prepareToLeave): its next showing builds every
+    // list from the top. show() and setActive(true) clear it.
+    bool showsFromTop() const noexcept { return showsFromTop_; }
+    // Keeps the scroll a module set for its next showing (a reveal made while
+    // it was hidden, a File Shelf drag's retract) instead of starting at the top.
+    void keepsScrollOnNextShow() noexcept { showsFromTop_ = false; }
     // A change the Mac applies to every built page at once (Recording mode,
     // render scale; a module's own broadcast) that this hidden canvas applies
     // when next shown: show / setActive re-render it (recordingDeferred is
@@ -298,8 +330,11 @@ public:
     // at once. Q4: the next page (and its own staging header) is BUILT here,
     // when the swap starts, and installed at the deadline.
     void navigate(double dx, double dy = 0);
-    // Completes a pending swap at once; `concealed` keeps page and header held
-    // invisible until the module shows again (a module leaving).
+    // Completes a pending swap at once. `concealed` (a module leaving, the
+    // HUD's close): the old page and header finish their leave and end
+    // transparent; the next page lands, without an entrance, when the module
+    // shows again (show, setActive(true)), or a navigate or new session drops
+    // the old page first. transitioning() is false meanwhile.
     void settleSwap(bool concealed = false);
     bool transitioning() const noexcept { return swapDeadline_.has_value(); }
     // Menus (LIB-78): one menu or pop-over at a time (opening closes the
@@ -318,11 +353,25 @@ public:
     // (navigate, leave, deactivate, palette, openMenu / openPopover, confirm)
     // dispatches to it.
     virtual void closePopups();
+    // HUDDesignCanvas.keepsClosingPopupsDrawn / retirePopup (2e08932): while
+    // the module leaves (prepareToLeave, setActive(false)) a menu or pop-over
+    // that closes stops taking input but stays drawn to leave with the page;
+    // the next showing (show, setActive(true)) or a new session removes it.
+    // Every other close removes it at once. `remove` takes the closed popup's
+    // layers out of the tree; capture only `this` or owning pointers.
+    bool keepsClosingPopupsDrawn() const noexcept { return keepsClosingPopupsDrawn_; }
+    void retirePopup(std::function<void()> remove, bool keepingDrawn);
     bool menuOpen() const noexcept { return menu_ != nullptr; }
     bool popoverOpen() const noexcept { return popover_ != nullptr; }
     // Text fields (one edits at a time; others end with commit).
     void registerField(TextField&);
     void endEditing(bool commit);
+    // HUDDesignCanvas.suspendInput (:556): inline editors commit and gestures
+    // end (a slider drag without commit) while the page stays drawn, menus,
+    // pop-overs and a running sub-page swap included (the HUD's close: they
+    // leave with the module). navigate, prepareToLeave and setActive(false)
+    // run it too.
+    void suspendInput();
     // The field's text view stopped being first responder: every editing
     // field of this canvas commits (TextField::editorFocusLost; see
     // Context::editorFocusMoved), and other text it edits ends
@@ -355,6 +404,9 @@ public:
     // new palette) whose content the scene tracks like the canvas's; nullptr
     // stops tracking. Create it with &env().deadlines for completions.
     void trackArena(const LayerArena* arena) noexcept { tracked_ = arena; }
+    // True while buildPage builds a sub-page swap's next page (Q4: built when
+    // the swap starts, installed when it lands); the shown page is still page().
+    bool buildingStagedPage() const noexcept { return staging_; }
     // Runs after a built page is installed (in place, at once, or when a
     // sub-page swap lands). The Mac builds the next page when the swap lands;
     // here it is built when the swap starts (Q4), so a canvas-owned component
@@ -368,20 +420,30 @@ public:
     // makeContent(for:style:): a module re-syncs its model around it (Clipboard,
     // Event Log, Volume) and calls Canvas::show.
     virtual void show(double now);
-    void setActive(bool, double now);           // deactivation forgets retained sub-page offsets
+    void setActive(bool, double now);
     // The HUD closed (overlayConcealed): the Mac drops SystemHUDView and
     // builds every canvas anew at the next opening (OverlayController
     // .tearDownSystemPresentation `systemView = nil`), so what a canvas
-    // instance holds starts over. While inactive, retained offsets go and a
-    // scrolled page is built again at offset 0 (an unscrolled one stays);
+    // instance holds starts over. While inactive, a scrolled page is built
+    // again at offset 0 (an unscrolled one stays);
     // modules reset their own canvas state (selection, sub-page, tab,
     // drafts) and call this.
     virtual void resetSession();
     // HUDDirectionalContent: the entrance after the module swap (header wipe +
-    // stagger from `offset` content px); nothing under Reduce Motion. Virtual
-    // like the Mac's playEntrance(from:), which a sub-page swap also calls
-    // (Work Mode adds its title wipe).
-    virtual void playEntrance(Point offset, double now);
+    // stagger from `offset` content px); nothing under Reduce Motion. The
+    // two-argument form (the Mac's playEntrance(from:), which a sub-page swap
+    // also calls) plays it at once; playEntrance(from:delay:) holds it back
+    // `delay` s (the HUD's open, until the centre shows). The canvas records
+    // the entrance (offset and start) until the module leaves, so a page
+    // re-rendered in place while it plays carries it on (rerender).
+    void playEntrance(Point offset, double now) { playEntrance(offset, now, 0); }
+    void playEntrance(Point offset, double now, double delay);
+    // HUDDesignCanvas.playPageEntrance(from:delay:): the page's part of the
+    // entrance (the header keeps its own), the row stagger plus a subclass's
+    // extras built with the page (Work Mode's inner title wipe, the File
+    // Shelf card). A page rebuilt mid-entrance replays it with a negative
+    // `delay` (how long ago the entrance began), resuming in phase.
+    virtual void playPageEntrance(Point offset, double delay);
     // Before the content leaves: close popups, end editing WITH commit, cancel
     // gestures (sliders without commit), settle a pending swap concealed, willLeave.
     void prepareToLeave(double now);
@@ -399,6 +461,10 @@ public:
     bool magnify(Point, double magnification, double now);
     bool keyDown(const KeyInput&, double now);
     bool containsControl(Point) const;          // a press here goes to the module before the shell
+    // HUDDesignCanvas.control(atBox:): the enabled control a left press at
+    // this point would pick, so a right-click resolves its target exactly as
+    // a left-click does (null while inactive or swapping).
+    Control* control(Point) const;
     // Virtual like HUDDesignCanvas.capturesPointer (Now Playing's open volume
     // pop-up captures too, NowPlayingCanvas.swift:29).
     virtual bool capturesPointer() const { return menuOpen() || popoverOpen(); }
@@ -448,22 +514,31 @@ private:
     // Replaced pages, closed menus and pop-overs: destroyed by a deadline at
     // the current time, never while one of their callbacks is on the stack.
     std::vector<std::shared_ptr<void>> graveyard_;
+    // Closed popups kept drawn while the module leaves (retirePopup); after
+    // the graveyard, so they go first when the canvas dies.
+    std::vector<std::function<void()>> departedPopups_;
+    bool keepsClosingPopupsDrawn_{};
     std::unique_ptr<Menu> menu_;
     std::unique_ptr<Popover> popover_;
     std::optional<std::string> menuAnchor_;
     std::vector<Control*> popoverControls_;
     std::vector<TextField*> fields_;
     Router router_;
-    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{};
+    bool active_{}, showsHeader_{true}, attached_{}, deferredStale_{}, deferredBuild_{}, showsFromTop_{}, cancellingGestures_{};
     std::optional<core::Language> renderedLanguage_;
     std::uint64_t renderedPalette_{}, pageSerial_{}, structure_{};
     const LayerArena* tracked_{};
     mutable std::array<std::uint64_t, 8> revisionKey_{};
     mutable std::uint64_t revision_{};
     std::optional<double> swapDeadline_;
+    bool concealedSwap_{};                      // settleSwap(true) left the old page leaving; pending_ lands on reveal
     Point swapOffset_;
+    // The entrance playing on the page (HUDDesignCanvas.entrance: its offset
+    // and start), until the module leaves; an in-place re-render carries it.
+    struct Entrance { Point offset; double start{}; };
+    std::optional<Entrance> entrance_;
+    static double entranceLength() noexcept;
     Layer* leaving_{};                          // the old page's layer while it leaves
-    std::vector<std::pair<std::string, double>> retainedOffsets_, pendingOffsets_;
     Deadlines::Token swapToken_{}, collectToken_{};
     std::vector<Deadlines::Token> timerGroups_;
     void begin(double now);                     // host entry: the clock
@@ -475,6 +550,9 @@ private:
     void cancelGestures();
     void finishLeave();
     void revealSettledPage();
+    void landConcealedSwap();
+    void closePopupsForLeave();
+    void removeDepartedPopups();
     bool stale() const noexcept;
     void rerenderIfStale();
     void bury(std::shared_ptr<void>);

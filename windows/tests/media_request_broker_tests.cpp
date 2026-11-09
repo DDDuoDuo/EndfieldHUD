@@ -41,7 +41,28 @@ void run(const std::filesystem::path&shader){Window w;auto gate=std::make_shared
  }
  const auto done=decoder.duplicateWorkerHandle();decoder.stop();check(WaitForSingleObject(done,10000)==WAIT_OBJECT_0,"One existing serial decoder shuts down through its owner");CloseHandle(done);check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"Synthetic broker never opens files, executes audio or shows UI");renderer.reset();}
 }
-int wmain(int argc,wchar_t**argv){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(initialized)&&argc==2,"Pass retained native shader for hidden shared media fixture");run(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" shared media broker checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(initialized))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Archive pauses its movie before a module leave (Mac 815b343): the broker's
+// pauseVideo clears only the calling module's play intent, also once hidden.
+void pauseScoped(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});
+ n::NativeNotesImageDecoder decoder([](const auto&r){return n::NotesImageAccess{std::filesystem::u8path(r.path),r.accessLease};},{w.hwnd,Window::notice,93},[](const n::NotesImageRequest&r,n::NotesImageAccess){return std::make_unique<Sequence>(r.path.ends_with(".gif"));});
+ n::NativeNotesImagePlayback images(decoder);
+ n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,93},[](auto,auto notify){auto p=std::make_shared<EngineProbe>();p->notify=std::move(notify);return std::make_unique<Engine>(p);});
+ {
+ n::NativeMediaRequestBroker broker(decoder,images,{w.hwnd,Window::notice,93},&video);const auto notes=broker.attachClient(),archive=broker.attachClient();
+ const std::array movie{n::NotesVideoRequest{"movie0","C:\\Owned-fixture\\not-opened.mp4",1,512,10,{},true}};
+ check(broker.setVideos(notes,1,movie,0)&&broker.setVideos(archive,1,movie,0),"Notes and Archive show a same-name movie");broker.accept(93,0);
+ n::NotesImageFrame poster{2,2,0,std::vector<std::uint8_t>(16,255)};for(const auto c:{notes,archive})check(broker.setVideoPoster(c,"movie0",1,1,&poster),"Each module's movie takes its still");broker.accept(93,0);
+ check(broker.toggleVideo(notes,"movie0",1)&&broker.toggleVideo(archive,"movie0",1)&&broker.findVideo(notes,"movie0")->wantsPlayback&&broker.findVideo(archive,"movie0")->wantsPlayback,"Both modules play their same-name movie");
+ check(broker.pauseVideo(archive,"movie0")&&!broker.findVideo(archive,"movie0")->wantsPlayback&&broker.findVideo(archive,"movie0")->state!=m::NotesMediaState::playing&&broker.findVideo(notes,"movie0")->wantsPlayback,"Archive's pause clears only its own movie's play intent");
+ check(!broker.pauseVideo(archive,"movie1")&&!broker.pauseVideo(archive,"movie0"),"An unknown key, or a movie already paused, reports no change");
+ check(broker.toggleVideo(archive,"movie0",2),"Archive plays its movie again");broker.hideVideos(archive,3,true);
+ check(broker.findVideo(archive,"movie0")&&!broker.findVideo(archive,"movie0")->visible&&broker.findVideo(archive,"movie0")->wantsPlayback,"A hidden movie keeps its play intent");
+ check(broker.pauseVideo(archive,"movie0")&&!broker.findVideo(archive,"movie0")->wantsPlayback&&broker.findVideo(notes,"movie0")->wantsPlayback,"A hidden known movie pauses, so it comes back without play intent");
+ check(broker.pauseVideo(notes,"movie0"),"Notes pauses its own movie");broker.hideVideos(notes,4);
+ check(broker.retireVideo(notes,"movie0")&&broker.retireVideo(archive,"movie0")&&broker.collectRetired()&&broker.detachClient(notes)&&broker.detachClient(archive),"Both paused movies retire and their modules detach");
+ }
+ check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"The pause fixture never shows UI");renderer.reset();}
+int wmain(int argc,wchar_t**argv){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(initialized)&&argc==2,"Pass retained native shader for hidden shared media fixture");run(argv[1]);pauseScoped(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" shared media broker checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(initialized))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){return 0;}
 #endif

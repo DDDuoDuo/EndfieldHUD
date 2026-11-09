@@ -20,8 +20,6 @@ namespace endfield::app {
 // Localized, event-time helpers shared by the owner and the adapters.
 std::string moduleCaption(std::string_view target, core::Language, std::string_view fallback);
 tools::NotesPreviewPreferences notesPreferences(const ModuleAppearance&);
-// The module's surface is drawn by this presentation sample (current or incoming).
-bool presentationShows(const core::ModulePresentationSample&, core::Module) noexcept;
 
 // Notes lists its projected controls under the HUD UIA root
 // (app/areas/notes_automation_binding.hpp): `clock` is the press time,

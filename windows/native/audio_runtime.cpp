@@ -11,7 +11,10 @@ namespace endfield::native {
 namespace {
 constexpr std::int32_t wrongThread=static_cast<std::int32_t>(0x8001010Eu); // RPC_E_WRONG_THREAD
 // Source-equivalent label hygiene: the topology list already carries trimmed,
-// nonempty labels; anything that cannot be represented as UTF-8 is withheld.
+// nonempty labels chosen as each Volume row's (audioTopology uses
+// audioEndpointLabel): a name that is not well-formed UTF-16 or is past 4096
+// UTF-8 bytes is the endpoint ID, so the device list keeps updating while it
+// exists.
 std::optional<std::map<std::string,std::string>>labels(const AudioEndpointSnapshot&s){
     if(!s.topologyActive||!s.topologyListed)return std::nullopt;
     std::map<std::string,std::string>out;
@@ -64,10 +67,10 @@ AudioRuntimeChanges AudioRuntime::drain(){
     s.pending->store(false,std::memory_order_release);
     if(!s.service.drain())return changes;
     changes.snapshot=true;
+    // The Volume binding is not republished here: the caller does it after
+    // drain() under the Volume owner's isolation (volume().receive()), so a
+    // Volume publish that throws can never stop this adoption.
     const auto&current=s.service.snapshot();
-    // The binding republishes only while Volume is visible and selected; its
-    // receiver updates the Volume owner synchronously.
-    changes.volume=s.binding.receive();
     if(current.applications!=s.applications){s.applications=current.applications;++s.applicationsRevision;changes.applications=true;}
     if(!current.topologyListed||!current.topologyActive)s.topologyListed=false;
     else if(!s.topologyListed||current.topologyGeneration!=s.topologyGeneration){
@@ -93,7 +96,8 @@ std::span<const AudioApplicationRoute>AudioRuntime::applications()const noexcept
 std::uint64_t AudioRuntime::applicationsRevision()const noexcept{return state_->applicationsRevision;}
 bool AudioRuntime::setApplicationGain(std::string_view route,double gain){
     auto&s=*state_;if(s.stopped||!s.onOwner()||!std::isfinite(gain)||gain<0||gain>1)return false;
-    return s.service.setApplicationGain(std::string(route),static_cast<float>(gain));
+    // Now Playing's rows come from this snapshot: the gain is for its output.
+    return s.service.setApplicationGain(s.service.snapshot().defaultOutputID,std::string(route),static_cast<float>(gain));
 }
 bool AudioRuntime::stopApplication(std::string_view route){auto&s=*state_;if(s.stopped||!s.onOwner())return false;return s.service.stopApplication(std::string(route));}
 bool AudioRuntime::powerSuspend(){auto&s=*state_;return !s.stopped&&s.onOwner()&&s.service.powerSuspend();}

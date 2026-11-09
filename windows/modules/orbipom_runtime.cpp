@@ -58,15 +58,15 @@ void bootInto(Boot&boot,const OrbiPomRuntimeOptions&options)noexcept{
     const auto checked=[&](JSValueConst value){
         if(!JS_IsException(value))return;
         Value error(boot.context,JS_GetException(boot.context));
-        if(boot.interrupted)throw std::runtime_error("Original minigame simulation exceeded its command time budget.");
-        CString text(boot.context,error.value);throw std::runtime_error(text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit).");
+        if(boot.interrupted)throw std::runtime_error("Original minigame simulation exceeded its command time budget");
+        CString text(boot.context,error.value);throw std::runtime_error(text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit)");
     };
     try{
         const auto matter=sourceFile(options.resourceRoot,"matter-0.20.0.js",83318,"928d059868201b2c4c270818fda44e5d26c099e4df407043f018f9bbe2c598cf");
         const auto game=sourceFile(options.resourceRoot,"orbipom.js",94724,"1c68da4d2165f3d6d45e8842ab4d7d6e766bb3d738e3ff19f32ca2dce64e4054");
         boot.runtime=JS_NewRuntime();if(!boot.runtime)throw std::runtime_error("Could not create the original minigame VM");++liveVMs;
         JS_SetMemoryLimit(boot.runtime,options.memoryBytes);JS_SetMaxStackSize(boot.runtime,options.stackBytes);JS_SetCanBlock(boot.runtime,false);JS_SetInterruptHandler(boot.runtime,Boot::interrupt,&boot);
-        boot.context=JS_NewContext(boot.runtime);if(!boot.context)throw std::runtime_error("Original minigame VM exceeded its initialization memory budget.");
+        boot.context=JS_NewContext(boot.runtime);if(!boot.context)throw std::runtime_error("Original minigame VM exceeded its initialization memory budget");
         for(const auto&item:std::array<std::pair<std::string_view,const char*>,2>{{{matter,"matter-0.20.0.js"},{game,"orbipom.js"}}}){Value result(boot.context,JS_Eval(boot.context,item.first.data(),item.first.size(),item.second,JS_EVAL_TYPE_GLOBAL));checked(result.value);}
         Value global(boot.context,JS_GetGlobalObject(boot.context));boot.bridge=JS_GetPropertyStr(boot.context,global.value,"OrbiPom");checked(boot.bridge);if(!JS_IsObject(boot.bridge))throw std::runtime_error("Missing original offline minigame bridge");
         for(std::size_t i=0;i<boot.methods.size();++i){boot.methods[i]=JS_GetPropertyStr(boot.context,boot.bridge,methodNames[i]);checked(boot.methods[i]);if(!JS_IsFunction(boot.context,boot.methods[i]))throw std::runtime_error("Incomplete original offline minigame bridge");}
@@ -98,8 +98,8 @@ struct OrbiPomRuntime::Impl {
     };
     std::string exception(){
         Value error(context,JS_GetException(context));
-        if(interrupted)return "Original minigame simulation exceeded its command time budget.";
-        CString text(context,error.value);return text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit).";
+        if(interrupted)return "Original minigame simulation exceeded its command time budget";
+        CString text(context,error.value);return text.bytes?std::string(text.bytes,std::min<std::size_t>(text.size,4096)):"Original minigame simulation failed (memory or stack limit)";
     }
     void checked(JSValueConst value){if(JS_IsException(value))throw std::runtime_error(exception());}
     Value property(JSValueConst object,const char*key){Value result(context,JS_GetPropertyStr(context,object,key));checked(result.value);return result;}
@@ -119,7 +119,7 @@ struct OrbiPomRuntime::Impl {
         if(text.size>64)throw std::runtime_error("Invalid original minigame state text size");
         return std::string(text.bytes,text.size);
     }
-    std::size_t arraySize(JSValueConst value,std::size_t limit){if(!JS_IsArray(value))throw std::runtime_error("Invalid original minigame array");const auto size=integer(value,"length");if(size<0||std::uint64_t(size)>limit)throw std::runtime_error("Original minigame snapshot exceeds its resource budget.");return std::size_t(size);}
+    std::size_t arraySize(JSValueConst value,std::size_t limit){if(!JS_IsArray(value))throw std::runtime_error("Invalid original minigame array");const auto size=integer(value,"length");if(size<0||std::uint64_t(size)>limit)throw std::runtime_error("Original minigame snapshot exceeds its resource budget");return std::size_t(size);}
     void interaction(JSValueConst value){
         const auto x=number(value,"previewX",published.previewX),y=number(value,"previewY",published.previewY),size=number(value,"previewSize",published.previewSize),scale=number(value,"previewScale",published.previewScale);
         const auto visible=boolean(value,"previewVisible");const auto hover=optionalID(value,"hoverBodyID");
@@ -139,7 +139,7 @@ struct OrbiPomRuntime::Impl {
         auto selected=property(value,"selectedBodyIDs");const auto selectedCount=arraySize(selected.value,2);s.selectedBodyIDs.clear();
         for(std::size_t index=0;index<selectedCount;++index){Value item(context,JS_GetPropertyUint32(context,selected.value,std::uint32_t(index)));checked(item.value);double id{};if(!JS_IsNumber(item.value)||JS_ToFloat64(context,&id,item.value)<0||!std::isfinite(id)||std::abs(id)>9007199254740991.||std::trunc(id)!=id)throw std::runtime_error("Invalid selected minigame body");s.selectedBodyIDs.push_back(std::int64_t(id));}
         auto bodies=property(value,"bodies");const auto count=arraySize(bodies.value,options.snapshotBytes/sizeof(OrbiPomBody));if(count>s.bodies.capacity())s.bodies.reserve(count);s.bodies.resize(count);
-        for(std::size_t index=0;index<count;++index){if(index%64==0&&interrupt(runtime,this))throw std::runtime_error("Original minigame snapshot exceeded its command time budget.");Value item(context,JS_GetPropertyUint32(context,bodies.value,std::uint32_t(index)));checked(item.value);auto&b=s.bodies[index];
+        for(std::size_t index=0;index<count;++index){if(index%64==0&&interrupt(runtime,this))throw std::runtime_error("Original minigame snapshot exceeded its command time budget");Value item(context,JS_GetPropertyUint32(context,bodies.value,std::uint32_t(index)));checked(item.value);auto&b=s.bodies[index];
             b={integer(item.value,"id"),smallInteger(item.value,"level"),number(item.value,"x"),number(item.value,"y"),number(item.value,"angle"),number(item.value,"size"),number(item.value,"opacity",1),number(item.value,"scale",1)};
             if(b.level<1||b.level>11||b.size<=0||b.scale<0||b.opacity<0||b.opacity>1)throw std::runtime_error("Invalid original minigame body metadata");
         }

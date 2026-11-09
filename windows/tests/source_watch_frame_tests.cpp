@@ -1,6 +1,7 @@
 #include "core/watch_runtime_input.hpp"
 #include "core/source_watch_frame.hpp"
 #include "core/shell_packet.hpp"
+#include "tests/source_watch_list_fixture.hpp"
 #include <bit>
 #include <atomic>
 #include <cstdlib>
@@ -127,4 +128,37 @@ void slantRetention(){
 }
 void synthetic(){Node root;root.id="root";root.name="root";root.rect=RectTransform{{},{},{},{100,80},{.5,.5}};SceneDefinition scene("root",{root});MountedLayoutDocument doc;Json canvas(Json::Object{});canvas["m_SortingOrder"]=6080;doc.components["root"]={{"canvas","MonoBehaviour","Canvas",canvas},{"cut","MonoBehaviour","UIWatchPanelCut",Json::Object{}},{"button","MonoBehaviour","UIButton",Json::Object{}}};Json image(Json::Object{});image["m_RaycastTarget"]=true;doc.components["root"].push_back({"image","MonoBehaviour","UIImage",image});SourceWatchFrameResources resources;resources.materialVariants["__ui_default"][0]="__ui_default";resources.textureSizes["__white"]={1,1};SourceWatchFrameBuilder builder(scene,doc,resources);const auto&f=builder.build({},{});check(f.batches.size()==1&&f.hits.size()==1,"Synthetic original UIImage produces one batch and hit");check(f.batches[0].geometry&&f.batches[0].geometry->mesh.indices==std::vector<std::uint32_t>{0,1,2,2,3,0},"Original source quad winding");const auto initial=builder.stats();const auto&shifted=builder.build({},Matrix4::translation(12,34,56));check(shifted.batches[0].world.values[12]==12&&builder.stats().worldOnlyFrames==initial.worldOnlyFrames+1,"World-only presentation updates source Canvas matrix");check(builder.stats().bakedGeometryBuilds==initial.bakedGeometryBuilds&&builder.stats().layoutBuilds==initial.layoutBuilds,"World-only Canvas movement retains local geometry and metrics");Pose transparent;transparent.properties["root"]["m_Color.a"]=0;const auto&t=builder.build(transparent,{});check(t.batches.empty()&&t.hits.size()==1,"Invisible graphic retains source raycast before alpha filtering");SourceDesktopFrameSettings settings;settings.hiddenNodes.insert("root");builder.setDesktopSettings(settings);check(builder.build({},{}).batches.empty()&&builder.build({},{}).hits.empty(),"Explicit desktop hidden nodes remove original graphics and hits");}
 }
-int main(int argc,char**argv){try{synthetic();ambientSynthetic();slantRetention();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>1)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<checks<<" source frame checks passed; max normalized floating error "<<maximumFloatError<<'\n';return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+// Arrange on HUD: tiles drawn away from their slots (desktopTilePlacements)
+// and one tile drawn above the others (desktopRaisedButton).
+void arrangePlacements(){
+ const auto fixture=endfield::tests::sourceListFixture();SourceWatchFrameBuilder builder(fixture.scene,fixture.document,fixture.resources,fixture.settings);
+ DesktopNavigationLayout navigation(fixture.scene,fixture.document,8);Pose pose;pose.transforms["root"].sizeDelta=Vec2{1000,640};const auto root=Matrix4::scale(.5,.5,1);
+ const auto index=[&](std::string_view id){return static_cast<std::size_t>(std::find_if(fixture.scene.nodes().begin(),fixture.scene.nodes().end(),[&](const auto&n){return n.id==id;})-fixture.scene.nodes().begin());};
+ const auto&rest=builder.build(pose,root,1,&navigation);check(rest.layoutReport.scroll&&rest.layoutReport.scroll->viewportID=="list","The fixture's list scrolls in its viewport");
+ const auto restBatches=rest.batches;const auto restHits=rest.hits;const auto restLabel=rest.resolved[index("b00label")].worldMatrix;const auto restButton=rest.resolved[index("b00")].worldMatrix;
+ check(rest.tileTranslations.empty()&&std::none_of(rest.hits.begin(),rest.hits.end(),[](const auto&h){return h.restWorld.has_value();}),"No placements: no translations and no resting worlds");
+ const auto before=builder.stats();
+ builder.setDesktopTilePlacements({{"b00",DesktopTilePlacement::offset({0,-30})}});const auto&offset=builder.build(pose,root,1,&navigation);
+ check(builder.stats().worldOnlyFrames==before.worldOnlyFrames+1&&builder.stats().layoutBuilds==before.layoutBuilds,"A placement change keeps the layout and takes the world-only path");
+ check(offset.tileTranslations.size()==1&&offset.tileTranslations.at("b00")==Vec3{0,-30,0},"The offset in the viewport's plane is the scene translation (an unscaled plane)");
+ check(offset.resolved[index("b00")].worldMatrix==Matrix4::translation(0,-30,0)*restButton&&offset.resolved[index("b00label")].worldMatrix==Matrix4::translation(0,-30,0)*restLabel,"The button's whole subtree moves");
+ check(offset.resolved[index("b01")].worldMatrix==rest.resolved[index("b01")].worldMatrix,"Other tiles stay");
+ for(std::size_t n=0;n<offset.hits.size();++n){const auto&h=offset.hits[n];
+  if(h.buttonID=="b00"){check(h.restWorld.has_value()&&h.world!=restHits[n].world,"The moved hit is drawn away");for(unsigned k=0;k<16;++k)near(h.restWorld->values[k],restHits[n].world.values[k],"The moved hit keeps where it rests",1e-12);}
+  else check(!h.restWorld&&h.world==restHits[n].world,"Unmoved hits rest where they are drawn");}
+ const auto unchanged=builder.stats();builder.build(pose,root,1,&navigation);check(builder.stats().reusedFrames==unchanged.reusedFrames+1,"Unchanged placements reuse the frame");
+ builder.setDesktopTilePlacements({{"b00",DesktopTilePlacement::center({20,40})}});const auto&held=builder.build(pose,root,1,&navigation);
+ const auto centre=DesktopTiles::center(held.resolved[index("b00")].worldMatrix,*held.resolved[index("b00")].rect,held.resolved[index("list")].worldMatrix);
+ check(centre&&std::abs((*centre)[0]-20)<1e-9&&std::abs((*centre)[1]-40)<1e-9,"A held tile's centre is drawn where it is placed");
+ const auto tilted=builder.stats();const auto&pointer=builder.build(pose,root*Matrix4::translation(3,4,0),1,&navigation);
+ check(builder.stats().worldOnlyFrames==tilted.worldOnlyFrames+1&&pointer.tileTranslations.contains("b00"),"The pointer path keeps the placement");
+ // Raising: one complete frame; the raised subtree draws after the rest of the row pool.
+ const auto complete=builder.stats();builder.setDesktopRaisedButton("b00");const auto&raised=builder.build(pose,root*Matrix4::translation(3,4,0),1,&navigation);
+ check(builder.stats().worldOnlyFrames==complete.worldOnlyFrames&&builder.stats().layoutReuses==complete.layoutReuses+1&&builder.stats().layoutBuilds==complete.layoutBuilds,"Changing the raised button costs one complete frame, its layout kept");
+ const auto position=[&](std::string_view id){return std::find_if(raised.batches.begin(),raised.batches.end(),[&](const auto&b){return b.sourceNodeID==id;})-raised.batches.begin();};
+ check(raised.batches.size()==restBatches.size()&&position("b00")==static_cast<std::ptrdiff_t>(raised.batches.size())-2&&position("b00label")==static_cast<std::ptrdiff_t>(raised.batches.size())-1,"The raised tile's batches come last within the row pool");
+ const auto again=builder.stats();builder.build(pose,root*Matrix4::translation(5,4,0),1,&navigation);check(builder.stats().worldOnlyFrames==again.worldOnlyFrames+1,"A raised tile keeps the world-only path afterwards");
+ builder.setDesktopRaisedButton(std::nullopt);builder.setDesktopTilePlacements({});const auto&back=builder.build(pose,root,1,&navigation);
+ check(back.batches.size()==restBatches.size()&&std::equal(back.batches.begin(),back.batches.end(),restBatches.begin(),[](const auto&a,const auto&b){return a.sourceNodeID==b.sourceNodeID&&a.world==b.world;})&&back.tileTranslations.empty(),"Without placements the frame is as before");
+}
+int main(int argc,char**argv){try{synthetic();ambientSynthetic();slantRetention();arrangePlacements();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>1)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<checks<<" source frame checks passed; max normalized floating error "<<maximumFloatError<<'\n';return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

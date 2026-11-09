@@ -94,8 +94,9 @@ struct NowPlayingKnownPlayer {
     std::string_view key, label;
     modules::NowPlayingSource source; // the source mapping it must produce
     std::array<std::string_view, 2> identities;
-    // One process route is expected. False for browsers: explicit
-    // AppUserModelIDs and multi-process players are a recorded platform gap.
+    // A process route is expected. Browsers' explicit AppUserModelIDs find
+    // theirs through the executable their Start shortcut launches; while
+    // that is unresolved the row records a gap rather than a failure.
     bool volume{};
 };
 std::span<const NowPlayingKnownPlayer> nowPlayingKnownPlayers() noexcept;
@@ -171,6 +172,9 @@ struct NowPlayingProbeServices {
     std::function<double()> clock;  // thread-safe monotonic seconds
     std::function<void()> wake;     // posts one owner wake; any thread
     std::function<void(ehud::data::Json)> emit; // JSON event lines (owner thread); optional
+    // Launch targets of explicit AppUserModelIDs, as the HUD resolves them
+    // (native::nowPlayingAppsFolderExecutable); optional.
+    native::NowPlayingLaunchResolver launch;
 };
 // Owner-thread probe over one NowPlayingSession activation.
 class NowPlayingProbe final {

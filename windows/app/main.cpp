@@ -33,7 +33,6 @@
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_work.hpp"
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
 #include "native/font_resources.hpp"
@@ -83,39 +82,39 @@ core::Language interfaceLanguage() { return endfield::native::preferredSystemLan
 // resources, launch arguments) and have no Mac source: Windows-only text in
 // the five source languages, in the catalog's terms.
 using Text = core::TranslationEntry;
-constexpr Text newerData{"This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it.",
-    "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用。",
-    "此 EndfieldHUD 資料由較新版本建立，已保持原樣。請安裝較新版本的 EndfieldHUD 後使用。",
-    "この EndfieldHUD のデータは新しいバージョンで作成されたため、変更せずに残しました。使用するには新しいバージョンの EndfieldHUD をインストールしてください。",
-    "이 EndfieldHUD 데이터는 최신 버전에서 만들어져 변경하지 않고 그대로 두었습니다. 사용하려면 최신 버전의 EndfieldHUD를 설치하세요."};
-constexpr Text dataFolderFailed{"EndfieldHUD could not open its data folder. Nothing was changed.",
-    "EndfieldHUD 无法打开数据文件夹，未作任何更改。", "EndfieldHUD 無法開啟資料所在的資料夾，未作任何變更。",
-    "EndfieldHUD のデータフォルダーを開けませんでした。何も変更されていません。", "EndfieldHUD 데이터 폴더를 열 수 없습니다. 변경된 내용은 없습니다."};
-constexpr Text invalidArguments{"EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。", "EndfieldHUD 收到了無效的啟動參數。",
-    "EndfieldHUD に無効な起動引数が渡されました。", "EndfieldHUD에 잘못된 실행 인수가 전달되었습니다."};
-constexpr Text displayResourcesDamaged{"The EndfieldHUD display resources are missing or damaged. Reinstall EndfieldHUD; your data was not changed.",
-    "EndfieldHUD 显示资源缺失或已损坏。请重新安装 EndfieldHUD；数据未被更改。", "EndfieldHUD 顯示資源遺失或已損毀。請重新安裝 EndfieldHUD；資料未被變更。",
-    "EndfieldHUD の表示リソースが見つからないか、破損しています。EndfieldHUD を再インストールしてください。データは変更されていません。",
-    "EndfieldHUD 표시 리소스가 없거나 손상되었습니다. EndfieldHUD를 다시 설치하세요. 데이터는 변경되지 않았습니다."};
+constexpr Text newerData{"This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it",
+    "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用",
+    "此 EndfieldHUD 資料由較新版本建立，已保持原樣。請安裝較新版本的 EndfieldHUD 後使用",
+    "この EndfieldHUD のデータは新しいバージョンで作成されたため、変更せずに残しました。使用するには新しいバージョンの EndfieldHUD をインストールしてください",
+    "이 EndfieldHUD 데이터는 최신 버전에서 만들어져 변경하지 않고 그대로 두었습니다. 사용하려면 최신 버전의 EndfieldHUD를 설치하세요"};
+constexpr Text dataFolderFailed{"EndfieldHUD could not open its data folder. Nothing was changed",
+    "EndfieldHUD 无法打开数据文件夹，未作任何更改", "EndfieldHUD 無法開啟資料所在的資料夾，未作任何變更",
+    "EndfieldHUD のデータフォルダーを開けませんでした。何も変更されていません", "EndfieldHUD 데이터 폴더를 열 수 없습니다. 변경된 내용은 없습니다"};
+constexpr Text invalidArguments{"EndfieldHUD received invalid launch arguments", "EndfieldHUD 收到了无效的启动参数", "EndfieldHUD 收到了無效的啟動參數",
+    "EndfieldHUD に無効な起動引数が渡されました", "EndfieldHUD에 잘못된 실행 인수가 전달되었습니다"};
+constexpr Text displayResourcesDamaged{"The EndfieldHUD display resources are missing or damaged. Reinstall EndfieldHUD; your data was not changed",
+    "EndfieldHUD 显示资源缺失或已损坏。请重新安装 EndfieldHUD；数据未被更改", "EndfieldHUD 顯示資源遺失或已損毀。請重新安裝 EndfieldHUD；資料未被變更",
+    "EndfieldHUD の表示リソースが見つからないか、破損しています。EndfieldHUD を再インストールしてください。データは変更されていません",
+    "EndfieldHUD 표시 리소스가 없거나 손상되었습니다. EndfieldHUD를 다시 설치하세요. 데이터는 변경되지 않았습니다"};
 constexpr Text modulesDisabled{"Some EndfieldHUD resources are missing or damaged, so these modules are disabled:",
     "部分 EndfieldHUD 资源缺失或已损坏，以下模块已停用：", "部分 EndfieldHUD 資源遺失或已損毀，以下模組已停用：",
     "EndfieldHUD の一部のリソースが見つからないか破損しているため、次のモジュールを無効にしました：",
     "일부 EndfieldHUD 리소스가 없거나 손상되어 다음 모듈이 비활성화되었습니다:"};
-constexpr Text reinstallModules{"Reinstall EndfieldHUD to restore them.", "请重新安装 EndfieldHUD 以恢复。", "請重新安裝 EndfieldHUD 以還原。",
-    "復元するには EndfieldHUD を再インストールしてください。", "복원하려면 EndfieldHUD를 다시 설치하세요."};
-constexpr Text displayFailed{"EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。",
-    "EndfieldHUD 無法啟動顯示介面，資料未被變更。", "EndfieldHUD の表示を開始できませんでした。データは変更されていません。",
-    "EndfieldHUD 화면을 시작할 수 없습니다. 데이터는 변경되지 않았습니다."};
-constexpr Text stoppedByError{"EndfieldHUD stopped because of an error. Your saved data was not changed.", "EndfieldHUD 因错误而停止，已保存的数据未被更改。",
-    "EndfieldHUD 因錯誤而停止，已儲存的資料未被變更。", "エラーのため EndfieldHUD が停止しました。保存されたデータは変更されていません。",
-    "오류로 인해 EndfieldHUD가 중지되었습니다. 저장된 데이터는 변경되지 않았습니다."};
+constexpr Text reinstallModules{"Reinstall EndfieldHUD to restore them", "请重新安装 EndfieldHUD 以恢复", "請重新安裝 EndfieldHUD 以還原",
+    "復元するには EndfieldHUD を再インストールしてください", "복원하려면 EndfieldHUD를 다시 설치하세요"};
+constexpr Text displayFailed{"EndfieldHUD could not start its display. Your data was not changed", "EndfieldHUD 无法启动显示界面，数据未被更改",
+    "EndfieldHUD 無法啟動顯示介面，資料未被變更", "EndfieldHUD の表示を開始できませんでした。データは変更されていません",
+    "EndfieldHUD 화면을 시작할 수 없습니다. 데이터는 변경되지 않았습니다"};
+constexpr Text stoppedByError{"EndfieldHUD stopped because of an error. Your saved data was not changed", "EndfieldHUD 因错误而停止，已保存的数据未被更改",
+    "EndfieldHUD 因錯誤而停止，已儲存的資料未被變更", "エラーのため EndfieldHUD が停止しました。保存されたデータは変更されていません",
+    "오류로 인해 EndfieldHUD가 중지되었습니다. 저장된 데이터는 변경되지 않았습니다"};
 // Windows has no host backdrop before Windows 11 (build 22000), and the HUD's
 // blurred background needs it.
-constexpr Text windows11Required{"EndfieldHUD requires Windows 11 (build 22000 or later): this version of Windows cannot draw the HUD's blurred background. Your data was not changed.",
-    "EndfieldHUD 需要 Windows 11（内部版本 22000 或更高版本）：此版本的 Windows 无法绘制 HUD 的模糊背景。数据未被更改。",
-    "EndfieldHUD 需要 Windows 11（組建 22000 或更新版本）：此版本的 Windows 無法繪製 HUD 的模糊背景。資料未被變更。",
-    "EndfieldHUD には Windows 11（ビルド 22000 以降）が必要です。このバージョンの Windows では HUD のぼかし背景を描画できません。データは変更されていません。",
-    "EndfieldHUD를 사용하려면 Windows 11(빌드 22000 이상)이 필요합니다. 이 버전의 Windows에서는 HUD의 흐림 배경을 그릴 수 없습니다. 데이터는 변경되지 않았습니다."};
+constexpr Text windows11Required{"EndfieldHUD requires Windows 11 (build 22000 or later): this version of Windows cannot draw the HUD's blurred background. Your data was not changed",
+    "EndfieldHUD 需要 Windows 11（内部版本 22000 或更高版本）：此版本的 Windows 无法绘制 HUD 的模糊背景。数据未被更改",
+    "EndfieldHUD 需要 Windows 11（組建 22000 或更新版本）：此版本的 Windows 無法繪製 HUD 的模糊背景。資料未被變更",
+    "EndfieldHUD には Windows 11（ビルド 22000 以降）が必要です。このバージョンの Windows では HUD のぼかし背景を描画できません。データは変更されていません",
+    "EndfieldHUD를 사용하려면 Windows 11(빌드 22000 이상)이 필요합니다. 이 버전의 Windows에서는 HUD의 흐림 배경을 그릴 수 없습니다. 데이터는 변경되지 않았습니다"};
 void report(const Text& text) {
     MessageBoxW(nullptr, wide(core::translated(text, interfaceLanguage())).c_str(), L"EndfieldHUD", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 }
@@ -261,8 +260,7 @@ int run(const std::vector<std::string>& values) {
         return 1;
     }
     reportDisabled(package);
-    // Each run opens the root again: an accepted restart (the Mac import
-    // commit between two runs) or a GPU device loss ends a run with every
+    // Each run opens the root again: a GPU device loss ends a run with every
     // store closed, then a fresh owner runs under the same instance guard.
     auto startup = arguments.startup;
     std::optional<core::Module> reopen;
@@ -271,12 +269,9 @@ int run(const std::vector<std::string>& values) {
     std::vector<std::chrono::steady_clock::time_point> recoveries;
     for (;;) {
         const auto base = isolated.empty() ? ehud::data::localApplicationDataBase() : isolated;
-        // A Mac import activation interrupted between its two renames (the
-        // previous root moved to its backup, the staged root not yet in place)
-        // is rolled back before any owner opens the root. Never replaces an
-        // existing root and never deletes anything (core/migration/README.md).
-        (void)ehud::migration::recoverMacImportWork((base / std::string(ehud::data::applicationRootDataDirectory)).lexically_normal(),
-            std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
+        // An earlier version's Mac import killed between its two renames left
+        // no v1: its backup moves back before anything opens the root.
+        (void)ehud::data::restoreInterruptedImportRoot(base);
         const auto root = openRoot(base);
         if (!root) return 1;
         fatalDataFolder = root->data;
@@ -312,7 +307,9 @@ int run(const std::vector<std::string>& values) {
         // Opt-in memory and thread census (numbers, owner names and system
         // module file names only): ENDFIELDHUD_MEMORY_TRACE=1 rewrites
         // Diagnostics/memory-trace.json after construction, the launch
-        // prewarm and each of the first eight openings and closings.
+        // prewarm, each of the first eight openings, closings and close
+        // requests, an expired transition deadline and a quit; every row
+        // carries the frame scheduling state.
         if (wchar_t flag[8]{}; GetEnvironmentVariableW(L"ENDFIELDHUD_MEMORY_TRACE", flag, 8) == 1 && flag[0] == L'1')
             options.memoryTrace = root->data / "Diagnostics" / "memory-trace.json";
         // Always: a disabled module owner leaves one bounded record
@@ -324,7 +321,6 @@ int run(const std::vector<std::string>& values) {
         // Areas join the module owner only with Notes (module selection, TSF).
         if (package.modules) app::appendRegisteredAreas(options.modules, false);
         int code{};
-        std::function<void()> work;
         std::optional<std::optional<core::Module>> recovered;
         {
             // Declared before the owner: the teardown stage covers its destructor.
@@ -334,18 +330,8 @@ int run(const std::vector<std::string>& values) {
             stage.emplace("application run");
             code = application.run();
             instance.setHandler({});
-            work = application.takeRestartWork();
             recovered = application.takeDeviceRecovery();
             stage.emplace("application teardown");
-        }
-        if (work) {
-            // Every owner and store of the finished run is closed: the area's
-            // work (e.g. the Mac import commit) runs exactly once, then the HUD
-            // opens again on System over the same root.
-            const app::FatalStage stage("restart work");
-            work(); work = {};
-            startup = {}; startup.settings = true; reopen.reset();
-            continue;
         }
         if (recovered) {
             // A lost GPU device: a fresh owner creates a new device and

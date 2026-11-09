@@ -85,9 +85,11 @@ struct BodyHost final : m::ArchiveBodyEditorHost {
     }
 };
 struct Media final : m::ArchiveMediaPresenter {
-    std::vector<std::string> shown; int clears{}; bool isPlaying{}; std::optional<std::string> failure;
-    void show(std::string_view document, std::size_t index, const m::ArchiveJson&) override { shown.push_back(std::string(document) + ":" + std::to_string(index)); }
-    void clear() override { ++clears; }
+    std::vector<std::string> shown, log; int clears{}; bool isPlaying{}; std::optional<std::string> failure;
+    void show(std::string_view document, std::size_t index, const m::ArchiveJson&) override { shown.push_back(std::string(document) + ":" + std::to_string(index)); log.push_back("show"); }
+    void clear() override { ++clears; isPlaying = false; log.push_back("clear"); }
+    // As the binding: a playing movie reports its paused state at once (NotesMedia.swift:402-407).
+    void pause() override { log.push_back("pause"); if (isPlaying) { isPlaying = false; if (onStateChange) onStateChange(); } }
     bool playing() const override { return isPlaying; }
     std::optional<std::string> error() const override { return failure; }
     double currentTime() const override { return 0; }
@@ -186,6 +188,14 @@ m::ArchiveJson png(std::string name) {
     return J::Object{{"version", 1}, {"kind", "image"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
         {"duration", J{}}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 1}};
 }
+m::ArchiveJson movie(std::string name) {
+    return J::Object{{"version", 1}, {"kind", "video"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
+        {"duration", 10}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 1}};
+}
+m::ArchiveJson gif(std::string name) {
+    return J::Object{{"version", 1}, {"kind", "gif"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
+        {"duration", 1}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 2}};
+}
 
 void richText() {
     namespace r = m::archive_rich_text;
@@ -239,9 +249,9 @@ void strings() {
             check(m::archiveErrorText(m::archiveClassificationErrorText(c, L::english), l) == t, "The English what() maps to the language's wording");
         }
     check(std::string(m::ArchiveClassificationError(C::passwordMissing).what()) == m::archiveClassificationErrorText(C::passwordMissing, L::english), "what() is the English text");
-    check(m::archiveErrorText("The archive is full.", L::simplifiedChinese) == "档案库已满。" && m::archiveErrorText("The archive could not be read. The original was preserved.", L::simplifiedChinese) == "无法读取档案，原始数据已保留。",
+    check(m::archiveErrorText("The archive is full", L::simplifiedChinese) == "档案库已满" && m::archiveErrorText("The archive could not be read. The original was preserved", L::simplifiedChinese) == "无法读取档案，原始数据已保留",
         "Store errors show the Mac pairs");
-    check(m::archiveErrorText("Archive file queue is busy. Retry after pending work completes.", L::japanese) == "Archive file queue is busy. Retry after pending work completes.", "Windows diagnostics pass unchanged");
+    check(m::archiveErrorText("Archive file queue is busy. Retry after pending work completes", L::japanese) == "Archive file queue is busy. Retry after pending work completes", "Windows diagnostics pass unchanged");
 }
 
 // BatchSix testCategories (:137-157).
@@ -276,7 +286,7 @@ void categories() {
     // Remove asks on the confirm bar.
     w.press("removeCategory");
     const auto& request = w.context.overlay().confirmState().request();
-    check(request && request->id == "removeCategory" && request->title == "Remove Field notes?" && request->danger && request->message == "Its documents move to Uncategorized.", "Remove asks on the confirm bar (DOCS-408)");
+    check(request && request->id == "removeCategory" && request->title == "Remove Field notes?" && request->danger && request->message == "Its documents move to Uncategorized", "Remove asks on the confirm bar (DOCS-408)");
     (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
     check(w.state.categories().empty() && c.filter().kind == m::ArchiveCanvas::FilterKind::all && w.toast() == "Category removed|", "Confirmed: All, removed, toast");
 }
@@ -455,6 +465,89 @@ void classified() {
     check(!w.state.isClassified(w.state.selected()->id) && w.toast() == "Declassified|", "Declassified with its toast");
 }
 
+// Mac 815b343 with db7c5c0's media half: the presentation stays through a
+// module leave; a video is paused before it, so it comes back paused where it
+// was left; a GIF keeps its playback; a relocked document's media go.
+void mediaLeave() {
+    const auto ask = [](World& w) {
+        auto& c = *w.canvas;
+        check(w.press("media") && c.menuOpen(), "Media opens its menu");
+        std::vector<d::AccessibilityItem> menu; c.accessibilityItems(menu);
+        for (const auto& i : menu) if (i.id.ends_with(":finder")) c.performAccessibilityAction(i.id, w.now);
+        w.settle();
+        check(!w.requests.empty() && c.presentingPanel(), "Choose in File Explorer asks the picker");
+        return w.requests.back();
+    };
+    const auto attach = [&](World& w, const m::ArchiveJson& reference) {
+        w.open();
+        check(w.press("new"), "New");
+        check(w.canvas->receiveMedia(ask(w), {reference}, std::nullopt), "The import reply lands");
+        w.settle();
+        check(w.media.shown.size() == 1 && w.media.log.back() == "show", "The presenter shows the item");
+        w.media.log.clear();
+    };
+    const auto leave = [](World& w) { w.canvas->prepareToLeave(w.now); w.canvas->setActive(false, w.now); w.settle(); };
+    const auto back = [](World& w) { w.canvas->show(w.now); w.canvas->setActive(true, w.now); w.settle(); };
+    const auto label = [](const World& w) { for (const auto& i : w.items()) if (i.id == "mediaPlay") return i.label; return std::string{}; };
+    using Log = std::vector<std::string>;
+    {
+        World w; attach(w, movie("clip.mp4"));
+        check(w.press("mediaPlay") && w.media.isPlaying && label(w) == "Pause", "Play starts the movie");
+        leave(w);
+        check(w.media.log == Log{"pause"} && !w.media.isPlaying, "Leaving pauses the movie and keeps its presentation (no clear)");
+        back(w);
+        check(w.media.log == Log{"pause"} && w.media.shown.size() == 1 && !w.media.isPlaying && label(w) == "Play",
+            "Back, the same presentation shows the movie paused: no new show, the button reads Play");
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play again");
+        w.canvas->prepareToLeave(w.now); w.canvas->setActive(false, w.now);
+        w.canvas->show(w.now); w.canvas->setActive(true, w.now);
+        check(w.media.log == Log{"pause", "pause"} && !w.media.isPlaying && w.media.shown.size() == 1 && label(w) == "Play",
+            "A switch reversed at once brings the movie back paused too, reading Play before any media refresh");
+        w.settle();
+        check(!w.media.isPlaying && label(w) == "Play", "And still Play once the queued state refresh has run");
+        const auto pending = ask(w);
+        leave(w);
+        check(!w.canvas->receiveMedia(pending, {png("late.png")}, std::nullopt), "An import pending at the leave is not received");
+        back(w);
+        w.media.log.clear();
+        w.canvas->endSession();
+        check(w.media.log == Log{"clear"}, "The end of the HUD session ends the presentation");
+    }
+    {
+        World w; attach(w, gif("loop.gif"));
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play starts the GIF");
+        leave(w);
+        check(w.media.log.empty() && w.media.isPlaying, "A GIF is not paused by a leave");
+        back(w);
+        // Its frame restarts at 0 in the player: a preserved hide and re-show of a playing
+        // GIF decodes frame 0 and keeps playing (notes_image_playback_contracts, "Reopen
+        // starts source GIF frame0 and restores playback intent").
+        check(w.media.log.empty() && w.media.shown.size() == 1 && w.media.isPlaying, "Back, the GIF keeps its presentation and playback");
+    }
+    {
+        World w; attach(w, png("still.png"));
+        leave(w); back(w);
+        check(w.media.log.empty() && w.media.shown.size() == 1, "A picture is neither paused nor cleared by a leave and back");
+    }
+    {
+        World w; attach(w, movie("sealed.mp4"));
+        auto& c = *w.canvas;
+        w.press("classify"); c.endEditing(true);
+        c.setAccessibilityText("newPassword", "correct horse", w.now); c.setAccessibilityText("confirmPassword", "correct horse", w.now);
+        c.performAccessibilityAction("classifySubmit", w.now); w.settle();
+        check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked, "The classified document is locked");
+        auto* password = dynamic_cast<d::TextField*>(w.control("password"));
+        check(password != nullptr, "The password bar");
+        password->beginEditing(); w.fields.value = "correct horse"; password->editorChanged("correct horse");
+        w.press("unlock"); w.settle();
+        check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor && label(w) == "Play", "Unlocked, the editor shows the movie again");
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play the classified movie");
+        w.media.log.clear();
+        leave(w);
+        check(w.media.log == Log{"pause", "clear"} && w.state.isSelectedLocked(), "Leaving relocks: the movie is paused, then its presentation goes with the text");
+    }
+}
+
 // Windows B14: the focused field and its selection survive a module switch.
 void focusMemory() {
     World w; w.open();
@@ -488,6 +581,156 @@ void closedUnseen() {
     check(!w.canvas->bodyArea() && !w.state.active(), "Ending an unseen session touches nothing");
     w.open();
     check(w.canvas->displayedPage().kind == m::ArchiveCanvas::PageKind::list, "A later first showing opens the list");
+}
+
+// A gallery document's menu (Mac 7ba4175, 7f8ed37): the tile's ⋯ or a
+// right-click opens Open / Move to… / Delete; a locked document can only be
+// opened; Move to… lists the categories at the same spot and a move toasts
+// once done; Delete asks and stays on the gallery; the labels hide a
+// classified title; an off-screen document's ⋯ stand-in opens the menu.
+//
+// documentStandIn: with no categories, an uncategorized document has nowhere
+// to move (Move to… off, Delete on). A document scrolled out of the grid has
+// no tile; the screen reader still lists it and its ⋯ at the grid's frame,
+// and the ⋯ opens (and closes) its menu at the grid's top-left (7f8ed37).
+void documentStandIn() {
+    World w;
+    for (unsigned n = 1; n <= 30; ++n) {
+        m::ArchiveEntry e; e.id = uuid(1000 + n); e.title = "Note " + std::to_string(n); e.body = "Body"; e.date = e.modified = double(n);
+        w.repo->save(e);
+    }
+    w.open();
+    auto& c = *w.canvas;
+    const auto rows = [&] {
+        std::vector<std::string> out;
+        for (const auto& item : w.items()) if (item.id.starts_with("doc.menu:")) out.push_back(item.id + (item.enabled ? "" : " off"));
+        return out;
+    };
+    const auto shown = w.state.entries();
+    check(shown.size() == 30 && w.control("doc:" + shown.front().id), "Thirty uncategorized documents, the first with a tile");
+    check(w.press("doc:" + shown.front().id + std::string(d::TileMoreButton::suffix)) && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete"},
+        "With no category to pick, Move to… is off and Delete stays on");
+    c.closeMenu();
+    // The last document is scrolled out: no tile, a listed stand-in and its ⋯.
+    const auto& hidden = shown.back();
+    const std::string standIn = "doc:" + hidden.id, standInMore = standIn + std::string(d::TileMoreButton::suffix);
+    check(!w.control(standIn) && !w.control(standInMore), "The last document has no tile");
+    const auto items = w.items();
+    const auto item = [&](const std::string& id) { const auto f = std::find_if(items.begin(), items.end(), [&](const auto& i) { return i.id == id; }); return f == items.end() ? nullptr : &*f; };
+    const auto* listed = item(standIn); const auto* listedMore = item(standInMore);
+    const std::string label = hidden.title + ", 2026.10.23";
+    check(listed && listedMore && listed->label == label && listedMore->label == "More, " + label, "It and its ⋯ are listed for the screen reader with the tile's labels");
+    const auto frame = listed->rect;
+    check(listedMore->rect == frame && frame.width > 0 && frame.height > 0, "Both stand at the grid's frame");
+    // Its ⋯ opens the menu at the grid's top-left, opening no document; again closes it.
+    check(w.press(standInMore) && c.menuOpen() && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete"} && !w.state.selected(),
+        "The stand-in's ⋯ opens the document's menu without opening it");
+    const auto after = w.items();
+    const auto open = std::find_if(after.begin(), after.end(), [](const auto& i) { return i.id == "doc.menu:open"; });
+    check(open != after.end() && open->rect.x >= frame.x && open->rect.x < frame.x + 8 && open->rect.y > frame.y && open->rect.y < frame.y + 20,
+        "The menu opens at the grid's top-left");
+    check(w.press(standInMore) && !c.menuOpen(), "The stand-in's ⋯ closes an open menu");
+    // The stand-in itself opens the document.
+    check(w.press(standIn) && w.state.selected() && w.state.selected()->id == hidden.id, "The stand-in opens its document");
+}
+// Mac 63d257a and 8dbb071: the list's posters are asked for from the
+// showing, not from the activation after the entrance; one that arrives on a
+// drawn tile cross-fades with its glyph; once the module is deactivated a
+// late decode is ignored.
+void posters() {
+    World w;
+    w.reduce(false);
+    m::ArchiveEntry e; e.id = uuid(3001); e.title = "Photo"; e.body = "Body"; e.date = e.modified = 1; e.media = {png("photo.png")};
+    w.repo->save(e);
+    auto& c = *w.canvas;
+    c.show(w.now);
+    for (int n = 0; n < 6 && w.posters.empty(); ++n) { w.queue.drain(); c.stateChanged(); w.advance(.01); }
+    check(!c.isActive() && w.posters.size() == 1 && w.posters[0].first == png("photo.png"), "Showing the list asks for its posters before the module is active");
+    c.setActive(true, w.now);
+    const auto* tile = find(c.root(), "tile.doc");
+    check(tile && !find(c.root(), "tile.poster"), "The tile draws its glyph while the poster decodes");
+    w.posters[0].second(d::ImageSource{d::ImageSource::Kind::memory, "poster.photo", {}, 1});
+    const auto* poster = find(c.root(), "tile.poster");
+    check(poster && !poster->hidden() && poster->animating(w.now) && near(poster->presented(d::Channel::opacity, w.now), 0) && !tile->hidden()
+        && near(tile->presented(d::Channel::opacity, w.now), 1), "A poster arriving on a drawn tile fades in over its glyph");
+    w.advance(.3);
+    check(tile->hidden() && !poster->animating(w.now), "The glyph is hidden once the fade ends");
+    c.prepareToLeave(w.now); c.setActive(false, w.now);
+    c.show(w.now);
+    check(w.posters.size() == 2, "Showing the list again asks for the poster again (leaving dropped the cache)");
+    c.setActive(true, w.now); c.prepareToLeave(w.now); c.setActive(false, w.now);
+    const auto* shown = find(c.root(), "tile.poster");
+    const bool hidden = !shown || shown->hidden();
+    w.posters[1].second(d::ImageSource{d::ImageSource::Kind::memory, "poster.late", {}, 2});
+    const auto* after = find(c.root(), "tile.poster");
+    check((!after || after->hidden()) == hidden && (!after || !after->animating(w.now)), "A decode that lands after the module was deactivated changes no tile");
+}
+void documentMenu() {
+    World w;
+    m::ArchiveCategory ops; ops.id = uuid(901); ops.name = "Ops"; ops.created = 1; w.repo->saveCategory(ops);
+    m::ArchiveCategory lab; lab.id = uuid(902); lab.name = "Lab"; lab.created = 2; w.repo->saveCategory(lab);
+    const auto document = [&](unsigned n, std::string title, std::optional<std::string> category, double date) {
+        m::ArchiveEntry e; e.id = uuid(n); e.title = std::move(title); e.body = "Body"; e.date = e.modified = date; e.categoryID = std::move(category);
+        w.repo->save(e); return e.id;
+    };
+    const auto report = document(911, "Field report", ops.id, 10), untitled = document(912, "", std::nullopt, 11), sealed = document(913, "Sealed", lab.id, 12);
+    w.repo->classify(sealed, "correct horse");
+    w.open();
+    auto& c = *w.canvas;
+    const auto more = [](const std::string& id) { return "doc:" + id + std::string(d::TileMoreButton::suffix); };
+    const auto rows = [&] {
+        std::vector<std::string> out;
+        for (const auto& item : w.items()) if (item.id.starts_with("doc.menu:") || item.id.starts_with("doc.moveTo:")) out.push_back(item.id + (item.enabled ? "" : " off"));
+        return out;
+    };
+    // Labels: "<title>, <dotted date>", "More, " + that; Untitled and Classified document.
+    check(w.control("doc:" + report)->label == "Field report, 2026.10.23" && w.control(more(report))->label == "More, Field report, 2026.10.23", "A titled document and its ⋯ are labelled");
+    check(w.control("doc:" + untitled)->label == "Untitled, 2026.10.23" && w.control(more(untitled))->label == "More, Untitled, 2026.10.23", "An untitled document reads Untitled");
+    check(w.control("doc:" + sealed)->label == "Classified document, 2026.10.23" && w.control(more(sealed))->label == "More, Classified document, 2026.10.23", "A classified title stays hidden");
+    // The ⋯: Open / Move to… / Delete; it toggles the menu.
+    check(w.press(more(report)) && c.menuOpen() && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move", "doc.menu:delete"}, "The ⋯ opens Open / Move to… / Delete");
+    check(w.press(more(report)) && !c.menuOpen(), "The ⋯ closes it again");
+    check(w.press(more(sealed)) && rows() == std::vector<std::string>{"doc.menu:open", "doc.menu:move off", "doc.menu:delete off"}, "A locked document can only be opened");
+    c.closeMenu();
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "Opening the menu opens no document");
+    // Move to…: the shared category list at the same spot, the current one marked; the move toasts once it is saved.
+    w.press(more(report));
+    check(w.press("doc.menu:move") && c.menuOpen() && rows() == std::vector<std::string>{"doc.moveTo:uncategorized", "doc.moveTo:" + ops.id, "doc.moveTo:" + lab.id}, "Move to… lists Uncategorized and the categories");
+    check(w.press("doc.moveTo:" + lab.id) && w.repo->entry(report)->categoryID == lab.id && w.toast() == "Moved|Lab", "A closed document moves and toasts Moved with the category");
+    check(w.state.entries().front().id == report && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "It moves to the front of All, still on the gallery");
+    // A right-click on a tile (or its ⋯) opens the same menu at the point.
+    const auto centre = [&](const std::string& id) { const auto r = w.control(id)->rect(c.root()); return d::Point{r.x + r.width / 2, r.y + r.height / 2}; };
+    check(c.rightPointerDown(centre("doc:" + untitled), w.now) && c.menuOpen() && rows().size() == 3 && !w.state.selected(), "A right-click opens the menu without opening the document");
+    check(c.rightPointerDown(centre("doc:" + untitled), w.now) && !c.menuOpen(), "A right-click with the menu open closes it");
+    check(c.rightPointerDown(centre(more(untitled)), w.now) && c.menuOpen(), "A right-click on the ⋯ opens the tile's menu");
+    // OPEN-B5-4: the module leaving closes the menu but keeps it drawn
+    // (2e08932); its didCloseMenu asks for a refresh, which waits while the
+    // canvas leaves (leaving_), so the leaving page is not rebuilt; the next
+    // showing removes the menu and brings the page up to date.
+    {
+        const auto* menuLayer = c.top().children().back();
+        const auto built = w.context.pagesBuilt();
+        c.prepareToLeave(w.now); c.setActive(false, w.now);
+        w.advance(.2); w.settle();
+        check(!c.menuOpen() && menuLayer->parent() == &c.top() && w.context.pagesBuilt() == built, "The leave keeps the closed menu drawn and rebuilds no page");
+        c.show(w.now); c.setActive(true, w.now); w.settle();
+        check(c.top().children().empty() || c.top().children().back() != menuLayer, "The next showing removes it");
+        check(c.rightPointerDown(centre(more(untitled)), w.now) && c.menuOpen(), "The tile's menu opens again");
+    }
+    // Delete asks with the title and stays on the gallery.
+    check(w.press("doc.menu:delete"), "Delete");
+    const auto& request = w.context.overlay().confirmState().request();
+    check(request && request->id == "deleteDocument" && request->message == "Untitled" && request->danger, "Delete asks with the title (Untitled)");
+    (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
+    check(!w.repo->entry(untitled) && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && w.toast() == "Document deleted|" && !w.control("doc:" + untitled), "Confirmed: deleted, still on the gallery");
+    // The editor's own Move and Delete are unchanged.
+    w.press("doc:" + report);
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "The document opens");
+    check(w.press("category") && w.press("moveTo:" + ops.id) && w.state.selected()->categoryID == ops.id && w.toast() == "Moved|Ops", "The editor's category menu still moves the open document");
+    w.press("delete");
+    (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
+    check(!w.repo->entry(report) && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && !w.state.selected(), "The editor's Delete returns to the gallery");
+    documentStandIn();
 }
 
 void languages() {
@@ -555,7 +798,7 @@ struct Oracle {
     }
     static J windows(const J& row, std::string_view language) {
         const auto l = language == "zh-Hans" ? L::simplifiedChinese : L::english;
-        J out = replaced(row, "This document's password is missing from the Keychain. It stays classified.",
+        J out = replaced(row, "This document's password is missing from the Keychain. It stays classified",
             m::archiveClassificationErrorText(m::ArchiveClassificationErrorCode::passwordMissing, l));
         return fieldRoles(out);
     }
@@ -637,6 +880,16 @@ void archiveOracle(Oracle& or_) {
     or_.scene("rename", "en", false, [&](World& w) { w.press("category:" + id(2)); w.canvas->beginRename(); });
     for (const auto* language : {"en", "zh-Hans"}) or_.scene("editor", language, false, press("doc:" + id(11)));
     or_.scene("editor", "en", true, press("doc:" + id(11)));
+    // A gallery document's menu: its ⋯ (a titled and a classified document), Move to…, a move through it, a right-click.
+    const auto more = [&](int n) { return "doc:" + id(n) + std::string(d::TileMoreButton::suffix); };
+    for (const auto* language : {"en", "zh-Hans"}) or_.scene("documentMenu", language, false, press(more(11)));
+    or_.scene("documentMenuClassified", "en", false, press(more(13)));
+    or_.scene("documentMoveTo", "en", false, pressTwo(more(11), "doc.menu:move"));
+    or_.scene("documentMoved", "en", false, [&](World& w) { w.press(more(11)); w.press("doc.menu:move"); w.press("doc.moveTo:" + id(2)); });
+    or_.scene("documentRightClick", "en", false, [&](World& w) {
+        const auto r = w.control("doc:" + id(12))->rect(w.canvas->root());
+        w.canvas->rightPointerDown({r.x + r.width / 2, r.y + r.height / 2}, w.now); w.settle();
+    });
     or_.scene("editorUntitled", "en", false, press("doc:" + id(14)));
     or_.scene("editorNew", "en", false, press("new"));
     or_.scene("editorNewInCategory", "en", false, pressTwo("category:" + id(2), "new"));
@@ -655,7 +908,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); focusMemory(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);

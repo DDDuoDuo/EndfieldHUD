@@ -62,6 +62,7 @@ public:
     std::int32_t read(std::vector<n::AudioSessionRecord>&out)override{std::lock_guard l(w->m);out=w->sessions;return 0;}
     std::int32_t readVolume(std::string_view id,float&v)override{std::lock_guard l(w->m);const auto*r=find(id);if(!r||!r->volume)return -98;v=*r->volume;return 0;}
     std::int32_t writeVolume(std::string_view id,float v)override{std::lock_guard l(w->m);auto*r=find(id);if(!r)return -98;r->volume=v;++w->writes;return 0;}
+    bool processRunning(std::string_view)noexcept override{return false;}
     void close()noexcept override{std::lock_guard l(w->m);w->sessionWake={};}
 };
 n::AudioSessionRecord record(std::string id,std::string process,std::uint32_t pid,float volume,std::string application){
@@ -163,6 +164,32 @@ void ambiguous(){
     owner.session->setActive(false,owner.now);audio.runtime->stop();
 }
 
+void helper(){
+    // Source d09780d with a6f2d27: of two processes of the player, a silent
+    // one and one playing (a browser's main process and its audio helper),
+    // the one playing takes the volume and only its session is attenuated.
+    Runtime audio;
+    {std::lock_guard l(audio.world->m);
+        audio.world->sessions={record("{main}","4242:100",4242,.8f,std::string(n::nowPlayingFixtureApplication)),
+                               record("{helper}","4343:100",4343,.7f,std::string(n::nowPlayingFixtureApplication))};
+        audio.world->sessions[0].active=false;}
+    Owner owner(n::nowPlayingAppVolume(*audio.runtime));
+    owner.session->setActive(true,owner.now);owner.flush();
+    audio.until(owner,[&]{return owner.input().volumeAvailable;},"The playing process's route resolves");
+    check(owner.session->volumeRoute()=="4343:100","The playing helper is picked over the silent main process");
+    check(owner.volume(.5),"The slider writes the helper's gain");
+    audio.until(owner,[&]{const auto*r=row(audio.runtime->applications(),"4343:100");return r&&r->state==n::AudioApplicationRouteState::active&&r->gain&&*r->gain==.5f;},"The helper's route becomes active");
+    check(std::abs(level(*audio.world,"{helper}")-.35f)<1e-6f&&std::abs(level(*audio.world,"{main}")-.8f)<1e-6f,"Only the helper's session is attenuated");
+    // Its working route keeps it picked when it falls silent and the main
+    // process plays (a live route ranks first).
+    n::AudioSessionBackend::Wake wake;{std::lock_guard l(audio.world->m);audio.world->sessions[0].active=true;audio.world->sessions[1].active=false;wake=audio.world->sessionWake;}
+    if(wake)wake();
+    audio.until(owner,[&]{const auto*r=row(audio.runtime->applications(),"4242:100");return r&&r->rendering;},"The main process is published playing");
+    owner.flush();check(owner.session->volumeRoute()=="4343:100","A working route outranks the process playing");
+    owner.session->setActive(false,owner.now);audio.runtime->stop();
+    check(std::abs(level(*audio.world,"{helper}")-.7f)<1e-6f,"Stopping the runtime restores the helper's level");
+}
+
 void fixture(){
     // The development-preview/coverage route: same adapter, synchronous publish.
     unsigned notices{};n::NowPlayingAudioFixture audio([&]{++notices;});
@@ -184,6 +211,6 @@ void fixture(){
 }
 }
 int main(){
-    try{runtime();ambiguous();fixture();std::cout<<"Now Playing runtime volume: "<<checks<<" checks passed (injected audio backends, synthetic player)\n";return 0;}
+    try{runtime();ambiguous();helper();fixture();std::cout<<"Now Playing runtime volume: "<<checks<<" checks passed (injected audio backends, synthetic player)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Now Playing runtime volume failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

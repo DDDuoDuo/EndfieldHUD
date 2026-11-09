@@ -5,17 +5,17 @@
 // WARP target. No network request, login page, browser, real account, token,
 // profile or visible window is used.
 //
-// Then the Mac import followed by a Windows sign-in: the import tool's codec
-// turns the Mac oracle cache into the committed Account/profile-cache.json,
-// and a fresh owner over it (the hidden-coverage community host replaying the
-// oracle envelopes, an in-memory vault and the fake official-site host that
-// runs the real login policy) reconnects through its accessibility peer.
+// Then a Windows sign-in over a cache an earlier Windows version imported from
+// the Mac (the Mac oracle cache with its linked region marked
+// requiresReconnect): a fresh owner over it (the hidden-coverage community
+// host replaying the oracle envelopes, an in-memory vault and the fake
+// official-site host that runs the real login policy) reconnects through its
+// accessibility peer.
 #ifdef _WIN32
 #include "tools/account_linking_owner.hpp"
 #include "tools/hud_design_overlay_owner.hpp"
 #include "app/areas/account_coverage.hpp"
 #include "core/data/file_io.hpp"
-#include "core/migration/mac_import_codecs.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "native/hud_design_text_metrics.hpp"
 #include "native/hypergryph_account_vault.hpp"
@@ -152,7 +152,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         owner.resize({0,0,96,1,0,0});owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);openingMS=since(opening);
         const auto expected=controller.record().snapshots.at(role.id()).sanityPresentation(now);
         check(expected&&expected->current==44&&owner.gauge().model().value()=="44 / 360"&&owner.gauge().model().canOpen(),"Header wallet projects cached sanity locally (never below the reported 42)");
-        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.canvas().presentation().isLinked,"The Account page asks for a fresh sign-in");
+        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing"&&owner.canvas().presentation().isLinked,"The Account page asks for a fresh sign-in");
         const auto wake=owner.nextWakeTime(clock);const double untilNext=*expected->nextRecoveryAt-now;
         check(wake&&std::abs(*wake-(clock+untilNext))<1e-6&&untilNext>0&&untilNext<=432,"Only the next local recovery point is scheduled (no API refresh while reconnecting)");
         check(owner.activeRequests()==0,"No community request is ever started for a reconnect-required region");
@@ -170,7 +170,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             overlay->deadline(clock); // the shared Context's deadlines (sub-page swaps, the confirm callback), as the host runs them
             const auto sample=modules.sample(clock).presentation;
             owner.update(app::ModuleFrame{center,settings,sample,1,clock,true},1);owner.upload(renderer);
-            all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
+            all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);for(const auto& e:owner.recoveryEntries()) all.push_back(e);
             composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
         };
         const auto first=Clock::now();frame({});firstFrameMS=since(first);renderer.draw(false);
@@ -207,12 +207,47 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         {
             const auto opened=renderer.stats();const auto openRaster=raster.stats();
             check(owner.gauge().sceneStats().popoverLoaded&&owner.gauge().sceneStats().popoverUploaded&&opened.nativeGroups==closedGPU.nativeGroups+1&&
-                  owner.headerEntries().size()==2,"Its first opening builds, uploads and composes the card above the wallet");
+                  owner.headerEntries().size()==1&&owner.recoveryEntries().size()==1,"Its first opening builds, uploads and composes the card (on the top layer) above the wallet");
             popoverGPUBytes=signedDelta(opened.resourceBytes+opened.nativeGroupBytes,closedGPU.resourceBytes+closedGPU.nativeGroupBytes);
             popoverRasterBytes=signedDelta(openRaster.resourceBytes,closedRaster.resourceBytes);
         }
         check(owner.key({app::KeyKind::down,VK_ESCAPE},0,clock+=.05)&&!owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),"Esc dismisses only the recovery popover");
         clock+=.5;frame({});
+        // The HUD close dismisses an open recovery menu with its .16 s fade
+        // (48584b5, accountGauge.dismiss(animated: true)): it is drawn on the
+        // top layer, fading, until then. A reopen during the close goes on.
+        check(owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&owner.gauge().model().popoverOpen(),"The wallet opens the recovery menu again");
+        (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+        clock+=.3;frame({});
+        {
+            const bool pageActive=owner.page().canvas(core::Module::account)->isActive();const auto requestsBefore=owner.activeRequests();
+            const double closedAt=clock+=.05;owner.overlayClosing(closedAt);
+            clock=closedAt+.08;frame({});const double fading=owner.gauge().sceneStats().popoverOpacity;
+            // C6d: the close's start stops the sign-in, the controller and the
+            // network only; the page stays as it was (active and drawn) until the hidden HUD.
+            check(owner.page().canvas(core::Module::account)->isActive()==pageActive&&(!pageActive||!owner.moduleEntries().empty())&&owner.activeRequests()<=requestsBefore,
+                  "Through the close the Account page stays as it was, drawn, with no new account work");
+            check(!owner.gauge().model().popoverOpen()&&!owner.capturesPointer()&&owner.recoveryEntries().size()==1&&fading>0&&fading<1,
+                  ("At +.08 s the closed recovery menu still fades out on the top layer ("+std::to_string(fading)+")").c_str());
+            // A press on the wallet during the close is refused (allowsModuleInput).
+            check(!owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},closedAt+.1)&&!owner.gauge().model().popoverOpen()&&!owner.capturesPointer(),
+                  "A wallet press during the close opens no recovery menu");
+            (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},closedAt+.1);
+            clock=closedAt+.17;frame({});
+            check(owner.recoveryEntries().empty()&&owner.gauge().sceneStats().popoverOpacity==0,"It is gone once its .16 s fade ends");
+            owner.setOverlayVisible(true,clock+=.05);clock+=.3;frame({});
+        }
+        // Under Reduce Motion the close dismisses the menu at once.
+        {
+            app::ModuleAppearance reduced;reduced.accentSRGB={250./255,212./255,31./255};reduced.reduceMotion=true;
+            owner.setAppearance(reduced,clock+=.05);
+            check(owner.pointer({app::PointerKind::down,app::PointerButton::left,wallet.x,wallet.y},clock+=.05)&&owner.gauge().model().popoverOpen(),"Reduce Motion: the wallet opens the recovery menu");
+            (void)owner.pointer({app::PointerKind::up,app::PointerButton::left,wallet.x,wallet.y},clock);
+            frame({});check(owner.recoveryEntries().size()==1,"Reduce Motion: the open menu is composed");
+            owner.overlayClosing(clock+=.05);frame({});
+            check(!owner.gauge().model().popoverOpen()&&owner.recoveryEntries().empty()&&owner.gauge().sceneStats().popoverOpacity==0,"Reduce Motion: the close removes the recovery menu at once");
+            owner.setOverlayVisible(true,clock+=.05);reduced.reduceMotion=false;owner.setAppearance(reduced,clock);clock+=1;frame({});
+        }
         // Steady tilt frames through the bundle: no allocation.
         frame({});const auto beforeRaster=raster.stats();allocations=0;counting=true;
         try {
@@ -255,7 +290,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             auto mapSettings=settings;mapSettings.module=core::Module::map;core::ModulePresentation mapModules(core::Module::map);
             const auto sample=mapModules.sample(clock).presentation;
             owner.update(app::ModuleFrame{core::Matrix4{},mapSettings,sample,1,clock,true},1);owner.upload(renderer);
-            all.assign(owner.headerEntries().begin(),owner.headerEntries().end());composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
+            all.assign(owner.headerEntries().begin(),owner.headerEntries().end());for(const auto& e:owner.recoveryEntries()) all.push_back(e);composition.setEntries(renderer,all);composition.present(renderer);owner.collected(renderer); // the host collects after each publication
             check(owner.moduleEntries().empty(),"The page is not composed on another module");
         }
         check(shown.surfaces>0&&shown.residentPixelBytes>0&&owner.page().sceneStats(core::Module::account)->rasterEntries==shown.rasterEntries,
@@ -322,7 +357,7 @@ void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem:
         owner.resize({1280,800,96,1,1280,800});
         gpu::LayerComposition composition;std::vector<gpu::LayerCompositionEntry> all;
         const auto publish=[&]{
-            owner.upload(renderer);all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
+            owner.upload(renderer);all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);for(const auto& e:owner.recoveryEntries()) all.push_back(e);
             composition.setEntries(renderer,all);composition.present(renderer);
         };
         if(prewarm) {
@@ -360,7 +395,7 @@ void prewarmedOpening(const std::filesystem::path& shader,const std::filesystem:
     check(!IsWindowVisible(window.hwnd),"Nothing was shown");
     executor.shutdown();CloseHandle(utilityEvent);renderer.reset();
 }
-// Mac import -> restart -> Windows sign-in through the production owner.
+// Imported Mac cache -> Windows sign-in through the production owner.
 void reconnectAfterImport(const std::filesystem::path& resources,const std::filesystem::path& oracle,const std::filesystem::path& coverage) {
     namespace areas=endfield::app::areas;
     // The linked Mac cache with both header games, as the controller contract picks it.
@@ -373,18 +408,25 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&cache["syncProfile"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
     }
     check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
-    const auto imported=ehud::migration::importMacAccountCache(mac->encode());
-    check(imported.disconnectedRegions==std::vector<std::string>{"mainland"}&&imported.roles>0&&imported.snapshots==2,"The import tool disconnects the linked region and keeps its roles and snapshots");
+    // As an earlier Mac import wrote it: the Mac cache, its linked region
+    // marked requiresReconnect (no credentials).
+    Json disconnected=*mac;disconnected["records"]["mainland"]["requiresReconnect"]=true;
+    const auto decoded=h::decodeCacheBytes(disconnected.encode());check(decoded.has_value(),"The imported cache decodes");
+    const auto& importedRecord=decoded->records.at("mainland");
+    const struct {std::string bytes;std::size_t roles{};bool profileSyncLocked{};} imported{disconnected.encode(),importedRecord.roles.size(),
+        decoded->syncProfile&&importedRecord.linked&&std::any_of(importedRecord.roles.begin(),importedRecord.roles.end(),
+            [&](const h::Role& role){return importedRecord.selectedRoleID==role.id()&&role.game==h::Game::endfield;})};
+    check(imported.roles>0&&importedRecord.snapshots.size()==2,"The imported cache keeps its roles and both snapshots");
     double now{};
     for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,snapshot["observedAt"].isString()?std::strtod(snapshot["observedAt"].string().c_str(),nullptr):snapshot["observedAt"].number());
     TempDirectory temp;
     {
-        // The import's commit: ordinary file, inherited permissions.
+        // The import's file: ordinary, inherited permissions.
         std::filesystem::create_directories(temp.path/L"Account");
         std::ofstream file(temp.path/L"Account"/L"profile-cache.json",std::ios::binary);file<<imported.bytes;
     }
     const auto cacheFile=temp.path/L"Account"/L"profile-cache.json";
-    check(!gpu::ownerOnly(cacheFile),"The committed import inherits its folder's permissions");
+    check(!gpu::ownerOnly(cacheFile),"The imported cache inherits its folder's permissions");
     ehud::data::ProfileStore store(temp.path);h::ProfileStoreAccountSink sink(store,gpu::nativeCharacterRules());
     const auto f=areas::loadAccountCoverageFixture(coverage);
     areas::SyntheticCommunityHost community(f.responses);areas::SyntheticAvatarLoader avatar(community);areas::SyntheticLoginHost login(community,f.nonce);
@@ -412,15 +454,15 @@ void reconnectAfterImport(const std::filesystem::path& resources,const std::file
         };
         {
             const auto& record=controller.record();
-            check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The restarted owner reads the imported roles and snapshots");
+            check(record.linked&&record.requiresReconnect&&record.roles.size()==imported.roles&&record.snapshots.size()==2,"The owner reads the imported roles and snapshots");
         }
-        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock is the one the import reported");
-        // The page and wallet as the HUD shows them after the restart.
+        check(bool(store.profileSyncLocked())==imported.profileSyncLocked,"The profile lock is the Mac's");
+        // The page and wallet as the HUD shows them over the imported cache.
         owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);
         core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
         modules.setDesignScreen(core::Module::account,true);
         {const auto sample=modules.sample(clock).presentation;owner.update(app::ModuleFrame{core::Matrix4{},settings,sample,1,clock,true},1);}
-        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.canvas().presentation().isLinked,
+        check(owner.canvas().presentation().statusMessage=="Sign in again to continue syncing"&&owner.canvas().presentation().isLinked,
               "The page asks for a new Windows sign-in");
         const auto wallet=controller.gaugeValue(h::WorkModeGaugeInput{true,1500,61.5}).value;
         check(owner.gauge().model().value()==wallet&&wallet.find(" / ")!=std::string::npos&&owner.gauge().model().canOpen(),"The header wallet shows the cached sanity");

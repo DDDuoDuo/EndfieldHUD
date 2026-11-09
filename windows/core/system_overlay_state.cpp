@@ -116,9 +116,10 @@ void SystemOverlayLifecycle::perform(SystemOverlayAction action, SystemOverlayEf
     switch (action.kind) {
     case SystemOverlayAction::Kind::none: return;
     case SystemOverlayAction::Kind::open: {
-        // initialModule: initialModuleRequest ?? moduleLayout.restorable(
-        // lastSystemModule); then the request is consumed by this presentation only.
-        const auto initial = initialModuleRequest_.value_or(moduleRestore_ ? moduleRestore_(lastSystemModule_) : lastSystemModule_);
+        // HUDOverlayLayout.initialModule(request:configuration:last:); then the
+        // request is consumed by this presentation only.
+        const auto chosen = openModule_ ? openModule_() : std::nullopt;
+        const auto initial = initialModuleRequest_ ? *initialModuleRequest_ : restorable(chosen.value_or(lastSystemModule_));
         view_ = initial;
         interaction_ = false;
         initialModuleRequest_.reset();
@@ -130,6 +131,9 @@ void SystemOverlayLifecycle::perform(SystemOverlayAction action, SystemOverlayEf
         out.push({Kind::close, action.token, view_.value_or(lastSystemModule_)});
         return;
     }
+}
+Module SystemOverlayLifecycle::restorable(Module module) const {
+    return moduleRestore_ ? moduleRestore_(module) : module;
 }
 bool SystemOverlayLifecycle::overlayToggle(SystemOverlayEffects& out) {
     // OverlayController.toggleSystemOverlay. Projection return is handled by
@@ -166,6 +170,8 @@ void SystemOverlayLifecycle::tearDown(SystemOverlayEffects& out) {
     const bool shouldQuit = quitAfterSystemClose_;
     quitAfterSystemClose_ = false;
     lastSystemModule_ = view_.value_or(lastSystemModule_);
+    // lastSystemModule's didSet: HUDOverlayLayout.saveLastModule.
+    if (remembersLastModule_) out.push({Kind::rememberModule, state_.generation(), lastSystemModule_});
     view_.reset();
     interaction_ = false;
     // The drag loop itself (shelfDragging_) is not the presentation's: it
@@ -203,15 +209,28 @@ SystemOverlayEffects SystemOverlayLifecycle::openWorkMode(double now) {
     if (suspended_ || terminating_ || editingPosition_) return out;
     if (state_.phase() == SystemOverlayPhase::open) { select(Module::workMode, out); return out; }
     if (state_.phase() != SystemOverlayPhase::closed || !appToggle(out)) return out;
+    scheduleWorkMode(now);
+    return out;
+}
+void SystemOverlayLifecycle::scheduleWorkMode(double now) {
     if (timerCount_ == timers_.size()) throw std::logic_error("Too many delayed Work Mode selections");
     // DispatchQueue.main.asyncAfter(deadline: .now() + entranceDuration + 0.3)
     timers_[timerCount_++] = {(now + entranceDuration) + 0.3, ++timerSerial_, state_.generation()};
-    return out;
 }
 SystemOverlayEffects SystemOverlayLifecycle::reopen() {
     SystemOverlayEffects out;
     if (terminating_) return out;
     if (!state_.active()) (void)appToggle(out);
+    return out;
+}
+SystemOverlayEffects SystemOverlayLifecycle::returnFromProjection(std::optional<double> workModeAt) {
+    if (workModeAt && !std::isfinite(*workModeAt)) throw std::invalid_argument("System overlay requires a finite caller clock");
+    SystemOverlayEffects out;
+    if (state_.active()) return out;
+    initialModuleRequest_ = restorable(lastSystemModule_);
+    // A refused opening leaves no request behind for a later one.
+    if (!appToggle(out)) { initialModuleRequest_.reset(); return out; }
+    if (workModeAt) scheduleWorkMode(*workModeAt);
     return out;
 }
 SystemOverlayEffects SystemOverlayLifecycle::close(bool interruptOpening) {

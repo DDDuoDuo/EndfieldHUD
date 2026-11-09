@@ -176,6 +176,7 @@ t::NowPlayingAcceptanceMatrix runLive(const Arguments& a, t::NowPlayingProbeOpti
     // factory runs on this thread, which pumps messages in Wake::wait.
     const auto players = n::windowsNowPlayingWindowSystem(monotonic);
     services.provider = n::windowsNowPlayingPlayers(monotonic, players);
+    services.launch = n::nowPlayingAppsFolderExecutable;
     if (a.lyrics) services.transport = n::windowsNowPlayingTransport();
     services.decode = n::decodeNowPlayingImage;
     services.clock = monotonic;

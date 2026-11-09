@@ -49,6 +49,9 @@ public:
     };
     // A new request rises in; nullopt hides it at once.
     void setDeletion(std::optional<Deletion>, double time);
+    // The deletion confirmation's rise (notes.confirm.reveal) ends at once:
+    // the HUD's close and the hidden HUD (NotesPreview settleMotion).
+    void settleMotion();
     void hoverDeletion(std::optional<core::Point> workspace, bool pressed, double time);
     void poseDeletion(const core::Matrix4& workspaceToScreen, float opacity, double time);
     std::span<const native::LayerCompositionEntry> deletionEntries() const noexcept;

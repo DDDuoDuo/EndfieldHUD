@@ -42,7 +42,7 @@ void content() {
         "> SANITY ................ 180 / 240  NEXT +1 IN 04:32",
         "> WORK MODE STREAK ...... 3 DAYS  12.3 H TOTAL",
         "> FACILITY .............. DISK 8% FREE",
-        "ALL SYSTEMS ONLINE. WELCOME BACK, PERLICA."};
+        "ALL SYSTEMS ONLINE. WELCOME BACK, PERLICA"};
     check(texts.size() == expected.size(), "line count " + std::to_string(texts.size()));
     for (std::size_t i = 0; i < expected.size(); ++i) check(texts[i] == expected[i], "line " + std::to_string(i) + ": [" + texts[i] + "]");
     // Tones: battery green, facility warning orange, footer status green, values yellow.
@@ -56,7 +56,7 @@ void content() {
     check(sparse.size() == 5, "unavailable sources are left out");
     check(flat(sparse[1], palette) == "> UPTIME ................ 0D 00H 00M", "a negative uptime counts as 0");
     check(flat(sparse[2], palette) == "> CALENDAR .............. 1 EVENT TODAY", "one event, singular");
-    check(flat(sparse[4], palette) == "ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR.", "default greeting");
+    check(flat(sparse[4], palette) == "ALL SYSTEMS ONLINE. WELCOME BACK, ENDMINISTRATOR", "default greeting");
     const auto nominal = b::bootLogLines(date, 60, b::BootLogBattery{15, false, b::BootLogBattery::Level::red}, {}, b::BootLogSanity{1, 2, std::nullopt},
         b::BootLogWorkStreak{1, 0}, b::BootLogDisk{40, false}, "x", d::asciiUppercase);
     check(flat(nominal[2], palette) == "> POWER ................. 15%  POWER MODE" && nominal[2].segments(palette)[2].color == d::fixed::red, "battery red tone, POWER MODE");
@@ -137,22 +137,52 @@ void panel() {
     at(51.38);
     check(finished == 1 && !log.isPlaying() && log.layer().hidden() && !log.isBlinking() && log.rowTexts().empty(), "finished and reset");
     // A full run without skipping: 900 ms after the last line.
-    log.play({b::BootLogLine::header("BOOT SEQUENCE", "x"), b::BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, X.")}, "1.3.0");
+    log.play({b::BootLogLine::header("BOOT SEQUENCE", "x"), b::BootLogLine::footer("ALL SYSTEMS ONLINE.", "WELCOME BACK, X")}, "1.3.0");
     at(51.661); at(51.921);
     check(log.revealedCount() == 2, "both lines revealed");
     at(52.82); check(!log.isFinishing(), "the tail lasts 900 ms");
     at(52.822); check(log.isFinishing(), "then the wipe-up");
     at(53.21); check(finished == 2, "finished");
+    // The HUD close's cancel strips the blink (the cursor at full opacity)
+    // and the rows' slide (the row just revealed lands at x 0, its fade goes
+    // on), and the lines keep typing.
+    at(60);
+    log.play(lines, "1.3.0");
+    at(60.28); at(60.54);
+    check(log.isBlinking() && log.revealedCount() == 2 && near(log.cursor().value(Channel::opacity), .2), "a new log blinks and types");
+    check(log.row(1).animating(60.6) && !near(log.row(1).presented(Channel::translateX, 60.6), 0), "the row just revealed slides in");
+    log.cancelForClose();
+    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1), "the close's cancel ends the blink with the cursor shown");
+    check(near(log.row(1).presented(Channel::translateX, 60.6), 0) && log.row(1).presented(Channel::opacity, 60.6) < 1 && near(log.row(1).presented(Channel::opacity, 60.71), 1),
+        "it lands the sliding row at x 0 and keeps its fade");
+    at(61);
+    check(!log.isBlinking() && near(log.cursor().value(Channel::opacity), 1) && log.revealedCount() > 2 && log.isPlaying(), "the lines keep typing without the blink");
+    log.stop();
+    check(!log.isPlaying() && finished == 2, "stop ends it without onFinish");
+    // A wipe-up running when the HUD closes: the panel shows whole again and
+    // onFinish still comes at its .38 s.
+    at(61.1);
+    log.play(lines, "1.3.0");
+    at(61.38);
+    log.skip();
+    check(log.isFinishing() && near(log.term().presented(Channel::opacity, 61.38), 1) && log.term().presented(Channel::opacity, 61.48) < 1, "the wipe-up plays");
+    at(61.48);
+    log.cancelForClose();
+    check(log.isFinishing() && near(log.term().presented(Channel::opacity, 61.5), 1) && near(log.term().presented(Channel::wipe, 61.5), 1) && finished == 2,
+        "the close's cancel strips a running wipe-up: the panel is whole again");
+    at(61.75); check(finished == 2 && log.isPlaying(), "its completion keeps its time");
+    at(61.77); check(finished == 3 && !log.isPlaying() && log.layer().hidden(), "and finishes at .38 s");
     // No lines: 900 ms then finish.
+    at(62);
     log.play({}, "1.3.0");
-    at(54.12); check(log.isFinishing(), "an empty log finishes after 900 ms");
-    at(54.51); check(finished == 3, "and completes");
+    at(62.91); check(log.isFinishing(), "an empty log finishes after 900 ms");
+    at(63.3); check(finished == 4, "and completes");
     // Reduce Motion: no wipe, no blink, the finish completes at once.
     env.reduceMotion = true;
     log.play({b::BootLogLine::sub("x")}, "1.3.0");
     check(!log.isBlinking() && near(log.term().presented(Channel::wipe, 55), 1), "Reduce Motion: no wipe or blink");
     log.skip();
-    check(finished == 4 && !log.isPlaying(), "Reduce Motion finishes at once");
+    check(finished == 5 && !log.isPlaying(), "Reduce Motion finishes at once");
 }
 
 // The centre while the log plays (BootLogStage, host side): the module host

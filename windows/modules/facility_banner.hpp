@@ -82,6 +82,9 @@ public:
     void hide(bool animated);
     // Drops a queued banner of `kind`, and lets it leave if it is on screen.
     void withdraw(FacilityAlertKind);
+    // The HUD close stops the hazard loop (its cancel strips it); the drop,
+    // the unfold and a leave already running keep playing (5c8a905).
+    void stopLoops() { hazard_->stop(); }
     // Plate geometry (:339-341): the rectangle at `unfolded` 0...1 of its width.
     static d::Rect plateRect(double unfolded) noexcept;
     // Content revision of the banner's arena (the owner re-emits on change).

@@ -1,5 +1,5 @@
 // The list cards: ports of Sources/HUDDesignCards.swift (HUDTaskCard :8-174,
-// HUDListCard :180-315, HUDArchiveTile :320-503).
+// HUDListCard :180-315, HUDArchiveTile :320-503; 1.3.1 HUDTileMoreButton :317-357).
 //
 // Recorded adaptation: HUDArchiveTile's selection brackets animate their path
 // from inset -5 to -4 (.16 s E) under an opacity fade (.1 s ease); a path is
@@ -323,6 +323,36 @@ void ListCard::flashCopied() {
 }
 
 // ---------------------------------------------------------------------------
+// HUDTileMoreButton (:317-357)
+// ---------------------------------------------------------------------------
+std::string TileMoreButton::label(const Environment& env, std::string_view name) { return tr(env, "More", "更多") + ", " + std::string(name); }
+TileMoreButton::TileMoreButton(Builder& b, std::string id, std::string label, std::string layerID)
+    : Control(b.env, id, std::move(label), b.layer(layerID.empty() ? id : layerID)) {
+    const std::string base = layerID.empty() ? this->id() : layerID;
+    layer().setAnimatable();                             // hover scale 1.08
+    layer().setBounds({size, size});
+    layer().setZPosition(2);
+    plate_ = &b.layer(sub(base, "plate"));
+    plate_->setFrame({0, 0, size, size});
+    // backgroundColor #141414 .8 -> .95 on hover: a tinted white circle.
+    setTintedBackground(*plate_, rgb(0x141414, .8), size / 2);
+    layer().add(*plate_);
+    layer().add(makeText(b, sub(base, "dots"), "⋯", TextStyle{12, FontWeight::black, white(1)}, {0, 5, size, 12}, TextAlignment::center));
+    setTarget({0, 0, size, size}, PathBuilder().ellipse({0, 0, size, size}));
+}
+void TileMoreButton::attach(Layer& parent, double width, const Layer* sibling) {
+    layer().setOrigin({width - 4 - size, 8});
+    if (sibling && sibling->parent() == &parent) parent.insertBelow(layer(), *sibling); else parent.add(layer());
+}
+void TileMoreButton::hoverChanged() {
+    const bool on = hovered() && enabled();
+    const auto c = clock();
+    motion::animateTint(*plate_, rgb(0x141414, on ? .95 : .8), duration::hover, c, easing::ease);
+    motion::animate(layer(), Channel::scaleX, on ? 1.08 : 1, duration::hover, c);
+    motion::animate(layer(), Channel::scaleY, on ? 1.08 : 1, duration::hover, c);
+}
+
+// ---------------------------------------------------------------------------
 // HUDArchiveTile (:320-503)
 // ---------------------------------------------------------------------------
 namespace {
@@ -348,13 +378,19 @@ const char* extensionName(ArchiveTile::Extension e) {
 }
 }
 // bracketPath (:428-437): two 9 px wide vertical brackets, 2 px, open toward the centre.
-PathBuilder ArchiveTile::bracketPath(Rect bounds, double inset) {
+std::array<Rect, 6> ArchiveTile::bracketRects(Rect bounds, double inset) {
     const Rect r{bounds.x + inset, bounds.y + inset, bounds.width - 2 * inset, bounds.height - 2 * inset}; // CGRect.insetBy
-    PathBuilder p;
+    std::array<Rect, 6> rects;
+    std::size_t n = 0;
     for (const bool left : {true, false}) {
         const double x = left ? r.x : r.x + r.width - 9;
-        p.rect({x, r.y, 9, 2}).rect({x, r.y + r.height - 2, 9, 2}).rect({left ? r.x : r.x + r.width - 2, r.y, 2, r.height});
+        rects[n++] = {x, r.y, 9, 2}; rects[n++] = {x, r.y + r.height - 2, 9, 2}; rects[n++] = {left ? r.x : r.x + r.width - 2, r.y, 2, r.height};
     }
+    return rects;
+}
+PathBuilder ArchiveTile::bracketPath(Rect bounds, double inset) {
+    PathBuilder p;
+    for (const auto& rect : bracketRects(bounds, inset)) p.rect(rect);
     return p;
 }
 ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string title, Extension extension, std::optional<std::string> extensionLabel,
@@ -429,7 +465,7 @@ ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string tit
 // docGlyph (:404-425): 40 x 50, ruled lines, the extension in the kind's colour, -6 deg.
 Layer& ArchiveTile::docGlyph(Builder& b, std::string_view id, Extension extension, const std::optional<std::string>& label) {
     Layer& doc = b.layer(id);
-    doc.setAnimatable();                                 // straightens and lifts on hover
+    doc.setAnimatable();                                 // straightens and lifts on hover, fades out under a late poster (setPoster)
     doc.setBounds({40, 50});
     const auto fold = PathBuilder().move({0, 0}).line({28, 0}).line({40, 11}).line({40, 50}).line({0, 50}).close();
     Layer& page = b.layer(sub(id, "page"));
@@ -463,17 +499,38 @@ Layer& ArchiveTile::classifiedStamp(Builder& b, std::string_view id, Point cente
     stamp.setBaseTransform(Affine::rotation(-10 * pi / 180));
     return stamp;
 }
+// attachMore (1.3.1 :444-455).
+TileMoreButton& ArchiveTile::attachMore(std::string id, std::string spokenLabel) {
+    if (more_) return *more_;
+    more_ = &builder_->make<TileMoreButton>(std::move(id), std::move(spokenLabel), sub(this->id(), "more"));
+    more_->attach(layer(), layer().bounds().width, brackets_);
+    return *more_;
+}
 // setPoster (:458-469): a thumbnail filling the well in place of the doc glyph (nullopt restores it).
-void ArchiveTile::setPoster(std::optional<ImageSource> source) {
+void ArchiveTile::setPoster(std::optional<ImageSource> source, bool animated) {
     if (style_ != Style::standard || (!source && !poster_)) return;
+    const auto c = clock();
+    const bool appearing = animated && source && (!poster_ || poster_->hidden()) && !c.reduceMotion;
+    ++posterSerial_;
     if (!poster_ && source) {
         poster_ = &builder_->layer(sub(id(), "tile.poster"));
         poster_->setFrame(localBounds(*well_)); poster_->setMasksToBounds(true);
+        poster_->setAnimatable();                        // fades in (setPoster animated)
         well_->insert(*poster_, 0);
     }
     if (source) poster_->setContent(image(poster_->id(), localBounds(*poster_), *source, "resizeAspectFill")); else poster_->clearContent();
     poster_->setHidden(!source);
-    doc_->setHidden(source.has_value());
+    // A running fade ends here: both at their model opacity 1.
+    for (Layer* layer : {poster_, doc_}) { layer->removeMotion(MotionSlot::fade); layer->setValue(Channel::opacity, 1); }
+    if (!appearing) { doc_->setHidden(source.has_value()); return; }
+    // The poster fades in under the glyph as the glyph fades out (the Mac
+    // snapshot fade of the well); the glyph is hidden once the fade ends.
+    doc_->setHidden(false);
+    motion::crossFade(*poster_, doc_, duration::hover, c);
+    motion::after(*doc_, c.now + duration::hover, c, [this, serial = posterSerial_] {
+        if (serial != posterSerial_) return;
+        doc_->setHidden(true); doc_->setValue(Channel::opacity, 1);
+    });
 }
 void ArchiveTile::setSelected(bool selected, bool animated) { if (selected != selected_) { selected_ = selected; renderSelection(animated); } }
 // renderSelection (:477-484).

@@ -1,5 +1,6 @@
 #include "native/clipboard_image.hpp"
 #include "native/system_services.hpp"
+#include "native/wic_orientation.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -120,7 +121,6 @@ unsigned orientation(const ClipboardEncodedImage&i){const Bytes b=*i.bytes;if(i.
 // Select the first source color context without making a second image buffer.
 // WIC's color transform performs profile conversion lazily at thumbnail size.
 ComPtr<IWICColorContext> sourceColor(IWICImagingFactory*factory,IWICBitmapFrameDecode*frame){UINT count{};const auto status=frame->GetColorContexts(0,nullptr,&count);if(status==WINCODEC_ERR_UNSUPPORTEDOPERATION||status==E_NOTIMPL)return {};checked(status);if(!count)return {};ComPtr<IWICColorContext>context;checked(factory->CreateColorContext(&context));IWICColorContext*raw=context.Get();checked(frame->GetColorContexts(1,&raw,&count));WICColorContextType type{};checked(context->GetType(&type));if(type==WICColorContextUninitialized)return {};if(type==WICColorContextExifColorSpace){UINT space{};checked(context->GetExifColorSpace(&space));if(space!=1&&space!=2)return {};}if(type==WICColorContextProfile){UINT size{};checked(context->GetProfileBytes(0,nullptr,&size));if(size>ClipboardHistory::maximum_image_bytes)throw DecodeError{ClipboardImageError::unsupportedProfile,E_INVALIDARG};}return context;}
-WICBitmapTransformOptions orientOptions(unsigned n){switch(n){case 2:return WICBitmapTransformFlipHorizontal;case 3:return WICBitmapTransformRotate180;case 4:return WICBitmapTransformFlipVertical;case 5:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270|WICBitmapTransformFlipHorizontal);case 6:return WICBitmapTransformRotate90;case 7:return static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90|WICBitmapTransformFlipHorizontal);case 8:return WICBitmapTransformRotate270;default:return WICBitmapTransformRotate0;}}
 ClipboardImageResult wic(const ClipboardEncodedImage&input){
     const Bytes bytes=*input.bytes;const bool dib=input.format==ClipboardEncodedFormat::dib||input.format==ClipboardEncodedFormat::dibV5;
     if(input.format==ClipboardEncodedFormat::png&&(!ClipboardHistory::valid_image(ClipboardImageFormat::png,bytes)||!pngCRC(bytes)))return {{},ClipboardImageError::invalidPayload,0};
@@ -134,7 +134,7 @@ ClipboardImageResult wic(const ClipboardEncodedImage&input){
     ComPtr<IWICBitmapFrameDecode>frame;checked(decoder->GetFrame(0,&frame));UINT width{},height{};checked(frame->GetSize(&width,&height));if(!ClipboardHistory::valid_image_metadata(width,height,bytes.size()))throw DecodeError{ClipboardImageError::dimensions,E_INVALIDARG};
     const double scale=std::min(1.,96./double(std::max(width,height)));UINT tw=std::max(1u,static_cast<UINT>(std::floor(width*scale+.5))),th=std::max(1u,static_cast<UINT>(std::floor(height*scale+.5)));
     ComPtr<IWICBitmapSource>source=frame;ComPtr<IWICBitmapScaler>scaler;if(width!=tw||height!=th){checked(factory->CreateBitmapScaler(&scaler));checked(scaler->Initialize(source.Get(),tw,th,WICBitmapInterpolationModeFant));source=scaler;}
-    const auto rotation=orientation(input);ComPtr<IWICBitmapFlipRotator>rotator;if(rotation!=1){checked(factory->CreateBitmapFlipRotator(&rotator));checked(rotator->Initialize(source.Get(),orientOptions(rotation)));source=rotator;if(rotation>=5)std::swap(tw,th);}
+    const auto rotation=orientation(input);{ComPtr<IWICBitmapSource>upright;checked(orientWICSource(factory.Get(),source.Get(),rotation,&upright));source=upright;}if(rotation>=5)std::swap(tw,th);
     // Keep the codec transform lazy until the bounded final CopyPixels. WIC
     // itself can allocate codec-private working memory; this is not a promise
     // of a hard process-RSS cap for arbitrary compressed input.

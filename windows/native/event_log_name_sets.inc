@@ -1,5 +1,5 @@
 // Generated from the unmodified SystemEventLog.compact Foundation sets.
-// Source SHA256: 10085570f86bca00eaa011f1dda4c3436b41c2252d0d18ff3c6650d3bff64b9e
+// Source SHA256: c91e00dc62c35b941ddbb6694eee2a8f5e7140cac1ae29a3063db36530ff68be
 // Regenerate with windows/tools/event_log_names_reference.sh; do not substitute ICU categories.
 struct ScalarRange {std::uint32_t first,last;};
 constexpr std::array sourceControls{

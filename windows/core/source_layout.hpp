@@ -36,6 +36,11 @@ public:
                                       const Overrides& overrides = emptyLayoutOverrides()) const;
     std::span<const std::size_t> traversalIndices() const noexcept { return traversal_; }
     std::optional<std::size_t> nodeIndex(std::string_view id) const noexcept;
+    std::optional<std::size_t> parentIndex(std::size_t index) const noexcept;
+    // `roots` and every node under them, as one flag per node (1: inside), in
+    // node order (HUDSourceWatchFrameBuilder.subtrees(of:in:)). The traversal
+    // lists parents first, so one pass suffices.
+    std::vector<unsigned char> subtrees(std::span<const std::size_t> roots) const;
     const SceneDefinition& scene() const noexcept { return *scene_; }
     static ResolvedNode resolveNode(const Node&, const TransformOverride*,
                                     const std::optional<SourceRect>& parentRect,
