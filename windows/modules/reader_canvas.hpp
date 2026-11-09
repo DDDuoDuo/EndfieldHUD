@@ -209,6 +209,11 @@ private:
     std::optional<Structure> renderedStructure_;
     std::vector<std::function<void()>> binders_;
     std::array<Slot, maximumPageLayers> slots_{};
+    // The state revision that didDeactivate's setActive(false) produced: the
+    // notice of that change (it empties the rendered column) reaches the canvas
+    // later, through the owner's revision sync, and must not relayout the page
+    // that is leaving as drawn (Mac e0ae44b's `deactivating`). Cleared on activation.
+    std::optional<std::uint64_t> deactivatedRevision_;
     std::vector<PageView> views_;
     design::Layer *clip_{}, *column_{}, *ribbon_{}, *pageNumberText_{};
     design::Slider* pageSlider_{};
@@ -231,6 +236,7 @@ private:
     struct Column { const ReaderPage* before{}; std::vector<const ReaderPage*> after; };
     Column column(const ReaderPage&) const;
     Slot& pageLayer(const ReaderPage&);
+    bool holdsPage(const ReaderLocation&) const;      // a slot shows this page now
     void recycle(std::span<const ReaderLocation> keep);
     void layoutPages();
     void slide(const ReaderLocation& from, const ReaderPage& to, double direction);

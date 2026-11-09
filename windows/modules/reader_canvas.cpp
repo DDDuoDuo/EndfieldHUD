@@ -131,6 +131,7 @@ ReaderCanvas::ReaderCanvas(d::Context& context, ReaderState& state, ReaderCanvas
 ReaderCanvas::~ReaderCanvas() { *alive_ = false; }
 
 void ReaderCanvas::didActivate() {
+    deactivatedRevision_.reset();
     state_->setActive(true);
     refreshMissing();
 }
@@ -139,7 +140,10 @@ void ReaderCanvas::didDeactivate() {
     panStart_.reset();
     cancel(detailTimer_);
     settleTurn();
+    // The page leaves as drawn: the state empties its rendered column here,
+    // and that change must not recycle the neighbouring pages first (Mac e0ae44b).
     state_->setActive(false);
+    deactivatedRevision_ = state_->revision();
 }
 void ReaderCanvas::willLeave() { closePanel(); }
 void ReaderCanvas::resetSession() {
@@ -210,6 +214,8 @@ void ReaderCanvas::controllerChanged() {
     // The library loaded after this canvas was made: reopen the book that was being read.
     if (!tabSettled_ && book) { if (state_->reading()) setTab(Tab::reading); tabSettled_ = true; }
     if (!renderedLanguage()) return;
+    // The notice of the deactivation's own change (ReaderCanvas.swift:143, `deactivating`).
+    if (deactivatedRevision_ && state_->revision() == *deactivatedRevision_) return;
     // The Mac skips a change while a sub-page swap runs because it builds the
     // next page when the swap lands; Windows built it when the swap started
     // (LIBRARY-DESIGN Q4), so a changed structure rebuilds that pending page
@@ -495,6 +501,9 @@ ReaderCanvas::Column ReaderCanvas::column(const ReaderPage& current) const {
     }
     return out;
 }
+bool ReaderCanvas::holdsPage(const ReaderLocation& location) const {
+    return std::any_of(slots_.begin(), slots_.end(), [&](const Slot& slot) { return slot.location && *slot.location == location; });
+}
 ReaderCanvas::Slot& ReaderCanvas::pageLayer(const ReaderPage& page) {
     for (auto& slot : slots_) if (slot.location && *slot.location == page.location) return slot;
     Slot* spare = nullptr;
@@ -543,11 +552,15 @@ void ReaderCanvas::layoutPages() {
         const double inset = columnInset();
         clip_->setFrame({pageViewport.x, pageViewport.y + inset, pageViewport.width, pageViewport.height - 2 * inset});
         column_->setFrame({0, 0, clip_->bounds().width, clip_->bounds().height});
+        // A neighbour rendered after the column is on screen fades in (Mac e0ae44b).
+        const bool shown = isActive() && column_ && d::isVisible(*column_, root());
         for (const auto& [p, top] : placed) {
+            const bool arriving = shown && !(p->location == current->location) && !holdsPage(p->location);
             auto& slot = pageLayer(*p);
             slot.pixels = p->pixels;
             slot.cropTop = inset / size.height; slot.cropHeight = columnHeight(*p) / size.height;
             slot.layer->setFrame({0, top, size.width, columnHeight(*p)});
+            if (arriving) d::motion::enter(*slot.layer, {0, 0}, clock());
         }
         publishViews();
         return;

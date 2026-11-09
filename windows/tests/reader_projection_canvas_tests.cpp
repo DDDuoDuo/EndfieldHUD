@@ -289,6 +289,57 @@ void readerContracts() {
     }
 }
 
+// Mac e0ae44b and dc1bf1b, top to bottom: the scrolled column leaves as
+// drawn (the deactivation empties the rendered column, and its notice must
+// not recycle the neighbours), shows again as it was while the reopened book
+// renders, and a neighbour placed while the column is on screen fades in.
+void readerKeepsPages() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    d::Context::Appearance a; a.language = Language::english; a.reduceMotion = false; w.context.apply(a, w.now);
+    auto library = syntheticLibrary(1); library.selected = bookID(1); library.reading = true;
+    ReaderRig r(w, library);
+    auto& canvas = *r.canvas;
+    const auto shot = [&] {
+        std::vector<std::pair<const d::Layer*, d::Rect>> out;
+        for (const auto& view : canvas.pageViews()) out.emplace_back(view.layer, view.layer->frame());
+        return out;
+    };
+    const auto enter = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)][0]; };
+    r.show(); r.activate(true);
+    check(canvas.tab() == m::ReaderCanvas::Tab::reading && r.state->library().preferences.vertical() && canvas.pageViews().size() == 3,
+        "Top to bottom: the current page and two neighbours are laid out");
+    // The book's first render builds the Reading page: its pages are placed
+    // before the column is on screen, so none fades in.
+    for (const auto& view : canvas.pageViews()) check(!enter(*view.layer).present(), "Pages placed while the page builds do not fade in");
+    // A page newly placed below the shown column fades in from offset zero.
+    w.advance(1);
+    const auto first = shot();
+    need(canvas, "next").activate(); r.sync();
+    std::size_t arrived{};
+    for (const auto& view : canvas.pageViews())
+        if (std::none_of(first.begin(), first.end(), [&](const auto& f) { return f.first == view.layer; })) {
+            ++arrived;
+            check(enter(*view.layer).present() && enter(*view.layer).start == w.now
+                && view.layer->tracks().slots[std::size_t(d::MotionSlot::enter)][1].kind != d::Track::Kind::enterTranslation, "The new neighbour fades in from offset zero");
+        }
+    check(arrived >= 1, "Turning on places a new neighbour");
+    w.advance(1);
+    canvas.scroll({295, m::ReaderCanvas::pageFrame.y + 100}, {0, 30}, w.now); r.sync();
+    const double offset = canvas.scrollOffset();
+    const auto drawn = shot();
+    check(offset > 0 && drawn.size() >= 3, "The column is scrolled with its neighbours drawn");
+    // The leave: the page goes as drawn.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    check(r.state->pages().empty() && shot() == drawn && canvas.scrollOffset() == offset, "Leaving keeps the neighbours and the scroll while the page fades out");
+    // A reopen that fails lays the column out as usual: the neighbours go.
+    canvas.prepareToLeave(w.now); canvas.setActive(false, w.now); r.sync();
+    r.source->count = 0;
+    canvas.show(w.now); canvas.setActive(true, w.now); r.sync();
+    check(r.state->error() && canvas.pageViews().size() <= 1, "A reopen that fails keeps no neighbours");
+    r.activate(false);
+}
+
 // --- Projection fixtures --------------------------------------------------------------------------
 struct Pen {
     std::vector<ehud::data::ProjectionSettings> saved;
@@ -636,6 +687,7 @@ void projectionOracle(Oracle& o) {
 int main(int argc, char** argv) {
     try {
         readerContracts();
+        readerKeepsPages();
         projectionContracts();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas", "projection"}, {"text", "layerDefaults", "reader", "readerFinal", "store"})) {
             Oracle oracle(*data);
