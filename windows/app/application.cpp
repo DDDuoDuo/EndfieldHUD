@@ -351,10 +351,14 @@ Application::Impl::ModuleContrast::ModuleContrast(gpu::LayerRasterizer&r,const g
     ramp.setBounds({side,side});ramp.setAnchorPoint({.5,.5});ramp.setPosition({295,305});ramp.setBaseTransform(d::Affine::scale(quarter,quarter));
     ramp.setAnimatable();root.add(ramp);
 }
-// fadeModuleContrast(visible: usesSourceShell && selectedModule != .nowPlaying)
-// on every selection: .13 s linear (a CABasicAnimation without timing) from
-// the presented opacity, at once while the HUD is hidden or under Reduce
-// Motion; the end value and the fade start together (the flash fix).
+// fadeWithModule(moduleContrast, visible: usesSourceShell && selectedModule
+// != .nowPlaying, key: "module.contrast") on every selection: .13 s linear (a
+// CABasicAnimation without timing) from the presented opacity, at once while
+// the HUD is hidden or under Reduce Motion; the end value and the fade start
+// together (the flash fix). The Mac's other fadeWithModule caller (9b4675b,
+// updateLegacyProgress) is the fallback Core Animation shell's centre arc;
+// Windows draws only the source shell, which never shows that arc, so it has
+// no twin here.
 void Application::Impl::updateModuleContrast(const core::Matrix4&center,double time){
     if(!moduleContrast||!designOverlay||!notes)return;
     namespace d=modules::design;auto&c=*moduleContrast;
