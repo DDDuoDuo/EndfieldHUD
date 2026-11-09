@@ -3237,6 +3237,11 @@ int Application::Impl::runHiddenVerification(){
                     // A part drawn directly (at rest, not through a fading group) by a module's scenes.
                     const auto partDrawn=[&](core::Module module,std::string_view part){auto*owner=registry.presenter(module);if(!owner)return false;
                         for(const auto&e:owner->entries(module))if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find(part)!=std::string::npos&&d.opacity>0)return true;return false;};
+                    // An entrance (the row stagger, the header's wipe and rule) pending or running in a canvas's tree.
+                    const std::function<bool(const modules::design::Layer&,double)> entering=[&](const modules::design::Layer&layer,double at){
+                        for(const auto slot:{modules::design::MotionSlot::enter,modules::design::MotionSlot::wipe,modules::design::MotionSlot::grow})
+                            for(const auto&track:layer.tracks().slots[std::size_t(slot)])if(track.running(at))return true;
+                        for(const auto*child:layer.children())if(entering(*child,at))return true;return false;};
                     const std::function<const modules::design::Layer*(const modules::design::Layer&,std::string_view)> layerEnding=[&](const modules::design::Layer&layer,std::string_view id)->const modules::design::Layer*{
                         if(layer.id().ends_with(id))return &layer;for(const auto*child:layer.children())if(const auto*found=layerEnding(*child,id))return found;return nullptr;};
                     // B5-1 (5c8a905, 839d3b8): a switch the close catches lands hidden on
@@ -3276,8 +3281,14 @@ int Application::Impl::runHiddenVerification(){
                             closeFinish();
                             contentCheck(!notes->modulePresentation().departing&&!from.canvas(fromModule)->isShown()&&!from.canvas(fromModule)->isActive()&&!to.canvas(toModule)->isActive(),
                                 switchName+": once hidden the old screen has left and nothing is departing");
-                            closeReopen();
                             const auto shown=reversed?fromModule:toModule;auto&shownCore=reversed?from:to;
+                            // The next open reveals the landed (or kept) screen with the opening's
+                            // entrance (ModulePresentation::reveal, then beginEntrance): .10 s in, the
+                            // entrance started at this open and its rows are still entering.
+                            {const double reopened=hostTime(t);perform(lifecycle.reopen(),t);t=run(t,.1);const auto&s=notes->modulePresentation();
+                             contentCheck(s.current.module==shown&&s.current.attached&&s.current.entrance&&s.current.entrance->start>=reopened-1e-6&&entering(shownCore.canvas(shown)->root(),hostTime(t)),
+                                 switchName+": the next open plays "+(reversed?"Clipboard":"Event Log")+"'s entrance");
+                             t=run(t,1.1);need(lifecycle.phase()==P::open,"The HUD opens again after a checked close");}
                             contentCheck(notes->selected()==shown&&shownCore.canvas(shown)->isActive()&&entriesPublished(shown)&&notes->modulePresentation().current.opacity==1,
                                 switchName+": the next open shows "+(reversed?"Clipboard":"Event Log"));
                         }
