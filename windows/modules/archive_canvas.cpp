@@ -434,7 +434,8 @@ ArchiveCanvas::ArchiveCanvas(d::Context& context, ArchiveState& state, ArchiveCa
     state_->lockSelected();
     posters_->decode = services_.posters;
     posters_->release = services_.releasePoster;
-    posters_->onChange = [this](const std::string& id, const std::optional<d::ImageSource>& image) { if (auto* t = tile(id)) t->setPoster(image); };
+    // A poster that arrives on a drawn tile cross-fades with its glyph (Mac 63d257a).
+    posters_->onChange = [this](const std::string& id, const std::optional<d::ImageSource>& image) { if (auto* t = tile(id)) t->setPoster(image, true); };
     openingTimer_ = timerGroup();
     soonTimer_ = timerGroup();
     if (services_.media) {
@@ -457,6 +458,8 @@ void ArchiveCanvas::show(double now) {
     if (renderedLanguage() && renderedLanguage() == env().language && (needsRefresh_ || !renderedStructure_ || structure() != *renderedStructure_)) rerender();
     Canvas::show(now);
     if (body_ && documentID_) body_->attach();
+    // The list's posters load from now, not from the end of the entrance (Mac 63d257a).
+    loadVisibleThumbnails();
 }
 void ArchiveCanvas::willEndInteraction() { if (isActive()) if (auto focus = currentFocus()) focusMemory_ = std::move(focus); }
 void ArchiveCanvas::didActivate() {
@@ -1675,8 +1678,10 @@ bool ArchiveCanvas::accessibilityText(std::string_view id, std::string_view valu
 }
 
 // --- Gallery thumbnails (:1233-1254) -------------------------------------------------------------
+// From the module's showing until it leaves (ArchiveCanvas.swift:1329: not
+// gated on activation since 63d257a).
 void ArchiveCanvas::loadVisibleThumbnails() {
-    if (!isActive() || !renderedStructure_ || renderedStructure_->page.kind != PageKind::list) { posters_->setWanted({}); return; }
+    if (leaving_ || !renderedLanguage() || !renderedStructure_ || renderedStructure_->page.kind != PageKind::list) { posters_->setWanted({}); return; }
     std::vector<const ArchiveSummary*> visible;
     for (const auto& s : shownDocuments_) if (tile(s.id) && !s.isClassified && s.mediaCount > 0 && visible.size() < Posters::wantedLimit) visible.push_back(&s);
     std::erase_if(thumbnailReferences_, [&](const auto& r) { return std::none_of(visible.begin(), visible.end(), [&](const auto* s) { return s->id == r.first; }); });

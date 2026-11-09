@@ -540,6 +540,38 @@ void documentStandIn() {
     // The stand-in itself opens the document.
     check(w.press(standIn) && w.state.selected() && w.state.selected()->id == hidden.id, "The stand-in opens its document");
 }
+// Mac 63d257a and 8dbb071: the list's posters are asked for from the
+// showing, not from the activation after the entrance; one that arrives on a
+// drawn tile cross-fades with its glyph; once the module is deactivated a
+// late decode is ignored.
+void posters() {
+    World w;
+    w.reduce(false);
+    m::ArchiveEntry e; e.id = uuid(3001); e.title = "Photo"; e.body = "Body"; e.date = e.modified = 1; e.media = {png("photo.png")};
+    w.repo->save(e);
+    auto& c = *w.canvas;
+    c.show(w.now);
+    for (int n = 0; n < 6 && w.posters.empty(); ++n) { w.queue.drain(); c.stateChanged(); w.advance(.01); }
+    check(!c.isActive() && w.posters.size() == 1 && w.posters[0].first == png("photo.png"), "Showing the list asks for its posters before the module is active");
+    c.setActive(true, w.now);
+    const auto* tile = find(c.root(), "tile.doc");
+    check(tile && !find(c.root(), "tile.poster"), "The tile draws its glyph while the poster decodes");
+    w.posters[0].second(d::ImageSource{d::ImageSource::Kind::memory, "poster.photo", {}, 1});
+    const auto* poster = find(c.root(), "tile.poster");
+    check(poster && !poster->hidden() && poster->animating(w.now) && near(poster->presented(d::Channel::opacity, w.now), 0) && !tile->hidden()
+        && near(tile->presented(d::Channel::opacity, w.now), 1), "A poster arriving on a drawn tile fades in over its glyph");
+    w.advance(.3);
+    check(tile->hidden() && !poster->animating(w.now), "The glyph is hidden once the fade ends");
+    c.prepareToLeave(w.now); c.setActive(false, w.now);
+    c.show(w.now);
+    check(w.posters.size() == 2, "Showing the list again asks for the poster again (leaving dropped the cache)");
+    c.setActive(true, w.now); c.prepareToLeave(w.now); c.setActive(false, w.now);
+    const auto* shown = find(c.root(), "tile.poster");
+    const bool hidden = !shown || shown->hidden();
+    w.posters[1].second(d::ImageSource{d::ImageSource::Kind::memory, "poster.late", {}, 2});
+    const auto* after = find(c.root(), "tile.poster");
+    check((!after || after->hidden()) == hidden && (!after || !after->animating(w.now)), "A decode that lands after the module was deactivated changes no tile");
+}
 void documentMenu() {
     World w;
     m::ArchiveCategory ops; ops.id = uuid(901); ops.name = "Ops"; ops.created = 1; w.repo->saveCategory(ops);
@@ -783,7 +815,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); documentMenu(); focusMemory(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);

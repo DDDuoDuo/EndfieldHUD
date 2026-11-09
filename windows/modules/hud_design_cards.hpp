@@ -113,7 +113,15 @@ public:
     ArchiveTile(Builder&, std::string id, int number, std::string title, Extension, std::optional<std::string> extensionLabel,
         std::optional<std::string> size, std::optional<std::string> date, double width, double wellHeight = 100,
         bool redacted = false, Style = Style::standard);
-    void setPoster(std::optional<ImageSource>);
+    // HUDArchiveTile.setPoster(_:animated:) (Mac 63d257a, 8dbb071, b8cc1df):
+    // a media thumbnail filling the well in place of the doc glyph (nullopt
+    // restores the glyph). `animated`: one arriving on a tile with no poster
+    // shown cross-fades with the glyph in one fade of the well
+    // (motion::crossFade over duration::hover: the poster 0 -> 1, the glyph
+    // to 0, then hidden); Reduce Motion shows it at once. The overlays above
+    // the poster (code, size, date) stay as they are, as in the Mac's
+    // snapshot fade; only the pixels under the glyph mix differently.
+    void setPoster(std::optional<ImageSource>, bool animated = false);
     void setSelected(bool, bool animated = true);
     bool selected() const noexcept { return selected_; }
     void playRemoval(std::function<void()> completion);
@@ -141,6 +149,7 @@ public:
     static Layer& docGlyph(Builder&, std::string_view id, Extension, const std::optional<std::string>& label);
 private:
     bool selected_{}; Style style_; Builder* builder_; TileMoreButton* more_{};
+    std::uint64_t posterSerial_{};   // a later setPoster cancels the glyph's hide at the end of a fade
     Layer *well_, *doc_, *poster_{}, *strip_, *label_, *brackets_, *bracketsRest_, *bracketsSelected_, *brighten_;
     void renderSelection(bool animated);
     static Layer& classifiedStamp(Builder&, std::string_view id, Point center);

@@ -938,6 +938,54 @@ void cards() {
         d::ArchiveTile::Style::classified);
     check(find(classified.layer(), "tile.stamp") && d::textOf(must(classified.layer(), "tile.stamp.text")).text() == "CLASSIFIED" && near(textColor(must(classified.layer(), "tile.label.text")), d::fixed::red),
         "Classified: the red stamp and label");
+    {
+        // HUDArchiveTile.setPoster(_:animated:) (Mac 63d257a, 8dbb071 through
+        // b8cc1df's crossFade): a late poster on a tile without one cross-fades
+        // with the doc glyph in one fade of the well; the glyph is hidden at
+        // its end with its model opacity back at 1.
+        const d::ImageSource first{d::ImageSource::Kind::memory, "poster.first", {}, 1}, second{d::ImageSource::Kind::memory, "poster.second", {}, 1};
+        const auto fade = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::fade)][0]; };
+        auto& late = w.b.make<d::ArchiveTile>("late", 1, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(late.layer());
+        const double t0 = w.env.now, hover = d::duration::hover;
+        late.setPoster(first, true);
+        const auto& poster = must(late.layer(), "tile.poster");
+        const auto& glyph = must(late.layer(), "tile.doc");
+        check(fade(poster).present() && near(fade(poster).start, t0) && near(fade(poster).duration, hover) && fade(glyph).present() && near(fade(glyph).duration, hover),
+            "A late poster and the glyph share one fade over duration::hover");
+        check(near(poster.presented(Channel::opacity, t0), 0) && near(glyph.presented(Channel::opacity, t0), 1) && !glyph.hidden() && !poster.hidden()
+            && near(poster.presented(Channel::opacity, t0 + hover / 2), .5) && near(glyph.presented(Channel::opacity, t0 + hover / 2), .5)
+            && model(poster, Channel::opacity) == 1 && model(glyph, Channel::opacity) == 0, "The poster fades 0 -> 1 as the glyph fades 1 -> 0, ease-in-out");
+        w.at(t0 + hover + .001);
+        check(glyph.hidden() && model(glyph, Channel::opacity) == 1 && near(poster.presented(Channel::opacity, w.env.now), 1) && !poster.animating(w.env.now),
+            "After the fade the glyph is hidden at its model opacity 1 and the poster rests");
+        late.setPoster(second, true);
+        check(!poster.animating(w.env.now) && !glyph.animating(w.env.now) && glyph.hidden() && !poster.hidden(), "A poster replacing a shown one swaps at once");
+        // setPoster(nullopt) mid-fade restores the glyph; the pending hide does nothing.
+        auto& cleared = w.b.make<d::ArchiveTile>("cleared", 2, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(cleared.layer());
+        cleared.setPoster(first, true);
+        w.at(w.env.now + hover / 2);
+        cleared.setPoster(std::nullopt);
+        const auto& clearedGlyph = must(cleared.layer(), "tile.doc");
+        const auto& clearedPoster = must(cleared.layer(), "tile.poster");
+        check(!clearedGlyph.hidden() && model(clearedGlyph, Channel::opacity) == 1 && near(clearedGlyph.presented(Channel::opacity, w.env.now), 1) && clearedPoster.hidden()
+            && !clearedPoster.animating(w.env.now), "Clearing the poster mid-fade shows the glyph at once");
+        w.at(w.env.now + hover);
+        check(!clearedGlyph.hidden() && model(clearedGlyph, Channel::opacity) == 1, "The fade's pending glyph hide does nothing after a later setPoster");
+        // Not animated (a page build) and Reduce Motion: at once.
+        auto& built = w.b.make<d::ArchiveTile>("built", 3, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(built.layer());
+        built.setPoster(first);
+        check(must(built.layer(), "tile.doc").hidden() && !must(built.layer(), "tile.poster").animating(w.env.now), "A poster set by a build shows at once");
+        w.env.reduceMotion = true;
+        auto& reduced = w.b.make<d::ArchiveTile>("reduced", 4, "Clip", d::ArchiveTile::Extension::vid, std::nullopt, std::nullopt, std::nullopt, 136.0);
+        w.host(reduced.layer());
+        reduced.setPoster(first, true);
+        check(must(reduced.layer(), "tile.doc").hidden() && !must(reduced.layer(), "tile.poster").animating(w.env.now)
+            && model(must(reduced.layer(), "tile.poster"), Channel::opacity) == 1, "Reduce Motion shows a late poster at once");
+        w.env.reduceMotion = false;
+    }
     w.env.reduceMotion = true; bool now = false; classified.playRemoval([&] { now = true; });
     check(now, "Reduce Motion removes at once");
 }

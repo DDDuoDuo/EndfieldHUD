@@ -424,6 +424,7 @@ ArchiveTile::ArchiveTile(Builder& b, std::string id, int number, std::string tit
     well_->add(*brighten_); well_->add(codeBar); well_->add(code);
     doc_ = &docGlyph(b, sub(this->id(), "tile.doc"), extension, extensionLabel);
     doc_->setPosition({width / 2, wellHeight / 2});
+    doc_->setAnimatable();                               // fades out under a late poster (setPoster)
     if (classified) well_->add(classifiedStamp(b, sub(this->id(), "tile.stamp"), {width / 2, wellHeight / 2}));
     else well_->add(*doc_);
     if (size) {
@@ -507,16 +508,30 @@ TileMoreButton& ArchiveTile::attachMore(std::string id, std::string spokenLabel)
     return *more_;
 }
 // setPoster (:458-469): a thumbnail filling the well in place of the doc glyph (nullopt restores it).
-void ArchiveTile::setPoster(std::optional<ImageSource> source) {
+void ArchiveTile::setPoster(std::optional<ImageSource> source, bool animated) {
     if (style_ != Style::standard || (!source && !poster_)) return;
+    const auto c = clock();
+    const bool appearing = animated && source && (!poster_ || poster_->hidden()) && !c.reduceMotion;
+    ++posterSerial_;
     if (!poster_ && source) {
         poster_ = &builder_->layer(sub(id(), "tile.poster"));
         poster_->setFrame(localBounds(*well_)); poster_->setMasksToBounds(true);
+        poster_->setAnimatable();                        // fades in (setPoster animated)
         well_->insert(*poster_, 0);
     }
     if (source) poster_->setContent(image(poster_->id(), localBounds(*poster_), *source, "resizeAspectFill")); else poster_->clearContent();
     poster_->setHidden(!source);
-    doc_->setHidden(source.has_value());
+    // A running fade ends here: both at their model opacity 1.
+    for (Layer* layer : {poster_, doc_}) { layer->removeMotion(MotionSlot::fade); layer->setValue(Channel::opacity, 1); }
+    if (!appearing) { doc_->setHidden(source.has_value()); return; }
+    // The poster fades in under the glyph as the glyph fades out (the Mac
+    // snapshot fade of the well); the glyph is hidden once the fade ends.
+    doc_->setHidden(false);
+    motion::crossFade(*poster_, doc_, duration::hover, c);
+    motion::after(*doc_, c.now + duration::hover, c, [this, serial = posterSerial_] {
+        if (serial != posterSerial_) return;
+        doc_->setHidden(true); doc_->setValue(Channel::opacity, 1);
+    });
 }
 void ArchiveTile::setSelected(bool selected, bool animated) { if (selected != selected_) { selected_ = selected; renderSelection(animated); } }
 // renderSelection (:477-484).
