@@ -3355,13 +3355,26 @@ int Application::Impl::runHiddenVerification(){
                         closeShow(core::Module::notes);
                         std::vector<gpu::NotesAutomationElement>elements;notes->automationElements(elements);std::string note;
                         for(const auto&e:elements)if(e.enabled&&e.id.starts_with("note:")&&e.id.ends_with(":edit")){note=e.id.substr(5,e.id.size()-10);break;}
-                        const auto formatMenu=[&]{for(const auto&e:notes->entries())if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find("notes.desk.")!=std::string::npos)return true;return false;};
+                        // The pop-up's draws: its scene's surfaces, or the group output a fade
+                        // draws them through (notes.desk.N.group). -1 when none is composed.
+                        const auto menuOpacity=[&]{double most=-1;for(const auto&e:notes->entries()){if(e.scene)for(const auto&d:e.scene->draws())if(d.sourceID.find("notes.desk.")!=std::string::npos)most=std::max(most,double(d.opacity));
+                            for(const auto&d:e.after)if(d.sourceID.find("notes.desk.")!=std::string::npos)most=std::max(most,double(d.opacity));}return most;};
+                        const auto formatMenu=[&]{return menuOpacity()>=0;};
+                        const auto menuControls=[&]{std::vector<gpu::NotesAutomationElement>peers;notes->automationElements(peers);
+                            return std::any_of(peers.begin(),peers.end(),[](const gpu::NotesAutomationElement&e){return e.id.starts_with("notes.desk:");});};
                         const bool opened=!note.empty()&&notes->perform("note:"+note+":formatSize",hostTime(t));t=run(t,.3);
-                        contentCheck(opened&&formatMenu(),"A Notes text card's size menu opens through its accessible action");
+                        contentCheck(opened&&formatMenu()&&menuControls(),"A Notes text card's size menu opens through its accessible action");
                         perform(lifecycle.toggle(),t);
-                        {const double closedAt=t;bool fading=false,gone=false;
-                         for(unsigned n=1;n<=9;++n){t=closedAt+n/60.;closeFrame(t);if(n==6)fading=formatMenu();if(n==9)gone=!formatMenu();}
-                         contentCheck(closing&&fading&&gone,"The close fades the Notes size menu out over .14 s: drawn .10 s in, gone at .15 s (C4)");}
+                        contentCheck(closing&&!menuControls(),"The close's start takes the Notes size menu's controls out of input (C4)");
+                        // Its own fade: the drawn opacity over the canvas opacity the frame
+                        // composes the notes with (canvasOpacity), falling every frame and
+                        // below half .10 s in (.14 s ease leaves about .06 there).
+                        {const double closedAt=t;double previous=2,tenth=2;bool falling=true,gone=false;
+                         for(unsigned n=1;n<=9;++n){t=closedAt+n/60.;closeFrame(t);
+                             if(n<=6){const double canvas=canvasOpacity(t),menu=menuOpacity();const double own=canvas>1e-3&&menu>=0?menu/canvas:-1;
+                                 falling=falling&&own>0&&own<previous;previous=own;if(n==6)tenth=own;}
+                             if(n==9)gone=!formatMenu();}
+                         contentCheck(falling&&tenth<.5&&gone,"The close fades the Notes size menu out over .14 s: falling and drawn .10 s in (own opacity "+std::to_string(tenth)+"), gone at .15 s (C4)");}
                         closeFinish();closeReopen();
                         contentCheck(notes->selected()==core::Module::notes&&!formatMenu(),"The next open shows the notes without the menu");
                     }
