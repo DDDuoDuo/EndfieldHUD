@@ -249,8 +249,9 @@ void ArchiveOwner::update(const app::ModuleFrame& frame) {
     i.clock(frame.time);
     i.focused = frame.focused;
     i.core->update(frame);
-    // NotesMediaPresentation lives only while the editor page is active
-    // (didDeactivate clears it; DOCS-437): decoding and playback follow.
+    // Decoding and playback run only while Archive is shown and active. The
+    // presentation stays through a module leave (the canvas paused a movie
+    // first; this hide keeps the picture shown 0.6 s): a return shows it again.
     i.media->setVisible(i.overlay && i.canvas->isActive() && i.core->pose(core::Module::archive).has_value(), i.time);
     i.compose();
 }

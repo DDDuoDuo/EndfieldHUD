@@ -85,9 +85,11 @@ struct BodyHost final : m::ArchiveBodyEditorHost {
     }
 };
 struct Media final : m::ArchiveMediaPresenter {
-    std::vector<std::string> shown; int clears{}; bool isPlaying{}; std::optional<std::string> failure;
-    void show(std::string_view document, std::size_t index, const m::ArchiveJson&) override { shown.push_back(std::string(document) + ":" + std::to_string(index)); }
-    void clear() override { ++clears; }
+    std::vector<std::string> shown, log; int clears{}; bool isPlaying{}; std::optional<std::string> failure;
+    void show(std::string_view document, std::size_t index, const m::ArchiveJson&) override { shown.push_back(std::string(document) + ":" + std::to_string(index)); log.push_back("show"); }
+    void clear() override { ++clears; isPlaying = false; log.push_back("clear"); }
+    // The binding reports the paused state at its next refresh, not here.
+    void pause() override { isPlaying = false; log.push_back("pause"); }
     bool playing() const override { return isPlaying; }
     std::optional<std::string> error() const override { return failure; }
     double currentTime() const override { return 0; }
@@ -185,6 +187,14 @@ bool rootsPart(World& w, const m::ArchiveBodyArea& area) {
 m::ArchiveJson png(std::string name) {
     return J::Object{{"version", 1}, {"kind", "image"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
         {"duration", J{}}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 1}};
+}
+m::ArchiveJson movie(std::string name) {
+    return J::Object{{"version", 1}, {"kind", "video"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
+        {"duration", 10}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 1}};
+}
+m::ArchiveJson gif(std::string name) {
+    return J::Object{{"version", 1}, {"kind", "gif"}, {"displayName", name}, {"referencePlatform", "windows"}, {"windowsPath", "C:\\Synthetic\\" + name},
+        {"duration", 1}, {"pixelWidth", 16}, {"pixelHeight", 16}, {"frameCount", 2}};
 }
 
 void richText() {
@@ -453,6 +463,83 @@ void classified() {
     check(request && request->id == "declassify" && !request->danger && request->title == "Remove classification?", "Declassify asks, not danger (DOCS-450)");
     (void)w.context.overlay().handleKey(w.key(d::key::enter)); w.advance(.2); w.settle();
     check(!w.state.isClassified(w.state.selected()->id) && w.toast() == "Declassified|", "Declassified with its toast");
+}
+
+// Mac 815b343 with db7c5c0's media half: the presentation stays through a
+// module leave; a video is paused before it, so it comes back paused where it
+// was left; a GIF keeps its playback; a relocked document's media go.
+void mediaLeave() {
+    const auto ask = [](World& w) {
+        auto& c = *w.canvas;
+        check(w.press("media") && c.menuOpen(), "Media opens its menu");
+        std::vector<d::AccessibilityItem> menu; c.accessibilityItems(menu);
+        for (const auto& i : menu) if (i.id.ends_with(":finder")) c.performAccessibilityAction(i.id, w.now);
+        w.settle();
+        check(!w.requests.empty() && c.presentingPanel(), "Choose in File Explorer asks the picker");
+        return w.requests.back();
+    };
+    const auto attach = [&](World& w, const m::ArchiveJson& reference) {
+        w.open();
+        check(w.press("new"), "New");
+        check(w.canvas->receiveMedia(ask(w), {reference}, std::nullopt), "The import reply lands");
+        w.settle();
+        check(w.media.shown.size() == 1 && w.media.log.back() == "show", "The presenter shows the item");
+        w.media.log.clear();
+    };
+    const auto leave = [](World& w) { w.canvas->prepareToLeave(w.now); w.canvas->setActive(false, w.now); w.settle(); };
+    const auto back = [](World& w) { w.canvas->show(w.now); w.canvas->setActive(true, w.now); w.settle(); };
+    const auto label = [](const World& w) { for (const auto& i : w.items()) if (i.id == "mediaPlay") return i.label; return std::string{}; };
+    using Log = std::vector<std::string>;
+    {
+        World w; attach(w, movie("clip.mp4"));
+        check(w.press("mediaPlay") && w.media.isPlaying && label(w) == "Pause", "Play starts the movie");
+        leave(w);
+        check(w.media.log == Log{"pause"} && !w.media.isPlaying, "Leaving pauses the movie and keeps its presentation (no clear)");
+        back(w);
+        check(w.media.log == Log{"pause"} && w.media.shown.size() == 1 && !w.media.isPlaying && label(w) == "Play",
+            "Back, the same presentation shows the movie paused: no new show, the button reads Play");
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play again");
+        w.canvas->prepareToLeave(w.now); w.canvas->setActive(false, w.now);
+        w.canvas->show(w.now); w.canvas->setActive(true, w.now); w.settle();
+        check(w.media.log == Log{"pause", "pause"} && !w.media.isPlaying && w.media.shown.size() == 1, "A switch reversed at once brings the movie back paused too");
+        const auto pending = ask(w);
+        leave(w);
+        check(!w.canvas->receiveMedia(pending, {png("late.png")}, std::nullopt), "An import pending at the leave is not received");
+        back(w);
+        w.media.log.clear();
+        w.canvas->endSession();
+        check(w.media.log == Log{"clear"}, "The end of the HUD session ends the presentation");
+    }
+    {
+        World w; attach(w, gif("loop.gif"));
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play starts the GIF");
+        leave(w);
+        check(w.media.log.empty() && w.media.isPlaying, "A GIF is not paused by a leave");
+        back(w);
+        check(w.media.log.empty() && w.media.shown.size() == 1 && w.media.isPlaying, "Back, the GIF keeps its presentation and playback");
+    }
+    {
+        World w; attach(w, png("still.png"));
+        leave(w); back(w);
+        check(w.media.log.empty() && w.media.shown.size() == 1, "A picture is neither paused nor cleared by a leave and back");
+    }
+    {
+        World w; attach(w, movie("sealed.mp4"));
+        auto& c = *w.canvas;
+        w.press("classify"); c.endEditing(true);
+        c.setAccessibilityText("newPassword", "correct horse", w.now); c.setAccessibilityText("confirmPassword", "correct horse", w.now);
+        c.performAccessibilityAction("classifySubmit", w.now); w.settle();
+        check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked, "The classified document is locked");
+        auto* password = dynamic_cast<d::TextField*>(w.control("password"));
+        check(password != nullptr, "The password bar");
+        password->beginEditing(); w.fields.value = "correct horse"; password->editorChanged("correct horse");
+        w.press("unlock"); w.settle();
+        check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor && label(w) == "Play", "Unlocked, the editor shows the movie again");
+        check(w.press("mediaPlay") && w.media.isPlaying, "Play the classified movie");
+        w.media.log.clear();
+        leave(w);
+        check(w.media.log == Log{"pause", "clear"} && w.state.isSelectedLocked(), "Leaving relocks: the movie is paused, then its presentation goes with the text");
+    }
 }
 
 // Windows B14: the focused field and its selection survive a module switch.
@@ -815,7 +902,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);

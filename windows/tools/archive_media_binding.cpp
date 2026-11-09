@@ -171,6 +171,16 @@ void ArchiveMediaBinding::togglePlayback() {
         : i.selected->kind == m::NotesMediaKind::gif ? i.broker.toggleImage(i.client, i.selected->key, i.time) : false;
     if (done) (void)refresh(i.time);
 }
+// NotesMediaPresentation.pause (NotesMedia.swift:402-407) has no visible
+// gate. No refresh here: it can deliver a finished import, and the canvas
+// pauses during a leave; the frame loop refreshes anyway.
+void ArchiveMediaBinding::pause() {
+    auto& i = *impl_;
+    // Only a movie pauses: the canvas asks only for a video, and the Mac's
+    // generic pause of a GIF has no Windows caller (decision AM-D2).
+    if (!i.selected || i.selected->kind != m::NotesMediaKind::video) return;
+    (void)i.broker.pauseVideo(i.client, i.selected->key);
+}
 void ArchiveMediaBinding::seek(double seconds) {
     auto& i = *impl_;
     if (!i.visible || !i.selected || i.selected->kind != m::NotesMediaKind::video || !std::isfinite(seconds)) return;

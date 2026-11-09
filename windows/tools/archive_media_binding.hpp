@@ -14,7 +14,9 @@
 // the canvas releases stays published until a later activation, so a module
 // switch inside the open HUD (the stand-by) keeps the tiles' pixels.
 // Decoding and playback run only while Archive is shown and active
-// (setVisible); hidden, the movie pauses and nothing loads.
+// (setVisible); hidden, nothing loads and a movie stops, keeping its time.
+// The canvas keeps the presentation through a module leave and pauses a
+// movie first, so it comes back paused where it was left.
 //
 // Borrows ONE broker client, the Renderer and the memory-image provider; no
 // decoder, player, picker, clock or timer of its own. Completions are read in
@@ -48,6 +50,7 @@ public:
     std::optional<std::string> error() const override;
     double currentTime() const override;
     void togglePlayback() override;
+    void pause() override;
     void seek(double seconds) override;
     // ArchiveCanvasServices::posters / releasePoster.
     void decodePoster(const modules::ArchiveJson&, std::function<void(std::optional<modules::design::ImageSource>)>);

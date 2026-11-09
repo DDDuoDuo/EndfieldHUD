@@ -43,6 +43,9 @@ public:
     virtual std::optional<std::string> error() const = 0;    // the localized failure
     virtual double currentTime() const = 0;                  // seconds
     virtual void togglePlayback() = 0;
+    // NotesMediaPresentation.pause (NotesMedia.swift:402-407): the play
+    // intent goes and a playing movie stops where it is, shown or not.
+    virtual void pause() = 0;
     virtual void seek(double seconds) = 0;
     // Set by the canvas: state changes (loaded, playing, failed) and progress.
     std::function<void()> onStateChange, onProgress;
@@ -217,6 +220,7 @@ private:
     NotesFormatBar* formatBar_{};
     design::Layer *progressFill_{}, *preview_{};
     std::optional<std::string> presentationKey_;
+    bool presentationVideo_{};   // the presentation's reference is a video (presentation?.reference.kind == .video)
     // Locked page and the password pop-overs
     LockedPanel* lockedPanel_{};
     design::TextField* passwordField_{};

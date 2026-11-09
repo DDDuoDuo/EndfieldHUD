@@ -92,6 +92,23 @@ void workerPoster(const std::filesystem::path&shader){Window window;n::Renderer 
     video.hide(9);video.collectRetired();video.retire("worker.poster");
 
 }
+// Archive's return after a module leave (Mac 815b343): a worker-poster movie
+// paused before its kept hide comes back paused where it was left, its live
+// frame seeked there; without the pause it plays again by itself.
+void workerPosterReturn(const std::filesystem::path&shader){for(const bool paused:{true,false}){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::notice,61},[&](auto,auto callback){probe=std::make_shared<Probe>();probe->fresh=false;probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    const std::array request{n::NotesVideoRequest{"return.movie","C:\\owned-synthetic\\tiny.mp4",1,512,10,{},true}};video.setVisible(request,0);video.accept(61,0);
+    n::NotesImageFrame frame{4,4,0,std::vector<std::uint8_t>(4*4*4,255)};check(video.setPoster("return.movie",1,1,&frame),"The worker still settles the movie's poster");
+    check(video.play("return.movie",.1)&&probe->playing,"Play starts the movie");video.sample(.1);probe->position=3;
+    if(paused)check(video.pause("return.movie")&&!probe->playing,"Archive pauses the movie before its leave");
+    video.hide(1,true);const auto*r=video.find("return.movie");check(r&&r->currentTime==3&&r->wantsPlayback==!paused&&r->state==m::NotesMediaState::hidden,"The kept hide saves the time left and keeps the play intent it had");
+    video.setVisible(request,1.1);video.accept(61,1.1);r=video.find("return.movie");check(r->state==m::NotesMediaState::loading&&probe->seeks==0&&!probe->playing,"Shown again, the new engine waits for the worker's still");
+    check(video.setPoster("return.movie",1,2,&frame)&&probe->seeks==1&&probe->position==3,"The still settles and the movie seeks once to where it was left");
+    if(paused){check(r->state==m::NotesMediaState::paused&&!r->wantsPlayback&&!probe->playing,"A paused movie comes back paused");
+        video.accept(61,1.2);video.sample(1.2);check(r->textureID=="return.movie.live"&&!probe->playing&&r->state==m::NotesMediaState::paused&&r->currentTime==3,"Its seeked frame shows, still without playing");}
+    else check(r->wantsPlayback&&probe->playing&&r->state==m::NotesMediaState::playing,"Without the pause the movie plays again by itself");
+    video.hide(2);video.collectRetired();video.retire("return.movie");}
+}
 // The frame server holds the renderer's device only while an engine exists
 // (Renderer::mediaDevice): a playing movie refuses the closed HUD's device
 // release, and once no movie is shown neither the lease nor the CoreMedia
@@ -127,7 +144,7 @@ void unsupported(const std::filesystem::path&shader){Window w;n::Renderer render
     check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"Actual invalid-container check never shows or captures desktop");
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);deviceLease(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);workerPosterReturn(argv[1]);deviceLease(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

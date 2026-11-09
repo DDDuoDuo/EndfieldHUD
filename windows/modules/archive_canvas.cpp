@@ -478,16 +478,22 @@ void ArchiveCanvas::didDeactivate() {
     finishOpening(false);
     unlocking_.reset();
     if (body_) body_->suspend();
-    clearMedia();
+    // The presentation stays through the leave (ArchiveCanvas.swift:183-186):
+    // the owner's hide that follows keeps the picture or frame shown for the
+    // leave and releases it 0.6 s later, and a return finds the same key.
     ++thumbnailGeneration_; metadataRequests_.clear(); posters_->clear();
     panel_ = false;
     if (services_.cancelMedia) services_.cancelMedia();
     ++mediaGeneration_;
+    // A video or audio item comes back paused, as a new presentation did; a
+    // GIF keeps the playback it had (:183-185). After the generation bump, so
+    // an import that finishes now is not received; before the owner's hide.
+    if (services_.media && presentationVideo_) services_.media->pause();
     reportEdits();
     state_->flush();
     // Leaving the module relocks a classified document; its text leaves memory with the editor.
     if (state_->selectedClassification() != ArchiveClassificationStatus::unclassified && !state_->isSelectedLocked()) {
-        discardDocument();
+        discardDocument(); clearMedia();
         state_->lockSelected();
     }
 }
@@ -1545,10 +1551,12 @@ void ArchiveCanvas::syncMedia(const ArchiveEntry& entry) {
     const auto key = entry.id + ":" + std::to_string(index) + ":" + reference.encode(1 << 20);
     if (presentationKey_ == key) return;
     presentationKey_ = key;
+    presentationVideo_ = reference["kind"] == ArchiveJson("video");
     services_.media->show(entry.id, index, reference);
 }
 void ArchiveCanvas::clearMedia() {
     presentationKey_.reset();
+    presentationVideo_ = false;
     if (services_.media) services_.media->clear();
 }
 // Loading reports from show(): coalesced outside the build (:1118-1127).
