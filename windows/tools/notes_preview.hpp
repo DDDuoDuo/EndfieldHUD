@@ -144,6 +144,21 @@ public:
     // SystemHUDView.playsBootLogOnOpen: the module host stays transparent
     // while the daily boot log plays (ModulePresentation::setConcealed).
     void setCentreConcealed(bool);
+    // The HUD's close (after the owners' overlayClosing, before the source
+    // session closes; SystemHUDView.cancelAnimations(forRetraction:) and
+    // close): a select the text service deferred (pendingModule) is taken as
+    // the latest pick; a switch in flight lands hidden on its new module, its
+    // old screen finishing its leave (ModulePresentation::settleForClose,
+    // always); the shown design screen leaves (leaveForClose, not under
+    // Reduce Motion).
+    void closeCentre(double time);
+    // The next open (or a reopen mid-close) shows the committed module again
+    // (ModulePresentation::reveal; NotesModule::setOverlayVisible(true)).
+    void revealCentre();
+    // The hidden HUD (overlayConcealed, overlayRetracted): what the close
+    // left playing ends (the departing screen, the close leave); true when
+    // something changed.
+    bool concealCentre(double time);
     core::Module selected()const noexcept;
     const core::ModulePresentationSample& modulePresentation()const noexcept;
     void resize(const app::ClientMetrics&);

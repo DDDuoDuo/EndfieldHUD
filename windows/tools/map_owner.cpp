@@ -201,7 +201,7 @@ void MapOwner::update(const app::ModuleFrame& f) {
     i.synchronize();
     const auto pose = i.core->pose(core::Module::map);
     const auto& sample = f.presentation;
-    const bool shown = sample.current.module == core::Module::map || (sample.incoming && sample.incoming->module == core::Module::map);
+    const bool shown = sample.shows(core::Module::map);
     // Module input stopped on another module (releaseRasterWorkingSet: only
     // while the canvas is inactive).
     if (!shown && !i.canvas->isActive()) i.releaseWorkingSet();

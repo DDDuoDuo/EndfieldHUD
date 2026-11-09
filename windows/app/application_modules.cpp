@@ -40,9 +40,6 @@ tools::NotesPreviewPreferences notesPreferences(const ModuleAppearance& a) {
     s.todoTitle=t("TODO","待办");s.itemPlaceholder=t("New item…","新事项…");s.addItem=t("+ Add item","+ 添加事项");s.checkItem=t("Check","勾选");s.uncheckItem=t("Uncheck","取消勾选");s.editItem=t("Edit item","编辑事项");s.moveUp=t("Move up","上移");s.moveDown=t("Move down","下移");s.removeItem=t("Delete item","删除事项");s.addItemAction=t("Add item","添加事项");s.imageTitle=t("IMAGE/VIDEO","图片/视频");s.drawingTitle=t("DRAWING","画画");s.drawingColor=t("Drawing color","画笔颜色");
     out.chooseFile=std::string(core::translated(core::chooseInFileExplorer,language));return out;
 }
-bool presentationShows(const core::ModulePresentationSample& sample, core::Module module) noexcept {
-    return sample.current.module == module || (sample.incoming && sample.incoming->module == module);
-}
 
 namespace {
 using Entries = std::span<const gpu::LayerCompositionEntry>;
@@ -99,7 +96,7 @@ public:
     }
     void resize(const ClientMetrics& m) override { n_.resize(m); }
     void setAppearance(const ModuleAppearance& a, double t) override { n_.applyPreferences(notesPreferences(a), t); }
-    void setOverlayVisible(bool v, double t) override { if (v) n_.setMediaActive(true, t); }
+    void setOverlayVisible(bool v, double t) override { if (v) { n_.revealCentre(); n_.setMediaActive(true, t); } }
     void overlayClosing(double t) override { n_.setMediaActive(false, t, true); }
     void update(const ModuleFrame& f) override { n_.update(f.center, f.chrome, f.opacity, f.time, f.focused); }
     void prewarm(const ModuleFrame& f) override { previewPrewarm(n_, f); }
@@ -119,6 +116,12 @@ public:
     bool message(const NativeMessage& m, double t) override { return n_.message(m, t); }
     void focus(bool v, double) override { n_.focus(v); }
     bool finishEditing(double) override { return n_.finish(); }
+    // The hidden HUD (the close finished, or a File Shelf drag's retract hid
+    // it): ModulePresentation's departing screen and close leave end.
+    bool hostEvent(const HostEvent& e, double t) override {
+        if (e.kind != HostEvent::Kind::overlayConcealed && e.kind != HostEvent::Kind::overlayRetracted) return false;
+        return n_.concealCentre(t);
+    }
     // HUDNotesInteraction's projected editor (the preview's own hit test).
     std::optional<ModuleCursor> cursorAt(core::Point p) const override { return previewTextCursor(n_, p); }
 };

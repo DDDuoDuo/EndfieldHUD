@@ -613,6 +613,22 @@ void NotesPreview::setDesignScreen(core::Module m,bool design){impl_->modules.se
 bool NotesPreview::isDesignScreen(core::Module m)const noexcept{return impl_->modules.isDesignScreen(m);}
 void NotesPreview::beginEntrance(double t,std::optional<core::MotionPoint> offset,double delay){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)i.modules.beginEntrance(event.time,i.preferences.reduceMotion,offset,delay);}
 void NotesPreview::setCentreConcealed(bool concealed){impl_->modules.setConcealed(concealed);}
+void NotesPreview::closeCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;
+    // The user's latest pick, deferred while the text service was locked:
+    // the close catches it like any switch (it must not start one mid-close).
+    if(i.pendingModule&&i.finish()){const auto pick=*i.pendingModule;i.pendingModule.reset();const auto chosen=i.modules.select(pick,t,true,i.preferences.reduceMotion);i.change(chosen.change,t);}
+    i.pendingModule.reset();
+    const auto settled=i.modules.settleForClose(t);
+    i.moduleSample=i.preferences.reduceMotion?settled.presentation:i.modules.leaveForClose(t).presentation;
+    i.moduleInput=i.moduleSample.acceptsModuleInput;
+    // Same-value presentations are no-ops: notes entering or leaving keep their tracks (C17).
+    if(i.finish())i.change(settled.change,t);
+}
+void NotesPreview::revealCentre(){impl_->modules.reveal();}
+bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);
+    const bool closing=i.modules.requiresFrames()&&!i.modules.isTransitioning();
+    i.modules.reveal();
+    return closing;}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}

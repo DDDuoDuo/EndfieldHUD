@@ -361,7 +361,7 @@ public:
     void update(const app::ModuleFrame& f) override {
         clock(f.time);
         const auto& sample = f.presentation;
-        const bool shown = sample.current.module == core::Module::nowPlaying || (sample.incoming && sample.incoming->module == core::Module::nowPlaying);
+        const bool shown = sample.shows(core::Module::nowPlaying);
         canvas_->setPresented(shown && sample.requested == core::Module::nowPlaying && overlayVisible_, time_);
         synchronize(time_);
         core_->update(f);

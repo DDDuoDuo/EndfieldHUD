@@ -210,4 +210,55 @@ void directionalEntranceAndReduce(){
     check(allocations.load()==before,"Directional switches, leaves, skips and entrances allocate nothing");
 }
 }
-int main(){try{lifecycle();pendingCancelSettle();sourceTracks();guardsAndAllocation();designMotion();contentDim();directional();directionalSupersede();directionalEntranceAndReduce();std::cout<<"PASS "<<checks<<" module presentation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+// HUDModuleContent.settle(concealed:) and leaveForClose at the HUD's close
+// (5c8a905, 839d3b8, 79bc665, 48584b5). The leave values come from the one
+// leave curve (DesignMotion::leaveAt) the switch leave above is checked on.
+void closeSettle(){
+    const auto design=[](Module initial){ModulePresentation p(initial);for(const auto m:{Module::notes,Module::clipboard,Module::eventLog,Module::volume})p.setDesignScreen(m,true);return p;};
+    const auto leaveAt=[](double elapsed,MotionPoint offset){return DesignMotion::leaveAt(elapsed,{offset.x*DesignBox::baseUnit,offset.y*DesignBox::baseUnit});};
+    // Forward: A to B, the close at +.05 lands B hidden; A finishes its leave as the departing screen.
+    {auto p=design(Module::notes);const auto a=p.sample(0).presentation.current.identity;
+     auto u=p.select(Module::clipboard,1,true,false,5);const auto b=u.presentation.incoming->identity;
+     u=p.settleForClose(1.05);const auto&s=u.presentation;const auto vector=ShellPosition::entranceOffset(Module::notes,Module::clipboard);
+     check(s.selected==Module::clipboard&&s.requested==Module::clipboard&&!s.transitioning&&s.current.module==Module::clipboard&&s.current.identity==b,"The close lands the switch on its new module");
+     check(!s.current.attached&&s.current.opacity==0,"The landed screen is hidden: not drawn, hit or activated (OPEN-B5-2: the not-attached path)");
+     check(s.departing&&s.departing->module==Module::notes&&s.departing->identity==a&&s.departing->attached&&s.shows(Module::notes)&&s.surface(Module::notes)==&*s.departing,"The old screen departs, drawn");
+     check(u.change&&u.change->to==Module::clipboard&&u.change->animated&&u.change->from==Module::clipboard,"The change is reported from the last destination reported (the switch's), animated");
+     check(!u.completedRequest&&p.requiresFrames(),"The switch's completion is dropped; frames run while it departs");
+     for(const double t:{1.08,1.12}){u=p.sample(t);const auto l=leaveAt(t-1,vector);
+         checkNear(u.presentation.departing->opacity,l.opacity,"The departing screen keeps its switch leave");checkNear(u.presentation.departing->planeOffset.x,l.translation.x,"and its motion");}
+     u=p.sample(1.131);check(!u.presentation.departing&&!u.presentation.shows(Module::notes),"It is gone once its leave ended");
+     u=p.leaveForClose(1.14);check(!u.presentation.current.attached&&!p.requiresFrames(),"leaveForClose leaves the hidden screen alone");
+     p.reveal();u=p.beginEntrance(5,false,std::nullopt,.2);check(u.presentation.current.attached&&u.presentation.current.opacity==1&&u.presentation.current.entrance&&u.presentation.current.module==Module::clipboard,"The next open shows the landed screen with its entrance");}
+    // A close at +.14: the swap due lands first; no departing screen, the close leave runs on B.
+    {auto p=design(Module::notes);p.select(Module::clipboard,1);auto u=p.settleForClose(1.14);
+     check(u.presentation.current.module==Module::clipboard&&u.presentation.current.attached&&!u.presentation.departing,"A swap already due lands on the new screen, shown");
+     u=p.leaveForClose(1.14);const auto o=ShellPosition::entranceOffset(std::nullopt,Module::clipboard);
+     for(const double t:{1.14,1.205,1.27,1.4}){u=p.sample(t);const auto l=leaveAt(t-1.14,{-o.x,-o.y});
+         checkNear(u.presentation.current.opacity,l.opacity,"The close leave fades the shown screen");checkNear(u.presentation.current.planeOffset.x,l.translation.x,"and moves it back");checkNear(u.presentation.current.planeOffset.y,l.translation.y,"in Y");}
+     checkNear(u.presentation.current.planeOffset.x,.6*o.x*DesignBox::baseUnit,"Toward +0.6 x the entrance offset in design units");check(u.presentation.current.opacity==0,"Held at 0 after .13 s");
+     const auto held=p.leaveForClose(1.5).presentation.current.planeOffset;check(held.x==u.presentation.current.planeOffset.x,"A second leaveForClose restarts nothing");
+     p.reveal();u=p.sample(1.6);check(u.presentation.current.opacity==1&&u.presentation.current.planeOffset.x==0&&!p.requiresFrames(),"reveal() shows it again");}
+    // Reversed: A to B to A at +.05 keeps A committed, on its switch leave, not hidden.
+    {auto p=design(Module::notes);const auto a=p.sample(0).presentation.current.identity;p.select(Module::clipboard,1,true,false,1);p.select(Module::notes,1.02,true,false,2);
+     auto u=p.settleForClose(1.05);const auto vector=ShellPosition::entranceOffset(Module::notes,Module::clipboard);
+     check(u.presentation.current.module==Module::notes&&u.presentation.current.identity==a&&u.presentation.current.attached&&!u.presentation.departing,"A reversed switch keeps the old screen committed");
+     check(u.change&&u.change->from==Module::clipboard&&u.change->to==Module::notes&&u.change->animated&&!u.completedRequest,"Its change goes back from the reported destination");
+     checkNear(u.presentation.current.opacity,leaveAt(.05,vector).opacity,"It stays on the switch leave");
+     const auto leaving=p.leaveForClose(1.06).presentation.current;checkNear(leaving.opacity,leaveAt(.06,vector).opacity,"leaveForClose is a no-op while it leaves");
+     u=p.sample(1.2);check(u.presentation.current.opacity==0,"The leave holds its end");
+     u=p.cancel(1.3);check(u.presentation.current.opacity==1&&u.presentation.current.attached&&!p.requiresFrames(),"cancel() shows it again");}
+    // A shutter switch and a skipped screen leave nothing departing; Reduce Motion: no close leave.
+    {ModulePresentation p(Module::notes);p.setDesignScreen(Module::notes,true);p.select(Module::system,1);auto u=p.settleForClose(1.05);
+     check(u.presentation.current.module==Module::system&&!u.presentation.current.attached&&!u.presentation.departing,"A shutter switch in flight lands hidden with nothing departing");
+     auto q=design(Module::notes);q.select(Module::clipboard,1);q.select(Module::eventLog,1.02);q.sample(1.13);u=q.settleForClose(1.15);
+     check(u.presentation.current.module==Module::eventLog&&u.presentation.current.attached,"A skipped screen's follower already landed: shown");
+     auto r=design(Module::notes);u=r.leaveForClose(2,true);check(u.presentation.current.opacity==1&&!r.requiresFrames(),"No close leave under Reduce Motion");
+     auto m=design(Module::volume);m.setDesignScreen(Module::volume,false);u=m.leaveForClose(2);check(u.presentation.current.opacity==1,"Nor for a module that is not a design screen");}
+    // Every clear: select, settle, cancel, beginEntrance, reveal; concealment hides the departing screen too.
+    {auto p=design(Module::notes);p.select(Module::clipboard,1);p.settleForClose(1.05);p.setConcealed(true);auto u=p.sample(1.06);check(u.presentation.departing&&u.presentation.departing->opacity==0,"A concealed centre hides the departing screen too");p.setConcealed(false);
+     u=p.select(Module::eventLog,1.07,false);check(!u.presentation.departing&&u.presentation.current.attached&&!p.requiresFrames(),"A select clears the close state");
+     p.leaveForClose(2);u=p.settle(2.01);check(u.presentation.current.opacity==1,"settle clears the close leave");
+     p.leaveForClose(3);u=p.beginEntrance(3.01);check(u.presentation.current.opacity==1&&u.presentation.current.entrance,"beginEntrance clears it");}
+}
+int main(){try{lifecycle();pendingCancelSettle();sourceTracks();guardsAndAllocation();designMotion();contentDim();directional();directionalSupersede();directionalEntranceAndReduce();closeSettle();std::cout<<"PASS "<<checks<<" module presentation checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

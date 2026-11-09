@@ -2086,6 +2086,11 @@ void Application::Impl::close(double time){
     // a press on the industry logo or a scroll arrow does nothing more.
     clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();logoPressed=false;scrollIndicatorPressed.reset();
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)(void)volumeBindingCall(registry,volumeModuleOwner.get(),*audio,"close",[&]{audio->volume().setVisible(false);});automationChanged();
+    // SystemHUDView.cancelAnimations(forRetraction: true) then close
+    // (5c8a905, 48584b5): after the owners stopped input, a module switch in
+    // flight lands hidden on its new module (its old screen finishing its
+    // leave) and the shown design screen leaves back the way it entered.
+    if(notes)isolate(notesModuleOwner,"close",[&]{notes->closeCentre(hostTime(time));});
     time=hostTime(time);
     // A close that interrupts the deploy: where RC 139's live measurement had stepped to by then (the retract starts there).
     designDensityAtClose.reset();
@@ -2375,12 +2380,18 @@ void Application::Impl::publishNative(){
     // Storage and Activity Monitor plates too (the Map cuts its own entries;
     // MapOwner::hostCut, valid after upload).
     if(notes){const auto&sample=notes->modulePresentation();
-        const bool mapShown=map&&(sample.current.module==core::Module::map||(sample.incoming&&sample.incoming->module==core::Module::map));
+        const bool mapShown=map&&sample.shows(core::Module::map);
         const auto*cut=mapShown?map->hostCut():nullptr;
         // The centre's contrast backdrop under the module host (shown HUD only).
         if(moduleContrast&&moduleContrast->posed&&session->phase()!=core::VisibilityPhase::concealed){(void)moduleContrast->scene.uploadAnimations(renderer);
             for(const auto&e:moduleContrast->scene.entries()){ordered.push_back(e);if(cut&&!ordered.back().cut)ordered.back().cut=cut;}}
         moduleEntryBegin=ordered.size();
+        // A switch the close caught leaving: its old screen finishes that leave
+        // below the landed one (HUDModuleContent.departing), inside the module
+        // range the confirm dim covers and cut like the others. An owner that
+        // presents both (Settings, Profile) appends once: the landed screen it
+        // then skips is hidden anyway.
+        if(sample.departing)appendModule(sample.departing->module,sample.departing->module==core::Module::map?nullptr:cut);
         appendModule(sample.current.module,sample.current.module==core::Module::map?nullptr:cut);
         if(sample.incoming)appendModule(sample.incoming->module,sample.incoming->module==core::Module::map?nullptr:cut);}
     else moduleEntryBegin=ordered.size();
@@ -2906,6 +2917,7 @@ Application::Impl::AutomationInputs Application::Impl::automationInputs(){
     const auto&sample=notes->modulePresentation();
     value.requested=sample.requested;value.current=sample.current.module;
     if(sample.incoming)value.incoming=sample.incoming->module;
+    if(sample.departing)value.departing=sample.departing->module;
     value.transitioning=sample.transitioning;value.moduleInput=sample.acceptsModuleInput;value.hudInput=session->inputEnabled();
     if(auto*owner=registry.presenter(sample.requested)){value.active=owner;(void)registry.guard(*owner,[&]{value.modal=owner->capturesPointer();},"automation");}
     // The shared confirm bar (CenterOverlay) opened or closed: its pills are

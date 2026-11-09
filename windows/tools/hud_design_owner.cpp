@@ -214,7 +214,8 @@ void DesignOwnerCore::update(const app::ModuleFrame& frame) {
     i.fieldSlot = nullptr;
     for (auto& slot : i.slots) {
         auto& s = *slot;
-        const auto* shown = sample.current.module == s.module ? &sample.current : sample.incoming && sample.incoming->module == s.module ? &*sample.incoming : nullptr;
+        // Current, incoming or departing (a switch the close caught leaving).
+        const auto* shown = sample.surface(s.module);
         const bool attached = shown && shown->attached;
         const bool active = i.overlay && attached && sample.requested == s.module;
         s.pose.reset();

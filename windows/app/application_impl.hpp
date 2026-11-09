@@ -1025,7 +1025,7 @@ struct Application::Impl {
     // once a client asked for the root, and re-lists when it changed.
     struct AutomationInputs {
         core::Module requested{}, current{};
-        std::optional<core::Module> incoming;
+        std::optional<core::Module> incoming, departing;
         bool transitioning{}, moduleInput{}, hudInput{}, modal{};
         const ModuleOwner* active{};
         bool operator==(const AutomationInputs&) const = default;
