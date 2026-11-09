@@ -14,7 +14,8 @@
 // the canvas releases stays published until a later activation, so a module
 // switch inside the open HUD (the stand-by) keeps the tiles' pixels.
 // Decoding and playback run only while Archive is shown and active
-// (setVisible); hidden, nothing loads and a movie stops, keeping its time.
+// (setVisible); hidden, nothing loads, a movie stops, keeping its time, and
+// the still or frame shown is released 0.6 s later with its decoder record.
 // The canvas keeps the presentation through a module leave and pauses a
 // movie first, so it comes back paused where it was left.
 //

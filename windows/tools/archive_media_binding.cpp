@@ -246,7 +246,13 @@ bool ArchiveMediaBinding::refresh(double t) {
     std::optional<Frame> frame;
     if (i.selected) {
         auto& a = *i.selected;
-        if (const auto* record = i.broker.findImage(i.client, a.key)) {
+        const auto* record = i.broker.findImage(i.client, a.key);
+        // Hidden, the binding's copy of the still and its texture go with the
+        // record's frame, released 0.6 s after a preserved hide
+        // (NotesMedia.swift:320-337); a return decodes the still again.
+        if (!i.visible && !(record && record->frame)) a.frame.reset();
+        if (!a.frame && a.uploaded && i.renderer.removeTexture(a.key)) a.uploaded = false;
+        if (record) {
             if (record->frame) { a.frame = record->frame; a.observedFrame = record->frameRevision; }
             // The movie's still settles its poster, and so does its failure:
             // a still that fails must not block the movie (NotesMedia.swift:370-371).

@@ -369,6 +369,7 @@ void movieReturn(const std::filesystem::path& shader, const std::filesystem::pat
     h.probes[0]->position = .6; h.settle(5);
     away();
     check(!canvas.isActive() && !media.playing() && !h.probes[0]->playing, "Switched away, the movie is paused and its engine stopped");
+    check(!media.frame(), "A second after the leave the movie's poster and the binding's copy of its still are released");
     back();
     h.await("the returned movie's seek", [&] { return h.probes.size() == 2 && h.probes[1]->seeks == 1; });
     h.await("the seeked frame", [&] { return texture(".live"); });
