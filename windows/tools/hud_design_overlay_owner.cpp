@@ -65,6 +65,7 @@ struct DesignOverlayOwner::Impl {
     Impl(gpu::LayerRasterizer& r, DesignOverlayOptions o)
         : raster(r), options(std::move(o)), measurer(r), context(measurer, gpu::nativeUppercase()), scene(r, options.raster, "design.overlay") {
         context.env().characters = gpu::nativeCharacterRules(); // grapheme clusters through ICU, never the portable approximation
+        context.setHostClock(options.now);   // the canvases' catch-up (Canvas::catchUpClock) reads the host's area clock
     }
     void clock(double t) {
         need(std::isfinite(t), "Design overlay needs finite time");

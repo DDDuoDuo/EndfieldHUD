@@ -344,7 +344,8 @@ public:
     }
     std::function<void(const std::vector<Row*>&)> onRowsAdded; // new pooled rows need routing (hover, accessibility)
 
-    void update(std::vector<ActivityApp> next, bool waiting, ActivitySort sortKey, bool descending) {
+    // Returns the empty state when this update shows it (Mac 08cd96a).
+    d::Layer* update(std::vector<ActivityApp> next, bool waiting, ActivitySort sortKey, bool descending) {
         items_ = std::move(next);
         for (auto* column : columns_) column->render(column->key() == sortKey, descending);
         area_->setContentHeight(std::max(0., double(items_.size()) * pitch - d::metric::rowGap));
@@ -364,11 +365,14 @@ public:
             d::Layer& state = d::emptyState::bilingual(b, "activity.apps.empty." + std::to_string(++emptyCount_), "NO APP READINGS", "暂无应用读数",
                 {d::metric::boxWidth, 250});
             state.setOrigin({0, 0});
+            state.setAnimatable();                       // it enters with the rows' stagger
             area_->content().add(state);
             empty_ = &state;
+            return &state;
         } else if (!showsEmpty && empty_) {
             empty_->removeFromParent(); empty_ = nullptr;
         }
+        return nullptr;
     }
     // bind(sortKey:) (:535-549): places the pool over the visible slice.
     void bind(ActivitySort sortKey) {
@@ -534,8 +538,10 @@ void ActivityCanvas::sort(ActivitySort key) {
     updateApps();
     std::vector<d::Layer*> layers;
     for (auto* row : table_->visibleRows()) layers.push_back(&row->plate->layer());
-    d::motion::stagger(layers, {0, 12}, clock());
+    staggerApps(layers);
 }
+// The Apps table's rows (or its empty state) stagger in from below.
+void ActivityCanvas::staggerApps(std::span<d::Layer* const> layers) { d::motion::stagger(layers, {0, 12}, clock()); }
 const d::ScrollArea* ActivityCanvas::appList() const noexcept { return table_ ? &table_->area() : nullptr; }
 bool ActivityCanvas::handleScroll(d::Point point, d::Point delta) {
     if (!showingApps_ || !table_ || !table_->area().layer().frame().contains(point)) return false;
@@ -598,22 +604,37 @@ void ActivityCanvas::buildApps(d::Page& page) {
     table_ = std::make_unique<AppTable>(page, area, columns, icons_);
     icons_.onLoad = [this](const std::vector<std::string>& ids) { if (table_) table_->showIcons(ids); };
     page.stagger(head);
-    table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
+    d::Layer* empty = table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
     page.restoreOffset(area);
     table_->bind(sortKey_);
     for (const auto& row : table_->rows()) { page.add(*row->plate); page.add(*row->readout); }
     for (auto* row : table_->visibleRows()) page.stagger(row->plate->layer());
+    if (empty) page.stagger(*empty);
     table_->onRowsAdded = [this, table = table_.get()](const std::vector<AppTable::Row*>& added) {
         if (table_.get() != table) return;
         for (auto* row : added) { table->page().add(*row->plate); table->page().add(*row->readout); }
         refreshRouter();
     };
 }
+// The first sample of a run fills a table built while it waited: the rows
+// that appear in an empty table, or the empty state, enter as the page's
+// rows do (Mac 08cd96a). Samples arrive from the executor's drain, outside a
+// frame, so the clock catches up to the host first. During a sub-page swap
+// the staged page is built again instead (the Q4 rebuild): its build staggers
+// the rows for the landing and sets the staging header's counter, which
+// header() would not reach here (it is the leaving one until the swap lands).
 void ActivityCanvas::updateApps() {
     if (!table_) return;
+    catchUpClock();
+    if (transitioning()) { rerender(); return; }
     const auto& snapshot = state_->appSnapshot();
+    const bool hadRows = !table_->visibleRows().empty();
     header().setCounter(d::format::pad2(std::int64_t(snapshot.items.size())));
-    table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
+    d::Layer* empty = table_->update(snapshot.items, snapshot.timestamp == 0, sortKey_, sortDescending_);
     table_->bind(sortKey_);
+    std::vector<d::Layer*> arrived;
+    if (!hadRows) for (auto* row : table_->visibleRows()) arrived.push_back(&row->plate->layer());
+    if (empty) arrived.push_back(empty);
+    if (!arrived.empty()) staggerApps(arrived);
 }
 } // namespace endfield::modules

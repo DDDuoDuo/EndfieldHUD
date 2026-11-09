@@ -255,6 +255,91 @@ void activity() {
     canvas.resetSession();
     check(!canvas.isShowingApps() && canvas.sortKey() == m::ActivitySort::cpu && canvas.sortDescending(), "A new HUD session shows Overview sorted by CPU");
 }
+// Mac 08cd96a: the Apps tab is built while the run's first sample waits;
+// the rows that fill the empty table, or a newly shown empty state, stagger in
+// from (0, 12) as a sort does, and an empty state built with the page joins
+// the page's stagger. Samples arrive outside a frame, so the canvas clock
+// first catches up to the host clock (the Context hook, OPEN-B5-1).
+void activityArrivals() {
+    const auto enterOf = [](const d::Layer& l) -> const auto& { return l.tracks().slots[std::size_t(d::MotionSlot::enter)]; };
+    const auto rowsOf = [](const d::Canvas& canvas) {
+        std::vector<const d::Layer*> rows;
+        for (int n = 0; n < 9; ++n) if (const auto* row = find(canvas.root(), "activity.app." + std::to_string(n)); row && !row->hidden()) rows.push_back(row);
+        return rows;
+    };
+    {
+        World w;
+        double host = w.now;
+        w.context.setHostClock([&] { return host; });
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2); host = w.now;
+        check(!canvas.transitioning() && rowsOf(canvas).empty() && !find(canvas.root(), "activity.apps.empty.1"), "Apps built while the first sample waits: no rows, no empty state");
+        // The first sample, delivered with the host clock 1 s past the canvas clock.
+        host = w.now + 1;
+        state.receiveApps(apps(5, 3));
+        const auto rows = rowsOf(canvas);
+        check(rows.size() == 3 && near(w.context.env().now, host), "The first sample fills the table and catches the clock up to the host");
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const auto& slot = enterOf(*rows[i]);
+            check(slot[0].present() && near(slot[0].start, host + d::staggerDelay(int(i))) && near(slot[0].duration, d::duration::entrance)
+                && slot[1].present() && near(slot[1].offset, 12), "Row " + std::to_string(i) + " enters from (0, 12) at host time + staggerDelay(i)");
+        }
+        const double first = enterOf(*rows[0])[0].start;
+        host += .5; state.receiveApps(apps(6, 3));
+        check(near(enterOf(*rows[0])[0].start, first), "A sample to a table that has rows staggers nothing");
+        host += .5; state.receiveApps(apps(7, 0));
+        const auto* empty = find(canvas.root(), "activity.apps.empty.1");
+        check(empty && enterOf(*empty)[0].present() && near(enterOf(*empty)[0].start, host + d::staggerDelay(0)) && near(enterOf(*empty)[1].offset, 12),
+            "A newly shown empty state enters as a row does");
+    }
+    {
+        // The first sample is empty: the empty state enters.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2);
+        state.receiveApps(apps(w.now, 0));
+        const auto* empty = find(canvas.root(), "activity.apps.empty.1");
+        check(empty && near(enterOf(*empty)[0].start, w.now + d::staggerDelay(0)), "An empty first sample: the empty state enters (no host clock: the canvas clock)");
+    }
+    {
+        // A page built empty: the empty state is in the page's stagger.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        state.receiveApps(apps(1, 0));
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now), "Apps is routed");
+        w.advance(.2);
+        const auto staggered = canvas.page().staggered();
+        check(!staggered.empty() && staggered.back()->id().find("activity.apps.empty.") != std::string::npos && enterOf(*staggered.back())[0].present(),
+            "An empty state built with the page joins its stagger and enters with it");
+    }
+    {
+        // A sample during the Overview-to-Apps swap: the staged page is built
+        // again, so the rows enter with the landing and the counter is current.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now) && canvas.transitioning(), "Apps swaps in");
+        w.advance(.05);
+        state.receiveApps(apps(w.now, 4));
+        check(canvas.transitioning(), "A sample does not land the swap");
+        w.advance(.1);
+        check(!canvas.transitioning() && canvas.header().counterText() == "04", "At the landing the header counts the sample's apps");
+        const auto staggered = canvas.page().staggered();
+        const auto rows = rowsOf(canvas);
+        check(rows.size() == 4 && staggered.size() == 6, "Tabs, columns and the four rows are the page's stagger");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            check(staggered[i + 2] == rows[i] && near(enterOf(*rows[i])[0].start, w.now + d::staggerDelay(int(i + 2))), "Row " + std::to_string(i) + " enters with the landing");
+    }
+}
 void activityState() {
     // Threads (AppActivityMonitor.swift:99-104) and the GPU gating (:124-130).
     m::ActivityAppsRaw before, after;
@@ -777,6 +862,7 @@ int main(int argc, char** argv) {
         graphPaths();
         appIcons();
         activity();
+        activityArrivals();
         activityState();
         storage();
         battery();

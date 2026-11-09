@@ -1375,6 +1375,14 @@ int Application::Impl::runHiddenVerification(){
                             need(canvas.page().scrollAreas().size()==1&&canvas.appList()==canvas.page().scrollAreas().front().get(),("The Apps page is the shown page before the drag (page areas "+std::to_string(canvas.page().scrollAreas().size())+", swapping "+std::to_string(canvas.transitioning())+", list "+std::to_string(canvas.appList()!=nullptr)+", active "+std::to_string(canvas.isActive())+")").c_str());
                             const auto turn=[&](double steps,std::uint32_t lines){drag+=.001;need(activityModuleOwner->wheel({target->x,target->y,steps,false,0,lines},drag),"Activity takes the wheel over its app list");(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
                             const auto publish=[&](std::size_t count,double stamp){provider.receiveApps(apps(count,stamp));drag+=.001;(void)designOverlay->deadline(drag);(void)activityModuleOwner->deadline(drag);present(drag,true);};
+                            // Mac 08cd96a: the rows that fill an emptied table stagger in from below,
+                            // from the sample's own (caught-up) time.
+                            publish(0,fixture.timestamp+.5);publish(5,fixture.timestamp+.6);
+                            {const std::function<const modules::design::Layer*(const modules::design::Layer&)>fifthRow=[&](const modules::design::Layer&l)->const modules::design::Layer*{
+                                 if(l.id().ends_with("activity.app.4"))return &l;for(const auto*child:l.children())if(const auto*hit=fifthRow(*child))return hit;return nullptr;};
+                             const auto*fifth=fifthRow(canvas.root());
+                             need(fifth&&!fifth->hidden()&&fifth->animating(drag)&&fifth->presented(modules::design::Channel::opacity,drag)<.05&&fifth->animating(drag+.3)&&!fifth->animating(drag+1.1),
+                                 "Rows that fill an emptied Activity table stagger in: the fifth is still below .05 on the next frame and settles within the entrance");}
                             publish(200,fixture.timestamp+1);
                             for(unsigned n=0;n<40;++n)turn(-1,3);
                             for(unsigned n=0;n<30;++n)turn(-.12,3);

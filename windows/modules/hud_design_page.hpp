@@ -108,6 +108,11 @@ public:
     // L10n.text / core::localized in the context language.
     std::string text(std::string_view english, std::string_view simplifiedChinese,
         std::span<const std::string_view> arguments = {}) const;
+    // The host clock (OPEN-B5-1, the overlay owner sets it from the host's
+    // area clock): data that reaches a canvas outside a frame (an executor
+    // drain) first catches env().now up to it (Canvas::catchUpClock), so
+    // motion it starts begins now, not at the last frame. Never moves it back.
+    void setHostClock(std::function<double()> clock) { hostClock_ = std::move(clock); }
     // Shared deadlines (overlay timers, scroll bars, canvases' module timers).
     std::optional<double> nextWakeTime() const noexcept;
     bool advance(double now);
@@ -128,6 +133,7 @@ private:
     std::unique_ptr<CenterOverlay> overlay_;
     std::vector<Canvas*> canvases_;
     TextEditorHost* editorHost_{};
+    std::function<double()> hostClock_;
     double unit_{geometry::baseUnit};
     std::uint64_t pagesBuilt_{};
     void registerCanvas(Canvas&);
@@ -273,6 +279,10 @@ public:
     std::optional<core::Language> renderedLanguage() const noexcept { return renderedLanguage_; }
     double now() const noexcept { return env().now; }
     motion::Clock clock() const noexcept { return env().clock(); }
+    // env().now moves forward to the context's host clock (setHostClock), if
+    // any: a module's data notice that arrives outside a frame calls it before
+    // it starts motion.
+    void catchUpClock();
     std::string text(std::string_view english, std::string_view simplifiedChinese, std::span<const std::string_view> arguments = {}) const;
     ModuleTitle title(std::string_view english, std::string_view simplifiedChinese) const;
     // In-place re-render (LIB-75): no entrance of its own, every scroll area

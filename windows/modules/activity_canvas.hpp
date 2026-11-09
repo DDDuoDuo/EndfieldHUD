@@ -135,6 +135,7 @@ private:
     void stopReading();
     void showApps(bool, double direction);
     void sort(ActivitySort);
+    void staggerApps(std::span<design::Layer* const>);
     void buildOverview(design::Page&);
     void buildApps(design::Page&);
     void updateOverview();
