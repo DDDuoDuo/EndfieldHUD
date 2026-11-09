@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <iostream>
@@ -90,6 +91,9 @@ struct Harness {
     gpu::LayerImageSource images{gpu::LayerImageSourceLimits{30, 48, 12 * 1024 * 1024}};
     app::UtilityExecutor utility{[] {}};
     std::unique_ptr<app::ArchiveService> service;
+    // failStills: the decoder cannot open a file (stills fail; an injected movie engine still opens).
+    std::atomic<bool> failStills{false};
+    std::atomic<unsigned> stillFailures{};
     std::unique_ptr<gpu::NativeNotesImageDecoder> decoder;
     std::unique_ptr<gpu::NativeNotesImagePlayback> playback;
     std::vector<std::shared_ptr<MovieProbe>> probes;           // one per movie engine, in order
@@ -113,7 +117,9 @@ struct Harness {
         renderer.setCamera(gpu::layerViewportProjection(1280, 800));
         service = std::make_unique<app::ArchiveService>(temporary.root / "Archive", utility, gpu::nativeArchiveTextRules(), [] {}, std::make_shared<m::ArchiveMemoryPasswordVault>());
         const gpu::NotesImageRoute route{window.hwnd, mediaMessage, 1};
-        decoder = std::make_unique<gpu::NativeNotesImageDecoder>([](const gpu::NotesImageRequest& r) { return gpu::NotesImageAccess{std::filesystem::u8path(r.path), r.accessLease}; }, route);
+        decoder = std::make_unique<gpu::NativeNotesImageDecoder>([this](const gpu::NotesImageRequest& r) {
+            if (failStills) { ++stillFailures; throw std::runtime_error("Synthetic still failure"); }
+            return gpu::NotesImageAccess{std::filesystem::u8path(r.path), r.accessLease}; }, route);
         playback = std::make_unique<gpu::NativeNotesImagePlayback>(*decoder);
         broker = std::make_unique<gpu::NativeMediaRequestBroker>(*decoder, *playback, route);
         if (movies) {
@@ -390,18 +396,21 @@ void movieReturn(const std::filesystem::path& shader, const std::filesystem::pat
     h.await("the reopened movie's still", [&] { return canvas.displayedPage().kind == m::ArchiveCanvas::PageKind::editor && h.probes.size() == engines + 1 && texture(".poster"); });
     h.settle(10);
     check(!media.playing() && h.probes.back()->seeks == 0 && h.probes.back()->plays == 0 && media.currentTime() == 0, "A new HUD opening shows the movie at zero, paused");
-    // A still that fails on the return does not block the movie (NotesMedia.swift:370-371).
+    // A still that fails on the return while the movie itself is fine does not
+    // block the movie (NotesMedia.swift:370-371).
     check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play the reopened movie");
     h.await("the reopened movie playing", [&] { return media.playing() && h.probes.back()->playing; });
     h.probes.back()->position = .6; h.settle(5);
     away();
-    std::filesystem::remove(movie);
+    h.failStills = true;
     back();
     h.await("the movie's return without its still", [&] { return h.probes.size() == engines + 2 && h.probes.back()->seeks == 1; });
     h.settle(10);
+    check(h.stillFailures > 0 && !texture(".poster"), "The returned movie's still fails");
     check(!media.playing() && h.probes.back()->plays == 0, "The movie whose still failed comes back paused where it was left");
     check(canvas.performAccessibilityAction("mediaPlay", h.time), "Play is pressed");
     h.await("the movie playing without its still", [&] { return media.playing() && h.probes.back()->playing && h.probes.back()->plays == 1; });
+    h.failStills = false;
 }
 int wmain(int argc, wchar_t** argv) {
     const auto hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
