@@ -726,6 +726,22 @@ std::optional<PlaneMask> designPlaneMask(const d::PoseMask& m, const core::Matri
     return PlaneMask{matrix(*inverse) * inverseBox, m.bounds, std::clamp(m.cornerRadius, 0., std::min(m.bounds.width, m.bounds.height) * .5)};
 }
 const core::Matrix4& NativeDesignScene::boxWorld() const noexcept { return impl_->boxWorld; }
+bool NativeDesignScene::composes(std::string_view source) const noexcept {
+    const auto& i = *impl_;
+    const auto listed = [&](auto&& match) { return std::any_of(i.entries.begin(), i.entries.end(), match); };
+    for (const auto& p : i.parts) {
+        if (!p->scene) continue;
+        const auto draws = p->scene->draws();
+        if (std::none_of(draws.begin(), draws.end(), [&](const DrawObject& d) { return d.opacity > 0 && d.sourceID.find(source) != std::string_view::npos; })) continue;
+        const Impl::Part& owner = p->host ? *p->host : *p;
+        if (owner.group) {
+            const auto output = owner.group->draws();
+            if (owner.group->holdsTarget() && output.size() && output[0].opacity > 0 &&
+                listed([&](const LayerCompositionEntry& e) { return e.after.data() == output.data(); })) return true;
+        } else if (listed([&](const LayerCompositionEntry& e) { return e.scene == p->scene.get(); })) return true;
+    }
+    return false;
+}
 NativeDesignSceneStats NativeDesignScene::stats() const noexcept {
     const auto& i = *impl_;
     auto s = i.statistics;

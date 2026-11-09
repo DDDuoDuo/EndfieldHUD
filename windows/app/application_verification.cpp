@@ -3288,9 +3288,12 @@ int Application::Impl::runHiddenVerification(){
                     if(settingsUI&&settingsModuleOwner&&registry.enabled(*settingsModuleOwner)&&clipboardModuleOwner&&registry.enabled(*clipboardModuleOwner)){
                         const auto systemModule=core::Module::system;auto&systemPage=settingsUI->canvas(systemModule);
                         const auto languageMenu=[&]{return layerEnding(systemPage.top(),"language.menu");};
-                        // Drawn: in the page's tree at a visible opacity while the page is
-                        // composed (through a fade its parts may draw through a group target).
-                        const auto menuDrawn=[&](double at){const auto*menu=languageMenu();return menu&&menu->presented(modules::design::Channel::opacity,at)>0&&entriesPublished(systemModule);};
+                        // Drawn: in the page's tree at a visible opacity, and the scene part
+                        // that draws it composed this frame (directly, or through the group a
+                        // fade draws it into: NativeDesignScene::composes) in the page's
+                        // published entries.
+                        const auto menuDrawn=[&](double at){const auto*menu=languageMenu();
+                            return menu&&menu->presented(modules::design::Channel::opacity,at)>0&&settingsUI->core().composes(systemModule,"language.menu")&&entriesPublished(systemModule);};
                         const auto openMenu=[&](const char*when){closeShow(systemModule);
                             const bool opened=systemPage.performAccessibilityAction("language",hostTime(t))&&systemPage.menuOpen();t=run(t,.3);
                             contentCheck(opened&&languageMenu()&&partDrawn(systemModule,"language.menu"),std::string(when)+", the System page's Language dropdown opens its menu through its accessible action");};

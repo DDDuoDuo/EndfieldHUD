@@ -146,6 +146,10 @@ public:
     // The retained scene of one presented canvas (resident pixels, parks,
     // generations; hidden coverage and owner tests). Empty for another module.
     std::optional<native::NativeDesignSceneStats> sceneStats(core::Module) const;
+    // NativeDesignScene::composes of one presented canvas's scene (false for
+    // another module): a part drawing `source` is composed this frame,
+    // directly or through its fade's group.
+    bool composes(core::Module, std::string_view source) const;
     // Owner-drawn media inside a canvas's scene (NativeDesignScene::setInsertion)
     // and this frame's design pose of that canvas (boxWorld with the switch
     // motion, module opacity, owner masks; nullopt while it is not drawn), so

@@ -653,6 +653,10 @@ std::optional<gpu::NativeDesignSceneStats> DesignOwnerCore::sceneStats(core::Mod
     const auto* s = impl_->slot(module);
     return s ? std::optional(s->scene->stats()) : std::nullopt;
 }
+bool DesignOwnerCore::composes(core::Module module, std::string_view source) const {
+    const auto* s = impl_->slot(module);
+    return s && s->scene->composes(source);
+}
 void DesignOwnerCore::setInsertion(core::Module module, const d::Layer* after, std::optional<gpu::LayerCompositionEntry> entry) {
     auto* s = impl_->slot(module);
     need(s != nullptr, "Design insertion for a module this owner does not present");

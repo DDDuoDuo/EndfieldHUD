@@ -77,6 +77,7 @@
 #include "native/layer_scene.hpp"
 #include <functional>
 #include <map>
+#include <string_view>
 
 namespace endfield::native {
 // requiredSourceImage key -> {asset, sha256} (pinned) or {memoryImage...}.
@@ -178,6 +179,12 @@ public:
     // Accessors for the owner core (cursor and UIA project through these).
     const core::Matrix4& boxWorld() const noexcept;
     NativeDesignSceneStats stats() const noexcept;
+    // A part whose scene draws a surface whose source ID contains `source` at
+    // a visible opacity is in this frame's entries: its own scene directly, or
+    // the group that draws it (its own or its host's, holding its target, its
+    // output visible). Hidden coverage and owner tests: through a fade a
+    // part's surfaces draw only into its group's target.
+    bool composes(std::string_view source) const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
