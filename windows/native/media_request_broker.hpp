@@ -35,6 +35,9 @@ public:
     bool toggleImage(Client,std::string_view,double);bool playImage(Client,std::string_view,double);
     bool pauseImage(Client,std::string_view);
     bool toggleVideo(Client,std::string_view,double);bool seekVideo(Client,std::string_view,double);
+    // The Mac's NotesMediaPresentation.pause (no visible gate): the play
+    // intent goes and a playing movie stops where it is.
+    bool pauseVideo(Client,std::string_view);
     bool setVideoPoster(Client,std::string_view,std::uint64_t requestRevision,
         std::uint64_t posterRevision,const NotesImageFrame*,HRESULT=S_OK);
     // Metadata-only inspection results: bounded first-frame validation happened
