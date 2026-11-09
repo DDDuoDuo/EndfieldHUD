@@ -143,8 +143,8 @@ ProfilePanningImage profilePanningImage(const ProfileImage&source,int orientatio
     const double magnification=std::isfinite(zoom)?std::clamp(zoom,1.,20.):1;
     const double longSide=std::min(2048.,side*std::max(fillWidth,fillHeight)*magnification*scale*1.35);
     const double factor=std::min(1.,longSide/std::max(width,height));
-    const unsigned w=std::max(1u,static_cast<unsigned>(std::lround(width*factor))),h=std::max(1u,static_cast<unsigned>(std::lround(height*factor)));
-    return {artworkResampled(source,orientation,{0,0,width,height},w,h),fillWidth,fillHeight};
+    // HUDPortraitArtwork.scaledImage: one factor on both axes, max(1, round(side x factor)) per side.
+    return {artworkScaled(source,orientation,{0,0,width,height},factor),fillWidth,fillHeight};
 }
 ProfileImage profileResampled(const ProfileImage&image,unsigned width,unsigned height){
     bounded(image.width,image.height);bounded(width,height);need(image.rgba.size()==std::size_t(image.width)*image.height*4,"Profile image size");

@@ -6,7 +6,9 @@
 // HUDPortraitArtwork.scaledImage (Sources/HUDPortraitArtwork.swift) over
 // synthetic straight sRGB pictures that windows/tests/now_playing_artwork_tests.cpp
 // builds byte for byte (`picture` below). Each picture is encoded as a PNG and
-// decoded through NowPlayingArtworkLoader.decode at the named slot.
+// decoded through NowPlayingArtworkLoader.decode at the named slot. The
+// "panning" rows are HUDPortraitArtwork.panningImage over one such picture
+// (the Personal ID portrait well; windows/tests/id_card_artwork_tests.cpp).
 import AppKit
 import CryptoKit
 import ImageIO
@@ -83,6 +85,16 @@ func pixels(_ image: CGImage) -> [UInt8] {
         out[k * 4 + 3] = UInt8(a)
     }
     return out
+}
+
+// An image's pixels as premultiplied sRGB RGBA8, top-left rows.
+func premultipliedPixels(_ image: CGImage) -> [UInt8] {
+    let width = image.width, height = image.height
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)!
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return Array(UnsafeBufferPointer(start: context.data!.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
 }
 
 func row(_ rgba: [UInt8], width: Int, y: Int) -> [UInt8] { Array(rgba[(y * width * 4)..<((y + 1) * width * 4)]) }
@@ -164,6 +176,22 @@ struct Case { let name: String; let kind: String; let width: Int; let height: In
                 out["backdropGrid"] = hex(grid(bg, width: bw, height: bh, step: 5)); out["backdropGridStep"] = 5
             }
             return out
+        }
+        // HUDPortraitArtwork.panningImage (the Personal ID portrait well, over
+        // the same scaledImage): the whole oriented picture scaled by one
+        // factor, whole output pixels (premultiplied). Windows:
+        // profilePanningImage in windows/modules/profile_artwork.*.
+        let panWidth = 61, panHeight = 37
+        let panSource = picture("pattern", panWidth, panHeight)
+        let panImage = image(panSource, panWidth, panHeight)
+        result["panningSource"] = ["width": panWidth, "height": panHeight, "rgba": hex(panSource)]
+        let pans: [(Int32, Double, Double, Double)] = [(1, 20, 1, 1), (6, 14, 1.5, 1), (3, 16, 1, 2), (8, 12, 1, 1), (2, 18, 1.2, 1)]
+        result["panning"] = pans.map { orientation, side, zoom, scale -> [String: Any] in
+            guard let pan = HUDPortraitArtwork.panningImage(panImage, side: CGFloat(side), zoom: zoom,
+                contentsScale: CGFloat(scale), orientation: orientation) else { fatalError("panning \(orientation)") }
+            return ["orientation": Int(orientation), "side": side, "zoom": zoom, "scale": scale,
+                    "fill": [Double(pan.fill.width), Double(pan.fill.height)],
+                    "width": pan.image.width, "height": pan.image.height, "rgba": hex(premultipliedPixels(pan.image))]
         }
         let json = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         try json.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))

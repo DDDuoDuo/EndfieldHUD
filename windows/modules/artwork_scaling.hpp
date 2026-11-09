@@ -49,12 +49,13 @@ struct ArtworkFinish {unsigned margin{};std::function<void(std::vector<double>&r
 ProfileImage artworkResampled(const ProfileImage&source,int orientation,core::Rect region,unsigned width,unsigned height,
     ArtworkEdges=ArtworkEdges::clear,const ArtworkFinish* =nullptr);
 // HUDPortraitArtwork.scaledImage (Sources/HUDPortraitArtwork.swift:103-111):
-// `region` of an upright source scaled by one `factor` on both axes into a
-// max(1, round(region x factor)) bitmap, filtered as artworkResampled does.
-// Where rounding leaves the bitmap larger than region x factor, the extra
-// column is on the right and the extra row on top (Core Image's bottom-left
-// origin), read through `edges`.
-ProfileImage artworkScaled(const ProfileImage&source,core::Rect region,double factor,
+// `region` of the EXIF-oriented source (orientation 1...8, in oriented pixels,
+// as the Mac's source.oriented(forExifOrientation:)) scaled by one `factor`
+// on both axes into a max(1, round(region x factor)) bitmap, filtered as
+// artworkResampled does. Where rounding leaves the bitmap larger than
+// region x factor, the extra column is on the right and the extra row on top
+// (Core Image's bottom-left origin), read through `edges`.
+ProfileImage artworkScaled(const ProfileImage&source,int orientation,core::Rect region,double factor,
     ArtworkEdges=ArtworkEdges::clear,const ArtworkFinish* =nullptr);
 // CIGaussianBlur (standard deviation `sigma` pixels) then CIExposureAdjust
 // (RGB x 2^ev in linear light, alpha unchanged) as a finish with a margin of

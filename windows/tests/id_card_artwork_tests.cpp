@@ -2,6 +2,7 @@
 #include "core/shell_packet.hpp"
 #include "core/data/json.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -17,6 +18,12 @@ std::vector<std::uint8_t>base64(std::string_view s){
     for(const char c:s){if(c=='=')break;const auto p=alphabet.find(c);check(p!=std::string::npos,"Fixture base64");value=(value<<6)|unsigned(p);bits+=6;if(bits>=0){out.push_back(static_cast<std::uint8_t>((value>>bits)&255));bits-=8;}}
     return out;
 }
+std::vector<std::uint8_t>unhex(std::string_view s){
+    std::vector<std::uint8_t>out;out.reserve(s.size()/2);
+    const auto digit=[](char c)->unsigned{check(std::isxdigit(static_cast<unsigned char>(c))!=0,"Fixture hex");return c<='9'?unsigned(c-'0'):unsigned((c|32)-'a'+10);};
+    for(std::size_t k=0;k+1<s.size();k+=2)out.push_back(static_cast<std::uint8_t>(digit(s[k])*16+digit(s[k+1])));
+    return out;
+}
 m::ProfileImage image(const Json&j,bool premultiplied){return {static_cast<unsigned>(j["width"].integer()),static_cast<unsigned>(j["height"].integer()),base64(j["rgba"].string()),premultiplied};}
 struct Error{int maximum{};double mean{};std::size_t over{};};
 Error compare(const std::vector<std::uint8_t>&a,const std::vector<std::uint8_t>&b,int threshold){
@@ -28,7 +35,7 @@ void report(const char*name,const Error&e){std::cout<<name<<": max="<<e.maximum<
 }
 int main(int argc,char**argv){
     try{
-        check(argc==3,"Pass id_card-artwork-source.json and windows/resources/profile");
+        check(argc==4,"Pass id_card-artwork-source.json, windows/resources/profile and now-playing-artwork-source.json");
         std::ifstream in(argv[1],std::ios::binary);check(bool(in),"Open artwork oracle");
         const auto fixture=Json::parse(std::string((std::istreambuf_iterator<char>(in)),{}),8*1024*1024);
         check(fixture["provenance"]["modifications"].array().empty(),"Unchanged Mac artwork sources");
@@ -78,6 +85,36 @@ int main(int argc,char**argv){
             if(!enlarging&&row["zoom"].number()==1&&o[0].number()==0&&o[1].number()==0){++reductions;portraitsMatch=portraitsMatch&&maximum<=4;}
         }
         check(portraitsMatch&&reductions>=5,"Oriented crop and Lanczos scale match Core Image (reductions to rounding)");
+        // HUDPortraitArtwork.panningImage at 79bc665 (now-playing-artwork-source.json
+        // from tools/now_playing_artwork_reference.sh): the whole oriented
+        // portrait scaled by one factor on both axes (scaledImage), so a side
+        // that rounds up gains a partly covered row on top instead of a
+        // stretched picture.
+        {
+            std::ifstream panIn(argv[3],std::ios::binary);check(bool(panIn),"Open the panning oracle");
+            const auto pans=Json::parse(std::string((std::istreambuf_iterator<char>(panIn)),{}),8*1024*1024);
+            const auto&ps=pans["panningSource"];
+            const m::ProfileImage panSource{static_cast<unsigned>(ps["width"].integer()),static_cast<unsigned>(ps["height"].integer()),unhex(ps["rgba"].string()),false};
+            std::size_t rows{};
+            for(const auto&row:pans["panning"].array()){
+                const auto orientation=static_cast<int>(row["orientation"].integer());
+                const auto actual=m::profilePanningImage(panSource,orientation,row["side"].number(),row["zoom"].number(),row["scale"].number());
+                const auto expected=unhex(row["rgba"].string());const auto&fill=row["fill"].array();
+                check(actual.image.width==unsigned(row["width"].integer())&&actual.image.height==unsigned(row["height"].integer())&&actual.image.premultiplied,"Panning image size max(1, round(side x factor))");
+                check(std::abs(actual.fillWidth-fill[0].number())<1e-12&&std::abs(actual.fillHeight-fill[1].number())<1e-12,"Panning aspect fill");
+                // Away from the edges the one-factor scale matches Core Image to
+                // rounding; next to the right and top edges, where the picture
+                // ends inside an output pixel, Core Image's fractional-edge
+                // filtering is not public (as for the portraits above).
+                const auto w=actual.image.width,h=actual.image.height;int maximum{};double total{};std::size_t count{};
+                for(unsigned y=2;y+2<h;++y)for(unsigned x=2;x+2<w;++x)for(unsigned c=0;c<4;++c){
+                    const auto i=(std::size_t(y)*w+x)*4+c;const int d=std::abs(int(actual.image.rgba[i])-int(expected[i]));maximum=std::max(maximum,d);total+=d;++count;}
+                const auto whole=compare(actual.image.rgba,expected,8);
+                std::cout<<"panning orientation "<<orientation<<" "<<w<<"x"<<h<<": interior max="<<maximum<<" mean="<<(count?total/count:0)<<" whole max="<<whole.maximum<<" mean="<<whole.mean<<'\n';
+                check(maximum<=8&&(count==0||total/count<=1)&&whole.mean<=1.5,"Panning image matches Core Image to rounding away from its fractional edges");++rows;
+            }
+            check(rows>=5,"Every panning row compared");
+        }
         // A large native avatar renders the 136 pt card crop without a full-size
         // floating-point copy (sliding window bounded by the vertical support).
         {

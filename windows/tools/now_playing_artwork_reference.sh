@@ -3,7 +3,8 @@
 # unchanged Mac NowPlayingArtwork.swift, HUDPortraitArtwork.swift and
 # HUDSourceProfileArtwork.swift (which the portrait file names): cover
 # layout rows, letterbox trims and the small-cover decode (foreground and
-# backdrop samples) over synthetic pictures.
+# backdrop samples) over synthetic pictures, and HUDPortraitArtwork.panningImage
+# rows (whole premultiplied outputs) for the Personal ID portrait.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 [[ $# -eq 2 && "$(uname -s)" == Darwin ]] || { echo 'Usage: now_playing_artwork_reference.sh NEW_OUTPUT_DIR EXISTING_MODULE_CACHE' >&2; exit 1; }

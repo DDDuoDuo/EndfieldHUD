@@ -43,7 +43,8 @@ ProfileImage profileRenderedImage(const ProfileImage&source,int orientation,core
 // EXIF-oriented portrait for a `side` px well that pans and zooms it with a
 // layer transform, drawn once per zoom step, sharp up to `zoom`: long side
 // min(2048, side x max(fill) x zoom x clamp(scale, 1, 8) x 1.35), never
-// enlarged, Lanczos in linear light. `fill` is its aspect-fill size in well
+// enlarged, scaled by one factor on both axes (artworkScaled, the Mac's
+// scaledImage). `fill` is its aspect-fill size in well
 // sides (max(1, w/h), max(1, h/w)), so the visible region matches the card
 // crop for the same zoom and offset.
 struct ProfilePanningImage {ProfileImage image;double fillWidth{1},fillHeight{1};};

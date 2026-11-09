@@ -136,14 +136,14 @@ ProfileImage resample(const ProfileImage&source,int orientation,core::Rect regio
 ProfileImage artworkResampled(const ProfileImage&source,int orientation,core::Rect region,unsigned outW,unsigned outH,ArtworkEdges edges,const ArtworkFinish*finish){
     return resample(source,orientation,region,outW,outH,outW/region.width,outH/region.height,0,edges,finish);
 }
-ProfileImage artworkScaled(const ProfileImage&source,core::Rect region,double factor,ArtworkEdges edges,const ArtworkFinish*finish){
+ProfileImage artworkScaled(const ProfileImage&source,int orientation,core::Rect region,double factor,ArtworkEdges edges,const ArtworkFinish*finish){
     need(std::isfinite(factor)&&factor>0&&std::isfinite(region.width)&&std::isfinite(region.height)&&region.width>0&&region.height>0,"Artwork scale");
     const auto side=[&](double v){const double n=std::round(v*factor);need(n<=16384,"Artwork output size");return std::max(1u,static_cast<unsigned>(n));};
     const unsigned outW=side(region.width),outH=side(region.height);
     // Core Image keeps the region's bottom-left corner at the output's origin
     // and crops (0, 0, width, height) upward, so a rounded-up height reads
     // past the picture's top edge; in top-left rows the bottoms align.
-    return resample(source,1,region,outW,outH,factor,factor,region.height-outH/factor,edges,finish);
+    return resample(source,orientation,region,outW,outH,factor,factor,region.height-outH/factor,edges,finish);
 }
 ArtworkFinish artworkBlurAndExposure(double sigma,double ev){
     auto kernel=artworkGaussian(sigma);const unsigned radius=static_cast<unsigned>(kernel.size()/2);const double gain=std::exp2(ev);
