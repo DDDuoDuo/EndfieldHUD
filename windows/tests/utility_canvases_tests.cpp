@@ -469,6 +469,24 @@ void volumeCanvas() {
         check(canvas.listedApplications().empty() && hasText(canvas.page().layer(), "Reason A"), "An empty App volume list shows its reason");
         empty.applicationMessage = "Reason B"; canvas.receive(empty);
         check(&canvas.page() != page && hasText(canvas.page().layer(), "Reason B") && !hasText(canvas.page().layer(), "Reason A"), "A new reason rebuilds the empty list with it");
+        // A rebuild whose only change is the reason carries the module
+        // entrance on in phase, like a listed-app change (Mac d03d5b9).
+        {
+            w.appearance(Language::english, false, false);   // motion on
+            const double t0 = w.now;
+            canvas.playEntrance({0, 24}, t0);
+            w.advance(.1);
+            page = &canvas.page();
+            empty.applicationMessage = "Reason B2"; canvas.receive(empty);
+            const auto rows = canvas.page().staggered();
+            check(&canvas.page() != page && hasText(canvas.page().layer(), "Reason B2") && !rows.empty(), "A new reason rebuilds the entering empty App volume page");
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                check(std::abs(rows[i]->tracks().slots[std::size_t(d::MotionSlot::enter)][0].start - (t0 + d::staggerDelay(int(i)))) < 1e-9,
+                    "Rebuilt empty App volume row " + std::to_string(i) + " enters in phase");
+            check(rows.back()->animating(w.now + .02), "The last row is still entering after the reason rebuild");
+            w.advance(2);
+            w.appearance(Language::english);
+        }
         static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true); canvas.settleSwap();
         page = &canvas.page();
         empty.applicationMessage = "Reason C"; canvas.receive(empty);
