@@ -1,6 +1,7 @@
 #pragma once
-// App shortcuts' rows of the offline Mac import ledger (WINDOWS-MIGRATION.md
-// section 7, core/migration/relink_ledger.hpp). An imported Mac shortcut
+// App shortcuts' rows of the relink ledger (WINDOWS-MIGRATION.md section 7,
+// core/migration/relink_ledger.hpp), which an earlier Import from Mac wrote.
+// An imported Mac shortcut
 // keeps its opaque bookmark until the user edits it and chooses a Windows
 // application; Migration/relink.json lists it ("appShortcuts.app") until then.
 // The ledger follows the committed shortcuts.json on the repository's own
@@ -26,10 +27,11 @@ struct ShortcutRelinkSync {
 // application; empty for a record without a Windows locator.
 std::string shortcutRelinkTarget(const ShortcutRecord&);
 // Worker-only, after `committed` was read from or atomically written to
-// <appRoot>/AppShortcuts, through the import's owner API
-// (ehud::migration::reconcileMacRelinks, keyed by {relinkAppShortcut,
-// shortcut id}). Without a ledger, or without a listed app shortcut row,
-// nothing is written; otherwise one serialized compare-and-replace write.
+// <appRoot>/AppShortcuts, through the relink ledger's owner API
+// (core/migration/relink_ledger.hpp: ehud::migration::reconcileMacRelinks,
+// keyed by {relinkAppShortcut, shortcut id}). Without a ledger, or without
+// a listed app shortcut row, nothing is written; otherwise one serialized
+// compare-and-replace write.
 // A row relinked to a packaged application resolves with its
 // "shell:AppsFolder\<AUMID>" target (validMacRelinkTarget). An unreadable or
 // newer ledger throws data::StoreError and is kept as it is.

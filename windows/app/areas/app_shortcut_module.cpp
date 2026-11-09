@@ -439,7 +439,7 @@ private:
     }
     double now() const { return host_.now(); }
     // The one transaction owner over the repository, the inspector and (with
-    // a relink root) the Mac import ledger.
+    // a relink root) the relink ledger (core/migration/relink_ledger).
     std::unique_ptr<m::AppShortcutTasks> makeTasks() {
         return std::make_unique<m::AppShortcutTasks>(utility_, directory_, g::nativeShortcutTextRules(),
             synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { guarded("completion", [&] { completed(std::move(r)); }); },
@@ -780,7 +780,7 @@ private:
         if (observer_) observer_();
     }
     void completed(m::ShortcutTaskResult r) {
-        // The import ledger was updated on the worker after the committed
+        // The relink ledger was updated on the worker after the committed
         // file (Windows-only bookkeeping; nothing is shown for it).
         if (r.relink) {++relinkSyncs_;lastRelink_ = *r.relink;}
         if (r.relinkFailed) {
@@ -1165,7 +1165,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     const auto seeded = file_;
     step.check(canvas_->isActive() && canvas_->storeAvailable() && !core_->entries(core::Module::addApp).empty() && seeded.items.size() == 1 && !seeded.items[0].native() &&
                d.disk() == seeded && canvas_->items() == seeded.items && canvas_->header().counterText() == "01", "+ Add App shows the seeded imported Mac shortcut from the data root");
-    // The load reconciled the import ledger on the repository worker.
+    // The load reconciled the relink ledger on the repository worker.
     step.check(relinkSyncs_ >= 1 && lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !relinkFailures_, "The load reconciles Migration/relink.json once");
     d.checkLedger(std::nullopt);
     d.checkNavigation();
@@ -1475,7 +1475,7 @@ std::unique_ptr<app::ModuleOwner> appShortcutModule(const app::ApplicationModule
         synthetic = std::make_shared<SyntheticApplications>();
     } else {
         // AppShortcutStore.applicationDirectory(): <app root>/AppShortcuts;
-        // the import ledger is <app root>/Migration/relink.json.
+        // the relink ledger is <app root>/Migration/relink.json.
         need(!context.dataRoot.empty() && context.dataRoot.is_absolute(), "an absolute data root is required");
         relinkRoot = context.dataRoot.lexically_normal();
         directory = relinkRoot / "AppShortcuts";

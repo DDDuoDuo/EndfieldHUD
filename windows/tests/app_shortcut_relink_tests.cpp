@@ -1,5 +1,5 @@
-// App shortcuts' rows of the offline Mac import ledger
-// (modules/app_shortcut_relink, Migration/relink.json). Synthetic records and
+// App shortcuts' rows of the relink ledger that an earlier Import from Mac
+// wrote (modules/app_shortcut_relink, Migration/relink.json). Synthetic records and
 // ledgers in NEW temporary app roots only; nothing is launched, inspected or
 // looked up by path or name.
 #include "modules/app_shortcut_relink.hpp"

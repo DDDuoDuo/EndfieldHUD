@@ -147,14 +147,14 @@ struct NotesPreview::Impl {
         store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
         }
         dataRoot=root;
-        // Mac import relink rows of Notes media (Migration/relink.json beside
+        // Relink ledger rows of Notes media (Migration/relink.json beside
         // Notes/): repair a relink or deletion whose ledger write was lost.
         // Nothing is read or written without a ledger (no Mac import).
         if(persistentDataRoot)(void)mod::notesMediaReconcile(dataRoot,store->notes());
         // Source NotesStore.delete: a managed image no remaining note uses is removed with its last note.
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){
             std::optional<std::string> image;for(const auto&n:store->notes())if(n.id==id){image=n.imageName;break;}store->remove(id);
-            // Record first, then its Mac import relink row (if any) is dismissed.
+            // Record first, then its relink ledger row (if any) is dismissed.
             ledger([root=dataRoot,note=std::string(id)]{(void)mod::notesMediaRemoved(root,note);});
             if(image&&std::none_of(store->notes().begin(),store->notes().end(),[&](const data::Note&n){return n.imageName==image;}))gpu::removeNotesManagedImage(dataRoot,*image);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
@@ -181,7 +181,7 @@ struct NotesPreview::Impl {
     ~Impl(){try{cancelImport();}catch(...){}
         // Accepted ledger writes still finish (their closures own copies); no completion runs.
         if(utility&&ledgerRoute)try{utility->invalidate(ledgerRoute,false);}catch(...){}}
-    // Mac import relink ledger upkeep after Notes' own (synchronous) record
+    // Relink ledger upkeep after Notes' own (synchronous) record
     // write: on the shared UtilityExecutor in submission order once the host
     // handed it over, else here. A full queue runs it here as well (the
     // ledger API serializes its in-process writers), so it is never dropped.
@@ -249,7 +249,7 @@ struct NotesPreview::Impl {
             const auto filename=std::filesystem::u8path(v.path).filename().u8string();const std::string name(reinterpret_cast<const char*>(filename.data()),filename.size());
             const auto reference=data::makeWindowsMediaReference(v.path,name,static_cast<int>(info.pixelWidth),static_cast<int>(info.pixelHeight),info.kind==mod::NotesMediaKind::video?"video":info.kind==mod::NotesMediaKind::gif?"gif":"image",info.kind==mod::NotesMediaKind::image?std::nullopt:std::optional<double>(info.duration),static_cast<int>(info.frameCount));
             if(workspace->relinkMedia(*target,reference,v.lease)){
-                // The relinked note is stored; its Mac import relink row resolves.
+                // The relinked note is stored; its relink ledger row resolves.
                 ledger([root=dataRoot,note=*target,path=std::string(v.path)]{(void)mod::notesMediaRelinked(root,note,path);});
                 if(const auto token=workspace->cardToken(*target))track(*token,TrackKind::mutation,time);changed=true;}else if(state->error())changed|=setMediaError(state->error());
             return changed;}

@@ -40,7 +40,7 @@ struct ArchiveExecutor {
     std::function<bool(std::function<void()>,std::function<void(std::exception_ptr)>)>submit;
 };
 struct ArchiveStateEvent {std::string name,id;};
-// Mac import relink ledger upkeep (modules/notes_relink_ledger.hpp), set by
+// Relink ledger upkeep (modules/notes_relink_ledger.hpp), set by
 // the repository's owner. Each function runs on the FIFO file executor right
 // after the record write it follows (record first, ledger second) and must
 // not throw; an unset function is skipped.

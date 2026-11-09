@@ -1067,7 +1067,7 @@ void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::p
 }
 } // namespace
 
-// The Mac import relink ledger beside an existing data root (production
+// The relink ledger beside an existing data root (production
 // persistent mode): loading the owner reconciles it with the stored notes.
 void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const std::filesystem::path&formats){
     namespace mig=ehud::migration;TempRoot root;std::filesystem::create_directories(root.path/"Migration");

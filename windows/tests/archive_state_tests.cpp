@@ -137,7 +137,7 @@ void gallery(){const auto rules=endfield::native::nativeArchiveTextRules();auto 
     // The editor's delete is unchanged: it closes the open document.
     check(state.deleteSelected()&&!state.selected(),"Deleting the open document closes it");queue.drain();check(!repo->documents.contains(shown.id),"The open document is removed");
 }
-// Mac import relink ledger upkeep: behind the record write on the FIFO queue,
+// Relink ledger upkeep: behind the record write on the FIFO queue,
 // only when the stored entry shows the change; reconcile once behind the first load.
 void relinkLedger(){const auto rules=endfield::native::nativeArchiveTextRules();auto repo=fixture();
     const J mac=J::Object{{"version",1},{"kind","image"},{"bookmark","Ym9va21hcms="},{"isSecurityScoped",true},{"lastKnownPath","/Users/doctor/a.png"},{"displayName","a.png"},{"pixelWidth",4},{"pixelHeight",3},{"frameCount",1}};

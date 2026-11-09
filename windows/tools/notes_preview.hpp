@@ -74,7 +74,7 @@ public:
     void chooseFiles(core::Point workspace);
     void chooseShelf(core::Point workspace);
     // The shared UtilityExecutor, handed over once by the host after
-    // construction: the Mac import relink ledger writes that follow Notes'
+    // construction: the relink ledger writes that follow Notes'
     // own record writes (a relinked media note resolves its row, a deleted
     // note dismisses it) then run on it in order instead of on the owner
     // thread. Null (the default) keeps them here. The load's reconcile runs

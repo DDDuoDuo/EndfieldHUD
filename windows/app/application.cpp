@@ -564,7 +564,7 @@ void Application::Impl::construct(){
         // The Shelf reads item properties and writes Migration/relink.json on the
         // shared executor (tools/shelf_owner.hpp); it was constructed before it.
         if(shelf)isolate(shelfModuleOwner,"utility",[&]{shelf->setUtility(utility.get());});
-        // Notes' Mac import relink ledger writes (relinks, deletions) run on the
+        // Notes' relink ledger writes (relinks, deletions) run on the
         // shared executor; the teardown destroys Notes before the executor.
         if(notes)notes->setUtilityExecutor(utility.get());
         // Notes/centre.json is written on the shared executor (tools/notes_centre_owner.hpp).

@@ -1469,7 +1469,7 @@ bool ArchiveCanvas::receiveMedia(const ArchiveMediaRequest& request, std::vector
         const auto path = references.front()["windowsPath"].isString() ? references.front()["windowsPath"].string() : std::string{};
         entry.media[request.index] = std::move(references.front());
         const auto id = entry.id;
-        // Record first (saved at once), then the Mac import relink ledger row.
+        // Record first (saved at once), then the relink ledger row.
         if (state_->update(std::move(entry), services_.foundationNow(), ownerTime()) && !path.empty()) { edited_ = true; (void)state_->mediaRelinked(id, std::move(mac), path); }
         presentationKey_.reset();
         stateChanged();

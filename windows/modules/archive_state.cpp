@@ -180,7 +180,7 @@ void ArchiveState::activate(){auto&i=*impl_;i.onThread();i.active=true;i.invalid
     const bool accepted=i.perform<Loaded>([store=i.store]{Loaded value;value.snapshot.entries=store->summaries();const auto id=store->selection();value.snapshot.selected=id?store->entry(*id):std::nullopt;value.snapshot.categories=store->categories();
         if(value.snapshot.selected&&std::any_of(value.snapshot.entries.begin(),value.snapshot.entries.end(),[&](const auto&s){return s.id==value.snapshot.selected->id&&s.isClassified;}))value.status=store->classificationStatus(value.snapshot.selected->id);return value;},
         [self=impl_,token](auto failure,auto result){if(self->generation!=token)return;if(failure)self->readError=message(failure);else if(result){try{const auto id=result->snapshot.selected?std::optional(result->snapshot.selected->id):std::nullopt;self->snapshot(std::move(result->snapshot));if(id&&result->status)self->record(*result->status,*id);self->changed();return;}catch(...){self->readError=message(std::current_exception());}}self->changed();});if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes";i.changed();}
-    // Once per state, behind the first load: the Mac import relink ledger
+    // Once per state, behind the first load: the relink ledger
     // against the stored entries (a relink whose ledger write was lost).
     else if(i.ledger&&i.ledger->reconcile&&!i.reconciled)i.reconciled=i.perform<int>([store=i.store,ledger=i.ledger]{ledger->reconcile(*store);return 0;},[](auto,auto){});
 }

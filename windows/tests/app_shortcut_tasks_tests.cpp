@@ -54,7 +54,8 @@ void destroyedSave(){
     const auto bytes=ehud::data::detail::readFile(temp.path/"shortcuts.json",m::shortcutMaximumBytes);check(bytes&&m::decodeShortcuts(J::parse(*bytes),rules()).items.size()==1,"Accepted queued save survives owner destruction");
 }
 }
-// The Mac import ledger follows the committed file on the same worker: the
+// The relink ledger (core/migration/relink_ledger), which an earlier Import
+// from Mac wrote, follows the committed file on the same worker: the
 // load reports the listed row, relinking the imported record (edit, choose a
 // Windows application, save) resolves it, and a broken ledger never fails a
 // committed file.

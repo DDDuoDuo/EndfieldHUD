@@ -6,7 +6,7 @@
 // routes of the other modules, refused virtual-file drops, stale-path renewal
 // saved by refresh, the properties reads on the utility worker, Open and Reveal
 // through the host's action message, the copy-only drag payload, the UI
-// Automation tree, the import ledger relink, localized platform text and error
+// Automation tree, the relink ledger relink, localized platform text and error
 // descriptions, and what the Shelf keeps resident (the Shell icon worker only
 // while shown, no artwork once the HUD closed on another module). No user
 // file, clipboard, Explorer window or application of the user is touched; the

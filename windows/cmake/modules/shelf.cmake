@@ -4,7 +4,7 @@
 # platform service (tools/shelf_owner.*: the reference store, bookmark-like
 # identity renewal, the picker, OLE drops and the copy-only drag-out with Shell
 # drag images, the Shell icon worker, the properties reads on the shared
-# utility executor, the import-ledger relink, Event Log records) is a built-in
+# utility executor, the relink-ledger relink, Event Log records) is a built-in
 # production owner of app/application.cpp, a tools::DesignModuleOwner. Tests
 # use synthetic files in new temporary directories, hidden windows and
 # injected handlers only: no user files, clipboard, Explorer window or picker

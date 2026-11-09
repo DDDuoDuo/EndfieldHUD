@@ -145,7 +145,7 @@ public:
     // A failure reported after the HUD closed (the reveal handoff): shown
     // when the shelf is next active (the Mac's pendingError).
     void deferError(std::string);
-    // The store changed outside the canvas (a relink, the import ledger read):
+    // The store changed outside the canvas (a relink, the relink ledger read):
     // reload, re-render when the structure changed (no selection change).
     void storeChanged();
     // Accessibility and verification actions (:601-624): shelf:add,
