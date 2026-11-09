@@ -787,12 +787,15 @@ void run(const std::filesystem::path& shader) {
         auto& c = *headerCore;
         struct Withdrawn {
             gpu::LayerComposition& composition; gpu::Renderer& renderer;
-            ~Withdrawn() { try { composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{}); } catch (...) {} }
+            ~Withdrawn() { try { composition.setEntries(renderer, std::vector<gpu::LayerCompositionEntry>{}); renderer.setCamera(core::Matrix4{}); } catch (...) {} }
         } withdrawn{composition, renderer};
         c.resize(metrics); c.setOverlayVisible(true, 200);
         auto headerChrome = chrome; headerChrome.module = core::Module::eventLog;
+        // On screen for the readbacks: the design screen's plane under the viewport camera.
+        const auto headerCenter = core::source::DesktopChromeLayout::make(headerChrome, {}, {}).designToScreen;
+        renderer.setCamera(gpu::layerViewportProjection(1000, 640));
         const auto show = [&](double t) {
-            const app::ModuleFrame f{center, headerChrome, sample(core::Module::eventLog), 1, t, true};
+            const app::ModuleFrame f{headerCenter, headerChrome, sample(core::Module::eventLog), 1, t, true};
             c.update(f); c.upload(renderer);
             std::vector<gpu::LayerCompositionEntry> entries;
             for (const auto& e : c.entries(core::Module::eventLog)) entries.push_back(e);
@@ -807,7 +810,9 @@ void run(const std::filesystem::path& shader) {
         auto& actions = headerChild(header.layer(), "header.actions");
         auto& back = header.back()->layer();
         headerFake->playEntrance({0, 24}, 200.05);
-        const double mid = 200.05 + d::staggerDelay(4) + .1;   // Back (3) and the actions (4) mid-fade
+        // Back (3) and the actions (4) mid-fade: the entrance's opacity is
+        // full .6 of the way through its curve, under .1 s in.
+        const double mid = 200.05 + d::staggerDelay(4) + .01;
         show(mid);
         const auto fading = [&](const d::Layer& l) { const double o2 = l.presented(d::Channel::opacity, mid); return o2 > .05 && o2 < .95; };
         check(fading(actions) && fading(back), "Mid-entrance the actions and Back are fading in");
