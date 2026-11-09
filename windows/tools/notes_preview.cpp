@@ -642,7 +642,7 @@ void NotesPreview::closeCentre(double t){auto&i=*impl_;const Impl::TimeScope eve
     (void)i.settleMotion(false);
 }
 void NotesPreview::revealCentre(){impl_->modules.reveal();}
-bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);
+bool NotesPreview::concealCentre(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);(void)event;
     const bool closing=i.modules.requiresFrames()&&!i.modules.isTransitioning();
     i.modules.reveal();
     return i.settleMotion(true)||closing;}

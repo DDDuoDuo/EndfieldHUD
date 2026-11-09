@@ -384,6 +384,19 @@ void reorderRules(const m::AppShortcutArtwork& art) {
     check(!canvas.reordering() && owner.requests.empty(), "Leaving mid-drag puts the row back and writes nothing");
     canvas.setActive(false, w.now);
     w.show(canvas);
+    // The HUD's close stops input with the canvas still active (48584b5,
+    // Canvas::suspendInput): a lifted row goes back and nothing is written;
+    // the release that follows does nothing.
+    {
+        const auto startA = centre(*canvas.rowGrip("A"), canvas.root());
+        press.point = startA;
+        canvas.pointerDown(startA, press, w.now);
+        canvas.pointerDragged({startA.x, startA.y + m::AppShortcutCanvas::pitch}, w.now);
+        check(canvas.reordering(), "A is lifted");
+        canvas.suspendInput();
+        canvas.pointerUp({startA.x, startA.y + 2 * m::AppShortcutCanvas::pitch}, w.now);
+        check(!canvas.reordering() && owner.requests.empty() && canvas.isActive(), "The close's input stop puts the row back and writes nothing");
+    }
     // Nothing lifts while the chooser is open or during a file drop; the hand stays normal with the chooser.
     control(canvas, "apps:add")->activate();
     check(canvas.chooserOpen() && !canvas.cursor(centre(*canvas.rowGrip("A"), canvas.root())), "With the chooser open a grip shows the normal cursor");
