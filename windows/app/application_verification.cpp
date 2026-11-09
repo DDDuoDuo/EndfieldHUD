@@ -3524,12 +3524,40 @@ int Application::Impl::runHiddenVerification(){
                     };
                     onShelf();
                     if(!args.shelfDataRoot.empty()){need(shelf->importFiles(syntheticShelfFiles(),hostTime(t)),"The drag probe's synthetic files are added to the Shelf");t=run(t,.8);}
-                    const double scrolled=gridOffset();bool retracting{},hidden{},hoverCleared{};
+                    const double scrolled=gridOffset();bool retracting{},hidden{},hoverCleared{},activeThroughRetract{},leftAtHide{};
+                    // C10 (Mac SystemHUDView.swift:1037-1042): the drag-out starts from a
+                    // press on a tile (one fully inside the grid's viewport, through the
+                    // host's pointer route) that ends without a click. The retract's close
+                    // keeps the canvas active, taking no input, until the hide, which
+                    // deactivates it; the press's release once the Shelf is back (a drag
+                    // cancelled with the button still down) activates nothing.
+                    std::optional<core::Point> tileAt;
+                    if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid"){
+                        const auto view=modules::design::convert({0,0,area->layer().bounds().width,area->layer().bounds().height},area->layer(),c->root());
+                        for(const auto*control:c->page().controls()){
+                            if(!control->id().starts_with("file:")||control->id().ends_with(modules::design::TileMoreButton::suffix))continue;
+                            const auto r=control->rect(c->root());if(r.x<view.x||r.y<view.y||r.x+r.width>view.x+view.width||r.y+r.height>view.y+view.height)continue;
+                            if(const auto client=shelf->core()->clientRect(r)){tileAt=core::Point{client->x+client->width/2,client->y+client->height/2};break;}}}
+                    const auto selectedBefore=shelf->canvas()?shelf->canvas()->selectedIDs():std::set<std::string,std::less<>>{};
+                    const bool cardBefore=shelf->canvas()&&shelf->canvas()->hasPropertiesCardForTesting();
+                    // The press, then a move past the tile's 5 px: the tile asks for its
+                    // drag-out (the action the host's message runs, taken here as the
+                    // Shelf Open probe takes its own, so no OLE loop starts), and the
+                    // stand-in loop below runs it.
+                    {const bool held=tileAt&&onPointer({PointerKind::down,PointerButton::left,tileAt->x,tileAt->y})&&shelf->core()->capturesPointer();
+                     if(held)(void)onPointer({PointerKind::move,PointerButton::none,tileAt->x+8,tileAt->y});
+                     MSG posted{};(void)PeekMessageW(&posted,static_cast<HWND>(host.hwnd()),tools::ShelfService::actionMessage,tools::ShelfService::actionMessage,PM_REMOVE);
+                     const auto action=shelf->takeAction();
+                     dragCheck(held&&action&&action->kind==tools::ShelfServiceAction::Kind::drag&&!action->itemID.empty(),"The drag-out starts from a tile pressed inside the grid and moved past 5 px");}
                     const bool cancelled=shelfDragOut([&](DWORD&effect){
                         retracting=lifecycle.shelfDrag().phase()==P::retracting&&lifecycle.phase()==L::open&&!lifecycle.interactionEnabled()&&closing&&
                             session->phase()==V::closing&&shelf->preservesFocusOnLoss()&&lifecycle.shelfDragActive();
+                        activeThroughRetract=shelf->canvas()&&shelf->canvas()->isActive()&&!shelf->core()->inputModule()&&!shelf->core()->capturesPointer();
                         // A hover plate kept through the retract (no concealment follows).
                         setClockHovered(true);
+                        for(unsigned n=0;n<60&&lifecycle.shelfDrag().phase()==P::retracting;++n){t=run(t+1./60,0);
+                            if(lifecycle.shelfDrag().phase()==P::retracting)activeThroughRetract=activeThroughRetract&&shelf->canvas()->isActive()&&!shelf->core()->capturesPointer();}
+                        leftAtHide=lifecycle.shelfDrag().phase()==P::hidden&&shelf->canvas()&&!shelf->canvas()->isActive();
                         t=run(t,1.2);
                         hidden=lifecycle.shelfDrag().phase()==P::hidden&&lifecycle.phase()==L::open&&session->phase()==V::concealed&&unshown();
                         hoverCleared=!chromeContent.clockHovered;
@@ -3539,12 +3567,18 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(retracting,"A drag-out disables the HUD's input and plays its exit without closing it");
                     dragCheck(hidden,"The retracted HUD hides for the rest of the drag");
                     dragCheck(hoverCleared,"The retracted HUD's hide clears the highlights kept through the retract");
+                    dragCheck(activeThroughRetract,"Through the retract the Shelf canvas stays active and drawn, taking no input, its press dropped (C10)");
+                    dragCheck(leftAtHide,"The retracted HUD's hide deactivates the Shelf canvas (C10)");
                     dragCheck(!cancelled&&lifecycle.shelfDrag().phase()==P::restoring&&session->phase()==V::opening&&!closing&&shown()&&!shelf->preservesFocusOnLoss(),
                         "A cancelled drag shows the HUD again with its entrance");
                     openingEntrance([&]{return !lifecycle.shelfDragActive();},"The Shelf back after a cancelled drag");
                     dragCheck(!lifecycle.shelfDragActive()&&lifecycle.phase()==L::open&&lifecycle.interactionEnabled()&&session->phase()==V::visible&&
                         notes->selected()==core::Module::fileShelf&&shelf->core()&&shelf->core()->inputModule()==core::Module::fileShelf,"The restored Shelf takes input again");
                     if(!args.shelfDataRoot.empty())dragCheck(scrolled>0&&gridOffset()==scrolled,"The restored Shelf keeps its grid's scroll");
+                    {(void)onPointer({PointerKind::up,PointerButton::left,tileAt->x,tileAt->y});t=run(t,.2);
+                     const bool captures=shelf->core()->capturesPointer(),card=shelf->canvas()->hasPropertiesCardForTesting();const auto&selected=shelf->canvas()->selectedIDs();
+                     dragCheck(!captures&&selected==selectedBefore&&card==cardBefore,("The release of the press the drag-out began from activates nothing once the Shelf is back (C10; captures "+
+                         std::to_string(captures)+", selected "+std::to_string(selectedBefore.size())+" -> "+std::to_string(selected.size())+", card "+std::to_string(cardBefore)+" -> "+std::to_string(card)+")").c_str());}
                     // Delivered once hidden: closed without a second animation.
                     const bool delivered=shelfDragOut([&](DWORD&effect){t=run(t,1.2);return copy(effect);},t);
                     dragCheck(delivered&&lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!closing&&unshown()&&!lifecycle.shelfDragActive()&&
@@ -3556,10 +3590,15 @@ int Application::Impl::runHiddenVerification(){
                     dragCheck(fast&&lifecycle.phase()==L::open&&lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast delivery still finishes the exit");
                     t=run(t,1.2);dragCheck(lifecycle.phase()==L::closed&&session->phase()==V::concealed&&!lifecycle.shelfDragActive(),"Then the HUD closes without a second animation");
                     onShelf();
+                    // C10: a drag cancelled before the hide (the restore ends the
+                    // retract's close, which leaves the canvas) keeps the grid's scroll.
+                    if(auto*c=shelf->canvas())for(const auto&area:c->page().scrollAreas())if(area->id()=="shelf.grid")area->setOffset(area->maximumOffset()*.5);
+                    t=run(t,.1);const double fastScrolled=gridOffset();
                     (void)shelfDragOut([&](DWORD&effect){t=run(t,.05);return cancel(effect);},t);
                     dragCheck(lifecycle.shelfDrag().phase()==P::retracting&&session->phase()==V::closing,"A fast cancellation still finishes the exit");
                     t=run(t,2.4);dragCheck(lifecycle.phase()==L::open&&!lifecycle.shelfDragActive()&&session->phase()==V::visible&&lifecycle.interactionEnabled(),
                         "Then the HUD comes back with its entrance");
+                    if(!args.shelfDataRoot.empty())dragCheck(fastScrolled>0&&gridOffset()==fastScrolled,"A drag cancelled during the exit keeps the grid's scroll (C10)");
                     // The summon hotkey during the drag waits for it, then closes the hidden HUD.
                     bool deferred{};
                     (void)shelfDragOut([&](DWORD&effect){t=run(t,1.2);trayAction(gpu::TrayAction::openOverlay,true,t);
