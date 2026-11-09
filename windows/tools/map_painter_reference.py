@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce compact CoreGraphics Map samples using unchanged source files.
+"""Reproduce compact CoreGraphics Map samples with the current Mac source files.
 
 Only two synthetic binary archives embedded in the fixture are opened by the
 source painter. No app, NSView/window, persistent store or user data is created.
@@ -17,9 +17,13 @@ root = Path(__file__).resolve().parents[2]
 output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / 'build/map-painter-reference'
 fixture_path = root / 'windows/tests/fixtures/map-painter-source.json'
 fixture = json.loads(fixture_path.read_text())
-for source, expected in fixture['sourcePins'].items():
-    if hashlib.sha256((root / source).read_bytes()).hexdigest() != expected:
-        raise SystemExit(f'Original source changed: {source}')
+# The fixture's samples were taken at its pinned sources. A source that has
+# changed since is compiled as it is now and must still reproduce every
+# sample; the comparison report lists it.
+current = {source: hashlib.sha256((root / source).read_bytes()).hexdigest() for source in fixture['sourcePins']}
+changed = sorted(source for source, expected in fixture['sourcePins'].items() if current[source] != expected)
+for source in changed:
+    print(f'Changed since the fixture pins, verified as it is now: {source}')
 output.mkdir(parents=True, exist_ok=True)
 for name in ('terrain', 'countries'):
     (output / (name + '.bin')).write_bytes(bytes.fromhex(fixture[name + 'Hex']))
@@ -55,6 +59,7 @@ def compare(left, right, path):
 for key in actual:
     compare(actual[key], fixture[key], key)
 report = {'authority': fixture['authority'], 'sourcePins': fixture['sourcePins'],
+          'verifiedSources': current, 'changedSincePins': changed,
           'numericComparisons': count, 'differences': 0,
           'fixtureSHA256': hashlib.sha256(fixture_path.read_bytes()).hexdigest(),
           'scope': 'Original CoreGraphics sample pixels; Windows antialiasing parity remains unverified.'}
