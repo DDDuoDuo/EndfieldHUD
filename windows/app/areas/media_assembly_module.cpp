@@ -611,6 +611,7 @@ private:
                             host_.rasterizer().stats().entries < entriesBefore,
                             "Once the HUD is closed the hidden Media Assembly releases its canvas artwork (" + std::to_string(hidden.sceneParts) + " parts, " +
                             std::to_string(entriesBefore - host_.rasterizer().stats().entries) + " shared raster entries)");
+            setOverlayVisible(true, step.time); // this owner's next opening (the harness keeps the HUD open)
         }
         {   // The host's refresh after the module step: the fragments follow the
             // owner (none while Media Assembly is not the accepting module).

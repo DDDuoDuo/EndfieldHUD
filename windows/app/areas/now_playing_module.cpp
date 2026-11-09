@@ -924,6 +924,9 @@ private:
                            "Closed on another module, Now Playing releases its scene (" + std::to_string(held->residentPixelBytes) + " raster bytes, " +
                                std::to_string(entries - host_.rasterizer().stats().entries) + " shared raster entries) and its cover texture, and keeps " +
                                std::to_string(kept.artworkBytes) + " decoded cover bytes for its warm reopen");
+            // The next opening, as the host's open reaches every owner: the
+            // hidden HUD left Now Playing unpresented until it.
+            setOverlayVisible(true, step.time + .1);
         }
     }
     CoverageGroup* coverageGroup() {

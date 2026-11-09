@@ -1042,6 +1042,7 @@ private:
             const auto gauge = owner_->gauge().sceneStats();
             step.check(!owner_->gauge().model().popoverOpen() && !gauge.popoverLoaded && !gauge.popoverUploaded,
                        "The shut recovery popover keeps no card once the HUD closed; the wallet stays");
+            setOverlayVisible(true, d.t); // this owner's next opening (the harness keeps the HUD open)
         }
         d.frame();
         if (step.cycle < 2 || w.finished || !w.linked) return;
