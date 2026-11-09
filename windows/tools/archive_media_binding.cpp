@@ -174,14 +174,17 @@ void ArchiveMediaBinding::togglePlayback() {
     if (done) (void)refresh(i.time);
 }
 // NotesMediaPresentation.pause (NotesMedia.swift:402-407) has no visible
-// gate. No refresh here: it can deliver a finished import, and the canvas
-// pauses during a leave; the frame loop refreshes anyway.
+// gate and reports the paused state at once (changeState). No refresh here:
+// it can deliver a finished import, and the canvas pauses during a leave; the
+// frame loop refreshes anyway.
 void ArchiveMediaBinding::pause() {
     auto& i = *impl_;
     // Only a movie pauses: the canvas asks only for a video, and the Mac's
     // generic pause of a GIF has no Windows caller (decision AM-D2).
     if (!i.selected || i.selected->kind != m::NotesMediaKind::video) return;
-    (void)i.broker.pauseVideo(i.client, i.selected->key);
+    // A paused movie is not playing: playing() says so before the next
+    // refresh, so a switch reversed before it shows Play.
+    if (i.broker.pauseVideo(i.client, i.selected->key) && i.publishedPlaying) { i.publishedPlaying = false; if (onStateChange) onStateChange(); }
 }
 void ArchiveMediaBinding::seek(double seconds) {
     auto& i = *impl_;

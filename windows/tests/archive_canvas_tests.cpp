@@ -88,8 +88,8 @@ struct Media final : m::ArchiveMediaPresenter {
     std::vector<std::string> shown, log; int clears{}; bool isPlaying{}; std::optional<std::string> failure;
     void show(std::string_view document, std::size_t index, const m::ArchiveJson&) override { shown.push_back(std::string(document) + ":" + std::to_string(index)); log.push_back("show"); }
     void clear() override { ++clears; isPlaying = false; log.push_back("clear"); }
-    // The binding reports the paused state at its next refresh, not here.
-    void pause() override { isPlaying = false; log.push_back("pause"); }
+    // As the binding: a playing movie reports its paused state at once (NotesMedia.swift:402-407).
+    void pause() override { log.push_back("pause"); if (isPlaying) { isPlaying = false; if (onStateChange) onStateChange(); } }
     bool playing() const override { return isPlaying; }
     std::optional<std::string> error() const override { return failure; }
     double currentTime() const override { return 0; }
@@ -500,8 +500,11 @@ void mediaLeave() {
             "Back, the same presentation shows the movie paused: no new show, the button reads Play");
         check(w.press("mediaPlay") && w.media.isPlaying, "Play again");
         w.canvas->prepareToLeave(w.now); w.canvas->setActive(false, w.now);
-        w.canvas->show(w.now); w.canvas->setActive(true, w.now); w.settle();
-        check(w.media.log == Log{"pause", "pause"} && !w.media.isPlaying && w.media.shown.size() == 1, "A switch reversed at once brings the movie back paused too");
+        w.canvas->show(w.now); w.canvas->setActive(true, w.now);
+        check(w.media.log == Log{"pause", "pause"} && !w.media.isPlaying && w.media.shown.size() == 1 && label(w) == "Play",
+            "A switch reversed at once brings the movie back paused too, reading Play before any media refresh");
+        w.settle();
+        check(!w.media.isPlaying && label(w) == "Play", "And still Play once the queued state refresh has run");
         const auto pending = ask(w);
         leave(w);
         check(!w.canvas->receiveMedia(pending, {png("late.png")}, std::nullopt), "An import pending at the leave is not received");
