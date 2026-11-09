@@ -85,7 +85,11 @@ public:
     void resize(const app::ClientMetrics&) override;
     void setAppearance(const app::ModuleAppearance&, double) override;
     void setOverlayVisible(bool, double) override;
-    void overlayClosing(double) override;                     // CenterOverlay::reset
+    // The HUD's close (48584b5): the bar, toast and dim stay drawn and finish
+    // their motion with the close, deciding nothing (CenterOverlay::
+    // suspendInput); nothing captures until the hidden HUD resets it
+    // (overlayConcealed, overlayRetracted, a reopen mid-close).
+    void overlayClosing(double) override;
     void update(const app::ModuleFrame&) override;            // places the overlay on the current boxWorld
     // Launch prewarm: the render scale of the first opening's frame reaches
     // the Context (Context::update) before the design owners build their
@@ -107,7 +111,9 @@ public:
     bool pointer(const app::PointerEvent&, double) override;
     bool wheel(const app::WheelEvent&, double) override;
     bool key(const app::KeyEvent&, double) override;
-    bool hostEvent(const app::HostEvent&, double) override;   // systemSettingsChanged "intl" -> region
+    // systemSettingsChanged "intl" -> region; overlayConcealed and
+    // overlayRetracted end a close (CenterOverlay::reset).
+    bool hostEvent(const app::HostEvent&, double) override;
     bool automationRefresh(IRawElementProviderFragmentRoot*) override;
     std::size_t automationCount() const override;
     long automationChild(std::size_t, IRawElementProviderFragment**) const override;

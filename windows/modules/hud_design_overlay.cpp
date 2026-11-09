@@ -558,7 +558,7 @@ bool CenterOverlay::decide(ConfirmState::Decision decision) {
 void CenterOverlay::finish(ConfirmState::Decision decision) {
     auto onConfirm = std::exchange(onConfirm_, {});
     auto onCancel = std::exchange(onCancel_, {});
-    router_.set({});
+    suspendInput();
     const auto clock = env_->clock();
     bar_->hide(true, clock, [this] {
         if (!confirm_.decision()) return;                // a new request was presented meanwhile
@@ -575,13 +575,13 @@ void CenterOverlay::finish(ConfirmState::Decision decision) {
 // dismissConfirm (:439-447): no decision, no callback.
 void CenterOverlay::dismissConfirm() {
     if (!confirm_.request()) return;
-    onConfirm_ = {}; onCancel_ = {};
+    suspendInput();
     confirm_.close();
-    router_.set({});
     bar_->hide(false, env_->clock());
     if (!toastState_.current()) setDimmed(false);
     notify();
 }
+void CenterOverlay::suspendInput() { onConfirm_ = {}; onCancel_ = {}; router_.set({}); }
 // showToast (:449-461).
 void CenterOverlay::showToast(ToastRequest request, std::function<void()> completion) {
     if (confirm_.isOpen()) return;                       // dropped: its completion never runs

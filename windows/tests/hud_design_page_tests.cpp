@@ -1435,6 +1435,25 @@ void focusMoves(RecordedMeasurer& measurer) {
     w.context.setEditorHost(nullptr);
 }
 
+// HUDCenterOverlay.suspendInput (:505-511, the HUD's close): the bar stays
+// drawn and dimmed but decides nothing; no handler runs, not even after its
+// timers; reset() at the hidden HUD takes it away.
+void suspendedBar(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    auto& o = w.context.overlay();
+    std::vector<std::string> events;
+    o.confirm(twinRequest(), [&] { events.push_back("confirm"); }, [&] { events.push_back("cancel"); });
+    const Point pill = pillCentre(o, 0);
+    o.suspendInput();
+    check(o.isConfirming() && !o.confirmBar().layer().hidden() && o.dimmed() && o.router().controls().empty(), "The suspended bar stays shown and dimmed with no control");
+    check(!o.pointerDown(pill) || events.empty(), "A press on a pill decides nothing");
+    o.pointerUp(pill);
+    w.advance(2);
+    check(events.empty() && !o.confirmBar().layer().hidden(), "No handler runs; the bar is still drawn after the timers");
+    o.reset();
+    check(!o.isConfirming() && !o.capturesInput() && o.confirmBar().layer().hidden() && !o.dimmed() && events.empty(), "reset() at the hidden HUD takes it away without a decision");
+}
+
 // HUDDesignCanvas.suspendInput (:556, the HUD's close): an editing field
 // commits and a slider drag ends without its final value, while the page,
 // an open menu or pop-over and a running sub-page swap stay as they are.
@@ -1499,6 +1518,7 @@ int main(int argc, char** argv) {
         carriedEntrance(measurer);
         focusMoves(measurer);
         suspendsInput(measurer);
+        suspendedBar(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());
         if (!measurer.misses.empty()) {

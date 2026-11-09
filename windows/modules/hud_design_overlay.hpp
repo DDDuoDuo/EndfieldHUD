@@ -308,6 +308,11 @@ public:
     // Motion); the router empties at once; only the first decision counts.
     bool decide(ConfirmState::Decision);
     void dismissConfirm();             // no decision, no callback (module change, HUD close)
+    // HUDCenterOverlay.suspendInput (:505-511): the bar stays drawn but
+    // decides nothing more, no handler and no control (the HUD's close, which
+    // hides it with the module; reset() at the end). A hosted PlacementEditor
+    // keeps its own router.
+    void suspendInput();
     // A toast while a confirm bar is open is DROPPED and its completion never
     // runs; a new toast replaces the current one (the previous completion runs
     // at once); the 1.5 s timer ends only the toast it started; the

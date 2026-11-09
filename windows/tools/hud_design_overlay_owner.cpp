@@ -60,6 +60,7 @@ struct DesignOverlayOwner::Impl {
     double density{2}, time{};
     std::uint64_t synced{}; // the overlay tree revision the scene holds
     bool overlay{}, posed{}, composed{}, pressed{};
+    bool closing{}; // overlayClosing until the hidden HUD resets the overlay (concealClosed)
     std::optional<double> held; // holdDensity
     Impl(gpu::LayerRasterizer& r, DesignOverlayOptions o)
         : raster(r), options(std::move(o)), measurer(r), context(measurer, gpu::nativeUppercase()), scene(r, options.raster, "design.overlay") {
@@ -71,7 +72,14 @@ struct DesignOverlayOwner::Impl {
         context.env().now = std::max(context.env().now, time);
     }
     double density0() const { return std::clamp(context.boxScale(), 1., 4.); }
-    bool capturing() const { return context.overlay().capturesInput(); }
+    // Nothing captures while the HUD closes: the bar stays drawn, deciding nothing.
+    bool capturing() const { return !closing && context.overlay().capturesInput(); }
+    // The close ended (the hidden HUD) or a reopen interrupts it: everything
+    // off at once (SystemHUDView deactivateModuleInput: overlay.reset()).
+    void concealClosed() {
+        closing = false; pressed = false;
+        context.overlay().reset();
+    }
     bool dimAnimating(double now) const {
         auto& o = context.overlay();
         const auto amount = o.dimFilter(now);
@@ -142,13 +150,23 @@ void DesignOverlayOwner::setAppearance(const app::ModuleAppearance& a, double t)
     i.appearance = a;
     i.apply();
 }
+// A hide, or a reopen while a close is pending, ends that close first.
 void DesignOverlayOwner::setOverlayVisible(bool v, double t) {
     auto& i = *impl_;
     i.clock(t);
+    if (!v || i.closing) i.concealClosed();
     i.overlay = v;
-    if (!v) i.context.overlay().reset();
 }
-void DesignOverlayOwner::overlayClosing(double t) { setOverlayVisible(false, t); } // CenterOverlay::reset
+// HUDCenterOverlay.suspendInput at the close's start: no decision, no
+// control, no synthetic release of a held pill; the overlay keeps composing.
+void DesignOverlayOwner::overlayClosing(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    if (!i.overlay) return;
+    i.context.overlay().suspendInput();
+    i.pressed = false;
+    i.closing = true;
+}
 void DesignOverlayOwner::update(const app::ModuleFrame& frame) {
     auto& i = *impl_;
     i.clock(frame.time);
@@ -217,6 +235,7 @@ bool DesignOverlayOwner::suppressesKeyFilters() const { return capturesPointer()
 bool DesignOverlayOwner::pointer(const app::PointerEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
+    if (i.closing) return false;
     if (!capturesPointer()) {
         // A left press no module owner took goes to the shell (the clock, the
         // logo, the navigation, empty space): SystemHUDView becomes first
@@ -259,6 +278,14 @@ bool DesignOverlayOwner::key(const app::KeyEvent& e, double t) {
 bool DesignOverlayOwner::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
+    // The hidden HUD (the close finished, or a File Shelf drag's retract
+    // hid it) resets what the close left drawn.
+    if (e.kind == app::HostEvent::Kind::overlayConcealed || e.kind == app::HostEvent::Kind::overlayRetracted) {
+        const bool changed = i.closing || i.context.overlay().capturesInput() || i.context.overlay().dimmed();
+        i.concealClosed();
+        i.overlay = false;   // shown again by the next opening (or the drag's restore)
+        return changed;
+    }
     if (e.kind == app::HostEvent::Kind::systemSettingsChanged) {
         // WM_SETTINGCHANGE "intl": the preferred UI languages may name another
         // CJK region for English / System text.
