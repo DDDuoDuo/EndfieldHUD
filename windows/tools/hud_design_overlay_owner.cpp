@@ -164,6 +164,8 @@ void DesignOverlayOwner::overlayClosing(double t) {
     i.clock(t);
     if (!i.overlay) return;
     i.context.overlay().suspendInput();
+    // HUDCenterOverlay.closingLayers under the close's keep (L-D1).
+    d::motion::stopLoops(i.context.overlay().layer());
     i.pressed = false;
     i.closing = true;
 }

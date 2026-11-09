@@ -472,6 +472,7 @@ void removeMotion(Layer& root, MotionKeep keep) {
     root.removeAllMotion(keep);
     for (Layer* child : root.children()) removeMotion(*child, keep);
 }
+void stopLoops(Layer& root) { removeMotion(root, closeKeep); }
 } // namespace motion
 
 // ---------------------------------------------------------------------------

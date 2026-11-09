@@ -353,6 +353,17 @@ void after(Layer&, double time, const Clock&, std::function<void()>);
 // descendant. Now Playing's stop keeps entranceSlots + leave; the HUD
 // close's stopLoops keeps every finite track ({{}, true}).
 void removeMotion(Layer& root, MotionKeep keep);
+// The HUD close's strip at its start (5c8a905, 939926a; decision L-D1, Mac
+// parity): every endless loop under `root` stops (blink, scan, sheen, pulse,
+// danger, the Work Mode dot) and every finite track plays on (entrances,
+// exits, wipes, pops, cross-fades, a module's own one-shots). The Mac keeps
+// an explicit key list (HUDMotion.closeKeys) and so also strips a few other
+// finite paths (scale, colour, translation.x, ...); they all end within the
+// .33 s close (scrolls aside), so Windows lets them finish rather than keep
+// a fragile key list. A canvas that stays active can start a loop again
+// mid-close (Work Mode's blink on a phase change), as on the Mac.
+inline constexpr MotionKeep closeKeep{{}, true};
+void stopLoops(Layer& root);
 }
 
 // ---------------------------------------------------------------------------

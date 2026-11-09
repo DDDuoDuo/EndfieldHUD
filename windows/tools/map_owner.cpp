@@ -41,6 +41,10 @@ struct MapOwner::Impl {
     std::unique_ptr<gpu::NativeMapScene> scene;
     app::ClientMetrics metrics;
     bool alive{true}, ready{}, posed{}, rasterActive{}, overlay{true}, prewarming{}, releasePending{}, textureFactory{};
+    // The HUD's close began and its hide has not run yet: the canvas keeps
+    // drawing, the pins' pulse loop stops (the Mac's close strips map.pulse,
+    // decision L-D1).
+    bool closing{};
     double time{};
     std::uint64_t cameraRevision{}, gestureRevision{}, playerBytes{};
     modules::MapColor accent{};
@@ -76,6 +80,10 @@ struct MapOwner::Impl {
     // prewarm (Windows only) builds the page without starting the painter.
     void prepare() { if (prewarming) return; if (!rasterActive) { rasterActive = true; raster->setActive(true, time); } if (requestGeography) requestGeography(); }
     void releaseWorkingSet() { if (rasterActive) { rasterActive = false; raster->setActive(false, time); } }
+    // The scene's appearance: the pulse needs ambient motion, and no close.
+    gpu::MapAppearance sceneAppearance() const { return {appearance.reducedMotion, appearance.ambient && !closing}; }
+    // The hidden HUD or a reopen ends a close: the pulse may run again.
+    void endClose() { if (!closing) return; closing = false; (void)scene->setAppearance(sceneAppearance()); }
     // The raster's style: always dark, the palette's yellow for the centre
     // country (WorldMapCanvas.swift:59, 154), painted at the map's density.
     void configure() {
@@ -181,7 +189,7 @@ void MapOwner::setAppearance(const app::ModuleAppearance& a, double t) {
     i.core->setAppearance(a, t);
     // The Mac stops the pin pulse with ambient motion off and in low-power visual mode.
     i.appearance = {a.reduceMotion, a.ambient && !a.lowPower};
-    (void)i.scene->setAppearance(i.appearance);
+    (void)i.scene->setAppearance(i.sceneAppearance());
     i.state.setReducedMotion(a.reduceMotion);
     if (a.reduceMotion) i.scene->settle();
     i.configure();
@@ -189,11 +197,22 @@ void MapOwner::setAppearance(const app::ModuleAppearance& a, double t) {
 void MapOwner::setOverlayVisible(bool v, double t) {
     auto& i = *impl_;
     i.clock(t);
+    i.endClose();
     i.overlay = v;
     i.core->setOverlayVisible(v, t);
     i.synchronize();
 }
-void MapOwner::overlayClosing(double t) { auto& i = *impl_; i.clock(t); i.core->overlayClosing(t); i.overlay = false; i.synchronize(); }
+// The close's start: input stops (the core), the pin pulse stops on the
+// first closing frame, and the raster working set goes now, as the Mac's
+// close runs releaseRasterWorkingSet; the map stays drawn until the hide.
+void MapOwner::overlayClosing(double t) {
+    auto& i = *impl_;
+    i.clock(t);
+    i.core->overlayClosing(t);
+    if (!i.closing && i.overlay) { i.closing = true; (void)i.scene->setAppearance(i.sceneAppearance()); }
+    i.releaseWorkingSet();
+    i.synchronize();
+}
 void MapOwner::update(const app::ModuleFrame& f) {
     auto& i = *impl_;
     i.clock(f.time);
@@ -323,6 +342,7 @@ bool MapOwner::hostEvent(const app::HostEvent& e, double t) {
     auto& i = *impl_;
     i.clock(t);
     const bool changed = i.core->hostEvent(e, t);
+    if (e.kind == app::HostEvent::Kind::overlayConcealed || e.kind == app::HostEvent::Kind::overlayRetracted) { i.endClose(); i.overlay = false; i.synchronize(); }
     if (e.kind == app::HostEvent::Kind::overlayConcealed) {
         // The Mac 1.3.0 closed HUD keeps no map (OverlayController's closed-heap
         // cleanup after releasing the view): the decoded geography, the terrain

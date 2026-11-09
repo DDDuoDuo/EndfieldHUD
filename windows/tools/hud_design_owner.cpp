@@ -235,6 +235,8 @@ void DesignOwnerCore::overlayClosing(double t) {
             s->input = false;
             s->canvas->suspendInput();
             s->canvas->settleSwap(true);
+            // The loops on a drawn canvas stop; finite motion ends with the close (L-D1).
+            if (s->pose) d::motion::stopLoops(s->canvas->root());
         }
     }
     if (i.options.closing) { i.bind(); i.options.closing(i.time); }

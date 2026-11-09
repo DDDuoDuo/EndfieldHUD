@@ -552,8 +552,8 @@ void strips() {
     };
     const auto present = [](const d::Layer& l, d::MotionSlot s) { for (const auto& t : l.tracks().slots[std::size_t(s)]) if (t.present()) return true; return false; };
     play();
-    // stopLoops: every finite track stays, the endless blink and glow go.
-    m::removeMotion(root, {{}, true});
+    // stopLoops (the close's keep, L-D1): every finite track stays, the endless blink and glow go.
+    m::stopLoops(root);
     check(present(row, d::MotionSlot::enter) && present(root, d::MotionSlot::leave) && present(row, d::MotionSlot::wipe) && present(row, d::MotionSlot::fade)
         && present(row, d::MotionSlot::grow) && present(dot, d::MotionSlot::pop) && present(root, d::MotionSlot::hold) && present(row, d::MotionSlot::effect),
         "The close's strip keeps the entrance, leave, wipe, fade, grow, pop, hold and a one-shot shake");
