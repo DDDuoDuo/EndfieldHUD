@@ -81,6 +81,8 @@ struct FakeCanvas final : d::Canvas {
         }
     }
     void willLeave() override { ++leaves; }
+    unsigned activations{};
+    void didActivate() override { ++activations; }
     bool handleKey(const d::KeyInput& k) override { if (k.virtualKey == 'K') { ++keys; return true; } return false; }
     bool handleScroll(d::Point, d::Point delta) override { scrolls += delta.y > 0; return true; }
     std::optional<d::Cursor> cursor(std::optional<d::Point> p) const override { return p && p->y > 400 ? std::optional(d::Cursor::openHand) : std::nullopt; }
@@ -459,13 +461,25 @@ void run(const std::filesystem::path& shader) {
         owner.setOverlayVisible(true, 5.5); overlay.setOverlayVisible(true, 5.5);
         frame(sample(core::Module::clipboard), 5.55);
         check(fake->isActive() && !owner.entries(core::Module::clipboard).empty(), "The next open shows the landed module");
-        // Reversed: Clipboard to Volume and back, closed at +.05.
+        // Reversed: Clipboard to Volume (Clipboard leaves), back to Clipboard
+        // while it is still leaving (it reactivates on its own leave), then
+        // the close: Clipboard stays active with input suspended, Volume was
+        // never activated.
+        const unsigned volumeActivations = skipped->activations, clipboardActivations = fake->activations;
+        auto toVolume = sample(core::Module::clipboard);
+        toVolume.requested = core::Module::volume; toVolume.transitioning = toVolume.directional = true; toVolume.acceptsModuleInput = false;
+        toVolume.incoming = sample(core::Module::volume, false).current;
+        frame(toVolume, 5.6);
+        check(!fake->isActive() && !skipped->isActive(), "The switch away leaves Clipboard; Volume is only prepared");
         auto reversed = sample(core::Module::clipboard);
+        reversed.transitioning = reversed.directional = true; reversed.acceptsModuleInput = false;
         reversed.current.opacity = .5;
-        frame(reversed, 5.6);
-        owner.overlayClosing(5.61); overlay.overlayClosing(5.61);
         frame(reversed, 5.62);
-        check(fake->isActive() && !core0.inputModule() && !owner.entries(core::Module::clipboard).empty(), "A reversed switch keeps its screen active with input suspended");
+        check(fake->isActive() && fake->activations == clipboardActivations + 1 && !core0.inputModule(), "Requested again during its own leave, Clipboard is active again");
+        owner.overlayClosing(5.65); overlay.overlayClosing(5.65);
+        frame(reversed, 5.66);
+        check(fake->isActive() && !core0.inputModule() && !owner.entries(core::Module::clipboard).empty() && skipped->activations == volumeActivations && !skipped->isActive(),
+            "A reversed switch keeps its screen active with input suspended; the skipped Volume never activated");
         (void)owner.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.8); (void)overlay.hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, 5.8);
         owner.setOverlayVisible(true, 5.9); overlay.setOverlayVisible(true, 5.9);
         frame(sample(core::Module::clipboard), 5.95);
