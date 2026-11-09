@@ -541,6 +541,12 @@ int Application::Impl::runIdleTrace(){
     {const auto framesBefore=host.stats().frames;perform(lifecycle.toggle(),clock());const auto after=host.stats();
      need(closed()&&concealedBroadcast&&!lifecycleClosing&&!transitionDeadline&&!after.visible&&!after.topmost&&!after.framePending&&after.frames==framesBefore,
           "A Reduce Motion close hides the HUD and completes the lifecycle's close without a frame");
+     // C11: inside that request the hidden HUD's deactivation already ran
+     // (overlayConcealed): no owner takes input, the overlay is reset and the
+     // module plays no close leave (none under Reduce Motion) or departing screen.
+     {bool capturing=false;registry.forEach([&](ModuleOwner&o){capturing=capturing||o.capturesPointer()||o.capturesKeys()||o.pointerLocked();},"reduce motion close");
+      need(!capturing&&designOverlay&&!designOverlay->context().overlay().capturesInput()&&notes&&!notes->modulePresentation().departing&&notes->modulePresentation().current.opacity==1,
+           "Inside the Reduce Motion close's request no owner takes input, the overlay is reset and no module leave plays");}
      pump(.3,{});need(host.stats().frames==framesBefore&&!host.stats().framePending,"The closed Reduce Motion HUD presents nothing afterwards");
      need(row("close-1")&&row("closed-1")&&*row("close-1")<*row("closed-1")&&tracedIs("close-1","lifecycle","closing")&&tracedIs("close-1","session","visible")&&
           tracedTrue("close-1","closePending")&&tracedTrue("close-1","reduceMotion")&&traced("close-1","host")["visible"].isBool()&&traced("close-1","host")["visible"].boolean(),
@@ -724,6 +730,13 @@ int Application::Impl::runIdleTrace(){
         perform(lifecycle.requestQuit(),clock());need(quitRequested&&lifecycle.phase()==P::closing&&closing&&!stopping,"The accepted Quit's close plays");
         suspend(Suspension::session,clock());
         need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&!host.stats().topmost,"A lock during an accepted Quit's close hides the HUD and quits");
+        // OPEN-6: a quit inside the close conceals first (forceConceal's
+        // overlayConcealed broadcast), so what the close kept drawing (the
+        // shown canvases, a departing screen, menus leaving with their
+        // module, Now Playing's presentation) has ended before the quit, and
+        // no owner takes input.
+        {bool still=false;registry.forEach([&](ModuleOwner&o){still=still||o.capturesPointer()||o.pointerLocked()||o.capturesKeys()||o.capturesWheel();},"quit check");
+         need(concealedBroadcast&&!closing&&!still,"A quit inside the close conceals every owner first and leaves none taking input");}
         shutdownVisible();
         return 0;
     }
