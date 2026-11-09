@@ -1,7 +1,7 @@
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/hero.zh-tw.png" alt="ENDFIELD HUD：適用於 Mac 和 Windows 的桌面 HUD，v1.3.0" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/hero.zh-tw.png" alt="ENDFIELD HUD：適用於 Mac 和 Windows 的桌面 HUD，v1.3.1" width="100%"></a>
 
 <p align="center">
-  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/button-release.png" alt="最新版本 v1.3.0" height="36"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/button-release.png" alt="最新版本 v1.3.1" height="36"></a>
   <a href="LICENSE"><img src="docs/media/readme/panels/button-license.png" alt="授權：MIT" height="36"></a>
   <a href="#installation"><img src="docs/media/readme/panels/button-platform.png" alt="平台：macOS / Windows" height="36"></a>
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSeDwB4CzTp5kdT5ArjwIcQlvRS9UlVkQnMpGF3OHbYJ1_uBCg/viewform?usp=sharing"><img src="docs/media/readme/panels/button-feedback.zh-tw.png" alt="回報問題或提出建議" height="36"></a>
@@ -28,14 +28,14 @@
 
 <img src="docs/media/readme/panels/sub-macos.zh-tw.png" alt="macOS：Apple 晶片 / Intel" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS：PKG / DMG" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-macos.png" alt="macOS：PKG / DMG" width="100%"></a>
 
 <sub>※ EndfieldHUD 會出現在選單列裡。按一下快速鍵，HUD 就會出現在所有軟體的上方</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.zh-tw.png" alt="下載" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-Installer.pkg"><b>PKG 安裝程式</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">所有版本</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-Installer.pkg"><b>PKG 安裝程式</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-macOS.dmg"><b>DMG</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">所有版本</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.zh-tw.png" alt="更新" width="112"></td>
@@ -58,14 +58,14 @@
 
 <img src="docs/media/readme/panels/sub-windows.zh-tw.png" alt="Windows：Windows 11 x64" width="100%">
 
-<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.0"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows：安裝程式（EXE）/ 免安裝版（ZIP）" width="100%"></a>
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.3.1"><img src="docs/media/readme/panels/banner-windows.png" alt="Windows：安裝程式（EXE）/ 免安裝版（ZIP）" width="100%"></a>
 
 <sub>※ 在 Windows 上，EndfieldHUD 待在通知區域（系統匣）裡。同樣的 HUD，同樣的快速鍵</sub>
 
 <table>
 <tr>
 <td width="120"><img src="docs/media/readme/panels/chip-download.zh-tw.png" alt="下載" width="112"></td>
-<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-setup.exe"><b>安裝程式（EXE）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.0/EndfieldHUD-1.3.0-build19-windows-x64-portable.zip"><b>免安裝版（ZIP）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">所有版本</a></td>
+<td><a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-setup.exe"><b>安裝程式（EXE）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.3.1/EndfieldHUD-1.3.1-build20-windows-x64-portable.zip"><b>免安裝版（ZIP）</b></a> / <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases">所有版本</a></td>
 </tr>
 <tr>
 <td><img src="docs/media/readme/panels/chip-update.zh-tw.png" alt="更新" width="112"></td>
@@ -91,6 +91,22 @@
 
 > [!WARNING]
 > 如果 Windows SmartScreen 跳出**Windows 已保護您的電腦**，點**其他資訊 → 仍要執行**。這是因為 App 目前還沒有進行簽署
+
+<br>
+
+<img src="docs/media/readme/panels/sub-linux.zh-tw.png" alt="Linux：Hyprland / 社群移植版" width="100%">
+
+<a href="https://github.com/OctoberPrayRain/HyprEndfield"><img src="docs/media/readme/panels/banner-linux.png" alt="Linux：適用於 Hyprland 的 HyprEndfield" width="100%"></a>
+
+<table>
+<tr>
+<td width="120"><img src="docs/media/readme/panels/chip-download.zh-tw.png" alt="下載" width="112"></td>
+<td><a href="https://github.com/OctoberPrayRain/HyprEndfield"><b>HyprEndfield</b></a>（作者：<a href="https://github.com/OctoberPrayRain">OctoberPrayRain</a>）</td>
+</tr>
+</table>
+
+> [!WARNING]
+> HyprEndfield 是 OctoberPrayRain 製作的社群移植版，不是我製作的。請自行承擔使用風險，因使用它造成的任何損失我概不負責
 
 <br>
 
