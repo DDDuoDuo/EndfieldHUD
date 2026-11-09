@@ -11,7 +11,6 @@ using d::Point;
 using d::Rect;
 namespace {
 bool contains(Rect r, Point p) noexcept { return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height; }
-void removeMotion(d::Layer& layer) { layer.removeAllMotion(); for (auto* child : layer.children()) removeMotion(*child); }
 // Hatch-L (spec section 1.6) as one vector path: 1 px stripes 3.5 px apart at -45 degrees (:277-288).
 d::PathBuilder hatch(d::Size size) {
     d::PathBuilder path;
@@ -390,8 +389,12 @@ void NowPlayingCanvas::setPresented(bool value, double now) {
         refresh(now);
     } else {
         stopClock(); closeVolume(); if (seek_) seek_->cancelDrag();
-        // Nothing keeps running on the hidden page (bar runs, lyric slides, fades).
-        if (renderedLanguage()) removeMotion(page().layer());
+        // Nothing keeps running on the hidden page (bar runs, lyric slides,
+        // fades); a finite entrance finishes under the module's leave, and a
+        // track change's page swap in flight finishes leaving (finiteKeys,
+        // :144-148: the entrance and exit keys and the cover cross-fade,
+        // which motion::crossFade plays in the entrance's fade slot).
+        if (renderedLanguage()) d::motion::removeMotion(page().layer(), {finiteKeys, false});
         if (services_.setPresented) services_.setPresented(false);
     }
 }

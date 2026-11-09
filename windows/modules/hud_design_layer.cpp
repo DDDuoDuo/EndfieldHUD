@@ -266,6 +266,22 @@ bool Layer::animating(double now) const noexcept {
 }
 void Layer::removeMotion(MotionSlot s) noexcept { if (tracks_) tracks_->slots[std::size_t(s)] = {}; }
 void Layer::removeAllMotion() noexcept { tracks_.reset(); }
+void Layer::removeAllMotion(MotionKeep keep) noexcept {
+    if (!tracks_) return;
+    auto& t = *tracks_;
+    const auto ends = [&](double end) noexcept { return keep.finite && std::isfinite(end); };
+    bool any{};
+    for (auto& track : t.property) { if (!ends(track.end())) track = {}; any |= track.present(); }
+    for (std::size_t s = 0; s < t.slots.size(); ++s) {
+        const bool whole = keep.slots.contains(MotionSlot(s));
+        for (auto& track : t.slots[s]) { if (!whole && !ends(track.end())) track = {}; any |= track.present(); }
+    }
+    for (ColorTrack* track : {&t.tintTrack, &t.tintEffect}) {
+        if (!ends(track->start + track->duration * track->repeat)) *track = {};
+        any |= track->keys > 0;
+    }
+    if (!any) tracks_.reset();
+}
 
 // ---------------------------------------------------------------------------
 // LayerArena
@@ -440,6 +456,10 @@ void after(Layer& l, double time, const Clock&, std::function<void()> work) {
     auto* deadlines = l.arena().deadlines();
     if (!deadlines) throw std::logic_error("Completions need an arena created with the context's deadlines: " + l.id());
     deadlines->after(time, l.arena().token(), std::move(work));
+}
+void removeMotion(Layer& root, MotionKeep keep) {
+    root.removeAllMotion(keep);
+    for (Layer* child : root.children()) removeMotion(*child, keep);
 }
 } // namespace motion
 

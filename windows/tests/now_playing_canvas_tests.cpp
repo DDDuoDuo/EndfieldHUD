@@ -10,6 +10,7 @@
 #include "tests/hud_design_oracle.hpp"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 
@@ -238,6 +239,41 @@ void nothingPlaying() {
         "The cover shows (Reduce Motion: at once) and the placeholder ring hides (:318-328)");
 }
 
+// Switching away mid-entrance (8be8a62, finiteKeys :144-148): the stop
+// keeps the entrance slots and the leave, so the rows finish entering under
+// the module's leave; loops, effects, lyric steps and pops are stripped.
+void stopKeepsFiniteMotion() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    canvas.playEntrance({0, 24}, w.now);
+    const auto rows = canvas.page().staggered();
+    check(rows.size() > 2, "Now Playing staggers its rows");
+    w.now += .1; w.context.advance(w.now);
+    canvas.setPresented(false, w.now);
+    const auto entering = [](const d::Layer& l) { for (const auto& t : l.tracks().slots[std::size_t(d::MotionSlot::enter)]) if (t.present()) return true; return false; };
+    check(entering(*rows.back()) && rows.back()->presented(d::Channel::opacity, w.now) < .05, "The last row keeps its enter track and is still transparent");
+    std::function<bool(const d::Layer&)> stripped = [&](const d::Layer& l) {
+        const auto& t = l.tracks();
+        for (const auto& p : t.property) if (p.present()) return false;
+        for (const auto s : {d::MotionSlot::hold, d::MotionSlot::pop, d::MotionSlot::effect})
+            for (const auto& track : t.slots[std::size_t(s)]) if (track.present()) return false;
+        if (t.tintTrack.keys || t.tintEffect.keys) return false;
+        for (const auto* child : l.children()) if (!stripped(*child)) return false;
+        return true;
+    };
+    check(stripped(canvas.page().layer()), "Bar runs, lyric steps, pops, holds and effects are gone");
+    std::function<bool(const d::Layer&, double)> resting = [&](const d::Layer& l, double at) {
+        if (l.animating(at)) return false;
+        for (const auto* child : l.children()) if (!resting(*child, at)) return false;
+        return true;
+    };
+    check(!resting(canvas.page().layer(), w.now) && resting(canvas.page().layer(), w.now + 1.1), "The kept entrance ends on its own");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -315,6 +351,7 @@ int main(int argc, char** argv) {
         layout(); coverFrames();
         behaviour();
         nothingPlaying();
+        stopKeepsFiniteMotion();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);

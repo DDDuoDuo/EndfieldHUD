@@ -41,6 +41,7 @@
 #include "modules/hud_design_motion.hpp"
 #include "modules/hud_design_nodes.hpp"
 #include <deque>
+#include <initializer_list>
 #include <set>
 #include <memory>
 
@@ -69,6 +70,29 @@ inline constexpr std::size_t channelCount = std::size_t(Channel::count);
 // tracks override earlier ones; additive tracks add to the result).
 enum class MotionSlot : std::uint8_t { enter, leave, hold, wipe, fade, pop, grow, effect, count };
 enum class WipeOrigin : std::uint8_t { left, top, centerX };
+// A set of motion slots (one of the Mac's animation key sets).
+struct MotionSlots {
+    std::uint16_t bits{};
+    constexpr MotionSlots() noexcept = default;
+    constexpr MotionSlots(std::initializer_list<MotionSlot> list) noexcept { for (const MotionSlot s : list) bits = std::uint16_t(bits | (1u << unsigned(s))); }
+    constexpr bool contains(MotionSlot s) const noexcept { return ((bits >> unsigned(s)) & 1u) != 0; }
+    constexpr MotionSlots operator|(MotionSlots other) const noexcept { MotionSlots r; r.bits = std::uint16_t(bits | other.bits); return r; }
+};
+// HUDMotion.entranceKeys (HUDDesignMotion.swift:107): the slots a module
+// entrance plays in, enter, the wipe with its fade (also motion::crossFade's
+// fade, as the Mac's two key sets treat hud.wipe.fade and the cross-fade
+// alike) and grow. Not native/hud_design_scene.cpp's entering() set
+// {enter, wipe, pop, grow}, which asks a different question (is a part still
+// arriving); keep the two apart.
+inline constexpr MotionSlots entranceSlots{MotionSlot::enter, MotionSlot::wipe, MotionSlot::fade, MotionSlot::grow};
+// What a motion strip keeps (the Mac's removeAnimations except a key set):
+// every track of the `slots` named, and with `finite` every other track that
+// ends on its own too, so only the endless loops (Track::repeat infinity:
+// blink, scan, sheen, pulse) go.
+struct MotionKeep {
+    MotionSlots slots;
+    bool finite{};
+};
 
 // An invisible hover/press target (HUDControlHighlightLayer.addTarget, Sources/
 // HUDControlHighlightLayer.swift:94-115) in its host layer's coordinates.
@@ -211,6 +235,9 @@ public:
     bool animating(double now) const noexcept;
     void removeMotion(MotionSlot) noexcept;
     void removeAllMotion() noexcept;
+    // Removes this layer's motion except what `keep` names; storage that ends
+    // up empty is given back. Not recursive: motion::removeMotion walks a subtree.
+    void removeAllMotion(MotionKeep keep) noexcept;
 
     LayerArena& arena() const noexcept { return *arena_; }
 private:
@@ -312,6 +339,11 @@ void colorKeyframes(Layer&, std::span<const Color> values, std::span<const doubl
 // A completion block (CATransaction completion): runs at `time` unless the
 // layer's arena died first.
 void after(Layer&, double time, const Clock&, std::function<void()>);
+// The one recursive strip (the Mac's removeAnimations(in:) over a layer and
+// its sublayers): Layer::removeAllMotion(keep) on `root` and every
+// descendant. Now Playing's stop keeps entranceSlots + leave; the HUD
+// close's stopLoops keeps every finite track ({{}, true}).
+void removeMotion(Layer& root, MotionKeep keep);
 }
 
 // ---------------------------------------------------------------------------

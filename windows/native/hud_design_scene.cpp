@@ -63,6 +63,8 @@ core::Rect inflated(const core::Rect& r, double vertical) { return {r.x, r.y - v
 // An entrance (stagger, wipe, pop, grow) on the layer or an ancestor up to
 // `root` is pending (its delay not over yet) or running: the layer is about to
 // show. A layer merely resting at opacity 0 (a hidden slider bubble) is not.
+// Not design::entranceSlots (HUDMotion.entranceKeys, what a strip keeps):
+// a pop counts here and a wipe's fade does not; keep the two sets apart.
 bool entering(const d::Layer& layer, const d::Layer& root, double now) noexcept {
     constexpr std::array slots{d::MotionSlot::enter, d::MotionSlot::wipe, d::MotionSlot::pop, d::MotionSlot::grow};
     for (const d::Layer* l = &layer; l; l = l == &root ? nullptr : l->parent()) {

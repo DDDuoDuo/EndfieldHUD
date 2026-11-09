@@ -109,6 +109,9 @@ public:
     class LyricWindow;
 private:
     struct Structure { core::Language language{}; bool playing{}; bool operator==(const Structure&) const = default; };
+    // NowPlayingCanvas.finiteKeys (:144): what the stop keeps on the hidden
+    // page, the entrance slots (the cover cross-fade included) and the leave.
+    static constexpr design::MotionSlots finiteKeys = design::entranceSlots | design::MotionSlots{design::MotionSlot::leave};
     NowPlayingCanvasServices services_;
     bool presented_{}, volumeOpen_{}, showsLyrics_{true}, lyricsVisible_{};
     std::optional<Structure> renderedStructure_;
