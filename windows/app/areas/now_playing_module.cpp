@@ -849,6 +849,37 @@ private:
         present(.5);
         step.check(title() == "EndfieldHUD Fixture 1" && origin() == modules::NowPlayingSessionOrigin::mediaSession && !playing() &&
                        service_->snapshot().media.sessions.size() == 1, "When the player exits the fixture media session is presented again");
+        if (step.cycle == 0) closingCoverage(step, t);
+    }
+    // C12 and OPEN-9, once: the close's start (the host's overlayClosing, then
+    // Volume's setVisible(false)) keeps Now Playing presented with its volume
+    // pop-up open and its audio vote, taking no input; the vote ends only with
+    // the presentation, at the hide. A reopen mid-close (the area's own path
+    // for it) ends that close's presentation first, as the hide does, and the
+    // next frame presents Now Playing again with a new provider.
+    void closingCoverage(app::ModuleCoverage& step, double t) {
+        const auto present = [&](double seconds) { t += seconds; observe(t); step.present(t); };
+        const auto startsAt = *starts_;
+        settle(step);
+        const bool popup = canvas_->perform("volume", t) && canvas_->volumeOpen();
+        present(.2);
+        step.check(popup && canvas_->volumeOpen() && audioFixture_->nowPlayingVisible(), "The volume pop-up is open before the close");
+        overlayClosing(t);
+        present(.05);
+        step.check(canvas_->presented() && canvas_->volumeOpen() && service_->snapshot().active && audioFixture_->nowPlayingVisible() &&
+                       !capturesPointer() && !pointerLocked() && !covers({1, 1}),
+                   "Through the close Now Playing stays presented, its volume pop-up open and its audio vote kept, taking no input");
+        present(.1);
+        step.check(canvas_->presented() && audioFixture_->nowPlayingVisible(), "The audio vote lasts through the close's frames (until the hide)");
+        setOverlayVisible(true, t);
+        step.check(!canvas_->presented() && !canvas_->volumeOpen() && !audioFixture_->nowPlayingVisible(),
+                   "Ending the close (the hide's path) unpresents Now Playing, closes the pop-up and withdraws the vote");
+        settle(step);
+        present(.5);
+        settle(step);
+        step.check(canvas_->presented() && service_->snapshot().active && audioFixture_->nowPlayingVisible(), "The next frame presents Now Playing again");
+        // The later cycles count one provider start per presentation from here.
+        startsBefore_ += *starts_ - startsAt;
     }
     void idleCoverage(app::ModuleCoverage& step) {
         settle(step); // e.g. the withdrawn audio vote's publication
