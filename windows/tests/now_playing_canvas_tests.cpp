@@ -353,6 +353,46 @@ void volumeLeavesWithPage() {
     check(layer.hidden() && !canvas.volumeOpen(), "The next showing hides it");
 }
 
+// OPEN-B5-5 (d6370b0 with B5-2): during a track change's page swap the
+// cover the owner draws stays anchored to the leaving page (its insertion
+// needs an anchor in the tree), leaving with it; the next page's cover is
+// drawn from its landing. A switch away mid-swap keeps the old page and its
+// cover until the module shows again.
+void coverLeavesWithPage() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    auto first = std::make_shared<endfield::native::NotesImageFrame>(); first->width = first->height = 960;
+    auto second = std::make_shared<endfield::native::NotesImageFrame>(); second->width = second->height = 961;
+    ctl.input.coverAvailable = true; ctl.cover = {first, nullptr, 960, 960}; ctl.input.coverRevision = 1;
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    const auto* shown = canvas.coverLayer();
+    check(shown && shown->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == first, "The shown page draws its cover");
+    const auto change = [&](std::string title, std::shared_ptr<endfield::native::NotesImageFrame> image, std::uint64_t revision) {
+        ctl.input.track->title = std::move(title); ctl.cover = {image, nullptr, image->width, image->height}; ctl.input.coverRevision = revision;
+        canvas.refresh(w.now);
+    };
+    w.now += 1; w.context.advance(w.now);
+    change("Ember Road", second, 2);
+    check(canvas.transitioning(), "A track change swaps the page");
+    check(canvas.coverLayer() == shown && shown->isDescendant(canvas.root()) && canvas.coverViews(w.now + .05)[1].image == first, "Mid-swap the leaving page keeps its cover and anchors it");
+    w.now += .14; w.context.advance(w.now);
+    check(!canvas.transitioning() && canvas.coverLayer() != shown && canvas.coverLayer()->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == second,
+        "Landed, the next page's cover is drawn");
+    // Caught by a switch away: the old page finishes leaving with its cover; the next showing lands the new one.
+    const auto* landed = canvas.coverLayer();
+    w.now += 1; w.context.advance(w.now);
+    auto third = std::make_shared<endfield::native::NotesImageFrame>(); third->width = third->height = 962;
+    change("Lanterns", third, 3);
+    w.now += .05; w.context.advance(w.now);
+    canvas.setPresented(false, w.now); canvas.prepareToLeave(w.now); canvas.setActive(false, w.now);
+    check(canvas.coverLayer() == landed && landed->isDescendant(canvas.root()) && canvas.coverViews(w.now)[1].image == second, "The departing page keeps its cover through its leave");
+    canvas.setPresented(true, w.now); canvas.show(w.now); canvas.setActive(true, w.now);
+    check(canvas.coverLayer() != landed && canvas.coverLayer()->isDescendant(canvas.root()), "The next showing anchors the landed page's cover");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -433,6 +473,7 @@ int main(int argc, char** argv) {
         stopKeepsFiniteMotion();
         coverCrossFade();
         volumeLeavesWithPage();
+        coverLeavesWithPage();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);

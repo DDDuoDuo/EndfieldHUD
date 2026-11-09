@@ -353,14 +353,22 @@ std::optional<std::string> NowPlayingCanvas::identity() const {
 // the owner asks every frame it draws).
 std::array<NowPlayingCanvas::CoverView, 2> NowPlayingCanvas::coverViews(double now) const noexcept {
     std::array<CoverView, 2> out{};
-    if (!art_[0]) return out;
+    const auto& art = leavingCover_ ? leavingCover_->art : art_;
+    const auto& covers = leavingCover_ ? leavingCover_->covers : covers_;
+    const double fadeEnd = leavingCover_ ? leavingCover_->fadeEnd : fadeEnd_;
+    if (!art[0]) return out;
     const auto view = [&](std::size_t n) {
-        const auto& c = covers_[n];
-        return CoverView{art_[n], c.image, c.backdrop, coverFrame(c.width, c.height, bool(c.backdrop), env().text.boxScale)};
+        const auto& c = covers[n];
+        return CoverView{art[n], c.image, c.backdrop, coverFrame(c.width, c.height, bool(c.backdrop), env().text.boxScale)};
     };
-    if (covers_[0].image && now < fadeEnd_) out[0] = view(0);
-    if (covers_[1].image) out[1] = view(1);
+    if (covers[0].image && now < fadeEnd) out[0] = view(0);
+    if (covers[1].image) out[1] = view(1);
     return out;
+}
+// The leaving page's cover stays until that page left the tree (a swap
+// landed, a concealed settle landed or was dropped): every such path installs.
+void NowPlayingCanvas::didInstall(d::Page&) {
+    if (leavingCover_ && !leavingCover_->plate->isDescendant(root())) leavingCover_.reset();
 }
 Rect NowPlayingCanvas::coverFrame(unsigned width, unsigned height, bool backdrop, double boxScale) noexcept {
     const double side = Layout::cover.width;
@@ -430,6 +438,9 @@ void NowPlayingCanvas::buildPage(d::Page& page) {
     // slot at the quantised boxScale for the layout and half a density step
     // more for decoding a cover that is not small (nowPlayingCoverSlot).
     if (services_.setArtworkPixels) services_.setArtworkPixels(nowPlayingCoverSlot(Layout::cover.width, env().text.boxScale));
+    // A swap's next page: the shown page keeps its cover until it left (a
+    // rebuild of that next page keeps the one recorded first).
+    if (buildingStagedPage() && cover_ && !leavingCover_ && cover_->isDescendant(root())) leavingCover_ = LeavingCover{cover_, art_, covers_, fadeEnd_};
     volumeOpen_ = false; volumeGesture_.reset(); displayed_.reset(); covers_ = {}; lyricsVisible_ = false; art_ = {};
     parts_.clear();
     const auto& track = input().track;

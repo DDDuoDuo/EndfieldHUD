@@ -82,8 +82,12 @@ public:
     bool showsLyrics() const noexcept { return showsLyrics_; }
     bool clockActive() const noexcept { return clockDeadline_.has_value(); }
     // The covers to draw (bottom first) and the cover layer (their clip).
+    // While a track change's page swap runs (or a module leave settled it
+    // concealed), these are the leaving page's: its cover leaves with it
+    // (OPEN-B5-5: d6370b0's departing page keeps its cover). The next page's
+    // own cover is drawn from its landing.
     std::array<CoverView, 2> coverViews(double now) const noexcept;
-    const design::Layer* coverLayer() const noexcept { return cover_; }
+    const design::Layer* coverLayer() const noexcept { return leavingCover_ ? leavingCover_->plate : cover_; }
     static std::string time(std::optional<double>);   // NowPlayingCanvas.time (:395-398)
     // previous, playPause, next, volume, lyrics (perform(actionID:), :588).
     bool perform(std::string_view actionID, double now) { return performAccessibilityAction(actionID, now); }
@@ -124,6 +128,15 @@ private:
     NowPlayingCover displayed_;
     std::array<NowPlayingCoverArt, 2> covers_{}; // what the two art layers show (bottom, top)
     double fadeEnd_{};               // the cross-fade's end: the old cover drops then
+    // The shown page's cover when a swap builds the next page (buildPage
+    // overwrites cover_, art_ and covers_ for it), until that page lands.
+    struct LeavingCover {
+        design::Layer* plate{};
+        std::array<design::Layer*, 2> art{};
+        std::array<NowPlayingCoverArt, 2> covers{};
+        double fadeEnd{};
+    };
+    std::optional<LeavingCover> leavingCover_;
     // Elements of the current page, updated in place between rebuilds.
     design::Layer *cover_{}, *placeholder_{}, *titleText_{}, *artistText_{}, *elapsedText_{}, *durationText_{};
     std::array<design::Layer*, 2> art_{};
@@ -143,6 +156,7 @@ private:
     void update(bool animated);
     bool canSeek() const;
     void showArt(bool animated);
+    void didInstall(design::Page&) override;
     void setLyricsVisible(bool visible, bool animated);
     std::optional<double> displayedElapsed() const;
     void updateClock(bool animated);

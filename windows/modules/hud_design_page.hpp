@@ -392,6 +392,9 @@ public:
     // new palette) whose content the scene tracks like the canvas's; nullptr
     // stops tracking. Create it with &env().deadlines for completions.
     void trackArena(const LayerArena* arena) noexcept { tracked_ = arena; }
+    // True while buildPage builds a sub-page swap's next page (Q4: built when
+    // the swap starts, installed when it lands); the shown page is still page().
+    bool buildingStagedPage() const noexcept { return staging_; }
     // Runs after a built page is installed (in place, at once, or when a
     // sub-page swap lands). The Mac builds the next page when the swap lands;
     // here it is built when the swap starts (Q4), so a canvas-owned component
