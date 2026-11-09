@@ -74,6 +74,19 @@ void manyReferences(){
     check(sawMixed,"Import and active playback make interleaved progress without starvation");
     decoder.setInspections({});decoder.hide();stop(decoder);check(probe->opens==probe->closes,"Large collection closes all independent codec leases");
 }
+// No decoder survives a hide (NotesMedia.swift:320-345): a request hidden and
+// shown again before the worker wakes opens its file again, however late the
+// worker runs; one shown on through an unrelated change keeps its decoder.
+void reshown(){Window w;auto probe=std::make_shared<Probe>();probe->block=true;
+    n::NativeNotesImageDecoder decoder(resolver(probe),w.route(8),factory(probe));const std::array one{request(60)};
+    decoder.setVisible(one);check(WaitForSingleObject(probe->entered.value,10000)==WAIT_OBJECT_0,"The first showing's decode holds the worker");
+    decoder.hide();check(decoder.setVisible(one),"The same request is shown again while the worker is still busy");
+    SetEvent(probe->release.value);const auto shown=collect(decoder,w,8,1);
+    check(SUCCEEDED(shown.front().result)&&shown.front().frame&&probe->opens==2&&probe->decodes==2,"A request hidden and shown again reopens its file instead of keeping the hidden showing's decoder");
+    const std::array two{request(60),request(61)};decoder.setVisible(two);collect(decoder,w,8,1);check(probe->opens==3,"An added request opens its own file");
+    decoder.requestFrame(one.front().key,1);const auto next=collect(decoder,w,8,1);
+    check(next.front().frame&&next.front().frame->index==1&&probe->opens==3,"A request shown on through an unrelated change keeps its decoder");
+    decoder.hide();stop(decoder);check(probe->opens==probe->closes,"Every reopened file closes");}
 void blockedStop(){Window w;auto probe=std::make_shared<Probe>();probe->block=true;auto decoder=std::make_unique<n::NativeNotesImageDecoder>(resolver(probe),w.route(5),factory(probe));const std::array one{request(90)};decoder->setVisible(one);check(WaitForSingleObject(probe->entered.value,10000)==WAIT_OBJECT_0,"Shutdown fixture enters bounded fake codec");Handle done(decoder->duplicateWorkerHandle());auto begin=GetTickCount64();decoder.reset();check(GetTickCount64()-begin<1000,"Facade destruction does not join blocked decoder");rejects([&]{n::NativeNotesImageDecoder another(resolver(probe),{},factory(probe));},"A blocked stopped codec cannot accumulate process workers");SetEvent(probe->release.value);check(WaitForSingleObject(done.value,10000)==WAIT_OBJECT_0&&probe->opens==probe->closes,"Worker cleanup remains safe after owner destruction");MSG msg{};check(!PeekMessageW(&msg,w.hwnd,Window::notice,Window::notice,PM_REMOVE),"No completion sent after owner route clears");}
 std::string utf8(const std::filesystem::path&p){auto s=p.u8string();return {reinterpret_cast<const char*>(s.data()),s.size()};}
 void write(const std::filesystem::path&path,std::span<const std::uint8_t>bytes){std::ofstream stream(path,std::ios::binary);stream.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(bool(stream),"Write only newly owned tiny image fixture");}
@@ -108,7 +121,7 @@ void errors(){
     for(const auto&r:results){check(FAILED(r.result),"Unreadable media fails explicitly");check(n::notesMediaError(r.result)==(r.key=="missing"?E::unavailable:E::unsupportedFormat),"Worker results carry the source error category");}
     decoder.hide();stop(decoder);std::error_code ignored;std::filesystem::remove_all(root,ignored);
 }
-int main(){try{generations();manyReferences();blockedStop();wic();errors();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{generations();manyReferences();reshown();blockedStop();wic();errors();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){std::cout<<"Windows WIC/worker fixture requires Windows; not executed on this platform\n";return 0;}
 #endif
