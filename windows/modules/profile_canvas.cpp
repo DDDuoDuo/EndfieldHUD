@@ -1080,7 +1080,8 @@ void ProfileCanvas::openMoreMenu(const d::Control& anchor) {
 bool ProfileCanvas::canUseSystemAccount() const {
     if (!store_ || !profile_.systemAccount.value) return false;
     return (canEdit(ProfileField::name) && !profile_.followsSystemName())
-        || (canEdit(ProfileField::playerID) && profile_.playerIDOverride)
+        || (canEdit(ProfileField::playerID)
+            && (profile_.playerIDOverride || (profile_.gamePlayerID && profile_.systemAccount.value->uid)))
         || profile_.avatarFilename || (!profile_.autoAvatar && profile_.systemAccount.value->avatarKey);
 }
 // A field a game sync owns is left to the sync; clearing the picture turns

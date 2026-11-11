@@ -63,7 +63,15 @@ struct NativeProjectedEditor::Impl {
         :document(d,capacity.maximumUnits),rich(richValue),history(historyValue?historyValue:richValue),scene(&s),style(std::move(styleValue)),options(std::move(opts)){
         richLayout=rich&&rich->richText().has_value();if(rich)paragraphText=document.text();options.paddingPoints=0;options.retainEmptyTextLayout=true;options.plainTextDocument=!rich&&!style.naturalParagraphSpacingOne;options.richTextDocument=rich!=nullptr||style.naturalParagraphSpacingOne;options.textDocumentOffset={};options.retainedPlainText.reset();options.revealPlainTextPosition.reset();validate(style,options);need(s.contentRevision()==0&&s.draws().empty(),"Projected editor needs its dedicated initially empty borrowed scene");}
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Projected editor used outside its creating thread");need(alive&&!stopped,"Projected editor is stopped");}
-    void current()const{onThread();need(layout&&layout->textRevision()==document.revision(),"Synchronize editor text before geometry/navigation");}
+    bool layoutCurrent() const { return layout && layout->textRevision() == document.revision(); }
+    void current() const { onThread(); need(layoutCurrent(), "Synchronize editor text before geometry/navigation"); }
+    // A frame or input can run before the posted TSF change arrives. During
+    // a TSF lock sync() leaves the layout alone, so defer to that notification.
+    bool syncLayout() {
+        onThread();
+        if (!layoutCurrent()) sync();
+        return alive && layoutCurrent();
+    }
     Json base(unsigned slot)const{return Json::Object{{"id",ids[slot]},{"class","CAShapeLayer"},{"kind","shape"},{"bounds",Json::Array{0,0,style.width,style.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"opacity",1},{"children",Json::Array{}}};}
     void reconcileParagraphs(){
         if(!rich||paragraphText==document.text())return;const auto next=document.text();
@@ -196,7 +204,7 @@ ITextStoreACP* NativeProjectedEditor::textStore()const noexcept{return impl_->in
 bool NativeProjectedEditor::syncContent(){auto i=impl_;return i->sync();}
 bool NativeProjectedEditor::setStyle(const ProjectedEditorStyle& style){auto i=impl_;i->onThread();auto options=i->options;options.richTextDocument=i->rich!=nullptr||style.naturalParagraphSpacingOne;validate(style,options);need(style.width==i->style.width&&style.height==i->style.height,"Short editor viewport resize requires owner replacement; long-document relayout is separate");if(style==i->style)return false;auto paintedStyle=style;paintedStyle.cornerRadius=i->style.cornerRadius;i->styleDirty|=paintedStyle!=i->style;i->style=style;i->poseReady=false;return true;}
 bool NativeProjectedEditor::setPose(const ProjectedEditorPose& pose){
-    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1&&pose.clip.size()<=ProjectedEditorPose::maximumClips,"Invalid projected editor pose");
+    auto i=impl_;if(!i->syncLayout())return false;need(i->scene->contentRevision()==i->structureRevision,"Editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1&&pose.clip.size()<=ProjectedEditorPose::maximumClips,"Invalid projected editor pose");
     const auto inverse=core::source::inverseSourceMatrix(pose.localToScreen);
     const auto clips=pose.clip.size();const bool sameClip=std::equal(pose.clip.begin(),pose.clip.end(),i->pose.clip.begin(),i->pose.clip.end());
     const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{i->horizontal,i->scroll},pose.visible,i->style.cornerRadius};
@@ -205,7 +213,8 @@ bool NativeProjectedEditor::setPose(const ProjectedEditorPose& pose){
         // A blink frame (R8): only the caret surface's opacity changes.
         auto&caret=i->placements[3];const auto selection=i->document.selection();caret.opacity=(pose.visible&&pose.ownerFocused&&pose.caretVisible&&selection.range.start==selection.range.end)?pose.opacity*pose.caretOpacity:0.f;
         i->scene->setPlacements(i->placements);i->pose.caretOpacity=pose.caretOpacity;return true;}
-    const auto placementResult=i->input->setPlacement(placement);if(!i->alive)return false;checked(placementResult,"Update projected editor candidate plane");
+    const auto placementResult=i->input->setPlacement(placement);if(!i->alive||placementResult==TS_E_NOLOCK)return false;checked(placementResult,"Update projected editor candidate plane");
+    if (!i->layoutCurrent()) return false; // A synchronous TSF layout notification can edit the text again.
     const auto selection=i->document.selection();const bool selectionVisible=selection.range.start!=selection.range.end;
     for(unsigned k=0;k<4;++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;if(k==3)out.world=out.world*core::Matrix4::translation(i->caretRect.x-i->horizontal,i->caretRect.y-i->scroll);out.opacity=pose.visible?pose.opacity:0;
         if((k==0&&!selectionVisible)||(k==2&&!i->document.composition())||(k==3&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;else if(k==3)out.opacity*=pose.caretOpacity;
@@ -268,7 +277,9 @@ bool NativeProjectedEditor::richLayoutEnabled()const noexcept{return impl_->rich
 ProjectedEditorResult NativeProjectedEditor::command(ProjectedEditorCommand command,bool extend){
     auto i=impl_;i->onThread();i->highUnit.reset();
     if(command==ProjectedEditorCommand::finish){if(i->document.composition()){const auto hr=i->input->cancelComposition();if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Cancel unconsumed IME composition");return {true,true,false};}return {true,false,true};}
-    if(i->document.composition())return {};i->current();const auto selection=i->document.selection();auto range=selection.range;const auto at=selection.activeEnd==text::ActiveEnd::start?range.start:range.end;
+    if (i->document.composition()) return {};
+    if (!i->syncLayout() || i->document.composition()) return {true,false,false};
+    const auto selection=i->document.selection();auto range=selection.range;const auto at=selection.activeEnd==text::ActiveEnd::start?range.start:range.end;
     switch(command){
     case ProjectedEditorCommand::selectAll:{const auto n=std::uint32_t(i->document.text().size());const auto hr=i->input->selectFromHost({{0,n},text::ActiveEnd::end,false});if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select entire bounded editor");i->revealPending=true;return {true,true,false};}
     case ProjectedEditorCommand::left:case ProjectedEditorCommand::right:{const bool left=command==ProjectedEditorCommand::left;const auto target=!extend&&range.start!=range.end?(left?range.start:range.end):(left?i->layout->previousCluster(at):i->layout->nextCluster(at));return i->select(target,extend);}
@@ -289,8 +300,17 @@ ProjectedEditorResult NativeProjectedEditor::character(std::uint32_t value,bool 
     return i->replace(i->document.selection().range,{units.data(),size});}
 ProjectedEditorResult NativeProjectedEditor::replaceTextFromHost(text::Range range,std::u16string_view value){auto i=impl_;i->onThread();i->highUnit.reset();return i->replace(range,value);}
 ProjectedEditorResult NativeProjectedEditor::setSelectionFromHost(text::Selection selection){auto i=impl_;i->onThread();i->highUnit.reset();const auto previous=i->document.selection();const auto hr=i->input->selectFromHost(selection);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Restore projected editor selection");if(i->alive)i->revealPending=true;return {true,selection!=previous,false};}
-ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedInsertion(i->document,*i->layout,point,i->placement);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
-ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->document.composition()||!i->poseReady||!i->placement.visible)return {};
+bool NativeProjectedEditor::preparePointer() {
+    auto i = impl_;
+    i->onThread();
+    if (i->document.composition() || !i->poseSet) return false;
+    if (!i->poseReady || !i->layoutCurrent()) setPose(i->pose);
+    return i->alive && i->poseReady && i->layoutCurrent() && !i->document.composition();
+}
+ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){
+    auto i=impl_;if(!preparePointer())return {};
+    const auto at=text::projectedInsertion(i->document,*i->layout,point,i->placement);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
+ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;if(!i->dragging||!preparePointer()||!i->placement.visible)return {};
     // Source text view passes the actual unprojected point outside its viewport
     // to document hit-testing, then reveals the resulting active selection.
     const auto local=i->placement.projection.unproject(point);if(!local)return {};

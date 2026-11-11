@@ -88,6 +88,7 @@ public:
     bool setStyle(const ProjectedEditorStyle&); // syncContent then setPose; radius alone never rerasterizes
     // Same world/camera drive glyphs, adornments, pointer and TSF geometry.
     // No raster/JSON/text measurement/allocation on unchanged-document frames.
+    // Pending text changes are synchronized here, or deferred while TSF holds a lock.
     bool setPose(const ProjectedEditorPose&);
     // Logical document points, positive downward. Requires synchronized text.
     // Repaints only viewport pixels from the same DWrite layout and refreshes
@@ -123,9 +124,9 @@ public:
     // Invalid ranges, active composition and store locks decline unchanged;
     // success notifies selection only. Caller synchronizes painted adornments.
     ProjectedEditorResult setSelectionFromHost(core::text::Selection);
-    // Client PHYSICAL pixels. Host owns actual focus/capture. Call syncContent
-    // before hit/cluster navigation after a Document text revision. A press
-    // anywhere in the viewport, and a drag anywhere, take the source NSTextView
+    // Client PHYSICAL pixels. Host owns actual focus/capture. Hit testing
+    // uses the latest text and pose, and waits when a TSF lock prevents a sync.
+    // A press anywhere in the viewport, and a drag anywhere, take the source NSTextView
     // insertion point (core::text::insertionHit): right of a line its end.
     ProjectedEditorResult pointerDown(core::Point,bool extend=false);
     ProjectedEditorResult pointerDrag(core::Point);
@@ -135,6 +136,7 @@ public:
     LayerScene& scene()const noexcept;
     std::uint64_t paintRevision()const noexcept;
 private:
+    bool preparePointer();
     struct Impl;std::shared_ptr<Impl> impl_;
 };
 } // namespace endfield::native

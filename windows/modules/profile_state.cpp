@@ -348,7 +348,10 @@ void ProfileState::publishSystemAccount(){
 bool ProfileState::useSystemAccount(bool name,bool playerID){
     return update([&](PersonalProfile&p){
         if(name){p.name=std::string(ehud::data::Profile::defaultName);p.autoName=true;}
-        if(playerID)p.playerIDOverride.reset();
+        if (playerID && !locked_.contains(ehud::data::ProfileSyncField::uid)) {
+            p.playerIDOverride.reset();
+            if (p.systemAccount.value && p.systemAccount.value->uid) p.gamePlayerID.reset();
+        }
         p.avatarFilename.reset();p.avatarZoom=1;p.avatarOffsetX=p.avatarOffsetY=0;p.autoAvatar=true;});
 }
 std::uint64_t ProfileState::observe(std::function<void()>fn){const auto id=nextObserver_++;observers_.emplace_back(id,std::move(fn));return id;}

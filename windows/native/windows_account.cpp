@@ -56,12 +56,14 @@ WindowsAccountCalls currentWindowsAccountCalls() {
         GetUserNameExW(NameDisplay, nullptr, &length);
         if (length == 0 || length > 4096) return std::nullopt;
         std::wstring text(length, L'\0');
-        return stringFrom(GetUserNameExW(NameDisplay, text.data(), &length), std::move(text), length);
+        const BOOL ok = GetUserNameExW(NameDisplay, text.data(), &length);
+        return stringFrom(ok, std::move(text), length);
     };
     calls.userName = []() -> std::optional<std::wstring> {
         std::wstring text(UNLEN + 1, L'\0');
         DWORD length = static_cast<DWORD>(text.size());
-        return stringFrom(GetUserNameW(text.data(), &length), std::move(text), length);
+        const BOOL ok = GetUserNameW(text.data(), &length);
+        return stringFrom(ok, std::move(text), length);
     };
     calls.fullName = [user = calls.userName]() -> std::optional<std::wstring> {
         const auto name = user();

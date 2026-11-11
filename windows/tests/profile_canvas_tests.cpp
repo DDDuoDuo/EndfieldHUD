@@ -771,6 +771,15 @@ void systemAccountMenu() {
     check(!item(canvas).first.enabled, "Nothing chosen: the account already shows, the item is off");
     store->update([](m::PersonalProfile& p) { p.autoAvatar = false; });
     check(!item(canvas).first.enabled, "The default picture counts only when there is an account picture to show");
+    store->update([](m::PersonalProfile& p) { p.gamePlayerID = "4000500060"; });
+    check(item(canvas).first.enabled, "Windows account info can replace a cached game UID when UID sync is off");
+    store->setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::uid));
+    check(!item(canvas).first.enabled, "Windows account info cannot replace a synced game UID");
+    store->useSystemAccount(false);
+    check(store->profile().displayedUID() == "4000500060", "The synced game UID stays when applying Windows account info");
+    store->setSyncLocked({});
+    canvas.perform("profile:menu", w.now); canvas.perform("profile.more:system", w.now);
+    check(!store->profile().gamePlayerID && store->profile().displayedUID() == "1001", "Choosing Windows account info shows the RID instead of the cached game UID");
     store->update([](m::PersonalProfile& p) { p.playerIDOverride = "42"; });
     check(item(canvas).first.enabled, "A Player ID override is a chosen value");
     store->setSyncLocked(ehud::data::ProfileSyncFields{}.with(ehud::data::ProfileSyncField::uid));

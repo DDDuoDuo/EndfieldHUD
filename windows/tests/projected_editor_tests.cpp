@@ -479,8 +479,25 @@ void pointerInsertion(HWND hwnd){
     ComPtr<FakeRange>range;range.Attach(new FakeRange(0,1));ComPtr<FakeView>view;view.Attach(new FakeView(range.Get()));
     locked(store,sink.Get(),[&]{BOOL accepted{};ok(owner->OnStartComposition(view.Get(),&accepted),"Start synthetic marked text");check(accepted!=FALSE,"Synthetic composition accepted");});
     const auto marked=doc.selection();check(!editor.pointerDown(client(right,lineY(0))).handled&&doc.selection()==marked&&doc.composition().has_value(),"Marked text declines a press right of a line and keeps its composition");
-    locked(store,sink.Get(),[&]{ok(owner->OnEndComposition(view.Get()),"End synthetic marked text");});
     check(doc.text()==value,"Pointer insertion never edits the text");
+    locked(store, sink.Get(), [&] {
+        TS_TEXTCHANGE delta{};
+        ok(store->SetText(0, 0, 1, L"\u4e2d", 1, &delta), "IME writes a provisional character before the owner notice");
+        check(editor.layout().textRevision() != doc.revision(), "The IME write leaves the previous layout pending");
+        check(!editor.setPose(pose), "A frame during the write lock keeps the previous layout");
+        check(!editor.pointerDown(client(right, lineY(0))).handled, "A click during marked text leaves the IME in control");
+    });
+    check(editor.setPose(pose) && editor.layout().painted()->text() == doc.text(), "A frame before the queued notice paints provisional text once the lock is released");
+    const auto firstLineY = lineY(0);
+    locked(store, sink.Get(), [&] {
+        TS_TEXTCHANGE delta{};
+        ok(store->SetText(0, 0, 1, L"\u6587", 1, &delta), "IME supplies its final character");
+        ok(owner->OnEndComposition(view.Get()), "End synthetic marked text");
+        check(!editor.pointerDown(client(right, firstLineY)).handled, "A click during the commit lock defers hit testing");
+    });
+    check(editor.pointerDown(client(right, firstLineY)).handled && selected(2, 2), "A click before the owner notice uses the newly committed layout");
+    editor.pointerUp();
+    check(doc.text().front() == u'\u6587' && editor.layout().painted()->text() == doc.text(), "The committed character is preserved and painted");
     ok(store->UnadviseSink(sink.Get()),"Detach pointer fixture sink");ok(editor.stop(),"Stop pointer fixture");check(!IsWindowVisible(hwnd),"Pointer fixture stays hidden");
 }
 void explicitCompositionCommit(HWND hwnd){

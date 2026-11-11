@@ -598,6 +598,10 @@ void contracts() {
         check(field.editing() && field.text() == "ABCDEFGHIJKLMNOPQRSTUVWX", "A field being edited is not refreshed under the typing");
         host.typed = "Typed"; field.endEditing(true);
         check(committed().overlayLayout().titleText == "Typed", "Its commit saves what was typed");
+        const std::string multilingualTitle = "\xe7\xbb\x88\xe6\x9c\xab \xe3\x81\xae \xed\x95\x9c";
+        field.beginEditing(); host.typed = multilingualTitle; field.endEditing(true);
+        check(committed().overlayLayout().titleText == multilingualTitle && field.text() == multilingualTitle,
+            "A custom title preserves Chinese, Japanese and Korean text in the field and settings");
         w.update([](Settings& s) { auto l = s.overlayLayout(); l.titleText = "Talos"; s.setOverlayLayout(l); });
         check(field.text() == "Talos", "An idle field shows the saved text");
         // A longer saved text (no character rule: as a hand-edited file keeps
