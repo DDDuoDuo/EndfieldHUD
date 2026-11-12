@@ -17,8 +17,12 @@ void need(bool value,const char*message){if(!value)throw std::invalid_argument(m
 // Quit. Not WS_EX_NOACTIVATE: the menu needs its owner in the foreground to
 // close on an outside click.
 constexpr wchar_t menuOwnerClass[]=L"EndfieldHUD.TrayMenuOwner";
+// Ignores WM_CLOSE (Alt+F4 while it holds the foreground after a menu), which
+// DefWindowProc would answer by destroying it and leaving the tray without
+// its menu until restart. It lives as long as its tray.
+LRESULT CALLBACK menuOwnerProcedure(HWND window,UINT message,WPARAM w,LPARAM l){return message==WM_CLOSE?0:DefWindowProcW(window,message,w,l);}
 HWND createMenuOwner(){
-    WNDCLASSEXW type{};type.cbSize=sizeof(type);type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=menuOwnerClass;
+    WNDCLASSEXW type{};type.cbSize=sizeof(type);type.lpfnWndProc=menuOwnerProcedure;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=menuOwnerClass;
     if(!RegisterClassExW(&type)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return nullptr;
     return CreateWindowExW(WS_EX_TOOLWINDOW,menuOwnerClass,L"",WS_POPUP,0,0,1,1,nullptr,nullptr,type.hInstance,nullptr);
 }

@@ -53,6 +53,11 @@ void run(){
      check(!IsWindowVisible(owner)&&GetWindowRect(owner,&rect)&&rect.right-rect.left<=1&&rect.bottom-rect.top<=1,"The menu's owner is never shown and 1x1, not monitor-sized");
      check((extended&WS_EX_TOOLWINDOW)&&!(extended&WS_EX_NOACTIVATE),"The menu's owner has no taskbar button and can take the foreground");
      check(!endfield::tests::obsTakesAsFullscreen(owner),"OBS's any-full-screen rule never takes the menu's owner");
+     // Alt+F4 on the menu's owner (WM_SYSCOMMAND SC_CLOSE, then WM_CLOSE)
+     // keeps it, so the next menu still has its owner.
+     SendMessageW(owner,WM_SYSCOMMAND,SC_CLOSE,0);SendMessageW(owner,WM_CLOSE,0,0);
+     fake.inMenu={};fake.choice=TrayAction::none;fake.menuOwner={};SendMessageW(hwnd,callback,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
+     check(IsWindow(owner)&&fake.menus==2&&fake.menuOwner==owner&&!tray.takeAction(),"Closing the menu's owner leaves it in place for the next menu");
      HWND scoped{};{Fake other;TrayController scopedTray(hwnd,callback+1,explorer,other.platform());check(scopedTray.start(icon,L"Scoped"),"A second tray starts");
         scopedTray.setMenu({{TrayAction::quit,L"Quit"}});scopedTray.message(callback+1,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));scoped=other.menuOwner;
         check(other.menus==1&&scoped&&IsWindow(scoped)&&scoped!=owner&&scoped!=hwnd,"Each tray creates its own menu owner");}
