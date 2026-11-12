@@ -456,6 +456,22 @@ void storage() {
     controller.completeCapacity(read.token, {{disks[0], volume("data", "Data", 2000000000000, 500000000000, false, true)}, std::nullopt}, w.now); canvas.controllerChanged(w.now);
     check(!canvas.transitioning() && canvas.header().counterText() == "75.0%" && canvas.cellFill() == std::pair{30, false} && text(canvas, "storage.used.numeral.value") == "75.0",
         "A read after the switch updates the page in place");
+    // Re-renders asked for during a sub-page swap (render scale, Recording
+    // mode, palette; Mac ee13e4b) rebuild only the staged page from the
+    // latest state: the leaving page and header keep theirs, one page lands.
+    w.advance(1);
+    canvas.navigate(0, 1);
+    w.advance(.05);
+    controller.refresh(w.now); read = *controller.takeCapacityRequest();
+    controller.completeCapacity(read.token, {disks, std::nullopt}, w.now);
+    const auto built = w.context.pagesBuilt();
+    canvas.renderScaleChanged(); canvas.recordingModeChanged(); canvas.paletteChanged();
+    check(canvas.transitioning() && w.context.pagesBuilt() == built + 3 && pagesInTree(canvas) == 1, "Re-renders during the swap rebuild only the staged page");
+    check(canvas.header().counterText() == "75.0%" && text(canvas, "dropdown.value") == "Data" && text(canvas, "storage.used.numeral.value") == "75.0" && litCells(canvas) == 30
+        && pageReadout(canvas).value == "Total 2.00 TB, Used 1.50 TB, Available 500.0 GB, 75.0%", "Re-renders during the swap leave the leaving page and header alone");
+    w.advance(.1);
+    check(!canvas.transitioning() && pagesInTree(canvas) == 1 && canvas.header().counterText() == "25.0%" && litCells(canvas) == 10
+        && text(canvas, "storage.used.numeral.value") == "25.0", "The swap lands the page re-rendered from the latest state");
     // Mount events re-list (after a read in flight).
     controller.refresh(w.now);
     read = *controller.takeCapacityRequest();
