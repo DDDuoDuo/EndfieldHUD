@@ -21,12 +21,16 @@ struct TrayPlatform {
     std::function<bool(DWORD,NOTIFYICONDATAW&)>notify;
     std::function<bool(HWND,int,UINT,UINT)>registerHotkey;
     std::function<void(HWND,int)>unregisterHotkey;
+    // The HWND is the menu's owner window (the tray's own, never the HUD's).
     std::function<TrayAction(HWND,POINT,const std::vector<TrayMenuItem>&)>menu;
     std::function<DWORD()>lastError;
 };
 TrayPlatform nativeTrayPlatform();
-// Borrows the persistent shell HWND and HICON; creates no window, timer or
-// worker. Stop before destroying either. All methods run on the owner thread.
+// Borrows the persistent shell HWND and HICON; creates no timer or worker,
+// and one window: the menu's never-shown 1x1 owner, which takes the
+// foreground while the menu is open instead of the shell HWND (the HUD
+// window). The icon, its callbacks and the hotkey stay on the shell HWND.
+// Stop before destroying either. All methods run on the owner thread.
 // Forward its callback, registered TaskbarCreated and WM_HOTKEY messages from
 // that existing HWND. The owner handles actions after takeAction(), preventing
 // a nested native menu loop from destroying its own caller.
@@ -50,7 +54,7 @@ public:
     std::optional<TrayHotkey>hotkey()const noexcept{return hotkey_;}
     DWORD lastError()const noexcept{return error_;}
 private:
-    HWND owner_;DWORD thread_;UINT callback_,taskbarCreated_;
+    HWND owner_,menuOwner_{};DWORD thread_;UINT callback_,taskbarCreated_;
     TrayPlatform platform_;HICON icon_{};std::wstring tooltip_;
     std::vector<TrayMenuItem>menu_;std::optional<TrayAction>action_;
     std::optional<TrayHotkey>hotkey_;int hotkeyID_{};

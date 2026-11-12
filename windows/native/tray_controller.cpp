@@ -8,6 +8,20 @@ namespace endfield::native {
 namespace {
 constexpr UINT iconID=1;constexpr int firstHotkey=0x4548,secondHotkey=0x4549;
 void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}
+// The tray menu's owner: a never-shown 1x1 tool window (no taskbar button)
+// that takes the foreground while the menu is open, so the menu never makes
+// the HUD window the foreground window. OBS Studio's Game Capture, in its
+// "Capture any full-screen application" mode, hooks a foreground window
+// whose rectangle matches its monitor, hidden or not, and keeps it until the
+// window is destroyed; the HUD window covers its monitor and lives until
+// Quit. Not WS_EX_NOACTIVATE: the menu needs its owner in the foreground to
+// close on an outside click.
+constexpr wchar_t menuOwnerClass[]=L"EndfieldHUD.TrayMenuOwner";
+HWND createMenuOwner(){
+    WNDCLASSEXW type{};type.cbSize=sizeof(type);type.lpfnWndProc=DefWindowProcW;type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=menuOwnerClass;
+    if(!RegisterClassExW(&type)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return nullptr;
+    return CreateWindowExW(WS_EX_TOOLWINDOW,menuOwnerClass,L"",WS_POPUP,0,0,1,1,nullptr,nullptr,type.hInstance,nullptr);
+}
 bool validText(std::wstring_view text,std::size_t limit){if(text.empty()||text.size()>limit)return false;for(std::size_t n=0;n<text.size();++n){const auto c=static_cast<unsigned>(text[n]);if(c==0)return false;if(c>=0xd800&&c<=0xdbff){if(++n>=text.size()||text[n]<0xdc00||text[n]>0xdfff)return false;}else if(c>=0xdc00&&c<=0xdfff)return false;}return true;}
 }
 bool validTrayHotkey(TrayHotkey key)noexcept{return !(key.modifiers&~(MOD_ALT|MOD_CONTROL|MOD_SHIFT|MOD_WIN))&&key.key>=VK_BACK&&key.key<=0xfe&&key.key!=VK_F12&&key.key!=VK_SHIFT&&key.key!=VK_CONTROL&&key.key!=VK_MENU&&key.key!=VK_LWIN&&key.key!=VK_RWIN&&key.key!=VK_PROCESSKEY&&key.key!=VK_PACKET;}
@@ -21,7 +35,8 @@ TrayPlatform nativeTrayPlatform(){return {
         for(const auto&item:items){const UINT flags=item.separator?MF_SEPARATOR:MF_STRING|(item.enabled?MF_ENABLED:MF_GRAYED)|(item.checked?MF_CHECKED:MF_UNCHECKED);
             if(!AppendMenuW(menu,flags,static_cast<UINT_PTR>(item.action),item.separator?nullptr:item.label.c_str()))return TrayAction::none;}
         // Required for dismissal on an outside click. The benign followup is
-        // the documented notification-area menu focus handoff.
+        // the documented notification-area menu focus handoff. owner is the
+        // tray's never-shown menu owner, not the HUD window.
         SetForegroundWindow(owner);
         const auto result=TrackPopupMenuEx(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_RIGHTBUTTON,point.x,point.y,owner,nullptr);
         PostMessageW(owner,WM_NULL,0,0);return static_cast<TrayAction>(result);
@@ -30,8 +45,11 @@ TrayController::TrayController(HWND owner,UINT callback,UINT taskbarCreated,Tray
     need(owner&&IsWindow(owner)&&GetWindowThreadProcessId(owner,nullptr)==thread_,"Tray needs its existing owner-thread window");
     need(callback>=WM_APP&&callback<=0xbfff&&taskbarCreated>=0xc000&&taskbarCreated<=0xffff,"Tray needs dedicated native message IDs");
     need(platform_.notify&&platform_.registerHotkey&&platform_.unregisterHotkey&&platform_.menu&&platform_.lastError,"Tray platform is incomplete");
+    // Without it (Windows out of window resources) the menu falls back to
+    // the icon's own window rather than losing the tray.
+    menuOwner_=createMenuOwner();
 }
-TrayController::~TrayController(){stop();}
+TrayController::~TrayController(){stop();if(menuOwner_)DestroyWindow(menuOwner_);}
 void TrayController::onThread()const{need(thread_==GetCurrentThreadId(),"Tray is owner-thread only");}
 NOTIFYICONDATAW TrayController::data()const{NOTIFYICONDATAW value{};value.cbSize=sizeof(value);value.hWnd=owner_;value.uID=iconID;return value;}
 bool TrayController::install(){auto value=data();value.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP|NIF_SHOWTIP;value.hIcon=icon_;value.uCallbackMessage=callback_;std::copy(tooltip_.begin(),tooltip_.end(),value.szTip);
@@ -51,7 +69,7 @@ bool TrayController::message(UINT message,WPARAM w,LPARAM l){onThread();if(!runn
     if(menuOpen_||action_||menu_.empty())return true;
     if(event!=WM_CONTEXTMENU&&event!=NIN_SELECT&&event!=NIN_KEYSELECT&&(!(!version4_&&(event==WM_RBUTTONUP||event==WM_LBUTTONUP))))return true;
     POINT point{GET_X_LPARAM(w),GET_Y_LPARAM(w)};if(!version4_||(point.x==-1&&point.y==-1))GetCursorPos(&point);
-    menuOpen_=true;TrayAction choice{};try{const auto items=menu_;choice=platform_.menu(owner_,point,items);}catch(...){menuOpen_=false;throw;}menuOpen_=false;
+    menuOpen_=true;TrayAction choice{};try{const auto items=menu_;choice=platform_.menu(menuOwner_?menuOwner_:owner_,point,items);}catch(...){menuOpen_=false;throw;}menuOpen_=false;
     if(!running_)return true;auto value=data();platform_.notify(NIM_SETFOCUS,value);
     const auto found=std::find_if(menu_.begin(),menu_.end(),[&](const auto&i){return i.action==choice&&!i.separator&&i.enabled;});if(choice!=TrayAction::none&&found!=menu_.end())action_=choice;return true;}
 std::optional<TrayAction>TrayController::takeAction()noexcept{return std::exchange(action_,{});}
