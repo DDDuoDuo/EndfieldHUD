@@ -339,6 +339,26 @@ void activityArrivals() {
         for (std::size_t i = 0; i < rows.size(); ++i)
             check(staggered[i + 2] == rows[i] && near(enterOf(*rows[i])[0].start, w.now + d::staggerDelay(int(i + 2))), "Row " + std::to_string(i) + " enters with the landing");
     }
+    {
+        // The HUD's close settles the Overview-to-Apps swap concealed while
+        // the canvas stays active and reading: a sample meanwhile leaves the
+        // fading Overview header alone, and the waiting page lands with it
+        // when the module shows again.
+        World w;
+        m::ActivityState state([](std::string_view a, std::string_view b) { return a.compare(b); });
+        state.receiveApps(apps(1, 2));
+        m::ActivityCanvas canvas(w.context, state);
+        open(canvas, w);
+        check(canvas.perform("activity:apps", w.now) && canvas.transitioning(), "Apps swaps in");
+        w.advance(.05);
+        state.receiveApps(apps(w.now, 3));
+        check(canvas.transitioning() && canvas.header().counterText() == "LIVE", "A sample during the swap leaves the leaving header alone");
+        canvas.settleSwap(true);
+        state.receiveApps(apps(w.now, 4));
+        check(!canvas.transitioning() && canvas.isActive() && canvas.header().counterText() == "LIVE", "A sample after a concealed settle leaves the fading header alone");
+        canvas.show(w.now);
+        check(canvas.header().counterText() == "04" && rowsOf(canvas).size() == 4, "The concealed swap lands with the sample's apps");
+    }
 }
 void activityState() {
     // Threads (AppActivityMonitor.swift:99-104) and the GPU gating (:124-130).

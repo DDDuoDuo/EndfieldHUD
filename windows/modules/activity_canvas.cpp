@@ -619,14 +619,16 @@ void ActivityCanvas::buildApps(d::Page& page) {
 // The first sample of a run fills a table built while it waited: the rows
 // that appear in an empty table, or the empty state, enter as the page's
 // rows do (Mac 08cd96a). Samples arrive from the executor's drain, outside a
-// frame, so the clock catches up to the host first. During a sub-page swap
-// the staged page is built again instead (the Q4 rebuild): its build staggers
-// the rows for the landing and sets the staging header's counter, which
-// header() would not reach here (it is the leaving one until the swap lands).
+// frame, so the clock catches up to the host first. Until a sub-page swap
+// lands (in flight, or settled concealed by the HUD's close, which keeps the
+// canvas reading) the staged page is built again instead (the Q4 rebuild):
+// its build staggers the rows for the landing and sets the staging header's
+// counter, which header() would not reach here (it is the leaving one until
+// the swap lands).
 void ActivityCanvas::updateApps() {
     if (!table_) return;
     catchUpClock();
-    if (transitioning()) { rerender(); return; }
+    if (swapPending()) { rerender(); return; }
     const auto& snapshot = state_->appSnapshot();
     const bool hadRows = !table_->visibleRows().empty();
     header().setCounter(d::format::pad2(std::int64_t(snapshot.items.size())));
