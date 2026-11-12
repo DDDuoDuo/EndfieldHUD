@@ -315,14 +315,16 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// In-place re-render (spec §1.10): no entrance, scroll offsets kept,
     /// except for a module that was left, which comes back at the top.
-    /// During a sub-page swap the page has already left: the re-rendered one
-    /// stays hidden until the swap lands its own page with the entrance.
+    /// During a sub-page swap the page has already left and the swap builds
+    /// the next page from the latest state when it lands or settles: building
+    /// one now would only write the next page's readings into the leaving
+    /// header, so the re-render waits for that page.
     /// A re-render while the entrance still plays (data arriving as the
     /// module opens or switches in) carries it on in phase: rows already
     /// shown stay shown, the rest still enter.
     func rerender() {
+        guard swapWork == nil else { return }
         install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
-        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey); return }
         guard let entrance else { return }
         let now = CACurrentMediaTime()
         if env.reducesMotion || now >= entrance.start + Self.entranceLength { self.entrance = nil; return }
