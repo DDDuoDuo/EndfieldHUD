@@ -218,10 +218,13 @@ void ReaderCanvas::controllerChanged() {
     if (deactivatedRevision_ && state_->revision() == *deactivatedRevision_) return;
     // The Mac skips a change while a sub-page swap runs because it builds the
     // next page when the swap lands; Windows built it when the swap started
-    // (LIBRARY-DESIGN Q4), so a changed structure rebuilds that pending page
+    // (LIBRARY-DESIGN Q4), so until the swap lands (in flight, or settled
+    // concealed by the HUD's close) a change rebuilds that pending page
     // (Canvas::rerender during a swap): an import that finishes loading while
-    // the Reading tab slides in lands on the book, not on LOADING.
-    if (transitioning()) { if (!renderedStructure_ || structure() != *renderedStructure_) rerender(); return; }
+    // the Reading tab slides in lands on the book, not on LOADING, and a page
+    // that turns meanwhile lands with its number. header() would reach the
+    // leaving header here.
+    if (swapPending()) { rerender(); return; }
     if (!renderedStructure_ || structure() != *renderedStructure_) rerender(); else for (const auto& binder : std::vector(binders_)) binder();
     header().setCounter(counter());
 }

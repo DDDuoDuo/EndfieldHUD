@@ -359,6 +359,43 @@ void readerKeepsPages() {
     r.state->setActive(false); r.sync();
 }
 
+// A change during a tab swap into Reading (the Mac skips it and builds the
+// page when the swap lands): the leaving Library header keeps its count, and
+// the landed Reading page and header show the newest page; the same for a
+// swap the HUD's close settled concealed, which lands when the module shows
+// again.
+void readerSwapLanding() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    d::Context::Appearance a; a.language = Language::english; a.reduceMotion = false; w.context.apply(a, w.now);
+    auto library = syntheticLibrary(2); library.selected = bookID(1); library.reading = true;
+    ReaderRig r(w, library);
+    auto& canvas = *r.canvas;
+    r.show(); r.activate(true);
+    check(canvas.tab() == m::ReaderCanvas::Tab::reading && canvas.header().counterText() == "P. 1", "The book opens on Reading at P. 1");
+    tab(canvas, 1); r.sync(); w.advance(.2); r.sync();
+    check(!canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::library && canvas.header().counterText() == "02", "Library counts the books");
+    tab(canvas, 2); r.sync();
+    check(canvas.transitioning(), "Reading swaps in");
+    w.advance(.05);
+    check(r.state->next(), "The page turns during the swap");
+    r.sync();
+    check(canvas.transitioning() && canvas.header().counterText() == "02", "The leaving Library header keeps its count");
+    w.advance(.1); r.sync();
+    check(!canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::reading && canvas.header().counterText() == "P. 25", "The landed Reading header shows the turned page");
+    w.advance(1);
+    tab(canvas, 1); r.sync(); w.advance(.2); r.sync();
+    tab(canvas, 2); r.sync();
+    w.advance(.02);
+    canvas.settleSwap(true);
+    check(r.state->next(), "The page turns after a concealed settle");
+    r.sync();
+    check(!canvas.transitioning() && canvas.header().counterText() == "02", "The fading Library header keeps its count");
+    canvas.show(w.now); r.sync();
+    check(canvas.tab() == m::ReaderCanvas::Tab::reading && canvas.header().counterText() == "P. 50", "The concealed swap lands with the turned page");
+    r.activate(false);
+}
+
 // --- Projection fixtures --------------------------------------------------------------------------
 struct Pen {
     std::vector<ehud::data::ProjectionSettings> saved;
@@ -707,6 +744,7 @@ int main(int argc, char** argv) {
     try {
         readerContracts();
         readerKeepsPages();
+        readerSwapLanding();
         projectionContracts();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas", "projection"}, {"text", "layerDefaults", "reader", "readerFinal", "store"})) {
             Oracle oracle(*data);
