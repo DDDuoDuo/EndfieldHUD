@@ -4,8 +4,10 @@
 // move, only in a focused field of a foreground HUD, solid under Reduce
 // Motion, frames only during ramps), the edit shortcuts, the secure field's
 // clipboard and undo refusal, the right-click menu through a FAKE (no menu or
-// window ever shows), the I-beam, Esc / Return rules and the published
-// scenes' retirement. Hidden window, WARP, no TSF manager, no input injection.
+// window ever shows), the I-beam, Esc / Return rules, the published scenes'
+// retirement, and input that arrives between an IME write and its owner
+// notice. Hidden window, WARP, a fake TSF manager (never the real one), no
+// input injection.
 #include "native/hud_design_text_field.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -13,15 +15,114 @@
 #endif
 #include <windows.h>
 #include <objbase.h>
+#include <msctf.h>
+#include <wrl/client.h>
+#include <atomic>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 using namespace endfield;
 using namespace native;
+using Microsoft::WRL::ComPtr;
 namespace d = modules::design;
 namespace {
 unsigned checks{};
 void check(bool v, const char* s) { ++checks; if (!v) throw std::runtime_error(s); }
+void ok(HRESULT hr, const char* s) { check(SUCCEEDED(hr), s); }
+// A fake text-services manager (the real TSF is never activated). Its only
+// job is to hand the test the editing field's text store, so the test can
+// write as an IME does: inside the store's lock, with the owner notice left
+// queued and undispatched.
+struct FakeDocument final : ITfDocumentMgr {
+    std::atomic<ULONG> refs{1};
+    ComPtr<ITextStoreACP> store;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id != __uuidof(IUnknown) && id != __uuidof(ITfDocumentMgr)) return E_NOINTERFACE;
+        *out = static_cast<ITfDocumentMgr*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto r = --refs; if (!r) delete this; return r; }
+    HRESULT STDMETHODCALLTYPE CreateContext(TfClientId, DWORD, IUnknown* owner, ITfContext** out, TfEditCookie* cookie) override {
+        if (!out || !cookie) return E_POINTER;
+        if (owner) (void)owner->QueryInterface(IID_PPV_ARGS(&store));
+        *out = nullptr; *cookie = 1; return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE Push(ITfContext*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE Pop(DWORD) override { store.Reset(); return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetTop(ITfContext**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetBase(ITfContext**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EnumContexts(IEnumTfContexts**) override { return E_NOTIMPL; }
+};
+struct FakeManager final : ITfThreadMgr, ITfKeystrokeMgr {
+    std::atomic<ULONG> refs{1};
+    std::vector<ComPtr<FakeDocument>> documents;
+    ComPtr<ITfDocumentMgr> current;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id == __uuidof(IUnknown) || id == __uuidof(ITfThreadMgr)) *out = static_cast<ITfThreadMgr*>(this);
+        else if (id == __uuidof(ITfKeystrokeMgr)) *out = static_cast<ITfKeystrokeMgr*>(this);
+        else return E_NOINTERFACE;
+        AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto r = --refs; if (!r) delete this; return r; }
+    // The first document a field's editor creates holds its context and store.
+    ITextStoreACP* store() const { return documents.empty() ? nullptr : documents.front()->store.Get(); }
+    HRESULT STDMETHODCALLTYPE Activate(TfClientId*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Deactivate() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE CreateDocumentMgr(ITfDocumentMgr** out) override {
+        if (!out) return E_POINTER;
+        ComPtr<FakeDocument> document; document.Attach(new FakeDocument);
+        *out = document.Get(); document->AddRef(); documents.push_back(std::move(document)); return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE EnumDocumentMgrs(IEnumTfDocumentMgrs**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetFocus(ITfDocumentMgr** out) override { if (!out) return E_POINTER; *out = current.Get(); if (*out) (*out)->AddRef(); return S_OK; }
+    HRESULT STDMETHODCALLTYPE SetFocus(ITfDocumentMgr* value) override { if (!value) return E_INVALIDARG; current = value; return S_OK; }
+    HRESULT STDMETHODCALLTYPE AssociateFocus(HWND, ITfDocumentMgr*, ITfDocumentMgr**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE IsThreadFocus(BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetFunctionProvider(REFCLSID, ITfFunctionProvider**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EnumFunctionProviders(IEnumTfFunctionProviders**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetGlobalCompartment(ITfCompartmentMgr**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE AdviseKeyEventSink(TfClientId, ITfKeyEventSink*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE UnadviseKeyEventSink(TfClientId) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetForeground(CLSID*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE TestKeyDown(WPARAM, LPARAM, BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE TestKeyUp(WPARAM, LPARAM, BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE KeyDown(WPARAM, LPARAM, BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE KeyUp(WPARAM, LPARAM, BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetPreservedKey(ITfContext*, const TF_PRESERVEDKEY*, GUID*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE IsPreservedKey(REFGUID, const TF_PRESERVEDKEY*, BOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE PreserveKey(TfClientId, REFGUID, const TF_PRESERVEDKEY*, const WCHAR*, ULONG) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE UnpreserveKey(REFGUID, const TF_PRESERVEDKEY*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetPreservedKeyDescription(REFGUID, const WCHAR*, ULONG) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetPreservedKeyDescription(REFGUID, BSTR*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SimulatePreservedKey(ITfContext*, REFGUID, BOOL*) override { return E_NOTIMPL; }
+};
+// Grants the test's write lock (the IME's edit session).
+struct Sink final : ITextStoreACPSink {
+    std::atomic<ULONG> refs{1};
+    std::function<void()> onLock;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id != __uuidof(IUnknown) && id != __uuidof(ITextStoreACPSink)) return E_NOINTERFACE;
+        *out = static_cast<ITextStoreACPSink*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto r = --refs; if (!r) delete this; return r; }
+    HRESULT STDMETHODCALLTYPE OnTextChange(DWORD, const TS_TEXTCHANGE*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnSelectionChange() override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode, TsViewCookie) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnAttrsChange(LONG, LONG, ULONG, const TS_ATTRID*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnLockGranted(DWORD) override { if (onLock) onLock(); return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnStartEditTransaction() override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnEndEditTransaction() override { return S_OK; }
+};
 struct Window {
     HWND hwnd{};
     Window() {
@@ -62,6 +163,14 @@ void run(const std::filesystem::path& shader) {
     options.clipboard.write = [&](std::u16string_view v) { clipboard = std::u16string(v); ++writes; return true; };
     options.editMenu = [&](core::Point, bool cut, bool copy, bool paste) { menus.push_back({cut, copy, paste}); return menuAnswer; };
     NativeDesignTextFields host(raster, options);
+    // The IME section's host, over a fake text-services manager. Like `host`
+    // it outlives the fields, which end their editing on destruction.
+    ComPtr<FakeManager> manager; manager.Attach(new FakeManager);
+    auto imeOptions = options;
+    imeOptions.threadManager = manager.Get();
+    imeOptions.clientID = 7;
+    imeOptions.ownerMessage = WM_APP + 0x45;
+    NativeDesignTextFields ime(raster, imeOptions);
     d::Environment env;
     env.text.uppercase = d::asciiUppercase;
     d::LayerArena arena("f", &env.deadlines);
@@ -161,6 +270,71 @@ void run(const std::filesystem::path& shader) {
     pose(2.3);
     (void)host.upload(renderer);
     check(host.collectRetired(renderer) && host.releaseResources(renderer), "Everything releases");
+    // --- input between an IME write and its owner notice ----------------------------------
+    // The IME writes inside the store's lock; the field lays the text out only
+    // when the queued owner notice is dispatched (never here). A key, wheel,
+    // click or hover that arrives first lays out the new text itself.
+    d::TextField::Options multiline; multiline.multiline = true;
+    auto& notes = builder.make<d::TextField>("notes", "Notes", "line", "Notes", d::Size{200, 60}, multiline);
+    notes.setEditorHost(&ime);
+    const auto imePose = [&](double t) {
+        time = t;
+        ime.setPose({core::Matrix4{}, camera, 590, 510, 1, true, t, false});
+        (void)ime.upload(renderer);
+    };
+    notes.beginEditing();
+    imePose(3);
+    auto* store = manager->store();
+    check(ime.editing() && store, "The multi-line field connects to the fake text services");
+    ComPtr<Sink> sink; sink.Attach(new Sink);
+    ok(store->AdviseSink(__uuidof(ITextStoreACPSink), sink.Get(), TS_AS_ALL_SINKS), "Advise the IME's sink");
+    const auto imeAppend = [&](std::wstring_view text) {
+        sink->onLock = [&] {
+            TS_TEXTCHANGE delta{};
+            LONG end{};
+            ok(store->GetEndACP(&end), "The IME reads the document end");
+            ok(store->SetText(0, end, end, text.data(), static_cast<ULONG>(text.size()), &delta), "The IME appends text; its owner notice stays queued");
+        };
+        HRESULT session{};
+        ok(store->RequestLock(TS_LF_READWRITE, &session), "Grant the IME write lock");
+        ok(session, "The IME write lock completes");
+        sink->onLock = {};
+    };
+    imeAppend(L"\u4e2d");
+    check(ime.key(key('Z', true)) && ime.text(notes) == "line", "Ctrl+Z before the owner notice lays out the IME text, then undoes it");
+    // The append leaves the caret at the end, so the new layout reveals the
+    // last line; a wheel up then moves from there, not from the stale top
+    // ("line", units 0 to 4), and a click near the top lands past line 2.
+    imeAppend(L"\n2\n3\n4\n5\n6\n7\n8");
+    check(ime.wheel({100, 30}, -20), "The wheel before the owner notice reaches the field");
+    check(ime.pointerDown({100, 14}, false), "A click after the wheel reaches the field");
+    ime.pointerUp();
+    const auto wheeled = ime.selection(notes);
+    check(wheeled && wheeled->second == 0 && wheeled->first > 6, "The wheel scrolls up from the revealed new lines, not from the stale offset");
+    imeAppend(L"\u6587");
+    const auto atEnd = ime.selection(notes);
+    check(ime.pointerDown({100, 14}, false), "A click before the owner notice reaches the field");
+    ime.pointerUp();
+    const auto clicked = ime.selection(notes);
+    check(atEnd && clicked && clicked->second == 0 && clicked->first < atEnd->first, "The click moves the caret back from the end of the newly laid-out text");
+    imeAppend(L"\u5b57");
+    const auto before = ime.text(notes);
+    const auto selected = ime.selection(notes);
+    ime.pointerDrag({100, 40});
+    check(ime.selection(notes) == selected && ime.text(notes) == before, "A hover before the owner notice neither throws nor selects");
+    // A drag whose press came before the IME write: the write moves the caret
+    // to the end, and the drag lays out the new text and selects back from it.
+    check(ime.pointerDown({100, 40}, false), "A press starts a drag");
+    imeAppend(L"\u53e5");
+    ime.pointerDrag({100, 14});
+    ime.pointerUp();
+    const auto dragged = ime.selection(notes);
+    check(dragged && dragged->second > 0 && dragged->first + dragged->second == 21, "A drag before the owner notice selects through the newly laid-out text");
+    ok(store->UnadviseSink(sink.Get()), "Detach the IME's sink");
+    notes.endEditing(true);
+    imePose(3.1);
+    (void)ime.upload(renderer);
+    check(ime.collectRetired(renderer) && ime.releaseResources(renderer), "The IME field releases everything");
     check(!IsWindowVisible(window.hwnd) && renderer.stats().presents == 0, "No window or menu was shown");
 }
 }

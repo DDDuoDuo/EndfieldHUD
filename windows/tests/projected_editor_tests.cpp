@@ -498,6 +498,39 @@ void pointerInsertion(HWND hwnd){
     check(editor.pointerDown(client(right, firstLineY)).handled && selected(2, 2), "A click before the owner notice uses the newly committed layout");
     editor.pointerUp();
     check(doc.text().front() == u'\u6587' && editor.layout().painted()->text() == doc.text(), "The committed character is preserved and painted");
+    // Scroll and history requests between an IME write and its owner notice:
+    // inside the write lock they decline and leave the layout for the notice;
+    // after the lock they lay out the new text first instead of throwing.
+    const auto imeAppend = [&](std::wstring_view text, std::function<void()> during) {
+        locked(store, sink.Get(), [&] {
+            TS_TEXTCHANGE delta{};
+            const auto end = static_cast<LONG>(doc.text().size());
+            ok(store->SetText(0, end, end, text.data(), static_cast<ULONG>(text.size()), &delta), "IME appends text before the owner notice");
+            check(editor.layout().textRevision() != doc.revision(), "The IME append leaves the previous layout pending");
+            during();
+        });
+    };
+    const auto synced = [&] { return editor.layout().textRevision() == doc.revision() && editor.layout().painted()->text() == doc.text(); };
+    const std::wstring lines(16, L'\n');
+    imeAppend(lines, [&] {
+        check(!editor.scrollBy(40) && !editor.setScrollOffset(40) && editor.scrollOffset() == 0, "A scroll during the write lock declines");
+        const auto undone = editor.undo(), redone = editor.redo();
+        check(undone.handled && !undone.changed && redone.handled && !redone.changed, "Undo and redo during the write lock decline");
+        check(editor.layout().textRevision() != doc.revision(), "Declined requests leave the layout for the owner notice");
+    });
+    // The append leaves the caret at the end, so the new layout reveals it at
+    // the bottom; the wheel then moves up from there, not from the stale top.
+    check(editor.scrollBy(-40) && editor.maximumScrollOffset() > 40 && synced(), "A wheel before the owner notice lays out the new lines first");
+    const auto wheeled = editor.scrollOffset();
+    (void)editor.revealCaret();
+    check(wheeled > 0 && std::abs(editor.scrollOffset() - wheeled - 40) < 1e-6, "The wheel scrolls from the offset that reveals the IME's caret, not from the stale one");
+    imeAppend(L"x", [] {});
+    (void)editor.setScrollOffset(0);
+    check(editor.scrollOffset() == 0 && synced(), "A scroll offset before the owner notice lays out the new text first");
+    imeAppend(L"y", [] {});
+    check(!editor.undo().handled && synced(), "Undo before the owner notice lays out the new text first (a plain buffer keeps no history)");
+    imeAppend(L"z", [] {});
+    check(!editor.redo().handled && synced() && doc.text().ends_with(u"xyz"), "Redo before the owner notice lays out the new text first");
     ok(store->UnadviseSink(sink.Get()),"Detach pointer fixture sink");ok(editor.stop(),"Stop pointer fixture");check(!IsWindowVisible(hwnd),"Pointer fixture stays hidden");
 }
 void explicitCompositionCommit(HWND hwnd){

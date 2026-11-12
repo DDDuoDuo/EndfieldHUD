@@ -64,7 +64,6 @@ struct NativeProjectedEditor::Impl {
         richLayout=rich&&rich->richText().has_value();if(rich)paragraphText=document.text();options.paddingPoints=0;options.retainEmptyTextLayout=true;options.plainTextDocument=!rich&&!style.naturalParagraphSpacingOne;options.richTextDocument=rich!=nullptr||style.naturalParagraphSpacingOne;options.textDocumentOffset={};options.retainedPlainText.reset();options.revealPlainTextPosition.reset();validate(style,options);need(s.contentRevision()==0&&s.draws().empty(),"Projected editor needs its dedicated initially empty borrowed scene");}
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Projected editor used outside its creating thread");need(alive&&!stopped,"Projected editor is stopped");}
     bool layoutCurrent() const { return layout && layout->textRevision() == document.revision(); }
-    void current() const { onThread(); need(layoutCurrent(), "Synchronize editor text before geometry/navigation"); }
     // A frame or input can run before the posted TSF change arrives. During
     // a TSF lock sync() leaves the layout alone, so defer to that notification.
     bool syncLayout() {
@@ -226,17 +225,19 @@ bool NativeProjectedEditor::setPose(const ProjectedEditorPose& pose){
     i->pose=pose;i->pose.clip={i->clip.data(),clips};i->poseReady=i->poseSet=true;return true;
 }
 bool NativeProjectedEditor::setScrollOffset(double offset){
-    auto i=impl_;i->current();need(std::isfinite(offset),"Invalid editor document offset");i->revealPending=false;const auto next=std::clamp(offset,0.,i->maximumScroll());if(next==i->scroll)return false;
+    auto i=impl_;if(!i->syncLayout())return false;need(std::isfinite(offset),"Invalid editor document offset");i->revealPending=false;const auto next=std::clamp(offset,0.,i->maximumScroll());if(next==i->scroll)return false;
     const auto oldPlacement=i->placement;const auto oldScroll=i->scroll;const bool hadPose=i->poseSet;
     {auto nextPlacement=oldPlacement;nextPlacement.scroll={i->horizontal,next};const auto hr=i->input->setPlacement(nextPlacement);if(hr==TS_E_NOLOCK||!i->alive)return false;checked(hr,"Scroll projected editor candidate plane");i->placement=nextPlacement;}
     i->scroll=next;i->viewportDirty=true;
     try{i->sync();if(hadPose&&i->alive)setPose(i->pose);}catch(...){i->scroll=oldScroll;i->viewportDirty=true;i->poseReady=false;if(i->alive){i->input->setPlacement(oldPlacement);i->placement=oldPlacement;}throw;}return true;
 }
-bool NativeProjectedEditor::scrollBy(double delta){need(std::isfinite(delta),"Invalid editor scroll delta");return setScrollOffset(impl_->scroll+delta);}
+// The wheel moves from the offset the new text's layout reveals, so the
+// layout (and its caret reveal) must be current before the base is read.
+bool NativeProjectedEditor::scrollBy(double delta){need(std::isfinite(delta),"Invalid editor scroll delta");auto i=impl_;if(!i->syncLayout())return false;return setScrollOffset(i->scroll+delta);}
 double NativeProjectedEditor::scrollOffset()const noexcept{return impl_->scroll;}
 double NativeProjectedEditor::maximumScrollOffset()const noexcept{return impl_->maximumScroll();}
 bool NativeProjectedEditor::setHorizontalScrollOffset(double offset){
-    auto i=impl_;i->current();need(std::isfinite(offset),"Invalid horizontal field offset");need(i->style.sourceSingleLineField,"Horizontal scroll requires an explicit single-line field");i->revealPending=false;const auto next=std::clamp(offset,0.,i->maximumHorizontal());if(next==i->horizontal)return false;
+    auto i=impl_;if(!i->syncLayout())return false;need(std::isfinite(offset),"Invalid horizontal field offset");need(i->style.sourceSingleLineField,"Horizontal scroll requires an explicit single-line field");i->revealPending=false;const auto next=std::clamp(offset,0.,i->maximumHorizontal());if(next==i->horizontal)return false;
     const auto oldPlacement=i->placement;const auto old=i->horizontal;const bool hadPose=i->poseSet;
     {auto proposed=oldPlacement;proposed.scroll={next,i->scroll};const auto hr=i->input->setPlacement(proposed);if(hr==TS_E_NOLOCK||!i->alive)return false;checked(hr,"Scroll projected field candidate plane");i->placement=proposed;}
     i->horizontal=next;i->viewportDirty=true;try{i->sync();if(hadPose&&i->alive)setPose(i->pose);}catch(...){i->horizontal=old;i->viewportDirty=true;i->poseReady=false;if(i->alive){i->input->setPlacement(oldPlacement);i->placement=oldPlacement;}throw;}return true;
@@ -246,7 +247,7 @@ double NativeProjectedEditor::maximumHorizontalScrollOffset()const noexcept{retu
 bool NativeProjectedEditor::revealCaret(){auto i=impl_;i->onThread();i->revealPending=true;const bool changed=i->sync();if(changed&&i->poseSet&&i->alive)setPose(i->pose);return changed;}
 
 ProjectedEditorResult NativeProjectedEditor::applyFormat(const core::notes::FormatChange&change){
-    auto i=impl_;i->current();if(!i->rich)return {};bool changed{};
+    auto i=impl_;if(!i->syncLayout())return {true,false,false};if(!i->rich)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{
         const auto oldLayout=i->richLayout;const auto revision=i->rich->revision();
         // Allocate the complete paragraph update before mutating the rich model.
@@ -261,13 +262,13 @@ ProjectedEditorResult NativeProjectedEditor::applyFormat(const core::notes::Form
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Format source rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeProjectedEditor::undo(){
-    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    auto i=impl_;if(!i->syncLayout())return {true,false,false};if(!i->history)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->history->undo();if(!changed)return {};i->revealPending=true;
         if(before==i->document.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->document.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Undo source rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeProjectedEditor::redo(){
-    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    auto i=impl_;if(!i->syncLayout())return {true,false,false};if(!i->history)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->history->redo();if(!changed)return {};i->revealPending=true;
         if(before==i->document.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->document.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Redo source rich document");return {true,changed,false};

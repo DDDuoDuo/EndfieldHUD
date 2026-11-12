@@ -61,6 +61,26 @@ void run(){
     check(document.text()!=typed&&sink->texts>=2,"Undo restores model text and announces TSF text delta");
     check(editor.redo().changed,"Rich text redo succeeds");editor.syncContent();check(document.text()==typed,"Redo restores same text and styles");
     bool called{};sink->onLock=[&]{called=true;const auto before=document.revision();check(!editor.applyFormat(ink).changed&&!editor.undo().changed,"Formatting/history decline TSF lock");check(document.revision()==before,"Locked commands preserve rich model");};HRESULT session{};ok(editor.textStore()->RequestLock(TS_LF_READWRITE|TS_LF_SYNC,&session),"Grant synthetic write lock");check(called&&SUCCEEDED(session),"Synthetic lock completed");sink->onLock={};
+    // Format, undo and redo between an IME write and its owner notice: inside
+    // the write lock they decline; after it they lay out the new text first
+    // instead of throwing.
+    const auto imeAppend=[&](std::wstring_view value,std::function<void()>during){
+        sink->onLock=[&]{TS_TEXTCHANGE delta{};const auto end=LONG(document.text().size());ok(editor.textStore()->SetText(0,end,end,value.data(),ULONG(value.size()),&delta),"IME appends rich text before the owner notice");
+            check(editor.layout().textRevision()!=document.revision(),"The IME append leaves the previous rich layout pending");during();};
+        HRESULT written{};ok(editor.textStore()->RequestLock(TS_LF_READWRITE,&written),"Grant the IME write lock");ok(written,"IME write lock completed");sink->onLock={};};
+    const auto paintedText=[&]{return std::u16string(editor.layout().painted()->text());};
+    notes::FormatChange green;green.kind=notes::FormatKind::color;green.color={0,1,0,1};
+    const auto appendedAt=std::uint32_t(document.text().size());
+    imeAppend(L"中文",[&]{const auto f=editor.applyFormat(green),u=editor.undo(),r=editor.redo();
+        check(f.handled&&!f.changed&&u.handled&&!u.changed&&r.handled&&!r.changed,"Format, undo and redo decline during the IME write lock");});
+    document.setSelection({{appendedAt,appendedAt+2},text::ActiveEnd::end,false});
+    check(editor.applyFormat(green).changed,"A format before the owner notice is applied");check(paintedText()==document.text(),"It lays out the IME text first");
+    check(std::any_of(document.runs().begin(),document.runs().end(),[&](const auto&r){return r.location<=appendedAt&&r.location+r.length>=appendedAt+2&&r.style.color&&r.style.color->green==1&&r.style.color->red==0;}),"The IME characters take the format");
+    editor.syncContent();imeAppend(L"!",[]{});const auto appended=std::u16string(document.text());
+    check(editor.undo().changed&&paintedText()==appended&&document.text()!=appended,"Undo before the owner notice paints the IME text first, then undoes it");
+    const auto undone=std::u16string(document.text());
+    check(editor.redo().changed&&paintedText()==undone&&document.text()==appended,"Redo before the owner notice paints the undone text first, then redoes it");
+    editor.syncContent();
     const auto count=raster.stats();for(unsigned n=0;n<120;++n){auto p=pose();p.localToScreen=Matrix4::translation(30+double(n)*.01,30);editor.setPose(p);}
     check(raster.stats().rasterizations==count.rasterizations&&raster.stats().textLayoutsCreated==count.textLayoutsCreated,"Rich projected pointer frames create no text layouts or raster images");
     const auto beforeLanguage=editor.layout().painted();const auto contentRevision=document.revision();const auto selected=document.selection();const auto notified=sink->layouts;
