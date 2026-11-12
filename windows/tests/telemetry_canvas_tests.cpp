@@ -472,6 +472,7 @@ void storage() {
     w.advance(.1);
     check(!canvas.transitioning() && pagesInTree(canvas) == 1 && canvas.header().counterText() == "25.0%" && litCells(canvas) == 10
         && text(canvas, "storage.used.numeral.value") == "25.0", "The swap lands the page re-rendered from the latest state");
+    check(w.context.pagesBuilt() == built + 3, "The landing builds no further page");
     // A swap settled concealed (the HUD's close, a module leaving while
     // active) waits for the module to show again: a read finishing meanwhile
     // leaves the fading header and page on the old figures, and the waiting
