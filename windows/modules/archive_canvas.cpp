@@ -531,10 +531,14 @@ void ArchiveCanvas::stateChanged() {
 }
 // Re-renders when the structure changed, otherwise updates in place. Waits
 // while the page is leaving, a menu or pop-over is open, or a category is
-// being renamed.
+// being renamed. The Mac also waits while a page swap runs because it builds
+// the next page when the swap lands; Windows built it when the swap started
+// (Q4), and that build cleared needsRefresh_, so until the swap lands the
+// change reaches the staged page (a structure change builds it again,
+// Canvas::rerender; the binders are its own), and it lands up to date.
 void ArchiveCanvas::refreshWhenPossible() {
     if (!renderedLanguage()) return;
-    if (holding_ || transitioning() || leaving_ || rename_ || menuOpen() || popoverOpen()) { needsRefresh_ = true; return; }
+    if (holding_ || leaving_ || rename_ || menuOpen() || popoverOpen()) { needsRefresh_ = true; return; }
     refresh();
 }
 void ArchiveCanvas::refresh() {
@@ -833,7 +837,7 @@ void ArchiveCanvas::finishRename(const std::string& id, std::optional<std::strin
         stateChanged();
         for (const auto& c : state_->categories()) if (c.id == id) { toast(d::Icon::pen, "Category renamed", "分类已重命名", c.name); break; }
     }
-    if (transitioning() || leaving_) needsRefresh_ = true; else rerender();
+    if (leaving_) needsRefresh_ = true; else rerender();   // during a swap: the staged page (refreshWhenPossible)
 }
 
 // --- Opening and closing documents (:505-534) ---------------------------------------------------

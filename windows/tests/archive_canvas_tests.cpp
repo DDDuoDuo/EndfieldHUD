@@ -468,6 +468,44 @@ void classified() {
 // Mac 815b343 with db7c5c0's media half: the presentation stays through a
 // module leave; a video is paused before it, so it comes back paused where it
 // was left; a GIF keeps its playback; a relocked document's media go.
+// A change during a page swap (the Mac waits and builds the next page when
+// the swap lands): the leaving page and header stay as they were and the page
+// the swap lands shows the change; the same for a swap the HUD's close settled
+// concealed, which lands when the module shows again.
+void swapLanding() {
+    World w; w.open();
+    auto& c = *w.canvas;
+    check(w.press("new") && c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "New opens the editor");
+    const auto document = w.state.selected()->id;
+    w.reduce(false);
+    check(c.performAccessibilityAction("back", w.now), "Back");
+    w.queue.drain(); c.stateChanged();
+    w.advance(.05);
+    check(c.transitioning(), "Back swaps to the list");
+    const auto first = w.state.addCategory(uuid(60), w.now, L::english);
+    check(first.has_value(), "A category is added during the swap");
+    c.stateChanged();
+    check(c.transitioning() && c.header().counterText() == "2026.10.23" && !w.control("category:" + *first), "A change during the swap leaves the leaving editor and its header alone");
+    w.advance(.1);
+    check(!c.transitioning() && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && w.control("category:" + *first)
+        && c.header().counterText().ends_with(" DOCS"), "The landed list shows the new category");
+    w.queue.drain(); w.advance(1);
+    check(c.performAccessibilityAction("doc:" + document, w.now), "The document opens again");
+    for (int n = 0; n < 4; ++n) { w.queue.drain(); c.stateChanged(); w.advance(.3); }
+    check(!c.transitioning() && c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "The editor is shown");
+    check(c.performAccessibilityAction("back", w.now), "Back again");
+    w.queue.drain(); c.stateChanged();
+    w.advance(.02);
+    c.settleSwap(true);
+    const auto second = w.state.addCategory(uuid(61), w.now, L::english);
+    check(second.has_value(), "A category is added after a concealed settle");
+    c.stateChanged();
+    check(!c.transitioning() && c.header().counterText() == "2026.10.23", "A change after a concealed settle leaves the fading header alone");
+    c.show(w.now);
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::list && w.control("category:" + *first) && w.control("category:" + *second),
+        "The concealed swap lands with both categories");
+    w.advance(1); w.queue.drain();
+}
 void mediaLeave() {
     const auto ask = [](World& w) {
         auto& c = *w.canvas;
@@ -908,7 +946,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); swapLanding(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);
