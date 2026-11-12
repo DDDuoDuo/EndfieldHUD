@@ -15,6 +15,11 @@
 #include <cstdlib>
 
 namespace endfield::tests {
+// rects_nearly_equal(a, b, 2): every edge within 2 px.
+inline bool obsNearlyEqual(const RECT& a, const RECT& b) {
+    const auto within = [](LONG x, LONG y) { return std::labs(x - y) <= 2; };
+    return within(a.left, b.left) && within(a.right, b.right) && within(a.top, b.top) && within(a.bottom, b.bottom);
+}
 inline bool obsTakesAsFullscreen(HWND window) {
     RECT rect{};
     if (!window || !GetWindowRect(window, &rect)) return false;
@@ -23,9 +28,7 @@ inline bool obsTakesAsFullscreen(HWND window) {
     const auto monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{}; info.cbSize = sizeof(info);
     if (!monitor || !GetMonitorInfoW(monitor, &info)) return false;
-    const auto within = [](LONG a, LONG b) { return std::labs(a - b) <= 2; };
-    return within(rect.left, info.rcMonitor.left) && within(rect.right, info.rcMonitor.right) &&
-        within(rect.top, info.rcMonitor.top) && within(rect.bottom, info.rcMonitor.bottom);
+    return obsNearlyEqual(rect, info.rcMonitor);
 }
 }
 #endif

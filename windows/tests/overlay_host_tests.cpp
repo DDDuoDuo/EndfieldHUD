@@ -754,6 +754,19 @@ void monitorCover() {
     }
     check(monitorCoverRect(PixelRect{m.left, m.top, m.right, m.bottom}) == PixelRect{m.left, m.top, m.right + monitorCoverOverhang, m.bottom + monitorCoverOverhang},
         "The cover rectangle reaches past OBS's 2 px tolerance on the right and bottom only");
+    // OBS outside per-monitor awareness reads both rectangles scaled down by
+    // the monitor's scale (MulDiv rounding on each edge): the overhang still
+    // passes the tolerance at every Windows scale up to 500 %, wherever the
+    // monitor sits.
+    for (int dpi = 96; dpi <= 480; dpi += 24)
+        for (const LONG origin : {-3840L, -1707L, 0L, 1L, 1366L, 2561L})
+            for (const LONG size : {1024L, 1366L, 1707L, 1920L, 2560L, 3841L, 7680L}) {
+                const auto cover = monitorCoverRect(PixelRect{origin, origin, origin + size, origin + size});
+                const auto scaled = [&](LONG value) { return static_cast<LONG>(MulDiv(value, 96, dpi)); };
+                const RECT monitorView{scaled(origin), scaled(origin), scaled(origin + size), scaled(origin + size)};
+                const RECT windowView{scaled(cover.left), scaled(cover.top), scaled(cover.right), scaled(cover.bottom)};
+                check(!endfield::tests::obsNearlyEqual(windowView, monitorView), "OBS's rule does not take the cover rectangle in the scaled coordinates of a caller that is not per-monitor aware");
+            }
     unsigned resizes{}; ClientMetrics last{};
     OverlayCallbacks callbacks; callbacks.resize = [&](const ClientMetrics& c) { ++resizes; last = c; };
     OverlayOptions options{L"Hidden monitor-cover fixture", m.left, m.top, width, height, nullptr}; options.coverMonitor = true;

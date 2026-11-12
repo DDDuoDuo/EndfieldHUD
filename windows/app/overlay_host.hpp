@@ -114,8 +114,12 @@ struct PixelRect {
 // monitor-sized), and a window region clips drawing and hit-testing to the
 // monitor, so the strip on a neighbouring monitor neither draws nor takes
 // clicks.
-inline constexpr int monitorCoverOverhang = 3;
-static_assert(monitorCoverOverhang > 2, "OBS takes a window within 2 px of its monitor");
+// OBS compares in its own DPI awareness: a caller that is not per-monitor
+// aware sees both rectangles scaled down by up to 500 % (each edge rounded),
+// so the overhang keeps at least 4 px per 100 % of the largest scale, which
+// stays past the 2 px tolerance after that rounding.
+inline constexpr int monitorCoverOverhang = 20;
+static_assert(monitorCoverOverhang >= 4 * 5, "OBS takes a window within 2 px of its monitor, also in scaled (not per-monitor aware) coordinates up to 500 %");
 // The window rectangle that covers a monitor with these pixel bounds.
 constexpr PixelRect monitorCoverRect(const PixelRect& monitor) noexcept {
     return {monitor.left, monitor.top, monitor.right + monitorCoverOverhang, monitor.bottom + monitorCoverOverhang};
