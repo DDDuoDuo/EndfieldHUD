@@ -207,6 +207,7 @@ private:
     std::optional<ReaderPreferences> columnKey_;
     std::optional<ReaderLocation> columnLocation_;
     std::optional<Structure> renderedStructure_;
+    std::string renderedCounter_;                // the header counter the last build set
     std::vector<std::function<void()>> binders_;
     std::array<Slot, maximumPageLayers> slots_{};
     // The state revision that didDeactivate's setActive(false) produced: the

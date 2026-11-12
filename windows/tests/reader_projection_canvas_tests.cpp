@@ -375,8 +375,10 @@ void readerSwapLanding() {
     check(canvas.tab() == m::ReaderCanvas::Tab::reading && canvas.header().counterText() == "P. 1", "The book opens on Reading at P. 1");
     tab(canvas, 1); r.sync(); w.advance(.2); r.sync();
     check(!canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::library && canvas.header().counterText() == "02", "Library counts the books");
+    const auto built = w.context.pagesBuilt();
     tab(canvas, 2); r.sync();
     check(canvas.transitioning(), "Reading swaps in");
+    check(w.context.pagesBuilt() == built + 1, "The swap's own Reading save builds no second staged page");
     w.advance(.05);
     check(r.state->next(), "The page turns during the swap");
     r.sync();

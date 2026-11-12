@@ -223,8 +223,15 @@ void ReaderCanvas::controllerChanged() {
     // (Canvas::rerender during a swap): an import that finishes loading while
     // the Reading tab slides in lands on the book, not on LOADING, and a page
     // that turns meanwhile lands with its number. header() would reach the
-    // leaving header here.
-    if (swapPending()) { rerender(); return; }
+    // leaving header here. A change the staged page shows as built (the
+    // swap's own Reading save, its write completing) builds nothing: the
+    // binders belong to the staged page (its build replaced them), so a page
+    // drawn or bookmarked meanwhile still reaches its paper.
+    if (swapPending()) {
+        if (!renderedStructure_ || structure() != *renderedStructure_ || counter() != renderedCounter_) rerender();
+        else for (const auto& binder : std::vector(binders_)) binder();
+        return;
+    }
     if (!renderedStructure_ || structure() != *renderedStructure_) rerender(); else for (const auto& binder : std::vector(binders_)) binder();
     header().setCounter(counter());
 }
@@ -299,7 +306,8 @@ void ReaderCanvas::buildPage(d::Page& page) {
         const auto& rules = env().characters;
         crumbs.push_back(rules.count(book->title) > 44 ? rules.prefix(book->title, 43) + "…" : book->title);
     }
-    header().configure(std::move(crumbs), "MOD-10", title("E-Reader", "阅读器"), counter(), false);
+    renderedCounter_ = counter();
+    header().configure(std::move(crumbs), "MOD-10", title("E-Reader", "阅读器"), renderedCounter_, false);
 }
 // A page installed without the paper drops the page layers of the one that
 // left (they were drawn while it left, as the Mac builds the next page late).
