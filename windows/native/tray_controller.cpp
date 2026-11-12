@@ -44,11 +44,14 @@ TrayPlatform nativeTrayPlatform(){return {
         SetForegroundWindow(owner);
         const auto result=TrackPopupMenuEx(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_RIGHTBUTTON,point.x,point.y,owner,nullptr);
         PostMessageW(owner,WM_NULL,0,0);return static_cast<TrayAction>(result);
-    },[]{return GetLastError();}};}
+    },[]{return GetLastError();},
+    // The menu's owner holds the foreground: an open HUD takes it back, as
+    // when the menu took the foreground for the HUD window itself.
+    [](HWND owner){if(IsWindowVisible(owner))SetForegroundWindow(owner);}};}
 TrayController::TrayController(HWND owner,UINT callback,UINT taskbarCreated,TrayPlatform platform):owner_(owner),thread_(GetCurrentThreadId()),callback_(callback),taskbarCreated_(taskbarCreated),platform_(std::move(platform)){
     need(owner&&IsWindow(owner)&&GetWindowThreadProcessId(owner,nullptr)==thread_,"Tray needs its existing owner-thread window");
     need(callback>=WM_APP&&callback<=0xbfff&&taskbarCreated>=0xc000&&taskbarCreated<=0xffff,"Tray needs dedicated native message IDs");
-    need(platform_.notify&&platform_.registerHotkey&&platform_.unregisterHotkey&&platform_.menu&&platform_.lastError,"Tray platform is incomplete");
+    need(platform_.notify&&platform_.registerHotkey&&platform_.unregisterHotkey&&platform_.menu&&platform_.lastError&&platform_.returnFocus,"Tray platform is incomplete");
     // Without it (Windows out of window resources) the menu falls back to
     // the icon's own window rather than losing the tray.
     menuOwner_=createMenuOwner();
@@ -74,8 +77,11 @@ bool TrayController::message(UINT message,WPARAM w,LPARAM l){onThread();if(!runn
     if(event!=WM_CONTEXTMENU&&event!=NIN_SELECT&&event!=NIN_KEYSELECT&&(!(!version4_&&(event==WM_RBUTTONUP||event==WM_LBUTTONUP))))return true;
     POINT point{GET_X_LPARAM(w),GET_Y_LPARAM(w)};if(!version4_||(point.x==-1&&point.y==-1))GetCursorPos(&point);
     menuOpen_=true;TrayAction choice{};try{const auto items=menu_;choice=platform_.menu(menuOwner_?menuOwner_:owner_,point,items);}catch(...){menuOpen_=false;throw;}menuOpen_=false;
-    if(!running_)return true;auto value=data();platform_.notify(NIM_SETFOCUS,value);
-    const auto found=std::find_if(menu_.begin(),menu_.end(),[&](const auto&i){return i.action==choice&&!i.separator&&i.enabled;});if(choice!=TrayAction::none&&found!=menu_.end())action_=choice;return true;}
+    if(!running_)return true;
+    const auto found=std::find_if(menu_.begin(),menu_.end(),[&](const auto&i){return i.action==choice&&!i.separator&&i.enabled;});const bool chosen=choice!=TrayAction::none&&found!=menu_.end();
+    // A chosen action shows the HUD itself (Application::Impl::trayAction).
+    if(!chosen){platform_.returnFocus(owner_);if(!running_)return true;}
+    auto value=data();platform_.notify(NIM_SETFOCUS,value);if(chosen)action_=choice;return true;}
 std::optional<TrayAction>TrayController::takeAction()noexcept{return std::exchange(action_,{});}
 void TrayController::stop()noexcept{if(!running_)return;running_=false;try{if(hotkey_)platform_.unregisterHotkey(owner_,hotkeyID_);if(installed_){auto value=data();platform_.notify(NIM_DELETE,value);}}catch(...){}installed_=false;version4_=false;hotkey_.reset();hotkeyID_=0;action_.reset();icon_=nullptr;}
 }

@@ -24,6 +24,10 @@ struct TrayPlatform {
     // The HWND is the menu's owner window (the tray's own, never the HUD's).
     std::function<TrayAction(HWND,POINT,const std::vector<TrayMenuItem>&)>menu;
     std::function<DWORD()>lastError;
+    // After a menu dismissed without a choice, the shell HWND (the HUD
+    // window) gets the foreground back from the menu's owner, only while it
+    // is shown: a hidden HUD window never becomes the foreground.
+    std::function<void(HWND)>returnFocus;
 };
 TrayPlatform nativeTrayPlatform();
 // Borrows the persistent shell HWND and HICON; creates no timer or worker,

@@ -13,12 +13,14 @@ struct Fake {
     std::vector<DWORD>notices;std::vector<NOTIFYICONDATAW>data;std::map<int,TrayHotkey>keys;
     unsigned registrations{},menus{};bool registrationFails{},shellFails{},legacy{};
     POINT anchor{};HWND menuOwner{};TrayAction choice{TrayAction::none};std::function<void()>inMenu;
+    std::vector<HWND>returns;std::size_t returnedAt{};
     TrayPlatform platform(){return {
         [this](DWORD kind,NOTIFYICONDATAW&v){notices.push_back(kind);data.push_back(v);return !shellFails&&!(legacy&&kind==NIM_SETVERSION);},
         [this](HWND,int id,UINT modifiers,UINT key){++registrations;if(registrationFails)return false;check(!keys.contains(id),"Hotkey replacement never overwrites a registered ID");keys.emplace(id,TrayHotkey{modifiers,key});return true;},
         [this](HWND,int id){check(keys.erase(id)==1,"Only own registered hotkeys are released");},
         [this](HWND owner,POINT p,const std::vector<TrayMenuItem>&){++menus;anchor=p;menuOwner=owner;if(inMenu)inMenu();return choice;},
-        []{return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);}};}
+        []{return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);},
+        [this](HWND owner){returns.push_back(owner);returnedAt=notices.size();}};}
 };
 void run(){
     constexpr UINT callback=WM_APP+210;const auto explorer=RegisterWindowMessageW(L"EndfieldHUD.Isolated.Tray.Restart");
@@ -45,6 +47,7 @@ void run(){
     SendMessageW(hwnd,callback,MAKELPARAM(-123,90),MAKELPARAM(WM_CONTEXTMENU,1));
     check(fake.menus==1&&fake.anchor.x==-123&&fake.anchor.y==90&&tray.takeAction()==TrayAction::quit,"Version4 context coordinates preserve negative monitors; nested notifications cannot open another menu");
     check(fake.notices.back()==NIM_SETFOCUS,"Menu completion returns notification-area focus");
+    check(fake.returns.empty(),"A chosen action leaves the foreground to the action (trayAction shows the HUD)");
     // The menu takes the foreground for its owner: the tray's own never-shown
     // 1x1 tool window, never the HUD window, which covers its monitor (OBS's
     // any-full-screen Game Capture hooks a monitor-sized foreground window).
@@ -58,11 +61,15 @@ void run(){
      SendMessageW(owner,WM_SYSCOMMAND,SC_CLOSE,0);SendMessageW(owner,WM_CLOSE,0,0);
      fake.inMenu={};fake.choice=TrayAction::none;fake.menuOwner={};SendMessageW(hwnd,callback,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
      check(IsWindow(owner)&&fake.menus==2&&fake.menuOwner==owner&&!tray.takeAction(),"Closing the menu's owner leaves it in place for the next menu");
+     // A dismissed menu hands the foreground back to the HUD window (shown
+     // only), before the notification area takes its focus.
+     check(fake.returns==std::vector<HWND>{hwnd}&&fake.returnedAt+1==fake.notices.size()&&fake.notices.back()==NIM_SETFOCUS,"A dismissed menu returns the foreground to the HUD window before NIM_SETFOCUS");
+     nativeTrayPlatform().returnFocus(hwnd);check(!IsWindowVisible(hwnd)&&GetForegroundWindow()!=hwnd,"A hidden HUD window never takes the foreground back");
      HWND scoped{};{Fake other;TrayController scopedTray(hwnd,callback+1,explorer,other.platform());check(scopedTray.start(icon,L"Scoped"),"A second tray starts");
         scopedTray.setMenu({{TrayAction::quit,L"Quit"}});scopedTray.message(callback+1,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));scoped=other.menuOwner;
         check(other.menus==1&&scoped&&IsWindow(scoped)&&scoped!=owner&&scoped!=hwnd,"Each tray creates its own menu owner");}
      check(!IsWindow(scoped)&&IsWindow(owner),"The menu owner is destroyed with its tray");}fake.inMenu={};fake.choice=TrayAction::checkUpdates;
-    SendMessageW(hwnd,callback,MAKELPARAM(2,3),MAKELPARAM(NIN_KEYSELECT,1));check(!tray.takeAction(),"Disabled menu actions cannot dispatch");
+    SendMessageW(hwnd,callback,MAKELPARAM(2,3),MAKELPARAM(NIN_KEYSELECT,1));check(!tray.takeAction()&&fake.returns.size()==2,"Disabled menu actions cannot dispatch; the menu counts as dismissed");
     const auto before=fake.notices.size();const auto registered=fake.registrations;SendMessageW(hwnd,explorer,0,0);
     check(fake.notices.size()==before+2&&fake.notices[before]==NIM_ADD&&fake.notices.back()==NIM_SETVERSION&&fake.registrations==registered,"Explorer restart restores icon without duplicating shortcut or polling");
     SendMessageW(hwnd,WM_CLIPBOARDUPDATE,0,0);SendMessageW(hwnd,WM_POWERBROADCAST,PBT_APMPOWERSTATUSCHANGE,0);check(serviceEvents==2,"Existing hidden host routes native service notifications");
