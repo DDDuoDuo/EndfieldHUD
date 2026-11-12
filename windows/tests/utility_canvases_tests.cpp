@@ -433,6 +433,36 @@ void volumeCanvas() {
         canvas.settleSwap();
         w.appearance(Language::english);
     }
+    // A snapshot during a tab swap: the leaving header keeps the old volume
+    // and the page the swap lands shows the new one (the Mac builds that page
+    // when the swap lands); the same for a swap the HUD's close settled
+    // concealed, which lands when the module shows again.
+    {
+        auto quiet = model.state; quiet.muted = false; quiet.volume = .55;
+        canvas.receive(quiet);
+        check(canvas.tab() == 1 && canvas.header().counterText() == "55", "App volume shows the volume before the swap");
+        w.appearance(Language::english, false, false);   // motion on
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true);
+        w.advance(.05);
+        auto louder = quiet; louder.volume = .72;
+        canvas.receive(louder);
+        check(canvas.transitioning() && canvas.header().counterText() == "55", "A volume change during the tab swap leaves the leaving header alone");
+        w.advance(.1);
+        check(!canvas.transitioning() && canvas.tab() == 0 && canvas.header().counterText() == "72"
+            && dynamic_cast<const d::Slider*>(control(canvas, "volume"))->value() == 72, "The landed Devices page and header show the new volume");
+        w.advance(1);
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true);
+        w.advance(.02);
+        canvas.settleSwap(true);
+        auto softer = quiet; softer.volume = .40;
+        canvas.receive(softer);
+        check(!canvas.transitioning() && canvas.header().counterText() == "72", "A volume change after a concealed settle leaves the fading header alone");
+        canvas.show(w.now);
+        check(canvas.tab() == 1 && canvas.header().counterText() == "40", "The concealed swap lands with the new volume");
+        w.advance(1);
+        w.appearance(Language::english);
+        canvas.receive(model.state);
+    }
     // A snapshot listing one more app while the module entrance plays
     // rebuilds the App volume page; the rebuilt rows carry the entrance on
     // in phase (Mac d03d5b9).

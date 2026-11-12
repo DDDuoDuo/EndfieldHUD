@@ -132,8 +132,12 @@ void VolumeCanvas::changed() {
     // A gesture never retargets to another device or a control that became read-only.
     if (gesture_ && gesture_->output != snapshot_.outputID) cancelSliderGestures();
     // A route starting under a drag changes the list's status line; the
-    // rebuild waits for the release so the gesture is never cut off.
-    if ((!renderedStructure_ || structure() != *renderedStructure_) && !sliding()) rerender();
+    // rebuild waits for the release so the gesture is never cut off. Until a
+    // tab swap lands (in flight, or settled concealed by the HUD's close) the
+    // staged page is built again instead (as StorageCanvas::changed): the
+    // counter binder's header() would reach the leaving header, and the Mac
+    // builds that page when the swap lands, from the newest snapshot.
+    if (swapPending() || ((!renderedStructure_ || structure() != *renderedStructure_) && !sliding())) rerender();
     else for (const auto& bind : std::vector(binders_)) bind();
     if (!isActive()) return;
     const auto status = snapshot_.status;
