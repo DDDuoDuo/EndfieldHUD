@@ -269,6 +269,36 @@ void eventLogCanvas() {
     // Filters (:376-380): offset resets.
     static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true);
     check(canvas.filter() == m::EventLogFilter::timer && canvas.listOffsetForTesting() == 0 && canvas.shown().size() == 167, "Timer lists the work records");
+    // A record logged during a filter swap: the leaving header keeps its count
+    // and the page the swap lands lists and counts it (the Mac builds that
+    // page when the swap lands); the same for a swap the HUD's close settled
+    // concealed, which lands when the module shows again.
+    {
+        w.appearance(Language::english, false, false);   // motion on
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(2, true);
+        w.advance(.05);
+        store.state.events.insert(store.state.events.begin(), event(902, m::EventKind::shelfAdded, now + 2, {{"filename", "G.pdf"}}));
+        canvas.storeChanged();
+        check(canvas.transitioning() && canvas.header().counterText() == "501", "A record logged during the filter swap leaves the leaving header alone");
+        w.advance(.1);
+        check(!canvas.transitioning() && canvas.filter() == m::EventLogFilter::shelf && canvas.header().counterText() == "502"
+            && !canvas.shown().empty() && canvas.shown().front().id == event(902, m::EventKind::shelfAdded, 0).id, "The landed Shelf page lists and counts the new record");
+        w.advance(1);
+        static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true);
+        w.advance(.02);
+        canvas.settleSwap(true);
+        store.state.events.insert(store.state.events.begin(), event(903, m::EventKind::workStarted, now + 3, {{"kind", "countdown"}, {"seconds", "60"}}));
+        canvas.storeChanged();
+        check(!canvas.transitioning() && canvas.header().counterText() == "502", "A record after a concealed settle leaves the fading header alone");
+        canvas.show(w.now);
+        check(canvas.filter() == m::EventLogFilter::timer && canvas.header().counterText() == "503"
+            && !canvas.shown().empty() && canvas.shown().front().id == event(903, m::EventKind::workStarted, 0).id, "The concealed swap lands listing and counting the new record");
+        w.advance(1);
+        w.appearance(Language::english);
+        store.state.events.erase(store.state.events.begin(), store.state.events.begin() + 2);
+        canvas.storeChanged();
+        check(canvas.header().counterText() == "501", "The log is back to its 501 records");
+    }
     // Clear (:382-394).
     auto* clear = canvas.header().controls().back();
     clear->activate();

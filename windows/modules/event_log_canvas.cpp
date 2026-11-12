@@ -299,8 +299,12 @@ void EventLogCanvas::storeChanged() {
     refresh();
 }
 // New records re-render in place; the row at the top stays in view (:270-273).
+// The Mac skips a change while a filter swap runs because it builds the next
+// page when the swap lands; Windows built it when the swap started (Q4), so
+// until the swap lands the change builds that staged page again (Canvas::
+// rerender), and it lands listing and counting the new records.
 void EventLogCanvas::refresh() {
-    if (!renderedLanguage() || transitioning()) return;
+    if (!renderedLanguage()) return;
     if (renderedEvents_ && events() == *renderedEvents_) return;
     rerender();
 }
