@@ -119,7 +119,9 @@ final class StorageCanvas: HUDDesignCanvas {
 
     private func controllerChanged() {
         guard renderedLanguage != nil, !switchingVolume else { return }
-        applyReadings()
+        // The leaving page keeps the old disk's readings; the page the swap
+        // builds reads the newest snapshot.
+        if !isTransitioning { applyReadings() }
         guard isActive else { return }
         let snapshot = controller.snapshot
         if pendingRefreshToast, !snapshot.isLoading {
@@ -164,8 +166,9 @@ final class StorageCanvas: HUDDesignCanvas {
         guard !items.isEmpty else { return }
         openMenu(id: "volume", items: items, anchor: anchor) { [weak self] item in
             guard let self, item.id != self.controller.currentVolume?.id else { return }
-            // The chosen disk re-enters from below with its listed numbers;
-            // its fresh reading then updates that page in place.
+            // The chosen disk re-enters from below with the newest reading;
+            // one that arrives while the old page leaves lands with the new
+            // page, a later one updates it in place.
             self.switchingVolume = true
             let chosen = self.controller.selectVolume(identifier: item.id)
             self.switchingVolume = false
