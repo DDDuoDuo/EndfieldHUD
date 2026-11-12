@@ -318,8 +318,14 @@ void WorkModeCanvas::controllerChanged() {
 // layer ids (Canvas::rerender), so the scene reuses the ring, the title, the
 // timer and the presets and rasterizes only the state, tab lock and buttons
 // that changed (rc140: the whole page, ~63 surfaces, 55-78 ms per click).
+//
+// The Mac skips a change while a kind swap runs because it builds the next
+// page when the swap lands; Windows built it when the swap started (Q4), so
+// until the swap lands a change reaches that staged page (a structure change
+// builds it again, Canvas::rerender; the digits and ring are its own), and
+// it lands with the newest state.
 void WorkModeCanvas::refresh(bool animated) {
-    if (!renderedLanguage() || transitioning()) return;
+    if (!renderedLanguage()) return;
     if (structure() != renderedStructure_) { rerender(); applyBlink(); return; }
     const auto value = snapshot();
     if (timerText_) d::editText(*timerText_, [&](d::TextBlock& block) { block.setText(timeText(value)); });

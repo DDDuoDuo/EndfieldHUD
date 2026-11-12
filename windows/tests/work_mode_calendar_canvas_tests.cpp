@@ -516,6 +516,29 @@ void workMode(Run& run) {
         w.canvas->setFocusStatusMessage("   "); snap("focusCleared", w);
     }
     {
+        // A Focus message during a kind swap: the leaving page stays as it was
+        // and the page the swap lands shows the alert (the Mac builds that
+        // page when the swap lands); the same for a swap the HUD's close
+        // settled concealed, which lands when the module shows again.
+        WorkWorld w(run.measurer);
+        const auto step = [&](double seconds) { w.advance(seconds); w.harness.context.advance(w.now); };
+        w.press("workMode.kind:1");
+        step(.05);
+        w.canvas->setFocusStatusMessage("Focus could not turn on");
+        check(w.canvas->transitioning() && !w.control("workMode.focus"), "A Focus message during the kind swap leaves the leaving page alone");
+        step(.1);
+        check(!w.canvas->transitioning() && w.controller.snapshot(w.now).kind == m::WorkModeKind::stopwatch && w.control("workMode.focus"),
+            "The landed Stopwatch page shows the Focus alert");
+        step(1);
+        w.press("workMode.kind:0");
+        step(.02);
+        w.canvas->settleSwap(true);
+        w.canvas->setFocusStatusMessage("   ");
+        check(!w.canvas->transitioning() && w.control("workMode.focus"), "A cleared Focus message after a concealed settle leaves the fading page alone");
+        w.canvas->show(w.now);
+        check(w.controller.snapshot(w.now).kind == m::WorkModeKind::countdown && !w.control("workMode.focus"), "The concealed swap lands without the alert");
+    }
+    {
         WorkWorld w(run.measurer);
         w.harness.reduce(true);
         w.canvas->primaryAction(); w.advance(2); snap("reduceMotionRunning", w);
