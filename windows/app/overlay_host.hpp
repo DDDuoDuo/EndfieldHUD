@@ -95,6 +95,31 @@ private:
     std::optional<double> frame_, external_;
 };
 
+// Screen pixels: left/top inclusive, right/bottom exclusive (a Win32 RECT).
+struct PixelRect {
+    int left{}, top{}, right{}, bottom{};
+    bool operator==(const PixelRect&) const = default;
+};
+// OBS Studio's Game Capture, in its "Capture any full-screen application"
+// mode, hooks the foreground window whose GetWindowRect lies within 2 px of
+// its nearest monitor's rcMonitor on every edge (unless it is maximized with
+// a border). It ignores visibility, cloaking and the extended styles, and
+// lets go only when that window is destroyed or its process exits: a HUD
+// window exactly the monitor's size, ever the foreground (an opening), kept
+// OBS hooked to EndfieldHUD until Quit. A monitor-covering window
+// (OverlayOptions::coverMonitor) therefore reaches this many pixels past the
+// monitor's right and bottom edges, beyond that 2 px tolerance, while its
+// client origin stays at the monitor's origin. The host reports the
+// monitor's size as the client size (swap chain, composition and layout stay
+// monitor-sized), and a window region clips drawing and hit-testing to the
+// monitor, so the strip on a neighbouring monitor neither draws nor takes
+// clicks.
+inline constexpr int monitorCoverOverhang = 3;
+static_assert(monitorCoverOverhang > 2, "OBS takes a window within 2 px of its monitor");
+// The window rectangle that covers a monitor with these pixel bounds.
+constexpr PixelRect monitorCoverRect(const PixelRect& monitor) noexcept {
+    return {monitor.left, monitor.top, monitor.right + monitorCoverOverhang, monitor.bottom + monitorCoverOverhang};
+}
 struct ClientMetrics {
     std::uint32_t pixelWidth{}, pixelHeight{}, dpi{96};
     double scale{1}, width{}, height{}; // logical client coordinates, top-left
@@ -239,9 +264,12 @@ struct OverlayOptions {
     int x{}, y{}; // screen pixels, supplied by caller
     std::uint32_t pixelWidth{1280}, pixelHeight{800};
     void* ownerWindow{}; // optional HWND; borrowed
-    // The window covers one monitor (the HUD and Projection): a per-monitor
-    // DPI change fits it to its monitor's pixel bounds instead of Windows'
-    // suggested rectangle, which need not equal them for a covering popup.
+    // The window covers one monitor (the HUD and Projection): x, y and the
+    // pixel size here and in place() are the monitor's bounds, and the window
+    // takes monitorCoverRect of them, its client size and window region the
+    // monitor's. A per-monitor DPI change fits it to its monitor's cover
+    // rectangle instead of Windows' suggested rectangle, which need not
+    // equal it for a covering popup.
     bool coverMonitor{};
     // Hidden benchmarks only (watch_session_preview --idle-trace, with an
     // offscreen renderer): the window is never shown, yet show() makes it
@@ -282,6 +310,8 @@ struct OverlayHostStats {
     bool presentationGated{};
     // Coalesced samples recovered from the mouse history for drag moves.
     std::uint64_t pointerHistorySamples{};
+    // Moves place() made (none for a window already where it was asked).
+    std::uint64_t placeMoves{};
     // Refresh rate of the window's display (Hz, 0 unknown) and the frames
     // finite motion presented at that pace.
     double refreshRate{};
@@ -358,10 +388,16 @@ public:
     // Hides the window; it keeps the topmost band (Mac: orderOut keeps the
     // panel's level).
     void hide();
-    // Moves and sizes the window to these screen pixels (Projection on its
-    // retained display) and changes nothing else: z-order, visibility and
-    // activation stay as they are, so the window keeps its band, shown or
-    // hidden. false when Windows refuses the move or no window exists.
+    // Moves and sizes the window to these screen pixels (the HUD on the
+    // display an opening chose, Projection on its retained display; with
+    // coverMonitor the monitor's bounds, the window taking monitorCoverRect
+    // of them) and changes nothing else: z-order, visibility and activation
+    // stay as they are, so the window keeps its band, shown or hidden. A
+    // window already there is left alone (no move, WM_SIZE or resize
+    // callback: every opening places the HUD). A per-monitor DPI change
+    // during the move can apply Windows' suggested rectangle; a second pass
+    // restores the exact one. false when Windows refuses the move or no
+    // window exists.
     bool place(int x, int y, int pixelWidth, int pixelHeight);
     void setFrameDemand(core::FrameDemand);
     // Caller aggregates its next media/save/countdown deadline. It shares the

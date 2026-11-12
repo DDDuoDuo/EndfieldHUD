@@ -133,6 +133,7 @@ constexpr wchar_t windowClass[] = L"EndfieldSourceOverlayHost.v1";
 [[noreturn]] void fail(const char* operation) {
     throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), operation);
 }
+PixelRect pixelRect(const RECT& r) { return {r.left, r.top, r.right, r.bottom}; }
 double monotonicSeconds() {
     static const double frequency = [] {
         LARGE_INTEGER value{};
@@ -210,6 +211,27 @@ struct OverlayHost::Impl {
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
     unsigned menuDepth{}, sizeMoveDepth{};
     bool coverMonitor{};
+    // The size of the window region a monitor-covering window has (its
+    // monitor's), 0 before the first one.
+    std::uint32_t clipWidth{}, clipHeight{};
+    // The window rectangle for these screen pixels: a monitor-covering
+    // window's monitorCoverRect of them (its monitor's bounds).
+    PixelRect windowRect(int x, int y, int width, int height) const {
+        const PixelRect bounds{x, y, x + width, y + height};
+        return coverMonitor ? monitorCoverRect(bounds) : bounds;
+    }
+    // A monitor-covering window's region: its monitor, in window coordinates
+    // (the window's origin is the monitor's), so the strip monitorCoverRect
+    // adds past the monitor neither draws nor takes clicks. Set again only
+    // when the monitor's size changes.
+    void clipToMonitor(std::uint32_t width, std::uint32_t height) {
+        if (!window || (width == clipWidth && height == clipHeight)) return;
+        const auto region = CreateRectRgn(0, 0, static_cast<int>(width), static_cast<int>(height));
+        if (!region) fail("CreateRectRgn monitor clip");
+        // Recorded first: SetWindowRgn sends the window its position messages.
+        clipWidth = width; clipHeight = height;
+        if (!SetWindowRgn(window, region, TRUE)) { DeleteObject(region); clipWidth = clipHeight = 0; fail("SetWindowRgn monitor clip"); }
+    }
     // OverlayOptions::offscreenScheduling / refreshRate (hidden benchmarks).
     bool offscreen{};
     double fixedRefresh{};
@@ -543,13 +565,17 @@ struct OverlayHost::Impl {
         RECT rect{};
         if (!window || !GetClientRect(window, &rect)) return;
         auto next = client;
-        next.pixelWidth = static_cast<std::uint32_t>(std::max(0L, rect.right - rect.left));
-        next.pixelHeight = static_cast<std::uint32_t>(std::max(0L, rect.bottom - rect.top));
+        // A monitor-covering window's client is its monitor: the window
+        // reaches monitorCoverOverhang past it (monitorCoverRect).
+        const LONG overhang = coverMonitor ? monitorCoverOverhang : 0;
+        next.pixelWidth = static_cast<std::uint32_t>(std::max(0L, rect.right - rect.left - overhang));
+        next.pixelHeight = static_cast<std::uint32_t>(std::max(0L, rect.bottom - rect.top - overhang));
         next.scale = static_cast<double>(next.dpi) / 96;
         next.width = next.pixelWidth / next.scale;
         next.height = next.pixelHeight / next.scale;
         const bool changed = next != client;
         client = next;
+        if (coverMonitor) clipToMonitor(next.pixelWidth, next.pixelHeight);
         const auto handlers = callbacks;
         if (ready && changed && handlers && handlers->resize) handlers->resize(next);
     }
@@ -640,11 +666,14 @@ struct OverlayHost::Impl {
             const auto* suggested = reinterpret_cast<const RECT*>(l);
             RECT fitted{};
             if (suggested && coverMonitor) {
-                // A monitor-covering popup keeps its monitor's exact pixel
-                // bounds; the suggested rectangle only scales the old size.
+                // A monitor-covering popup keeps its monitor's exact cover
+                // rectangle; the suggested rectangle only scales the old size.
                 MONITORINFO info{}; info.cbSize = sizeof(info);
                 const auto monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
-                if (monitor && GetMonitorInfoW(monitor, &info)) fitted = info.rcMonitor; else fitted = *suggested;
+                if (monitor && GetMonitorInfoW(monitor, &info)) {
+                    const auto cover = monitorCoverRect(pixelRect(info.rcMonitor));
+                    fitted = {cover.left, cover.top, cover.right, cover.bottom};
+                } else fitted = *suggested;
             } else if (suggested) fitted = *suggested;
             const auto* rect = suggested ? &fitted : nullptr;
             if (rect && !SetWindowPos(target, nullptr, rect->left, rect->top,
@@ -834,6 +863,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.gated.reset(); p.frameInterval.reset(); p.lastMouse.reset();
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
     p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
+    p.clipWidth = p.clipHeight = 0;
     p.offscreen = options.offscreenScheduling;
     p.fixedRefresh = std::isfinite(options.refreshRate) && options.refreshRate > 0 ? options.refreshRate : 0;
     p.testVisibility = options.testVisibility; p.testForeground = options.testForeground; p.testBand = options.testBand;
@@ -842,9 +872,9 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     // once), unlike a SetWindowPos raise, which Windows refuses a process
     // without the right to set the foreground window. An offscreen benchmark
     // window is never shown and stays out of it.
+    const auto rect = p.windowRect(options.x, options.y, static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight));
     const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | (options.offscreenScheduling ? 0 : WS_EX_TOPMOST), windowClass,
-        options.title.c_str(), WS_POPUP, options.x, options.y,
-        static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight),
+        options.title.c_str(), WS_POPUP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
         static_cast<HWND>(options.ownerWindow), nullptr, GetModuleHandleW(nullptr), &p);
     if (!window) { p.rethrow(); fail("CreateWindowEx overlay"); }
     p.rethrow();
@@ -928,10 +958,18 @@ void OverlayHost::hide() {
 bool OverlayHost::place(int x, int y, int width, int height) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (!p.window) return false;
-    // Geometry only: never HWND_TOPMOST here, whatever the window shows.
-    const bool placed = SetWindowPos(p.window, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
-    p.rethrow();
-    return placed;
+    const auto wanted = p.windowRect(x, y, width, height);
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        RECT current{};
+        if (GetWindowRect(p.window, &current) && pixelRect(current) == wanted) break;
+        // Geometry only: never HWND_TOPMOST here, whatever the window shows.
+        ++p.counts.placeMoves;
+        const bool placed = SetWindowPos(p.window, nullptr, wanted.left, wanted.top,
+            wanted.right - wanted.left, wanted.bottom - wanted.top, SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+        p.rethrow();
+        if (!placed || !p.window) return false;
+    }
+    return true;
 }
 double OverlayHost::clockNow() { return monotonicSeconds(); }
 void OverlayHost::setDeadline(std::optional<double> deadline) {

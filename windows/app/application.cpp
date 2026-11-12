@@ -513,6 +513,8 @@ void Application::Impl::construct(){
         const auto selected=gpu::resolveDisplay({},displays,{pointer.x,pointer.y});
         need(selected.has_value(),"No usable display for the source shell preview");
         hudDisplay=displays[*selected].handle;hudDisplayID=displayKey(displays[*selected]);previousApplication=reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
+        // The display's bounds: the host gives the window their cover
+        // rectangle (monitorCoverRect), its client and region the display's.
         windowOptions.coverMonitor=true;
         const auto bounds=displays[*selected].bounds;
         windowOptions.x=bounds.left;windowOptions.y=bounds.top;
@@ -1954,16 +1956,12 @@ gpu::DisplayPreference Application::Impl::displayPreference()const{
         const auto text=wide(id.string());preference.persistentID=std::u16string(text.begin(),text.end());}
     return preference;
 }
-// Covers the display with the HUD window. A per-monitor DPI change can apply
-// Windows' suggested rectangle; the second pass restores the exact bounds.
+// Covers the display with the HUD window: OverlayHost::place gives it the
+// display's cover rectangle (monitorCoverRect) and leaves a window already
+// there alone, so an opening on the same display resizes nothing.
 void Application::Impl::placeOnDisplay(const gpu::DisplayDescriptor&display){
     hudDisplay=display.handle;hudDisplayID=displayKey(display);
-    const auto window=static_cast<HWND>(host.hwnd());const auto&b=display.bounds;
-    for(unsigned attempt=0;attempt<2;++attempt){
-        RECT current{};if(!GetWindowRect(window,&current))return;
-        if(current.left==b.left&&current.top==b.top&&current.right==b.right&&current.bottom==b.bottom)return;
-        if(!SetWindowPos(window,nullptr,b.left,b.top,b.right-b.left,b.bottom-b.top,SWP_NOZORDER|SWP_NOACTIVATE))return;
-    }
+    const auto&b=display.bounds;(void)host.place(b.left,b.top,b.right-b.left,b.bottom-b.top);
 }
 void Application::Impl::targetDisplay(){
     // OverlayController: every opening chooses HUDDisplayPolicy.targetScreen.
@@ -3038,8 +3036,9 @@ std::optional<gpu::DisplayDescriptor> Application::Impl::projectionDisplay(std::
 }
 void Application::Impl::moveProjection(const gpu::DisplayDescriptor&display){
     hudDisplay=display.handle;projectionWorkTopPixels=std::max(0,display.workArea.top-display.bounds.top);
-    // Geometry only: the HUD hidden for the hand-off and a shown Projection
-    // both keep their place in the topmost band.
+    // Geometry only (the display's cover rectangle, monitorCoverRect): the
+    // HUD hidden for the hand-off and a shown Projection both keep their
+    // place in the topmost band.
     const auto&bounds=display.bounds;need(host.place(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),"Position Projection on its retained display");
     (void)projectionCall("resize",[&]{projection->resize(host.metrics(),projectionWorkTopPixels/host.metrics().scale);});
 }

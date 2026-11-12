@@ -1,4 +1,5 @@
 #include "app/overlay_host.hpp"
+#include "tests/obs_fullscreen_rule.hpp"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -735,6 +736,72 @@ void bandLostAtShow() {
     host.hide();check(!host.stats().bandPending&&!host.stats().activationPending,"Hiding drops the waits");
     host.destroy();
 }
+// OBS Studio's any-full-screen Game Capture (tests/obs_fullscreen_rule.hpp)
+// must never take the HUD window: played on the real, never-shown host
+// window of the session's primary monitor after its creation, its placement
+// and a per-monitor DPI change. Nothing is shown or activated.
+void monitorCover() {
+    MONITORINFO info{}; info.cbSize = sizeof(info);
+    check(GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &info) != FALSE, "Read the session's primary monitor");
+    const RECT m = info.rcMonitor;
+    const auto width = static_cast<std::uint32_t>(m.right - m.left), height = static_cast<std::uint32_t>(m.bottom - m.top);
+    {
+        // The copied rule takes a window exactly the monitor's size: the HUD
+        // window before monitorCoverRect.
+        OverlayHost plain; plain.create({L"Hidden monitor-sized fixture", m.left, m.top, width, height, nullptr});
+        check(endfield::tests::obsTakesAsFullscreen(static_cast<HWND>(plain.hwnd())), "OBS's any-full-screen rule takes a hidden window exactly the monitor's size");
+        plain.destroy();
+    }
+    check(monitorCoverRect(PixelRect{m.left, m.top, m.right, m.bottom}) == PixelRect{m.left, m.top, m.right + monitorCoverOverhang, m.bottom + monitorCoverOverhang},
+        "The cover rectangle reaches past OBS's 2 px tolerance on the right and bottom only");
+    unsigned resizes{}; ClientMetrics last{};
+    OverlayCallbacks callbacks; callbacks.resize = [&](const ClientMetrics& c) { ++resizes; last = c; };
+    OverlayOptions options{L"Hidden monitor-cover fixture", m.left, m.top, width, height, nullptr}; options.coverMonitor = true;
+    OverlayHost host; host.create(options, callbacks);
+    const auto window = static_cast<HWND>(host.hwnd());
+    const auto band = GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST;
+    const auto covers = [&](const std::string& when) {
+        RECT rect{}; check(GetWindowRect(window, &rect) != FALSE, "Read the cover fixture's rectangle");
+        check(rect.left == m.left && rect.top == m.top && rect.right == m.right + monitorCoverOverhang && rect.bottom == m.bottom + monitorCoverOverhang,
+            ("The window covers the monitor and reaches monitorCoverOverhang past its right and bottom edges after " + when).c_str());
+        check(!endfield::tests::obsTakesAsFullscreen(window), ("OBS's any-full-screen rule does not take the HUD window after " + when).c_str());
+        POINT origin{}; check(ClientToScreen(window, &origin) && origin.x == m.left && origin.y == m.top, ("The client origin is the monitor's after " + when).c_str());
+        const auto metrics = host.metrics();
+        check(metrics.pixelWidth == width && metrics.pixelHeight == height && last.pixelWidth == width && last.pixelHeight == height,
+            ("The host reports the monitor's size as the client (swap chain, composition, layout) after " + when).c_str());
+        const auto region = CreateRectRgn(0, 0, 0, 0); RECT box{};
+        const int kind = GetWindowRgn(window, region); GetRgnBox(region, &box); DeleteObject(region);
+        check(kind == SIMPLEREGION && box.left == 0 && box.top == 0 && box.right == static_cast<LONG>(width) && box.bottom == static_cast<LONG>(height),
+            ("The window region is the monitor in window coordinates after " + when).c_str());
+        check(!IsWindowVisible(window) && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) == band, ("The fixture stays hidden in its band after " + when).c_str());
+    };
+    covers("its creation");
+    // Every opening places the HUD on its display: a window already there
+    // is left alone (no move, WM_SIZE or swap-chain resize).
+    const auto settled = resizes;
+    check(host.place(m.left, m.top, static_cast<int>(width), static_cast<int>(height)) && host.stats().placeMoves == 0 && resizes == settled,
+        "Placing the HUD on the display it covers moves and resizes nothing");
+    covers("a repeated placement");
+    check(host.place(m.left, m.top, static_cast<int>(width / 2), static_cast<int>(height / 2)) && host.stats().placeMoves == 1 &&
+        host.metrics().pixelWidth == width / 2 && host.metrics().pixelHeight == height / 2, "Placing it on another area moves it once");
+    check(host.place(m.left, m.top, static_cast<int>(width), static_cast<int>(height)) && host.stats().placeMoves == 2, "Placing it back moves it once");
+    covers("its placement");
+    const auto placed = resizes;
+    check(host.place(m.left, m.top, static_cast<int>(width), static_cast<int>(height)) && host.stats().placeMoves == 2 && resizes == placed,
+        "The next opening on the same display moves and resizes nothing");
+    // A per-monitor DPI change: Windows' suggested rectangle only scales the
+    // old size; the window keeps its monitor's cover rectangle.
+    const auto dpi = host.metrics().dpi, other = dpi >= 144 ? 96u : 144u;
+    RECT suggested{m.left, m.top, m.left + static_cast<LONG>(width * other / dpi), m.top + static_cast<LONG>(height * other / dpi)};
+    SendMessageW(window, WM_DPICHANGED, MAKEWPARAM(other, other), reinterpret_cast<LPARAM>(&suggested));
+    check(host.metrics().dpi == other && last.dpi == other, "The simulated DPI change reaches the host");
+    covers("a DPI change");
+    suggested = {m.left, m.top, m.left + static_cast<LONG>(width), m.top + static_cast<LONG>(height)};
+    SendMessageW(window, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), reinterpret_cast<LPARAM>(&suggested));
+    covers("a DPI change back");
+    check(host.stats().placeMoves == 2, "A DPI change fits the window without place()");
+    host.destroy();
+}
 void nativeDeadlines() {
     OverlayHost host;unsigned wakes{},frames{};
     OverlayCallbacks callbacks;
@@ -1263,7 +1330,7 @@ int main(int argc,char**argv) {
 #endif
         scheduling(); coalescing(); deadlines(); displayPacing(); mouseHistory();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput(); nestedModalLoopUnderPacedMotion();
+        nativeWindow(); callbackFailures(); firstOpeningBand(); zBandAndActivation(); zBandNative(); bandLostAtShow(); monitorCover(); nativeDeadlines(); offscreenCadence(); gatedFrameUnderContinuousInput(); nestedModalLoopUnderPacedMotion();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else
