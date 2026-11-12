@@ -33,7 +33,11 @@ void StorageCanvas::wake(double now) {
 }
 void StorageCanvas::changed() {
     if (!renderedLanguage() || switchingVolume_) return;
-    applyReadings();
+    // The leaving page and header keep the old disk's readings (Mac 84e2f54):
+    // during a sub-page swap the staged page is built again instead (the Q4
+    // rebuild, as ActivityCanvas::updateApps), so the swap lands the newest
+    // reading; header() would reach the leaving header here.
+    if (transitioning()) rerender(); else applyReadings();
     if (!isActive()) return;
     const auto& snapshot = controller_->snapshot();
     if (pendingRefreshToast_ && !snapshot.isLoading) {
@@ -74,8 +78,9 @@ void StorageCanvas::openVolumeMenu(const d::Dropdown& anchor) {
     openMenu("volume", std::move(items), anchor, std::nullopt, [this](const d::Menu::Item& item) {
         const auto* current = controller_->currentVolume();
         if (current && item.id == current->id) return;
-        // The chosen disk re-enters from below with its listed numbers; its
-        // fresh reading then updates that page in place.
+        // The chosen disk re-enters from below with the newest reading; one
+        // that arrives while the old page leaves lands with the new page, a
+        // later one updates it in place.
         switchingVolume_ = true;
         const bool chosen = controller_->selectVolume(item.id, now());
         switchingVolume_ = false;

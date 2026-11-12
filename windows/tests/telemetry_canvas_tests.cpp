@@ -369,6 +369,21 @@ void activityState() {
 m::StorageVolume volume(std::string id, std::string name, std::int64_t total, std::int64_t available, bool startup, bool removable = false) {
     return {std::move(id), "C:\\", removable, startup, {std::move(name), total, available, 1}};
 }
+// The page in the tree (the leaving one during a sub-page swap): its lit
+// cells (a lit capacity cell carries the plate, untinted) and its readout.
+int litCells(const d::Canvas& canvas) {
+    int lit{};
+    for (const auto* cell : layer(canvas, "storage.cells").children()) if (!cell->children().front()->tint()) ++lit;
+    return lit;
+}
+const d::Readout& pageReadout(const d::Canvas& canvas) {
+    for (const auto* control : canvas.page().controls())
+        if (const auto* readout = dynamic_cast<const d::Readout*>(control); readout && readout->id() == "storage.readings") return *readout;
+    throw std::runtime_error("No storage readout");
+}
+std::size_t pagesInTree(const d::Canvas& canvas) {
+    return std::size_t(std::count_if(canvas.root().children().begin(), canvas.root().children().end(), [](const d::Layer* child) { return child->id().find(".page") != std::string::npos; }));
+}
 void storage() {
     World w;
     m::StorageController controller;
@@ -413,9 +428,36 @@ void storage() {
     const auto data = item(canvas, "volume:data"), sys = item(canvas, "volume:sys");
     check(data && data->label == "Data" && sys && sys->on && !data->on, "Menu rows show the disk names; the current one is selected");
     check(canvas.performAccessibilityAction("volume:data", w.now) && !canvas.menuOpen() && saved == std::vector<std::string>{"data"} && requests == 5, "Choosing a disk remembers it and reads afresh (MODS-435)");
-    w.advance(.2); canvas.show(w.now);
-    check(item(canvas, "volume")->value == "Data" && canvas.header().counterText() == "25.0%", "The chosen disk shows at once with its listed numbers");
+    // The fresh read lands while the old page leaves (Mac 84e2f54): the
+    // leaving page and header keep the old disk's figures, the entering page
+    // shows the fresh ones.
+    check(canvas.transitioning(), "Choosing a disk starts the sub-page swap");
+    w.advance(.05);
+    const std::vector<m::StorageVolume> fresh{disks[0], volume("data", "Data", 2000000000000, 1000000000000, false, true)};
+    read = *controller.takeCapacityRequest();
+    check(controller.completeCapacity(read.token, {fresh, std::nullopt}, w.now), "The chosen disk's read completes during the leave");
+    canvas.controllerChanged(w.now);
+    check(canvas.transitioning() && canvas.header().counterText() == "95.0%" && text(canvas, "dropdown.value") == "System", "The leaving header keeps the old disk");
+    check(text(canvas, "storage.available.numeral.value") == "50.0" && text(canvas, "storage.available.numeral.unit") == "GB" && text(canvas, "storage.used.numeral.value") == "95.0",
+        "The leaving numerals keep the old disk");
+    check(litCells(canvas) == 38 && text(canvas, "storage.plate.0.stat.value") == "1.00 TB" && text(canvas, "storage.plate.1.stat.value") == "950.0 GB"
+        && text(canvas, "storage.plate.2.stat.value") == "50.0 GB", "The leaving cells and plates keep the old disk");
+    check(pageReadout(canvas).label == "System" && pageReadout(canvas).value == "Total 1.00 TB, Used 950.0 GB, Available 50.0 GB, 95.0%", "The leaving readout keeps the old disk");
+    w.advance(.1);
+    check(!canvas.transitioning() && pagesInTree(canvas) == 1, "The swap lands one page");
+    check(item(canvas, "volume")->value == "Data" && canvas.header().counterText() == "50.0%" && text(canvas, "storage.available.numeral.value") == "1.00"
+        && text(canvas, "storage.available.numeral.unit") == "TB" && text(canvas, "storage.used.numeral.value") == "50.0", "The entering page shows the fresh reading");
+    check(canvas.cellFill() == std::pair{20, false} && litCells(canvas) == 20 && text(canvas, "storage.plate.2.stat.value") == "1.00 TB"
+        && item(canvas, "storage.readings")->value == "Total 2.00 TB, Used 1.00 TB, Available 1.00 TB, 50.0%", "The entering cells, plates and readout show the fresh reading");
+    check(layer(canvas, "storage.plate.0").presented(d::Channel::opacity, w.now) < 1, "The fresh figures arrive with the entrance");
+    // A later read updates the landed page in place.
+    w.advance(1);
+    controller.refresh(w.now); read = *controller.takeCapacityRequest();
+    controller.completeCapacity(read.token, {{disks[0], volume("data", "Data", 2000000000000, 500000000000, false, true)}, std::nullopt}, w.now); canvas.controllerChanged(w.now);
+    check(!canvas.transitioning() && canvas.header().counterText() == "75.0%" && canvas.cellFill() == std::pair{30, false} && text(canvas, "storage.used.numeral.value") == "75.0",
+        "A read after the switch updates the page in place");
     // Mount events re-list (after a read in flight).
+    controller.refresh(w.now);
     read = *controller.takeCapacityRequest();
     controller.volumesChanged(w.now);
     check(!controller.takeCapacityRequest(), "A mount event during a read waits for it");
@@ -424,6 +466,23 @@ void storage() {
         "Then re-reads; an unmounted choice falls back to the startup disk and is kept (MODS-431, 434)");
     canvas.setActive(false, w.now);
     check(!controller.active() && !canvas.nextWakeTime(w.now), "Leaving stops reading and its 60 s timer");
+    // Reduce Motion: the chosen disk installs at once with its listed
+    // numbers, and its read updates that page in place.
+    {
+        World r;
+        d::Context::Appearance a; a.reduceMotion = true; r.context.apply(a, r.now);
+        m::StorageController c;
+        m::StorageCanvas still(r.context, c);
+        open(still, r);
+        auto first = *c.takeCapacityRequest();
+        c.completeCapacity(first.token, {disks, std::nullopt}, r.now); still.controllerChanged(r.now);
+        check(still.performAccessibilityAction("volume", r.now) && still.performAccessibilityAction("volume:data", r.now) && !still.transitioning(), "Under Reduce Motion the chosen disk installs at once");
+        check(item(still, "volume")->value == "Data" && still.header().counterText() == "25.0%" && litCells(still) == 10, "Under Reduce Motion the chosen disk shows its listed numbers");
+        auto next = *c.takeCapacityRequest();
+        c.completeCapacity(next.token, {fresh, std::nullopt}, r.now); still.controllerChanged(r.now);
+        check(still.header().counterText() == "50.0%" && still.cellFill() == std::pair{20, false} && litCells(still) == 20 && text(still, "storage.used.numeral.value") == "50.0",
+            "Under Reduce Motion the read updates the page in place");
+    }
     // StorageVolumeCatalog.limited (:116-123).
     std::vector<m::StorageVolume> many;
     for (int n = 0; n < 9; ++n) many.push_back(volume("v" + std::to_string(n), "V", 10, 5, n == 0));
