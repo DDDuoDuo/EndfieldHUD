@@ -258,9 +258,14 @@ void CalendarCanvas::controllerChanged() {
     }
     refresh();
 }
-// Structure changes re-render in place; busy flips update the buttons.
+// Structure changes re-render in place; busy flips update the buttons. The
+// Mac skips a change while a month or day swap runs because it builds the
+// next page when the swap lands; Windows built it when the swap started (Q4),
+// so until the swap lands a change reaches that staged page (a structure
+// change builds it again, Canvas::rerender; the binders are its own), and it
+// lands with the newest events and count.
 void CalendarCanvas::refresh() {
-    if (!renderedLanguage() || transitioning()) return;
+    if (!renderedLanguage()) return;
     if (structure() != renderedStructure_) {
         rerender();
         if (editingText()) refreshTextFieldProjection();

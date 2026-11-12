@@ -835,6 +835,32 @@ void calendar(Run& run) {
         const auto& deleted = zh.harness.context.overlay().toastState().current();
         check(deleted && deleted->title == "提醒已取消" && deleted->caption == "Event deleted", "The Chinese delete toast reads 提醒已取消 (MODS-659, catalog pair)");
     }
+    {
+        // An event saved during a month swap: the leaving header keeps its
+        // count and the page the swap lands counts it (the Mac builds that
+        // page when the swap lands); the same for a swap the HUD's close
+        // settled concealed, which lands when the module shows again.
+        CalendarWorld w(run.measurer, run.data, true);
+        double t = 10;
+        const auto step = [&](double seconds) { t += seconds; w.harness.context.advance(t); };
+        check(w.canvas->header().counterText() == "06 EVENTS", "Calendar counts its six events");
+        w.canvas->perform("nextMonth");
+        step(.05);
+        check(w.state->save("Synthetic call", "", {2026, 11, 3}), "An event is saved during the month swap");
+        w.queue.drain();
+        check(w.canvas->transitioning() && w.canvas->header().counterText() == "06 EVENTS", "An event saved during the month swap leaves the leaving header alone");
+        step(.1);
+        check(!w.canvas->transitioning() && w.canvas->month().month == 11 && w.canvas->header().counterText() == "07 EVENTS", "The landed month counts the new event");
+        step(1);
+        w.canvas->perform("nextMonth");
+        step(.02);
+        w.canvas->settleSwap(true);
+        check(w.state->save("Synthetic trip", "", {2026, 12, 3}), "An event is saved after a concealed settle");
+        w.queue.drain();
+        check(!w.canvas->transitioning() && w.canvas->header().counterText() == "07 EVENTS", "An event saved after a concealed settle leaves the fading header alone");
+        w.canvas->show(t);
+        check(w.canvas->month().month == 12 && w.canvas->header().counterText() == "08 EVENTS", "The concealed swap lands counting the new event");
+    }
 }
 }
 
