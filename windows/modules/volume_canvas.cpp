@@ -70,8 +70,11 @@ void VolumeCanvas::resetSession() {
     Canvas::resetSession();
     if (changed && renderedLanguage()) rerender();
 }
+// A swap that has not landed (settled concealed by the HUD's close) already
+// holds the newest snapshot: every change since it started built it again
+// (changed), so the show lands it without another build.
 void VolumeCanvas::show(double now) {
-    if (renderedLanguage()) { env().now = now; changed(); }
+    if (renderedLanguage() && !swapPending()) { env().now = now; changed(); }
     Canvas::show(now);
 }
 void VolumeCanvas::receive(native::VolumeSnapshot next) {

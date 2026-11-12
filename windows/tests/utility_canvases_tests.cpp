@@ -457,8 +457,10 @@ void volumeCanvas() {
         auto softer = quiet; softer.volume = .40;
         canvas.receive(softer);
         check(!canvas.transitioning() && canvas.header().counterText() == "72", "A volume change after a concealed settle leaves the fading header alone");
+        const auto built = w.context.pagesBuilt();
         canvas.show(w.now);
         check(canvas.tab() == 1 && canvas.header().counterText() == "40", "The concealed swap lands with the new volume");
+        check(w.context.pagesBuilt() == built, "The concealed swap lands the page it holds without another build");
         w.advance(1);
         w.appearance(Language::english);
         canvas.receive(model.state);
