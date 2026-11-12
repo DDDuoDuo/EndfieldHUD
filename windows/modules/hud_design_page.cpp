@@ -252,7 +252,7 @@ void Canvas::rerenderIfStale() {
 
 // --- Rendering (:289-401) ----------------------------------------------------
 void Canvas::rerender() {
-    if (swapDeadline_ || concealedSwap_) {               // the swap lands its own, rebuilt page
+    if (swapPending()) {                                 // the swap lands its own, rebuilt page
         if (pending_) bury(std::shared_ptr<Page>(std::move(pending_)));
         pending_ = makePage({}, true);
         return;
@@ -277,7 +277,7 @@ void Canvas::navigate(double dx, double dy) {
     auto& deadlines = env().deadlines;
     const auto clock = env().clock();
     if (clock.reduceMotion || !attached_) {
-        if (swapDeadline_ || concealedSwap_) {
+        if (swapPending()) {
             if (swapDeadline_) { deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset(); }
             concealedSwap_ = false;
             finishLeave();
@@ -697,7 +697,7 @@ void Canvas::cancelGestures() {
 // --- Pointer input, content-box px (:502-577) -----------------------------------------
 bool Canvas::pointerDown(Point point, const PointerInput& input, double now) {
     begin(now);
-    if (!active_ || swapDeadline_ || concealedSwap_) return false;
+    if (!active_ || swapPending()) return false;
     if (interceptPointerDown(point, input)) { notifyInput(); return true; }
     // The first press outside an open menu or pop-over only closes it; a press
     // on its anchor closes it too (the anchor toggles).
@@ -734,7 +734,7 @@ void Canvas::pointerUp(Point point, double now) {
 }
 bool Canvas::rightPointerDown(Point point, double now) {
     begin(now);
-    if (!active_ || swapDeadline_ || concealedSwap_) return false;
+    if (!active_ || swapPending()) return false;
     if (capturesPointer()) { closePopups(); return true; }
     return handleRightPointerDown(point);
 }
@@ -809,7 +809,7 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
 
 // --- Accessibility (:606-622) ----------------------------------------------------------
 void Canvas::accessibilityItems(std::vector<AccessibilityItem>& out) const {
-    if (!active_ || swapDeadline_ || concealedSwap_) return;
+    if (!active_ || swapPending()) return;
     router_.accessibilityItems(*root_, out);
 }
 bool Canvas::performAccessibilityAction(std::string_view id, double now) {

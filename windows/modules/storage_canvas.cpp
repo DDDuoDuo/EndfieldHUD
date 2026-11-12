@@ -34,10 +34,11 @@ void StorageCanvas::wake(double now) {
 void StorageCanvas::changed() {
     if (!renderedLanguage() || switchingVolume_) return;
     // The leaving page and header keep the old disk's readings (Mac 84e2f54):
-    // during a sub-page swap the staged page is built again instead (the Q4
-    // rebuild, as ActivityCanvas::updateApps), so the swap lands the newest
-    // reading; header() would reach the leaving header here.
-    if (transitioning()) rerender(); else applyReadings();
+    // until a sub-page swap lands (in flight, or settled concealed by the
+    // HUD's close) the staged page is built again instead (the Q4 rebuild, as
+    // ActivityCanvas::updateApps), so the swap lands the newest reading;
+    // header() would reach the leaving header here.
+    if (swapPending()) rerender(); else applyReadings();
     if (!isActive()) return;
     const auto& snapshot = controller_->snapshot();
     if (pendingRefreshToast_ && !snapshot.isLoading) {

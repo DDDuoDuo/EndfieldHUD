@@ -472,6 +472,21 @@ void storage() {
     w.advance(.1);
     check(!canvas.transitioning() && pagesInTree(canvas) == 1 && canvas.header().counterText() == "25.0%" && litCells(canvas) == 10
         && text(canvas, "storage.used.numeral.value") == "25.0", "The swap lands the page re-rendered from the latest state");
+    // A swap settled concealed (the HUD's close, a module leaving while
+    // active) waits for the module to show again: a read finishing meanwhile
+    // leaves the fading header and page on the old figures, and the waiting
+    // page lands with the fresh ones.
+    w.advance(1);
+    canvas.navigate(0, 1);
+    w.advance(.02);
+    canvas.settleSwap(true);
+    controller.refresh(w.now); read = *controller.takeCapacityRequest();
+    controller.completeCapacity(read.token, {fresh, std::nullopt}, w.now); canvas.controllerChanged(w.now);
+    check(!canvas.transitioning() && canvas.header().counterText() == "25.0%" && text(canvas, "storage.used.numeral.value") == "25.0" && litCells(canvas) == 10
+        && pageReadout(canvas).value == "Total 2.00 TB, Used 500.0 GB, Available 1.50 TB, 25.0%", "A read during a concealed settle leaves the fading header and page alone");
+    canvas.show(w.now);
+    check(pagesInTree(canvas) == 1 && canvas.header().counterText() == "50.0%" && canvas.cellFill() == std::pair{20, false} && litCells(canvas) == 20
+        && text(canvas, "storage.used.numeral.value") == "50.0", "The concealed swap lands with the fresh reading, header included");
     // Mount events re-list (after a read in flight).
     controller.refresh(w.now);
     read = *controller.takeCapacityRequest();

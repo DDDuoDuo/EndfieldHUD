@@ -337,6 +337,11 @@ public:
     // the old page first. transitioning() is false meanwhile.
     void settleSwap(bool concealed = false);
     bool transitioning() const noexcept { return swapDeadline_.has_value(); }
+    // A swap not landed yet: in flight (transitioning) or settled concealed
+    // and waiting for the module to show again. Until it lands, header()
+    // outside a build is the leaving header and rerender() rebuilds only the
+    // staged page.
+    bool swapPending() const noexcept { return swapDeadline_ || concealedSwap_; }
     // Menus (LIB-78): one menu or pop-over at a time (opening closes the
     // other); the anchor control (held by id, re-resolved after a re-render)
     // gives the rect and minimum width and shows its open state; picking
