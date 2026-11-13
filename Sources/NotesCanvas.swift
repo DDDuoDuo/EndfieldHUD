@@ -457,6 +457,8 @@ final class NotesCanvas: HUDDesignCanvas, NSTextViewDelegate {
             reorder = state
         case .ended:
             guard let state = reorder, state.id == id else { return }
+            // Q / E, leaving the module or closing the HUD mid-drag puts the card back.
+            guard !isCancellingGestures else { cancelReorder(); return }
             reorder = nil
             state.drop(cards[id]?.layer, env: env)
             guard state.order != document.tasks.map(\.id) else { return }

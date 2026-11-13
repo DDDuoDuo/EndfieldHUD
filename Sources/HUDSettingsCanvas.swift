@@ -468,7 +468,8 @@ final class HUDSettingsCanvas: HUDDesignCanvas {
             guard let drag = moduleDrag, drag.module == module else { return }
             moduleDrag = nil
             HUDMotion.animate(plate, "opacity", to: Float(1), duration: HUDDuration.hover, env: env)
-            controller.update { $0.moduleLayout.move(module, to: drag.slot) }
+            // Leaving the page or closing the HUD mid-drag puts the row back.
+            if !isCancellingGestures { controller.update { $0.moduleLayout.move(module, to: drag.slot) } }
             layoutModuleRows(config.moduleLayout.order, animated: true)
             HUDMotion.perform { plate.zPosition = 0 }
         }
