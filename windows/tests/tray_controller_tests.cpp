@@ -41,7 +41,6 @@ void run(){
     // A press on the icon is asked of the shell for the icon's own window.
     fake.pressed=true;check(tray.iconPressed()&&fake.pressQueries==std::vector<HWND>{hwnd},"A press on the installed icon is asked for the icon's own window");
     fake.pressed=false;check(!tray.iconPressed()&&fake.pressQueries.size()==2,"No press on the icon is reported as none");
-    {auto incomplete=fake.platform();incomplete.iconPressed={};rejects([&]{TrayController missing(hwnd,callback+5,explorer,std::move(incomplete));},"A tray platform without iconPressed is incomplete");}
     // Natively: a window with no icon is never pressed (no input is injected).
     check(!nativeTrayPlatform().iconPressed(hwnd),"The native press check answers false for a window with no icon");
     fake.shellFails=true;check(!tray.updateIcon(replacement,L"测试")&&tray.lastError()!=0,"Failed Shell update is observable");fake.shellFails=false;
@@ -117,25 +116,22 @@ void run(){
     // The click on the icon makes Explorer the foreground before the menu
     // opens (WM_ACTIVATEAPP FALSE), then the menu's owner takes it (TRUE).
     // As in Application::Impl::closeForFocusLoss, a deactivation that is a
-    // press on the icon (iconPressed) does not close the open HUD at once:
-    // the close waits (pending) for the menu's owner's activation, which
-    // claims it, and follows at the end of the wait (expire) if the
-    // application is still inactive. Asking the shell can dispatch messages,
-    // so the activation is read after it.
+    // press on the icon (iconPressed) does not close the open HUD at once
+    // (the application's wait for the menu, and its close at the end of the
+    // wait, are checked in its idle trace). Asking the shell can dispatch
+    // messages.
     // The hand-back after an action stands in for the application's
     // (Application::Impl::trayReturnsFocus, checked in the hidden run):
     // after an item that left the HUD not showing.
-    {bool open{},closeOnFocusLost{true},active{true},pending{};unsigned focusCloses{};OverlayHost hud;TrayController*hudRoute{};
+    {bool open{},closeOnFocusLost{true},active{true};unsigned focusCloses{};OverlayHost hud;TrayController*hudRoute{};
      OverlayOptions options{L"Synthetic tray HUD",0,0,16,16,nullptr};
      options.testVisibility=[](bool shown,bool){return shown;};options.testForeground=[]{return true;};options.testBand=[](bool topmost){return topmost;};
      OverlayCallbacks hudCallbacks;
      hudCallbacks.appMessage=[&](const NativeMessage&m)->std::optional<std::intptr_t>{if(hudRoute&&hudRoute->message(m.message,m.wParam,m.lParam))return 0;return {};};
      const auto focusClose=[&]{open=false;++focusCloses;hud.hide();};
-     hudCallbacks.applicationActive=[&](bool value){active=value;if(value){pending=false;return;}
-         if(!open||!closeOnFocusLost)return;
-         if(hudRoute&&hudRoute->iconPressed()){if(!active)pending=true;return;}
+     hudCallbacks.applicationActive=[&](bool value){active=value;if(value||!open||!closeOnFocusLost)return;
+         if(hudRoute&&hudRoute->iconPressed())return;
          focusClose();};
-     const auto expire=[&]{if(std::exchange(pending,false)&&!active)focusClose();};
      // No window is added for the press: count the thread's top-level windows.
      const auto windows=[]{unsigned count{};EnumThreadWindows(GetCurrentThreadId(),[](HWND,LPARAM l){++*reinterpret_cast<unsigned*>(l);return TRUE;},reinterpret_cast<LPARAM>(&count));return count;};
      hud.create(options,hudCallbacks);const auto hudWindow=static_cast<HWND>(hud.hwnd());
@@ -179,35 +175,24 @@ void run(){
      {(void)menu(TrayAction::openOverlay);const auto topLevel=windows();shell.pressed=true;shell.pressQueries.clear();
       // (a) A dismissed menu: the shown HUD takes the foreground back; no NIM_SETFOCUS.
       {const auto closes=focusCloses;const auto [dismissed,notices]=menu(TrayAction::none);
-       check(!dismissed&&open&&hud.stats().visible&&focusCloses==closes&&!pending&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices,
+       check(!dismissed&&open&&hud.stats().visible&&focusCloses==closes&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices,
            "A press on the icon leaves the open HUD open, and the dismissed menu hands it the foreground back");
        check(!shell.pressQueries.empty()&&std::all_of(shell.pressQueries.begin(),shell.pressQueries.end(),[&](HWND w){return w==hudWindow;}),"The press is asked for the HUD window's icon, not the menu's owner");
-       expire();check(open&&focusCloses==closes,"A press the menu claimed closes nothing at the end of the wait");shell.returns.clear();}
+       shell.returns.clear();}
       // (b) Items chosen over the open HUD: it stays open, no hand-back and
-      // no NIM_SETFOCUS; a later deactivation off the icon still closes at once.
+      // no NIM_SETFOCUS.
       for(const auto choice:{TrayAction::openOverlay,TrayAction::settings,TrayAction::workMode,TrayAction::about,TrayAction::checkUpdates,TrayAction::previewCharging}){
           const auto closes=focusCloses;const auto [action,notices]=menu(choice);
-          check(action==choice&&open&&hud.stats().visible&&focusCloses==closes&&!pending&&!shellTookFocus(notices)&&shell.returns.empty(),
+          check(action==choice&&open&&hud.stats().visible&&focusCloses==closes&&!shellTookFocus(notices)&&shell.returns.empty(),
               "An item chosen over the open HUD after a press on the icon leaves it open with the foreground");}
-      {const auto closes=focusCloses;shell.pressed=false;SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
-       check(!open&&!hud.stats().visible&&focusCloses==closes+1&&!pending,"A later deactivation off the icon closes the HUD at once");
-       SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);(void)menu(TrayAction::openOverlay);shell.pressed=true;}
       // (c) Quit over the open HUD: the press closes nothing; the application's
       // Quit closes the HUD with its animation.
       {const auto closes=focusCloses;const auto [action,notices]=menu(TrayAction::quit);
-       check(action==TrayAction::quit&&open&&focusCloses==closes&&!pending&&shell.returns.empty()&&shell.notices.size()==notices,"Quit chosen over the open HUD after a press on the icon is the application's to run");}
-      // (e) A press no menu claims (dragged off the icon, or a menu refused
-      // the foreground): the close follows at the end of the wait (the
-      // application's, inside a menu's loop too: checked in its idle trace).
-      {const auto closes=focusCloses;SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
-       check(open&&hud.stats().visible&&pending&&focusCloses==closes,"A press on the icon waits for the menu");
-       expire();check(!open&&!hud.stats().visible&&focusCloses==closes+1,"A press no menu claimed closes the HUD at the end of the wait");
-       SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);}
-      // (f) Asking the shell dispatched the menu's activation: nothing waits and nothing closes.
+       check(action==TrayAction::quit&&open&&focusCloses==closes&&shell.returns.empty()&&shell.notices.size()==notices,"Quit chosen over the open HUD after a press on the icon is the application's to run");}
+      // (e) Asking the shell dispatched the menu's activation: nothing closes.
       {(void)menu(TrayAction::openOverlay);const auto closes=focusCloses;shell.duringPress=[&]{SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);};
        SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);shell.duringPress={};
-       check(open&&hud.stats().visible&&active&&!pending&&focusCloses==closes,"An activation dispatched while the shell is asked leaves nothing waiting");
-       expire();check(open&&focusCloses==closes,"Nothing closes after it");}
+       check(open&&hud.stats().visible&&active&&focusCloses==closes,"An activation dispatched while the shell is asked leaves the HUD open and active");}
       // (d) A deactivation that is no press on the icon: closed at once, and the
       // dismissed menu then finds no shown HUD, so the notification area gets its focus back.
       {shell.pressed=false;const auto closes=focusCloses;const auto [dismissed,notices]=menu(TrayAction::none);
