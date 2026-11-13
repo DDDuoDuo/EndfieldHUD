@@ -553,6 +553,11 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(const auto action=tray->takeAction()){
             const bool hotkey=m.message==WM_HOTKEY;const auto time=now();
             if(!(hotkey&&lastHookSummon&&time-*lastHookSummon<.3))trayAction(*action,hotkey,time);
+            // A menu item whose action left the HUD hidden (Preview Charging):
+            // the menu's never-shown owner holds the foreground, so the
+            // notification area gets its focus back, as after a dismissed
+            // menu. An item that showed the HUD (trayAction) keeps it.
+            if(!hotkey&&tray&&!stopping&&session->phase()==core::VisibilityPhase::concealed&&!projectionHandoff.active()&&!projectionShown())tray->returnFocus();
         }
         return 0;
     }

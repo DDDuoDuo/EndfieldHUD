@@ -115,7 +115,8 @@ void run(){
          // The menu's owner takes the foreground: the application is active.
          SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);SendMessageW(hudWindow,callback+2,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
          const auto action=hudTray.takeAction();
-         if(action){open=true;hud.show(true);}
+         if(action&&*action!=TrayAction::previewCharging){open=true;hud.show(true);}
+         else if(action&&!hud.stats().visible)hudTray.returnFocus(); // Preview Charging left the HUD hidden
          check(!early&&shell.menus>0,"No action runs before the menu returns");
          return std::pair{action,notices};};
      const auto shellTookFocus=[&](std::size_t from){return std::find(shell.notices.begin()+from,shell.notices.end(),DWORD(NIM_SETFOCUS))!=shell.notices.end();};
@@ -134,6 +135,9 @@ void run(){
          // A real later click elsewhere still closes it.
          SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
          check(!open&&!hud.stats().visible&&focusCloses==closes+1,"A deactivation after the opening's activation closes the HUD");}
+     {const auto [action,notices]=menu(TrayAction::previewCharging);
+      check(action==TrayAction::previewCharging&&!hud.stats().visible&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices+1&&shell.notices.back()==NIM_SETFOCUS,
+          "Preview Charging leaves the HUD hidden and then returns the notification area's focus");}
      hudTray.stop();hudRoute=nullptr;hud.destroy();}
     tray.stop();const auto stopped=fake.notices.size();tray.stop();tray.returnFocus();check(fake.notices.size()==stopped&&fake.notices.back()==NIM_DELETE&&!tray.message(explorer,0,0),"Stop removes icon once and ignores queued lifecycle messages and focus hand-backs");
     fake.legacy=true;check(tray.start(icon,L"Legacy"),"Version negotiation failure retains legacy icon");fake.choice=TrayAction::openOverlay;
