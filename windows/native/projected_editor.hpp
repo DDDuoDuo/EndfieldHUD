@@ -90,7 +90,8 @@ public:
     // No raster/JSON/text measurement/allocation on unchanged-document frames.
     // Pending text changes are synchronized here, or deferred while TSF holds a lock.
     bool setPose(const ProjectedEditorPose&);
-    // Logical document points, positive downward. Requires synchronized text.
+    // Logical document points, positive downward. Pending text changes are
+    // laid out first, or the call declines while TSF holds a lock.
     // Repaints only viewport pixels from the same DWrite layout and refreshes
     // the current pose/TSF placement; caller uploads/presents changed resources.
     // A locked TSF transaction declines scrolling before any paint mutation.
