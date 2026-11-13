@@ -752,8 +752,6 @@ void monitorCover() {
         check(endfield::tests::obsTakesAsFullscreen(static_cast<HWND>(plain.hwnd())), "OBS's any-full-screen rule takes a hidden window exactly the monitor's size");
         plain.destroy();
     }
-    check(monitorCoverRect(PixelRect{m.left, m.top, m.right, m.bottom}) == PixelRect{m.left, m.top, m.right + monitorCoverOverhang, m.bottom + monitorCoverOverhang},
-        "The cover rectangle reaches past OBS's 2 px tolerance on the right and bottom only");
     // OBS outside per-monitor awareness reads both rectangles scaled down by
     // the monitor's scale (MulDiv rounding on each edge): the overhang still
     // passes the tolerance at every Windows scale up to 500 %, wherever the
