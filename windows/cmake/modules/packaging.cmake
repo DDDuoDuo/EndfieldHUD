@@ -1,6 +1,6 @@
 # Packaging area: unpackaged per-user installer, portable zip, release
 # staging, CI support, the section 9 performance-gate tooling and the Windows
-# updater (windows/packaging/README.md). Only the updater (the windowsUpdates
+# updater. Only the updater (the windowsUpdates
 # area) is linked into EndfieldHUD.exe; the installer is its own small
 # program. Tests use temporary folders, a loopback HTTP fixture server and a
 # private HKCU\Software\EndfieldHUD-Test-<id> subtree only: never the real
@@ -168,7 +168,7 @@ if(WIN32)
   # measured from outside: windows/tools/package_perf_gate.cpp. The real run
   # shows the HUD, so no test, CI step or build target ever starts it against
   # EndfieldHUD.exe: the user runs "package_perf_gate --desktop" on the
-  # laptop's desktop (windows/packaging/README.md, Performance gates).
+  # laptop's desktop.
   add_library(hud_packaging_perf packaging/perf_probe.cpp packaging/perf_runner.cpp)
   target_compile_definitions(hud_packaging_perf PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
   target_link_libraries(hud_packaging_perf PUBLIC hud_packaging_io hud_application_core PRIVATE pdh psapi dxgi version rstrtmgr bcrypt advapi32 user32)
@@ -178,14 +178,13 @@ if(WIN32)
   list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_perf package_perf_gate)
 
   # Release staging: install tree -> portable zip + setup + size report +
-  # SHA256SUMS in <build>/packaging/dist (never a GitHub release).
-  set(EHUD_RELEASE_ALLOW_INCOMPLETE OFF CACHE BOOL "Stage a developer package even when Mac-exported runtime inputs are missing")
-  set(EHUD_SIGN_CERTIFICATE_SHA1 "" CACHE STRING "Thumbprint of DDDuoDuo's code-signing certificate (empty: unsigned)")
-  set(EHUD_SIGN_TIMESTAMP_URL "" CACHE STRING "RFC 3161 timestamp server for signtool")
+  # SHA256SUMS in <build>/packaging/dist, unsigned (never a GitHub release).
+  # Signed artifacts come only from .github/workflows/windows-release.yml,
+  # which runs the same script phase by phase around its SignPath requests.
   set(ehud_release_command "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
     "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/packaging/dist" "-DPACKER=$<TARGET_FILE:package_payload>" "-DSTUB=$<TARGET_FILE:endfieldhud_setup_stub>"
-    "-DUNINSTALLER=$<TARGET_FILE:endfieldhud_uninstaller>" "-DSYMBOLS=$<TARGET_PDB_FILE:EndfieldHUD>" "-DALLOW_INCOMPLETE=${EHUD_RELEASE_ALLOW_INCOMPLETE}"
-    "-DSIGN_SHA1=${EHUD_SIGN_CERTIFICATE_SHA1}" "-DSIGN_TIMESTAMP=${EHUD_SIGN_TIMESTAMP_URL}" -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stage_release.cmake")
+    "-DUNINSTALLER=$<TARGET_FILE:endfieldhud_uninstaller>" "-DSYMBOLS=$<TARGET_PDB_FILE:EndfieldHUD>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stage_release.cmake")
   if(TARGET EndfieldHUD)
     add_custom_target(endfieldhud_release COMMAND ${ehud_release_command} COMMENT "Staging EndfieldHUD release artifacts" VERBATIM USES_TERMINAL)
     add_dependencies(endfieldhud_release EndfieldHUD endfieldhud_resources endfieldhud_setup_stub endfieldhud_uninstaller package_payload)
@@ -253,16 +252,12 @@ if(WIN32)
       --requirements "${CMAKE_CURRENT_SOURCE_DIR}/packaging/os-requirements.json")
     list(APPEND EHUD_PACKAGING_TARGETS package_os_capabilities)
     if(TARGET EndfieldHUD)
-      # The real install tree staged, packed, installed and removed in
-      # temporary folders (complete when the Mac-exported inputs are configured).
-      set(ehud_release_complete OFF)
-      if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
-        set(ehud_release_complete ON)
-      endif()
+      # The real install tree staged in three phases, packed, installed and
+      # removed in temporary folders.
       add_test(NAME endfieldhud_release_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
         "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/packaging-release-check" "-DPACKER=$<TARGET_FILE:package_payload>"
         "-DSTUB=$<TARGET_FILE:endfieldhud_setup_stub>" "-DUNINSTALLER=$<TARGET_FILE:endfieldhud_uninstaller>" "-DSYMBOLS=$<TARGET_PDB_FILE:EndfieldHUD>"
-        "-DREQUIRE_COMPLETE=${ehud_release_complete}" "-DCHECKER=$<TARGET_FILE:packaging_installer_tests>"
+        "-DCHECKER=$<TARGET_FILE:packaging_installer_tests>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/run_release_check.cmake")
       set_tests_properties(endfieldhud_release_contracts PROPERTIES TIMEOUT 900)
       add_dependencies(packaging_installer_tests EndfieldHUD package_payload)

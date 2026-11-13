@@ -2,10 +2,10 @@
 //
 //   package_payload pack    --tree <dir> --stub <EndfieldHUD-Setup stub> --out <setup.exe>
 //                           --release <v1.2.0> --build <18> --commit <sha>
-//                           [--add <package path>=<file>]... [--incomplete] [--encoding lzms|identity]
+//                           [--add <package path>=<file>]... [--encoding lzms|identity]
 //   package_payload inspect <setup.exe>
 //   package_payload report  --tree <dir> --release <v> --build <n> --commit <sha> --json <out> --markdown <out>
-//                           [--add <package path>=<file>]... [--artifact <kind>=<file>]... [--incomplete] [--signed]
+//                           [--add <package path>=<file>]... [--artifact <kind>=<file>]... [--signed]
 //
 // `pack` writes the self-contained setup (packaging/package_format.hpp) and
 // re-opens it with the setup's own verifying reader. `report` checks that the
@@ -67,7 +67,7 @@ Options parse(const std::vector<std::string>& args) {
         const auto& a = args[n];
         if (!a.starts_with("--")) { o.positional.push_back(a); continue; }
         const auto name = a.substr(2);
-        if (name == "incomplete" || name == "signed") { o.values[name].push_back("1"); continue; }
+        if (name == "signed") { o.values[name].push_back("1"); continue; }
         if (n + 1 >= args.size()) throw std::invalid_argument(a + " needs a value");
         o.values[name].push_back(args[++n]);
     }
@@ -120,7 +120,6 @@ int pack(const Options& o) {
     p::PackOptions options;
     options.version = version(o);
     options.commit = o.one("commit");
-    options.complete = !o.flag("incomplete");
     if (o.values.contains("encoding")) {
         const auto encoding = p::encodingFromName(o.one("encoding"));
         if (!encoding) throw std::invalid_argument("Unknown --encoding");
@@ -202,7 +201,6 @@ int report(const Options& o) {
     root["release"] = v.release();
     root["build"] = v.build;
     root["commit"] = o.one("commit");
-    root["complete"] = !o.flag("incomplete");
     root["signed"] = o.flag("signed");
     root["installed"] = std::move(installed);
     root["artifacts"] = std::move(artifactRows);
@@ -215,8 +213,7 @@ int report(const Options& o) {
                                               Json("Third-party notices of every bundled component: THIRD-PARTY-NOTICES.txt")};
     const auto json = Json(std::move(root)).encode() + "\n";
     std::string markdown = "# EndfieldHUD " + v.display() + " Windows x64 package size\n\n";
-    markdown += std::string("Package: ") + (o.flag("incomplete") ? "**incomplete developer build** (missing Mac-exported runtime inputs)" : "complete") +
-                "; code signing: " + (o.flag("signed") ? "signed" : "**unsigned**") + ".\n\n";
+    markdown += std::string("Code signing: ") + (o.flag("signed") ? "signed" : "**unsigned**") + ".\n\n";
     markdown += "## Installed files\n\n| Part | Files | Size | Bytes |\n| --- | ---: | ---: | ---: |\n";
     for (const auto& [name, value] : categories)
         markdown += "| `" + name + "` | " + std::to_string(value.first) + " | " + mebibytes(value.second) + " | " + std::to_string(value.second) + " |\n";
