@@ -200,7 +200,9 @@ private:
     std::optional<std::string> imageBook_, awaitingBook_;
     std::optional<std::pair<design::Point, core::Point>> panStart_;
     design::Deadlines::Token detailTimer_{};
-    struct Wheel { double remainder{}; bool consumed{}; double last{-1e9}; } wheel_;
+    // tabChange: when the tab last changed (a touchpad swipe that runs
+    // through it is held like one that just turned, handleScroll).
+    struct Wheel { double remainder{}; bool consumed{}; double last{-1e9}; double tabChange{-1e9}; } wheel_;
     bool wheelPrecise_{};
     std::uint64_t pageTurnSequence_{};
     std::optional<PendingTurn> pendingTurn_;

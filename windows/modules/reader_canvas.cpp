@@ -160,13 +160,15 @@ void ReaderCanvas::resetSession() {
 // swipe that began elsewhere (or during the swap) never pages the new tab:
 // the wheel starts again (the Mac's (0, true, 0)). A wheel has no gesture
 // phases here, so the next notch re-arms it at once; what the old tab
-// gathered below a detent is dropped.
+// gathered below a detent is dropped. With no swipe start to wait for, a
+// touchpad swipe that runs on past the landing is held as if the tab
+// change had turned a page (the .24 s re-arm, handleScroll).
 void ReaderCanvas::setTab(Tab next) {
     if (next == tab_) return;
     tab_ = next;
     tabSettled_ = true;
     state_->setReading(tab_ == Tab::reading);
-    wheel_ = {0, true, 0};
+    wheel_ = {0, true, 0, now()};
 }
 // The bar shows the target during the leave, so Q / E then cycle from it.
 void ReaderCanvas::select(Tab next) {
@@ -1056,7 +1058,8 @@ bool ReaderCanvas::handleScroll(Point point, Point delta) {
     const double amount = delta.x, cross = delta.y;
     if (!(std::abs(amount) > std::abs(cross) * 1.1)) return true;
     const double time = now();
-    if (time - wheel_.last >= .24) wheel_.consumed = false;
+    const double since = wheelPrecise_ ? std::max(wheel_.last, wheel_.tabChange) : wheel_.last;
+    if (time - since >= .24) wheel_.consumed = false;
     if (wheel_.consumed) return true;
     wheel_.remainder += amount;
     if (std::abs(wheel_.remainder) >= (wheelPrecise_ ? 60 : 16)) {

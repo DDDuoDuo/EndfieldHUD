@@ -441,6 +441,27 @@ void readerTabTargets() {
     canvas.scroll(paper, {10, 0}, w.now); r.sync();
     check(canvas.pageTurnSequence() == turns + 1, "A full detent on the new tab turns one page");
     land();
+    // A touchpad swipe that runs on through Q / E and past the landing is
+    // held like one that just turned (.24 s); a mouse notch turns at once.
+    const auto backToReading = [&] {
+        key(U'q'); land(); key(U'e'); r.sync(); w.advance(.15); r.sync();
+        return !canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::reading;
+    };
+    check(backToReading(), "Reading lands again after Q and E");
+    canvas.setWheelPrecise(true);
+    canvas.scroll(paper, {70, 0}, w.now); r.sync();
+    check(canvas.pageTurnSequence() == turns + 1, "A touchpad swipe that runs on past the landing turns no page");
+    w.advance(.1); canvas.scroll(paper, {70, 0}, w.now); r.sync();
+    check(canvas.pageTurnSequence() == turns + 2, "The swipe turns again .24 s after the tab change, as after a turn");
+    land();
+    check(backToReading(), "Reading lands once more");
+    canvas.setWheelPrecise(false);
+    canvas.scroll(paper, {20, 0}, w.now); r.sync();
+    check(canvas.pageTurnSequence() == turns + 3, "A mouse notch just after the landing turns at once");
+    land();
+    canvas.scroll(paper, {-20, 0}, w.now); r.sync(); land();
+    canvas.scroll(paper, {-20, 0}, w.now); r.sync(); land();
+    check(canvas.pageTurnSequence() == turns + 5, "The wheel turns back to the first page");
     // A pan held through E.
     check(canvas.magnify(paper, 1, w.now) && canvas.imageView().zoom > 1, "The picture zooms in");
     land();
