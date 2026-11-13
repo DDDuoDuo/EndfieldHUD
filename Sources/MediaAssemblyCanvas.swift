@@ -103,6 +103,13 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
         refreshInPlace()
     }
     override func didDeactivate() { drag = nil; stage.setHovered(nil); stopExportTicker() }
+    /// A stage drag ends with the other gestures, so a crop or sticker drag
+    /// held through Esc or Q / E stops editing when its page leaves.
+    override func suspendInput() {
+        super.suspendInput()
+        guard drag != nil else { return }
+        drag = nil; stage.setHovered(nil); context.onInputStateChange?()
+    }
     override func recordingModeChanged() {}
 
     // MARK: Controller changes
@@ -147,8 +154,10 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
         if controller.document != nil, !reload, isActive { navigate(dx: 0, dy: 1) } else { rerender() }
     }
 
+    /// During a sub-page swap the leaving page and the shared header keep
+    /// their readings; the page the swap builds reads the latest state.
     private func refreshInPlace() {
-        guard renderedLanguage != nil else { return }
+        guard renderedLanguage != nil, !isTransitioning else { return }
         header.setCounter(counterText)
         binders.forEach { $0() }
         layoutStage()
@@ -670,6 +679,9 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
 
     private func exportTick() {
         guard var shown = exportShown else { stopExportTicker(); return }
+        // The gauge holds while a sub-page swap plays; the landing page
+        // shows it and the next tick carries on from there.
+        guard !isTransitioning else { return }
         let target = controller.isExporting ? controller.progress : (exportOutcome != nil ? 1 : shown)
         if env.reducesMotion { shown = max(shown, target) } else if target > shown { shown = min(target, shown + max(0.07, (target - shown) * 0.35)) }
         exportShown = shown
@@ -745,9 +757,11 @@ final class MediaAssemblyCanvas: HUDDesignCanvas {
         if revealOnPreview { revealOnPreview = false; stage.setContentOpacity(0, animated: false); stage.setContentOpacity(1, animated: true) }
     }
 
-    /// Every stage layer from the current state, in place.
+    /// Every stage layer from the current state, in place. The stage sits on
+    /// the leaving page during a sub-page swap: zoom, pan and previews that
+    /// arrive then wait for the page the swap builds, which lays it out.
     private func layoutStage() {
-        guard renderedLanguage != nil else { return }
+        guard renderedLanguage != nil, !isTransitioning else { return }
         let document = controller.document
         stage.setEmpty(document == nil && !closing, subtitle: L10n.text("Open an image or video", "打开图片或视频"), subtitleLanguage: nil)
         relabelStageControls()

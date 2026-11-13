@@ -211,7 +211,7 @@ final class WorkModeCanvas: HUDDesignCanvas {
     /// Reduce Motion changed: settle the arc and the blink.
     func refreshMotionPreference() {
         guard renderedLanguage != nil else { return }
-        rerender(); applyBlink()
+        rerender()
     }
 
     // MARK: Lifecycle
@@ -266,7 +266,7 @@ final class WorkModeCanvas: HUDDesignCanvas {
     /// the ring and the primary button's label.
     private func refresh(animated: Bool) {
         guard renderedLanguage != nil, !isTransitioning else { return }
-        if structure != renderedStructure { rerender(); applyBlink(); return }
+        if structure != renderedStructure { rerender(); return }
         let value = controller.snapshot
         HUDMotion.perform { timerText?.text = Self.timeText(value) }
         ring?.set(WorkModeDialGeometry.fraction(value), animated: animated && isActive)
@@ -389,6 +389,8 @@ final class WorkModeCanvas: HUDDesignCanvas {
         }
         if let alert { page.add(alert) }
         stateDot = dot
+        // Every page built, a swap's landing page included, blinks while running.
+        applyBlink()
         page.stagger(group)
     }
 

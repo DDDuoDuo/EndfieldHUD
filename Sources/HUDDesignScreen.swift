@@ -215,6 +215,10 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func willLeave() {}
     /// Keyboard, precedence 8 (spec §1.12). Return true when consumed.
     func handleKey(_ event: NSEvent) -> Bool { false }
+    /// A key that acts on something outside the page (a player) still works
+    /// during a sub-page swap. Other module keys are dropped until the page
+    /// lands (Esc and Q / E still retarget the swap).
+    func handlesKeyDuringSwap(_ event: NSEvent) -> Bool { false }
     /// Keyboard, precedence 3: hotkey capture swallows keys before everything.
     func interceptKey(_ event: NSEvent) -> Bool { false }
     /// Keyboard, precedence 11: module extras after Esc and Q / E.
@@ -315,14 +319,16 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// In-place re-render (spec §1.10): no entrance, scroll offsets kept,
     /// except for a module that was left, which comes back at the top.
-    /// During a sub-page swap the page has already left: the re-rendered one
-    /// stays hidden until the swap lands its own page with the entrance.
+    /// During a sub-page swap the page has already left and the swap builds
+    /// the next page from the latest state when it lands or settles: building
+    /// one now would only write the next page's readings into the leaving
+    /// header, so the re-render waits for that page.
     /// A re-render while the entrance still plays (data arriving as the
     /// module opens or switches in) carries it on in phase: rows already
     /// shown stay shown, the rest still enter.
     func rerender() {
+        guard swapWork == nil else { return }
         install(makePage(restoring: showsFromTop ? [:] : currentOffsets))
-        if swapWork != nil { HUDMotion.hold(page.layer, key: Self.holdKey); return }
         guard let entrance else { return }
         let now = CACurrentMediaTime()
         if env.reducesMotion || now >= entrance.start + Self.entranceLength { self.entrance = nil; return }
@@ -380,6 +386,9 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     func settleSwap(concealed: Bool = false) {
         guard let work = swapWork else { return }
         work.cancel(); swapWork = nil
+        // The settled page lands without an entrance: a later re-render must
+        // not replay the previous page's.
+        entrance = nil
         CATransaction.begin()
         // The model ends transparent, so a cancel that strips the leave keeps them out.
         if concealed {
@@ -624,7 +633,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
 
     /// Wheel: an open menu, then the module's zoom surfaces, then scroll areas.
     func scroll(at point: CGPoint, delta: CGPoint, event: NSEvent? = nil) -> Bool {
-        guard isActive else { return false }
+        // The leaving page of a sub-page swap no longer scrolls.
+        guard isActive, swapWork == nil else { return false }
         if let state = menuState {
             if state.menu.layer.frame.contains(point) { state.menu.scroll(by: delta.y) }
             return true
@@ -639,7 +649,8 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
     }
 
     func magnify(at point: CGPoint, magnification: CGFloat) -> Bool {
-        guard isActive, !capturesPointer else { return false }
+        // The leaving page of a sub-page swap no longer zooms.
+        guard isActive, swapWork == nil, !capturesPointer else { return false }
         return handleMagnify(at: point, magnification: magnification)
     }
 
@@ -661,14 +672,22 @@ class HUDDesignCanvas: NSObject, HUDModuleContentFactory, HUDDirectionalContent 
             return event.keyCode == 53
         }
         if isEditingText { return false }
-        if handleKey(event) { return true }
         let flags = event.modifierFlags.intersection([.command, .control, .option])
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        // During a sub-page swap the page a key is meant for has not landed:
+        // module keys (arrows, Space, Return, digits, their chords) would act
+        // on the leaving page, so they are dropped quietly. Esc and Q / E
+        // retarget the swap as before; the summon shortcut reaches the host.
+        if swapWork != nil, event.keyCode != 53, !(flags.isEmpty && (key == "q" || key == "e")), !handlesKeyDuringSwap(event) {
+            return !SummonShortcut.active.matches(event: event)
+        }
+        if handleKey(event) { return true }
         guard flags.isEmpty else { return false }
         if event.keyCode == 53 {
             if let back = page.back { back(); return true }
             return false
         }
-        if let tabs = page.tabs, let key = event.charactersIgnoringModifiers?.lowercased() {
+        if let tabs = page.tabs, let key {
             if key == "q" { tabs.cycle(-1); return true }
             if key == "e" { tabs.cycle(1); return true }
         }

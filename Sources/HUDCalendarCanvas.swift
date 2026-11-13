@@ -12,6 +12,7 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
     private(set) var month: HUDCalendarDay
     /// The event whose plate is open in the fields.
     private(set) var editingID: UUID?
+    private var restoresDraft = false
     /// What was typed for a new event while another one is open.
     private var draft = (title: "", details: "")
     private var presented = false, controllerActive = false
@@ -255,6 +256,7 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         // Title, details and the buttons follow the list.
         let editing = editingID.flatMap { id in controller.events.first { $0.id == id } }
         let fieldTop = 55 + listHeight + 6
+        if restoresDraft { restoreDraft() }
         titleField.placeholder = editing == nil ? L10n.text("New event", "新事项") : L10n.text("Title", "标题")
         detailsField.placeholder = L10n.text("Details", "详情")
         for (index, field) in [titleField, detailsField].enumerated() {
@@ -303,7 +305,7 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         guard (1900...9999).contains(next.year) else { return }
         month = HUDCalendarDay(year: next.year, month: next.month, day: 1)
         selectedDay = month
-        stopEditing()
+        stopEditing(leaving: true)
         navigate(dx: CGFloat(step))
     }
 
@@ -312,8 +314,8 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         let today = controller.today
         let target = HUDCalendarDay(year: today.year, month: today.month, day: 1)
         selectedDay = today
-        stopEditing()
-        if target == month { refresh(); return }
+        if target == month { stopEditing(); refresh(); return }
+        stopEditing(leaving: true)
         let forward = target > month
         month = target
         navigate(dx: forward ? 1 : -1)
@@ -384,7 +386,7 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         guard target != month else { if day != selectedDay { show(day) }; return }
         let forward = target > month
         month = target; selectedDay = day
-        stopEditing()
+        stopEditing(leaving: true)
         navigate(dx: forward ? 1 : -1)
     }
 
@@ -392,7 +394,7 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         if day.year != month.year || day.month != month.month {
             let forward = day > month
             month = HUDCalendarDay(year: day.year, month: day.month, day: 1)
-            selectedDay = day; stopEditing(); navigate(dx: forward ? 1 : -1)
+            selectedDay = day; stopEditing(leaving: true); navigate(dx: forward ? 1 : -1)
             return
         }
         selectedDay = day
@@ -421,9 +423,16 @@ final class HUDCalendarCanvas: HUDDesignCanvas {
         refresh()
     }
 
-    private func stopEditing() {
+    /// `leaving`: the month changes, so the leaving page keeps the fields as
+    /// drawn and the page the swap builds shows the draft again.
+    private func stopEditing(leaving: Bool = false) {
         guard editingID != nil else { return }
         editingID = nil
+        if leaving { restoresDraft = true } else { restoreDraft() }
+    }
+
+    private func restoreDraft() {
+        restoresDraft = false
         titleField.setText(draft.title); detailsField.setText(draft.details)
         titleField.setInvalid(false)
     }

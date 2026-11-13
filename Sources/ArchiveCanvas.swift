@@ -1001,7 +1001,9 @@ final class ArchiveCanvas: HUDDesignCanvas, NSTextViewDelegate {
             case .unlocked where self.controller.selected?.id == id:
                 self.playOpening(id)
             case .wrongPassword:
-                guard let field = self.passwordField else { return }
+                // Only the settled locked page of this document takes the shake and focus.
+                guard let field = self.passwordField, !self.isTransitioning, !self.leaving,
+                      self.controller.selected?.id == id else { self.refreshWhenPossible(); return }
                 field.setInvalid(true)
                 self.lockedPanel?.shake()
                 if field.isEditing { field.endEditing(commit: true) }
