@@ -47,7 +47,7 @@ TrayPlatform nativeTrayPlatform(){return {
     },[]{return GetLastError();},
     // The menu's owner holds the foreground: an open HUD takes it back, as
     // when the menu took the foreground for the HUD window itself.
-    [](HWND owner){if(IsWindowVisible(owner))SetForegroundWindow(owner);}};}
+    [](HWND owner){return IsWindowVisible(owner)&&SetForegroundWindow(owner)!=FALSE;}};}
 TrayController::TrayController(HWND owner,UINT callback,UINT taskbarCreated,TrayPlatform platform):owner_(owner),thread_(GetCurrentThreadId()),callback_(callback),taskbarCreated_(taskbarCreated),platform_(std::move(platform)){
     need(owner&&IsWindow(owner)&&GetWindowThreadProcessId(owner,nullptr)==thread_,"Tray needs its existing owner-thread window");
     need(callback>=WM_APP&&callback<=0xbfff&&taskbarCreated>=0xc000&&taskbarCreated<=0xffff,"Tray needs dedicated native message IDs");
@@ -79,9 +79,16 @@ bool TrayController::message(UINT message,WPARAM w,LPARAM l){onThread();if(!runn
     menuOpen_=true;TrayAction choice{};try{const auto items=menu_;choice=platform_.menu(menuOwner_?menuOwner_:owner_,point,items);}catch(...){menuOpen_=false;throw;}menuOpen_=false;
     if(!running_)return true;
     const auto found=std::find_if(menu_.begin(),menu_.end(),[&](const auto&i){return i.action==choice&&!i.separator&&i.enabled;});const bool chosen=choice!=TrayAction::none&&found!=menu_.end();
-    // A chosen action shows the HUD itself (Application::Impl::trayAction).
-    if(!chosen){platform_.returnFocus(owner_);if(!running_)return true;}
-    auto value=data();platform_.notify(NIM_SETFOCUS,value);if(chosen)action_=choice;return true;}
+    // A chosen action runs after the menu (Application::Impl::trayAction)
+    // and nothing takes the foreground after it, as on the Mac, where the
+    // menu item's action runs once the menu has closed: NIM_SETFOCUS here
+    // would hand the foreground to the notification area as the action
+    // shows the HUD, and Close when focus lost would close it.
+    if(chosen){action_=choice;return true;}
+    returnFocus();return true;}
+void TrayController::returnFocus(){onThread();if(!running_)return;
+    if(platform_.returnFocus(owner_)||!running_)return;
+    auto value=data();platform_.notify(NIM_SETFOCUS,value);}
 std::optional<TrayAction>TrayController::takeAction()noexcept{return std::exchange(action_,{});}
 void TrayController::stop()noexcept{if(!running_)return;running_=false;try{if(hotkey_)platform_.unregisterHotkey(owner_,hotkeyID_);if(installed_){auto value=data();platform_.notify(NIM_DELETE,value);}}catch(...){}installed_=false;version4_=false;hotkey_.reset();hotkeyID_=0;action_.reset();icon_=nullptr;}
 }

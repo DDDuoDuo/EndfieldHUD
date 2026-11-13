@@ -24,10 +24,11 @@ struct TrayPlatform {
     // The HWND is the menu's owner window (the tray's own, never the HUD's).
     std::function<TrayAction(HWND,POINT,const std::vector<TrayMenuItem>&)>menu;
     std::function<DWORD()>lastError;
-    // After a menu dismissed without a choice, the shell HWND (the HUD
-    // window) gets the foreground back from the menu's owner, only while it
-    // is shown: a hidden HUD window never becomes the foreground.
-    std::function<void(HWND)>returnFocus;
+    // After a menu that showed no HUD (TrayController::returnFocus), the
+    // shell HWND (the HUD window) gets the foreground back from the menu's
+    // owner, only while it is shown: a hidden HUD window never becomes the
+    // foreground. Answers whether the shown HUD window took it.
+    std::function<bool(HWND)>returnFocus;
 };
 TrayPlatform nativeTrayPlatform();
 // Borrows the persistent shell HWND and HICON; creates no timer or worker,
@@ -53,6 +54,13 @@ public:
     bool setHotkey(std::optional<TrayHotkey>);
     bool message(UINT,WPARAM,LPARAM);
     std::optional<TrayAction>takeAction()noexcept;
+    // After a menu that leaves no HUD to take the foreground (one dismissed
+    // without a choice, or a chosen action that left the HUD hidden): a shown
+    // HUD takes it back from the menu's owner, otherwise the notification
+    // area gets its focus back (NIM_SETFOCUS). Never after an action that
+    // showed the HUD: the notification area would take the foreground from
+    // it, and Close when focus lost would close it.
+    void returnFocus();
     void stop()noexcept;
     bool visible()const noexcept{return installed_;}
     std::optional<TrayHotkey>hotkey()const noexcept{return hotkey_;}
