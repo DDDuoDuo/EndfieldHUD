@@ -393,6 +393,33 @@ void coverLeavesWithPage() {
     check(canvas.coverLayer() != landed && canvas.coverLayer()->isDescendant(canvas.root()), "The next showing anchors the landed page's cover");
 }
 
+// A track change swaps the page (Mac 89b8735): Space and Left / Right act on
+// the player, so they still work during the swap (they read the player,
+// never the leaving page); other keys are dropped until the page lands.
+void swapKeepsPlayerKeys() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    w.now += 1; w.context.advance(w.now);
+    ctl.input.track->title = "Ember Road"; ctl.input.track->position = 10; ctl.input.track->sampledAt = w.now;
+    canvas.refresh(w.now);
+    check(canvas.transitioning(), "A track change swaps the page");
+    const auto sent = ctl.sent.size();
+    check(canvas.keyDown(keyOf(d::key::space), w.now) && ctl.sent.size() == sent + 1 && ctl.sent.back().kind == m::NowPlayingIntentKind::playPause,
+        "Space plays or pauses the player during the swap");
+    check(canvas.keyDown(keyOf(d::key::right), w.now) && ctl.sent.back().kind == m::NowPlayingIntentKind::seek && std::abs(ctl.sent.back().value - 15) < 1e-9,
+        "Right seeks the new track +5 s during the swap");
+    check(canvas.keyDown(keyOf(d::key::left), w.now) && ctl.sent.back().kind == m::NowPlayingIntentKind::seek && std::abs(ctl.sent.back().value - 5) < 1e-9,
+        "Left seeks it -5 s");
+    check(canvas.keyDown(keyOf(d::key::down), w.now) && canvas.keyDown(keyOf(d::key::space, true), w.now) && ctl.sent.size() == sent + 3,
+        "Other keys (Shift+Space among them) are dropped during the swap");
+    w.now += .14; w.context.advance(w.now);
+    check(!canvas.transitioning() && textOf(canvas.root(), "nowPlaying.cover.title") == "Ember Road", "The new page lands");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -474,6 +501,7 @@ int main(int argc, char** argv) {
         coverCrossFade();
         volumeLeavesWithPage();
         coverLeavesWithPage();
+        swapKeepsPlayerKeys();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);

@@ -103,6 +103,7 @@ public:
     design::Rect hitBounds() const override { return Layout::hitBounds; }
     bool interceptPointerDown(design::Point, const design::PointerInput&) override;
     bool handleKey(const design::KeyInput&) override;
+    bool handlesKeyDuringSwap(const design::KeyInput&) override;
     bool adjustAccessibilitySlider(std::string_view id, double value, double now) override;
     std::optional<double> nextWakeTime(double) const override;
     void wake(double now) override;

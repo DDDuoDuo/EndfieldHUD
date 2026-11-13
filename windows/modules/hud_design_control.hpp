@@ -64,6 +64,7 @@ namespace key {
 inline constexpr std::uint32_t back = 0x08, tab = 0x09, enter = 0x0D, shift = 0x10, control = 0x11, menu = 0x12;
 inline constexpr std::uint32_t escape = 0x1B, space = 0x20, pageUp = 0x21, pageDown = 0x22, end = 0x23, home = 0x24;
 inline constexpr std::uint32_t left = 0x25, up = 0x26, right = 0x27, down = 0x28, deleteForward = 0x2E;
+inline constexpr std::uint32_t leftWindows = 0x5B, rightWindows = 0x5C, f4 = 0x73;
 }
 struct KeyInput {
     std::uint32_t virtualKey{};

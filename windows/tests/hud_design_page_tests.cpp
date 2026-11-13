@@ -731,6 +731,11 @@ struct CanvasRun {
         std::vector<std::string> events, keys;
         for (const auto& e : m["events"].array()) events.push_back(e.string());
         for (const auto& e : m["keys"].array()) keys.push_back(e.string());
+        // Back-map (Mac 89b8735, newer than the fixture): a module key during
+        // a sub-page swap is dropped before the canvas's hooks. Both 'x'
+        // presses of the script come during a swap (keyPrecedence after the
+        // E swap, navigateForward), so no handleExtraKey x is recorded.
+        std::erase(keys, std::string("handleExtraKey x"));
         std::string list; for (const auto& e : c.events) list += e + "; ";
         check(c.events == events, where + ": module events differ: " + list);
         check(c.keys == keys, where + ": key hooks");
@@ -877,7 +882,9 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
     for (const auto& k : plainKeys) keyResults.push_back(canvas.keyDown(k, w.now));
     {
         const J& m = run.step(canvas, "keyPrecedence");
-        for (std::size_t i = 0; i < keyResults.size(); ++i) check(keyResults[i] == m["results"].array()[i]["consumed"].boolean(), "Key precedence: " + m["results"].array()[i]["key"].string());
+        // Back-map (Mac 89b8735): 'z' comes during the E swap, which drops it, consumed.
+        for (std::size_t i = 0; i < keyResults.size(); ++i)
+            check(keyResults[i] == (m["results"].array()[i]["key"].string() == "z" || m["results"].array()[i]["consumed"].boolean()), "Key precedence: " + m["results"].array()[i]["key"].string());
     }
     w.advance(.25);
     run.step(canvas, "afterTabSwaps");
@@ -887,7 +894,7 @@ void canvasScript(RecordedMeasurer& measurer, const J& canvasRows) {
     const bool pressDuringSwap = canvas.pointerDown(pt, press, w.now), keyDuringSwap = canvas.keyDown(keyOf('X', U'x'), w.now);
     {
         const J& m = run.step(canvas, "navigateForward");
-        check(pressDuringSwap == m["pressDuringSwap"].boolean() && keyDuringSwap == m["keyDuringSwap"].boolean(), "During a swap presses are ignored, keys are not");
+        check(pressDuringSwap == m["pressDuringSwap"].boolean() && keyDuringSwap == m["keyDuringSwap"].boolean(), "During a swap presses are ignored and keys consumed (dropped since Mac 89b8735)");
         check(canvas.page().layer().animating(w.now + .05), "The old page leaves");
     }
     const double deadline = *canvas.nextDeadline(w.now);
@@ -1281,6 +1288,37 @@ void carriedEntrance(RecordedMeasurer& measurer) {
         rebuild(c);
         check(noEnter(c) && c.pageEntrances == entrances, "An entrance played under Reduce Motion is not carried");
     }
+}
+
+// The leaving page of a sub-page swap takes no module key (Mac 89b8735):
+// keys are dropped, consumed, before the canvas's own hooks, so they never
+// act on the old page. Esc and plain Q / E still retarget the swap; what the
+// host or the system acts on (modifier presses, Windows-key chords, Alt+F4)
+// still passes. Once the page lands, keys reach the canvas again.
+void swapDropsKeys(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    canvas.depth = 1; canvas.navigate(1);
+    check(canvas.transitioning(), "A sub-page swap is under way");
+    const auto events = canvas.events;
+    d::KeyInput controlK = keyOf('K', U'k', false, true), digit = keyOf('1', U'1');
+    for (const auto& key : {keyOf('K', U'k'), keyOf('X', U'x'), keyOf('Z', U'z'), keyOf(d::key::down), keyOf(d::key::enter), keyOf(d::key::space, U' '), digit, controlK, keyOf('E', U'e', false, true)})
+        check(canvas.keyDown(key, w.now), "A module key during the swap is consumed");
+    check(canvas.keys.empty() && canvas.events == events && canvas.tab == 0 && canvas.transitioning(), "Dropped: no hook ran, the leaving page did nothing, Ctrl+E cycled no tab");
+    d::KeyInput windowsChord = keyOf('D', U'd'); windowsChord.win = true;
+    d::KeyInput windowsKey = keyOf(d::key::leftWindows); windowsKey.win = true;
+    d::KeyInput altF4 = keyOf(d::key::f4); altF4.alt = true;
+    for (const auto& key : {keyOf(d::key::shift), keyOf(d::key::control), keyOf(d::key::menu), windowsKey, windowsChord, altF4})
+        check(!canvas.keyDown(key, w.now), "Modifier presses, Windows-key chords and Alt+F4 pass to the host during the swap");
+    check(canvas.keyDown(keyOf('E', U'e'), w.now) && canvas.tab == 1 && canvas.events.back() == "tab 1 1.0" && canvas.transitioning(), "Plain E retargets the swap");
+    check(canvas.keyDown(keyOf('Q', U'Q', true), w.now) && canvas.tab == 0 && canvas.events.back() == "tab 0 -1.0", "Shift+Q retargets it too (Shift does not count)");
+    w.advance(.2);
+    check(!canvas.transitioning() && canvas.page().back, "The sub-page with Back landed");
+    canvas.depth = 2; canvas.navigate(1);
+    check(canvas.keyDown(keyOf(d::key::escape), w.now) && canvas.depth == 1 && canvas.events.back() == "back" && canvas.transitioning(), "Esc goes back from the leaving page, retargeting the swap");
+    w.advance(.2);
+    check(!canvas.transitioning() && canvas.keyDown(keyOf('K', U'k'), w.now) && canvas.keys == std::vector<std::string>{"handleKey k"}, "Landed, keys reach the canvas again");
 }
 
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
@@ -1762,6 +1800,7 @@ int main(int argc, char** argv) {
         suspendsInput(measurer);
         suspendedBar(measurer);
         concealedSettles(measurer);
+        swapDropsKeys(measurer);
         popupsLeaveWithModule(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

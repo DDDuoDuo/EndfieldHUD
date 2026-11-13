@@ -445,8 +445,8 @@ void swapReadings(d::TextMeasurer& measurer) {
     check(!c.isExporting() && c.header().counterText() == "IMG 01", "The third export finishes");
 }
 
-// The stage sits on the leaving page until a sub-page swap lands: zoom, the
-// crop box, a new preview, the playback bar and a new source's cleared
+// The stage sits on the leaving page until a sub-page swap lands: the crop
+// box, a new preview, the playback bar and a new source's cleared
 // picture wait for the landed page, which lays the stage out from the newest
 // state (the Windows staged page is built when the swap starts).
 void swapStage(d::TextMeasurer& measurer) {
@@ -464,13 +464,14 @@ void swapStage(d::TextMeasurer& measurer) {
     check(!c.transitioning() && c.stage().isCropVisible() && c.builtStage()->image() == e.controller->previewImage() && c.builtStage()->image() != tiles,
         "The landed Crop page lays the stage out with the crop box and the whole picture");
     w.advance(1);
-    // Zoom asked for while the page leaves.
+    // A zoom key while the page leaves is dropped (Mac 89b8735): it would act on the leaving page.
     const auto zoom = c.stage().zoomValue().valueText();
+    const double scale = c.viewport().zoom();
     check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Crop");
-    check(e.key(keyOf(0xBB, U'+')) && c.viewport().zoom() > 1, "+ zooms in during the leave");
+    check(e.key(keyOf(0xBB, U'+')) && c.viewport().zoom() == scale, "+ during the leave is dropped");
     check(c.stage().zoomValue().valueText() == zoom && c.stage().isCropVisible(), "The leaving stage keeps its zoom and crop box (" + c.stage().zoomValue().valueText() + ")");
     w.advance(.2); e.q.run();
-    check(!c.transitioning() && c.stage().zoomValue().valueText() != zoom && !c.stage().isCropVisible(), "The landed page shows the zoom (" + c.stage().zoomValue().valueText() + ")");
+    check(!c.transitioning() && c.stage().zoomValue().valueText() == zoom && !c.stage().isCropVisible(), "The landed page keeps the zoom without the crop box (" + c.stage().zoomValue().valueText() + ")");
     w.advance(1); e.spin();
     // A swap settled concealed by the HUD's close: a preview that arrives then waits too.
     check(e.perform("tool:crop"), "Crop again"); e.spin(); w.advance(1);

@@ -212,6 +212,10 @@ public:
     virtual void didDeactivate() {}
     virtual void willLeave() {}                 // stop timers and loops
     virtual bool handleKey(const KeyInput&) { return false; }      // precedence 8
+    // A key that acts on something outside the page (a player) still works
+    // during a sub-page swap; other module keys are dropped until the page
+    // lands (Esc and Q / E still retarget the swap).
+    virtual bool handlesKeyDuringSwap(const KeyInput&) { return false; }
     virtual bool interceptKey(const KeyInput&) { return false; }   // precedence 3 (hotkey capture)
     virtual bool handleExtraKey(const KeyInput&) { return false; } // precedence 11
     virtual bool handlePointerDown(Point, const PointerInput&) { return false; } // non-control surfaces

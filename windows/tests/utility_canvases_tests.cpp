@@ -474,6 +474,10 @@ void volumeCanvas() {
         w.appearance(Language::english, false, false);   // motion on
         static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true);
         w.advance(.05);
+        // Left / Right during the swap would nudge the leaving page's slider (Mac 89b8735).
+        const auto writes = model.writes;
+        check(canvas.keyDown(keyOf(d::key::right), w.now) && canvas.keyDown(keyOf(d::key::left), w.now) && model.writes == writes,
+            "Left / Right during the tab swap are dropped: the system volume does not change");
         auto louder = quiet; louder.volume = .72;
         canvas.receive(louder);
         check(canvas.transitioning() && canvas.header().counterText() == "55", "A volume change during the tab swap leaves the leaving header alone");

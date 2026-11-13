@@ -774,6 +774,11 @@ bool NowPlayingCanvas::interceptPointerDown(Point point, const d::PointerInput&)
     return true;
 }
 // Space plays or pauses, Left / Right seek 5 s, Esc closes the volume pop-up.
+// Space and Left / Right act on the player, so they work while a track
+// change swaps the page (they read the player, never the leaving page).
+bool NowPlayingCanvas::handlesKeyDuringSwap(const d::KeyInput& key) {
+    return !key.commandModifiers() && !key.shift && (key.virtualKey == d::key::space || key.virtualKey == d::key::left || key.virtualKey == d::key::right);
+}
 bool NowPlayingCanvas::handleKey(const d::KeyInput& key) {
     if (key.commandModifiers() || key.shift) return false;
     switch (key.virtualKey) {

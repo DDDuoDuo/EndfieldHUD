@@ -791,6 +791,23 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
         return true;
     }
     if (editingText()) return false;
+    const char32_t c = input.character >= U'A' && input.character <= U'Z' ? input.character + 32 : input.character;
+    // During a sub-page swap (the gate presses have, pointerDown) the page a
+    // key is meant for has not landed: module keys (arrows, Space, Return,
+    // digits, their chords) would act on the leaving page, so they are
+    // dropped quietly (Mac 89b8735). Esc and plain Q / E retarget the swap as
+    // before, and a canvas passes the keys that act outside the page
+    // (handlesKeyDuringSwap). The Mac lets its summon shortcut reach the
+    // host; here the summon arrives as WM_HOTKEY or through the summon hook,
+    // never as a canvas key, and what still passes is what the host or the
+    // system acts on: modifier presses (the Mac's keyDown never sees them),
+    // Windows-key chords and Alt+F4.
+    if (swapPending() && input.virtualKey != key::escape && !(!input.commandModifiers() && (c == U'q' || c == U'e')) && !handlesKeyDuringSwap(input)) {
+        switch (input.virtualKey) {
+        case key::shift: case key::control: case key::menu: case key::leftWindows: case key::rightWindows: return false;
+        default: return !(input.win || (input.alt && input.virtualKey == key::f4));
+        }
+    }
     if (handleKey(input)) return true;
     if (input.commandModifiers()) return false;
     if (input.virtualKey == key::escape) {
@@ -800,7 +817,6 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
         return true;
     }
     if (page_->tabs) {
-        const char32_t c = input.character >= U'A' && input.character <= U'Z' ? input.character + 32 : input.character;
         if (c == U'q') { page_->tabs->cycle(-1); return true; }
         if (c == U'e') { page_->tabs->cycle(1); return true; }
     }
