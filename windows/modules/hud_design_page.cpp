@@ -806,12 +806,13 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
     // (handlesKeyDuringSwap). The Mac lets its summon shortcut reach the
     // host; here the summon arrives as WM_HOTKEY or through the summon hook,
     // never as a canvas key, and what still passes is what the host or the
-    // system acts on: modifier presses (the Mac's keyDown never sees them),
-    // Windows-key chords and Alt+F4.
+    // system acts on: modifier presses and the volume, media, browser and
+    // launch keys (the Mac's keyDown never sees either), Windows-key chords
+    // and Alt+F4.
     if (swapPending() && input.virtualKey != key::escape && !(!input.commandModifiers() && (c == U'q' || c == U'e')) && !handlesKeyDuringSwap(input)) {
         switch (input.virtualKey) {
         case key::shift: case key::control: case key::menu: case key::leftWindows: case key::rightWindows: return false;
-        default: return !(input.win || (input.alt && input.virtualKey == key::f4));
+        default: return !(input.win || (input.alt && input.virtualKey == key::f4) || (input.virtualKey >= key::browserBack && input.virtualKey <= key::launchApp2));
         }
     }
     if (handleKey(input)) return true;

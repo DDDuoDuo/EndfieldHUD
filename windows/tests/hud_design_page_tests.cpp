@@ -1296,8 +1296,9 @@ void carriedEntrance(RecordedMeasurer& measurer) {
 // The leaving page of a sub-page swap takes no module key (Mac 89b8735):
 // keys are dropped, consumed, before the canvas's own hooks, so they never
 // act on the old page. Esc and plain Q / E still retarget the swap; what the
-// host or the system acts on (modifier presses, Windows-key chords, Alt+F4)
-// still passes. Once the page lands, keys reach the canvas again.
+// host or the system acts on (modifier presses, the volume, media, browser
+// and launch keys, Windows-key chords, Alt+F4) still passes. Once the page
+// lands, keys reach the canvas again.
 void swapDropsKeys(RecordedMeasurer& measurer) {
     World w(measurer); w.appearance(Language::english);
     FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
@@ -1314,6 +1315,11 @@ void swapDropsKeys(RecordedMeasurer& measurer) {
     d::KeyInput altF4 = keyOf(d::key::f4); altF4.alt = true;
     for (const auto& key : {keyOf(d::key::shift), keyOf(d::key::control), keyOf(d::key::menu), windowsKey, windowsChord, altF4})
         check(!canvas.keyDown(key, w.now), "Modifier presses, Windows-key chords and Alt+F4 pass to the host during the swap");
+    // VK_BROWSER_BACK, VK_VOLUME_MUTE, VK_VOLUME_UP, VK_MEDIA_PLAY_PAUSE, VK_LAUNCH_APP2:
+    // DefWindowProc turns them into WM_APPCOMMAND, so they stay unconsumed.
+    for (const std::uint32_t vk : {0xA6u, 0xADu, 0xAFu, 0xB3u, 0xB7u})
+        check(!canvas.keyDown(keyOf(vk), w.now), "Volume, media, browser and launch keys pass to the system during the swap");
+    check(canvas.keyDown(keyOf(0xBAu, U';'), w.now) && canvas.keys.empty(), "A key past the application-command range (VK_OEM_1) is still dropped");
     check(canvas.keyDown(keyOf('E', U'e'), w.now) && canvas.tab == 1 && canvas.events.back() == "tab 1 1.0" && canvas.transitioning(), "Plain E retargets the swap");
     check(canvas.keyDown(keyOf('Q', U'Q', true), w.now) && canvas.tab == 0 && canvas.events.back() == "tab 0 -1.0", "Shift+Q retargets it too (Shift does not count)");
     w.advance(.2);
