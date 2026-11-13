@@ -418,6 +418,31 @@ void swapReadings(d::TextMeasurer& measurer) {
     check(c.exportShown() > first && c.header().counterText() == c.counterText() && c.header().counterText() != shown, "The next tick carries on from the landed page (" + c.header().counterText() + ")");
     for (int n = 0; n < 30; ++n) w.advance(.1);
     check(!c.isExporting() && c.header().counterText() == "IMG 01", "The second export finishes");
+    w.context.overlay().clearToast();
+    // The HUD's close settles the swap concealed while the canvas stays
+    // active (DesignOwnerCore::overlayClosing): the ticker runs on, and the
+    // gauge, the leaving header and the stage still hold until the reopened
+    // page lands.
+    check(e.perform("tool:adjust") && e.perform("export") && e.perform("export:saveAs"), "Save As a third time");
+    w.advance(1);
+    c.panelFinished("C:\\out\\copy 3.png", w.now);
+    e.q.run(); w.advance(.09);
+    const auto closing = c.exportShown();
+    check(closing && *closing > 0 && *closing < 1, "The gauge runs (" + c.header().counterText() + ")");
+    const auto held = c.header().counterText();
+    check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Adjust while the gauge runs again");
+    c.suspendInput(); c.settleSwap(true);
+    check(c.isActive() && !c.transitioning() && c.swapPending(), "The HUD's close settles the swap concealed and leaves the canvas active");
+    for (int n = 0; n < 4; ++n) w.advance(.09);
+    check(c.exportShown() == closing && c.header().counterText() == held && c.stage().exportText() == "Exporting " + held,
+        "The gauge, the leaving header and the stage hold while the HUD closes (" + c.header().counterText() + ")");
+    c.prepareToLeave(w.now); c.setActive(false, w.now);
+    e.show();
+    check(!c.swapPending() && c.header().counterText() == held, "The reopened page lands with the held reading (" + c.header().counterText() + ")");
+    w.advance(.09);
+    check(c.exportShown() > closing && c.header().counterText() == c.counterText() && c.header().counterText() != held, "The next tick carries on from the landed page (" + c.header().counterText() + ")");
+    for (int n = 0; n < 30; ++n) w.advance(.1);
+    check(!c.isExporting() && c.header().counterText() == "IMG 01", "The third export finishes");
 }
 
 // The stage sits on the leaving page until a sub-page swap lands: zoom, the
