@@ -204,7 +204,7 @@ public:
     void setZoom(double zoom) { zoomValue_->setZoom(zoom); }
     // The seek slider for a video of `duration` seconds (nullopt: images),
     // built in the page's builder; installPlayback() moves it into the bar
-    // when its page is installed.
+    // (or hides the bar for an image) when its page is installed.
     design::Slider* configurePlayback(design::Builder& page, std::optional<double> duration, std::string label);
     void installPlayback();
     void setPlayback(bool visible, bool playing, double time, double duration);

@@ -613,7 +613,7 @@ std::string MediaAssemblyStage::fitted(const std::string& name, double width, co
 }
 d::Slider* MediaAssemblyStage::configurePlayback(d::Builder& page, std::optional<double> duration, std::string label) {
     pendingSeekSet_ = true;
-    if (!duration) { pendingSeek_ = nullptr; playback_->setHidden(true); return nullptr; }
+    if (!duration) { pendingSeek_ = nullptr; return nullptr; }
     auto& slider = page.make<d::Slider>("seek", std::move(label), 0, d::Slider::Range{0, std::max(.1, *duration), .01}, d::ValueFormat::clock,
         playback_->bounds().width - 42 - 8 - 76 - 10, true, false);
     slider.layer().setOrigin({42, 4});
@@ -625,7 +625,7 @@ void MediaAssemblyStage::installPlayback() {
     pendingSeekSet_ = false;
     if (seek_ && seek_ != pendingSeek_ && seek_->layer().parent() == playback_) seek_->layer().removeFromParent();
     seek_ = std::exchange(pendingSeek_, nullptr);
-    if (seek_) playback_->add(seek_->layer());
+    if (seek_) playback_->add(seek_->layer()); else playback_->setHidden(true);
 }
 void MediaAssemblyStage::setPlayback(bool visible, bool playing, double time, double duration) {
     // While the seek thumb is dragged the readout follows it.

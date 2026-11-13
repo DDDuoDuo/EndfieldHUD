@@ -405,6 +405,61 @@ void swapReadings(d::TextMeasurer& measurer) {
     check(!c.isExporting() && c.header().counterText() == "IMG 01", "The second export finishes");
 }
 
+// The stage sits on the leaving page until a sub-page swap lands: zoom, the
+// crop box, a new preview, the playback bar and a new source's cleared
+// picture wait for the landed page, which lays the stage out from the newest
+// state (the Windows staged page is built when the swap starts).
+void swapStage(d::TextMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english, false, false);
+    Editor e(w); e.show();
+    auto& c = *e.canvas;
+    e.import("C:\\oracle\\fixture.png"); w.advance(1);
+    // The crop box and the whole picture appear with the Crop page.
+    const auto tiles = c.builtStage()->image();
+    check(c.performAccessibilityAction("tool:crop", w.now) && c.transitioning(), "Crop opens");
+    e.q.run();
+    check(c.transitioning() && !c.stage().isCropVisible() && c.builtStage()->image() == tiles,
+        "The leaving tiles page shows no crop box and keeps its preview while Crop enters");
+    w.advance(.2);
+    check(!c.transitioning() && c.stage().isCropVisible() && c.builtStage()->image() == e.controller->previewImage() && c.builtStage()->image() != tiles,
+        "The landed Crop page lays the stage out with the crop box and the whole picture");
+    w.advance(1);
+    // Zoom asked for while the page leaves.
+    const auto zoom = c.stage().zoomValue().valueText();
+    check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Crop");
+    check(e.key(keyOf(0xBB, U'+')) && c.viewport().zoom() > 1, "+ zooms in during the leave");
+    check(c.stage().zoomValue().valueText() == zoom && c.stage().isCropVisible(), "The leaving stage keeps its zoom and crop box (" + c.stage().zoomValue().valueText() + ")");
+    w.advance(.2); e.q.run();
+    check(!c.transitioning() && c.stage().zoomValue().valueText() != zoom && !c.stage().isCropVisible(), "The landed page shows the zoom (" + c.stage().zoomValue().valueText() + ")");
+    w.advance(1); e.spin();
+    // A swap settled concealed by the HUD's close: a preview that arrives then waits too.
+    check(e.perform("tool:crop"), "Crop again"); e.spin(); w.advance(1);
+    const auto whole = c.builtStage()->image();
+    check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Crop again");
+    c.setActive(false, w.now);
+    check(!c.transitioning() && c.swapPending(), "The HUD's close settles the swap concealed");
+    e.q.run();
+    check(c.builtStage()->image() == whole, "A preview that arrives meanwhile does not reach the leaving stage");
+    c.setActive(true, w.now);
+    check(!c.swapPending() && c.builtStage()->image() == e.controller->previewImage() && c.builtStage()->image() != whole, "The landed page shows it");
+    w.advance(1);
+    // A new source: the leaving page keeps the old picture and playback bar.
+    e.import("C:\\oracle\\owned movie.mp4"); w.advance(1); e.spin();
+    const auto* playback = layerEnding(c.builtStage()->layer(), "media.playback");
+    check(c.builtStage()->image() && playback && !playback->hidden() && c.stage().play().enabled(), "The movie shows its playback bar");
+    check(c.performAccessibilityAction("tool:crop", w.now) && c.transitioning() && c.stage().play().enabled(), "Play stays enabled on the page Crop replaces");
+    w.advance(.2);
+    check(!c.transitioning() && !c.stage().play().enabled(), "Crop lands with Play disabled");
+    check(e.perform("cropDone"), "Crop done"); w.advance(1); e.spin();
+    const auto movie = c.builtStage()->image();
+    { const std::string paths[]{"C:\\oracle\\fixture.png"}; c.importFiles(paths, w.now); }
+    e.q.run();
+    check(c.transitioning() && e.controller->session().document() && !e.controller->session().document()->video, "The still enters from below");
+    check(c.builtStage()->image() == movie && !playback->hidden(), "The leaving page keeps the movie's picture and playback bar");
+    w.advance(.2); e.q.run();
+    check(!c.transitioning() && playback->hidden() && c.builtStage()->image() && c.builtStage()->image() != movie, "The landed page shows the still without a playback bar");
+}
+
 // --- The Mac oracle -------------------------------------------------------------------
 struct Oracle {
     const Json& data;
@@ -697,6 +752,7 @@ int main(int argc, char** argv) {
         motion(fake);
         heldDrag(fake);
         swapReadings(fake);
+        swapStage(fake);
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas"}, {"text", "viewport"})) {
             Oracle oracle(*data);
             oracle.viewport();

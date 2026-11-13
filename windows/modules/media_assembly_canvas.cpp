@@ -173,9 +173,12 @@ void MediaAssemblyCanvas::buildPage(d::Page& page) {
     const auto& session = controller_->session();
     const MediaAssemblyDocumentInfo* document = session.document().get();
     auto& stage = this->stage();
-    if (clearOnBuild_) { clearOnBuild_ = false; stage.setImage(nullptr, false); stage.setContentOpacity(1, false); }
     buildHeader(page, document);
-    // The stage outlives pages: it joins this page when it is installed (didInstall).
+    // The stage outlives pages: it joins this page when it is installed
+    // (didInstall), which clears it for a new source and lays it out. A
+    // sub-page swap's staged page (Windows builds it when the swap starts, the
+    // Mac when it lands) leaves the stage as drawn: it is still on the
+    // leaving page.
     stage.layer().setOrigin(stageOrigin);
     stagePage_ = &page;
     page.stagger(stage.layer());
@@ -187,7 +190,7 @@ void MediaAssemblyCanvas::buildPage(d::Page& page) {
         };
         hostBubble(*seek);
     }
-    relabelStageControls();
+    if (!swapPending()) relabelStageControls();
     page.add(stage.controls());
     auto& panel = page.makeLayer("media.panel");
     panel.setFrame(panelFrame);
@@ -203,6 +206,7 @@ void MediaAssemblyCanvas::didInstall(d::Page& page) {
     page.layer().insert(stage().layer(), 0);
     stage().installPlayback();
     stagePage_ = nullptr;
+    if (clearOnBuild_) { clearOnBuild_ = false; stage().setImage(nullptr, false); stage().setContentOpacity(1, false); }
     // The installed page's seek slider takes the current position.
     layoutStage();
 }
@@ -758,9 +762,13 @@ void MediaAssemblyCanvas::releasePreview() noexcept { if (stage_) stage_->releas
 void MediaAssemblyCanvas::revealReleasedPreview() {
     if (stage_ && controller_->session().document() && !stage_->image()) revealOnPreview_ = true;
 }
-// Every stage layer from the current state, in place.
+// Every stage layer from the current state, in place. The stage sits on the
+// leaving page until a sub-page swap lands (in flight, or settled concealed
+// by the HUD's close): zoom, pan, crop, playback and previews that arrive
+// meanwhile (a deferred one included) wait for the landed page, whose
+// didInstall lays it out.
 void MediaAssemblyCanvas::layoutStage() {
-    if (!renderedLanguage()) return;
+    if (!renderedLanguage() || swapPending()) return;
     auto& stage = this->stage();
     const auto& session = controller_->session();
     const auto document = session.document();
