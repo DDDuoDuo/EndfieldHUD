@@ -133,6 +133,11 @@ public:
     ProjectedEditorResult pointerDrag(core::Point);
     void pointerUp()noexcept;
     const LayerTextLayout& layout()const;
+    // The last painted layout's selection rectangles. Until text an IME wrote
+    // is laid out (layout().textRevision() behind the document) there are
+    // none, as NativeNotesLongEditor and TSF's TS_E_NOLAYOUT; the range is
+    // still checked against the current text.
+    std::span<const core::Rect> selectionRectangles(core::text::Range)const;
     const core::text::Placement& placement()const noexcept;
     LayerScene& scene()const noexcept;
     std::uint64_t paintRevision()const noexcept;

@@ -606,6 +606,6 @@ std::uint64_t NativeNotesEditor::paintRevision()const noexcept{EHUD_NOTES_EDITOR
 #undef EHUD_NOTES_EDITOR
 const LayerTextLayout& NativeNotesEditor::layout()const{if(editor_.index()!=0)throw std::logic_error("A chunked Notes field has one layout per paragraph chunk; use geometry()");return std::get<0>(editor_)->layout();}
 const core::text::Layout& NativeNotesEditor::geometry()const noexcept{if(editor_.index()==0)return std::get<0>(editor_)->layout();return std::get<1>(editor_)->geometry();}
-std::span<const core::Rect> NativeNotesEditor::selectionRectangles(core::text::Range r)const{if(editor_.index()==0)return std::get<0>(editor_)->layout().selectionRectangles(r);return std::get<1>(editor_)->selectionRectangles(r);}
+std::span<const core::Rect> NativeNotesEditor::selectionRectangles(core::text::Range r)const{return std::visit([&](const auto& e){return e->selectionRectangles(r);},editor_);}
 } // namespace endfield::native
 #endif

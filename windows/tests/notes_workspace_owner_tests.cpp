@@ -1,12 +1,14 @@
 #include "native/notes_workspace.hpp"
 #ifdef _WIN32
 #include <objbase.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <new>
@@ -17,11 +19,27 @@ void*operator new[](std::size_t n){return ::operator new(n);}void operator delet
 #if defined(__cpp_sized_deallocation)
 void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
 #endif
-namespace gpu=endfield::native;namespace core=endfield::core;namespace mod=endfield::modules;namespace data=ehud::data;
+namespace gpu=endfield::native;namespace core=endfield::core;namespace text=core::text;namespace mod=endfield::modules;namespace data=ehud::data;
 namespace {
 std::size_t checks{};
 void check(bool v,const char*why){++checks;if(!v)throw std::runtime_error(why);}
 template<class F>void rejects(F f,const char*why){bool rejected{};try{f();}catch(const std::exception&){rejected=true;}check(rejected,why);}
+void ok(HRESULT hr,const char*why){check(SUCCEEDED(hr),why);}
+// An isolated fake TSF sink standing in for an IME: no manager, profile or focus.
+struct Sink final:ITextStoreACPSink {
+    std::atomic<ULONG>refs{1};std::function<HRESULT(DWORD)>onLock;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID i,void**o)override{if(!o)return E_POINTER;*o=nullptr;if(i!=__uuidof(IUnknown)&&i!=__uuidof(ITextStoreACPSink))return E_NOINTERFACE;*o=static_cast<ITextStoreACPSink*>(this);AddRef();return S_OK;}
+    ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}
+    ULONG STDMETHODCALLTYPE Release()override{const auto r=--refs;if(!r)delete this;return r;}
+    HRESULT STDMETHODCALLTYPE OnTextChange(DWORD,const TS_TEXTCHANGE*)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnSelectionChange()override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode,TsViewCookie)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnAttrsChange(LONG,LONG,ULONG,const TS_ATTRID*)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnLockGranted(DWORD flags)override{try{return onLock?onLock(flags):S_OK;}catch(...){return E_FAIL;}}
+    HRESULT STDMETHODCALLTYPE OnStartEditTransaction()override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnEndEditTransaction()override{return S_OK;}
+};
 constexpr const char*one="00000000-0000-4000-8000-000000000001";
 constexpr const char*two="00000000-0000-4000-8000-000000000002";
 constexpr const char*three="00000000-0000-4000-8000-000000000003";
@@ -236,6 +254,20 @@ void scrolling(HWND hwnd,gpu::Renderer&renderer){
     check(state.revision()==editorRevision&&saves==editorSaves&&state.note(one)->text==editorText,"Editor wheel does not save a draft or mutate NotesState");publish();
     {const auto* thumb=indicator();const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));
      check(std::abs(thumb->masks[1].bounds.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"An editor wheel moves the thumb with the scroll offset");}
+    // An IME write raises the field's revision before its posted owner notice.
+    // Until the notice the field reports no selection geometry.
+    {auto*field=workspace.editor();auto*store=field->textStore();Microsoft::WRL::ComPtr<Sink>sink;sink.Attach(new Sink);ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_LAYOUT_CHANGE),"Advise the IME's fake sink");
+     const std::u16string original(workspace.editorDocument()->text());const auto at=static_cast<std::uint32_t>(original.size());
+     field->setScrollOffset(0);workspace.syncEditor();check(field->scrollOffset()==0&&workspace.editorDocument()->selection().range==text::Range{at,at},"The caret waits at the end of a field scrolled to its top");
+     auto write=[&](LONG start,LONG end,std::wstring_view value){sink->onLock=[&](DWORD){TS_TEXTCHANGE delta{};return store->SetText(0,start,end,value.data(),ULONG(value.size()),&delta);};
+         HRESULT session{};ok(store->RequestLock(TS_LF_SYNC|TS_LF_READWRITE,&session),"Request the IME write lock");ok(session,"The IME writes before the owner notice");sink->onLock={};};
+     write(LONG(at),LONG(at),L"\n\n\n\n\x4e2d");const auto now=static_cast<std::uint32_t>(workspace.editorDocument()->text().size());
+     check(field->geometry().textRevision()!=workspace.editorDocument()->revision(),"The IME write leaves the previous layout pending");
+     check(field->selectionRectangles({now-1,now}).empty()&&field->geometry().textRevision()!=workspace.editorDocument()->revision(),"Before the owner notice the field reports no selection geometry for the new text");
+     rejects([&]{(void)field->selectionRectangles({0,now+1});},"A range beyond the current text is still rejected");
+     workspace.takeEditorChanges(workspace.editorGeneration());check(!field->selectionRectangles({now-1,now}).empty(),"After the owner notice the field answers the IME's new text");
+     write(LONG(at),LONG(now),L"");workspace.takeEditorChanges(workspace.editorGeneration());check(workspace.editorDocument()->text()==original,"The IME removes its text again");
+     ok(store->UnadviseSink(sink.Get()),"The IME's fake sink detaches");}
     workspace.editor()->setScrollOffset(workspace.editor()->maximumScrollOffset());workspace.syncEditor();
     check(workspace.finishEditing().finished,"Explicit finish captures editor session offset");publish();
     // Unpublished and absent: a resident, unreferenced quad would be removable here.

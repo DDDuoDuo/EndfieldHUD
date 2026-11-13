@@ -307,6 +307,8 @@ ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto
 
 void NativeProjectedEditor::pointerUp()noexcept{if(GetCurrentThreadId()==impl_->thread)impl_->dragging=false;}
 const LayerTextLayout&NativeProjectedEditor::layout()const{return *impl_->layout;}
+std::span<const core::Rect>NativeProjectedEditor::selectionRectangles(text::Range range)const{auto i=impl_;i->onThread();need(range.start<=range.end&&range.end<=i->document.text().size(),"Projected editor ACP range exceeds its document");
+    if(!i->layoutCurrent())return {};return i->layout->selectionRectangles(range);}
 const text::Placement&NativeProjectedEditor::placement()const noexcept{return impl_->placement;}
 LayerScene&NativeProjectedEditor::scene()const noexcept{return *impl_->scene;}
 std::uint64_t NativeProjectedEditor::paintRevision()const noexcept{return impl_->paintRevision;}

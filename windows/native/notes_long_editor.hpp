@@ -141,6 +141,7 @@ public:
     void pointerUp()noexcept;
     const LayerTextLayout& layout()const; // single-layout editor only; throws for a chunked field
     const core::text::Layout& geometry()const noexcept;
+    // Both variants report no rectangles until text an IME wrote is laid out.
     std::span<const core::Rect> selectionRectangles(core::text::Range)const;
     const core::text::Placement& placement()const noexcept;
     LayerScene& scene()const noexcept;
