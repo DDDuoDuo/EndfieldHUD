@@ -255,7 +255,9 @@ void scrolling(HWND hwnd,gpu::Renderer&renderer){
     {const auto* thumb=indicator();const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));
      check(std::abs(thumb->masks[1].bounds.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"An editor wheel moves the thumb with the scroll offset");}
     // An IME write raises the field's revision before its posted owner notice.
-    // Until the notice the field reports no selection geometry.
+    // Until the notice the field reports no selection geometry; a wheel then
+    // lays the new text out first and scrolls from the offset that reveals the
+    // IME's caret, not from the stale one (as Archive and the editors).
     {auto*field=workspace.editor();auto*store=field->textStore();Microsoft::WRL::ComPtr<Sink>sink;sink.Attach(new Sink);ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_LAYOUT_CHANGE),"Advise the IME's fake sink");
      const std::u16string original(workspace.editorDocument()->text());const auto at=static_cast<std::uint32_t>(original.size());
      field->setScrollOffset(0);workspace.syncEditor();check(field->scrollOffset()==0&&workspace.editorDocument()->selection().range==text::Range{at,at},"The caret waits at the end of a field scrolled to its top");
@@ -265,6 +267,10 @@ void scrolling(HWND hwnd,gpu::Renderer&renderer){
      check(field->geometry().textRevision()!=workspace.editorDocument()->revision(),"The IME write leaves the previous layout pending");
      check(field->selectionRectangles({now-1,now}).empty()&&field->geometry().textRevision()!=workspace.editorDocument()->revision(),"Before the owner notice the field reports no selection geometry for the new text");
      rejects([&]{(void)field->selectionRectangles({0,now+1});},"A range beyond the current text is still rejected");
+     const auto from=projection.unproject(*point),to=projection.unproject({point->x,point->y-6.125});check(from&&to,"Upward wheel endpoints invert through the card");const auto localDelta=to->y-from->y;
+     check(workspace.scrollAt(*point,-6.125)&&field->geometry().textRevision()==workspace.editorDocument()->revision(),"A wheel before the owner notice lays out the IME text first");
+     const auto wheeled=field->scrollOffset();(void)field->revealCaret();workspace.syncEditor();const auto revealed=field->scrollOffset();
+     check(revealed>-localDelta&&std::abs(wheeled-(revealed+localDelta))<1e-8,"The wheel scrolls from the offset that reveals the IME's caret");
      workspace.takeEditorChanges(workspace.editorGeneration());check(!field->selectionRectangles({now-1,now}).empty(),"After the owner notice the field answers the IME's new text");
      write(LONG(at),LONG(now),L"");workspace.takeEditorChanges(workspace.editorGeneration());check(workspace.editorDocument()->text()==original,"The IME removes its text again");
      ok(store->UnadviseSink(sink.Get()),"The IME's fake sink detaches");}

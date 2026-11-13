@@ -657,9 +657,8 @@ bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
             // A bubbled wheel over another part of the same card is consumed;
             // only the native editor viewport scrolls its own document.
             const auto&placement=i.field->native->placement();const auto editorPoint=placement.projection.unproject(point);if(!editorPoint||!inside(placement.viewport,*editorPoint))return true;
-            // A queued TSF write may precede its owner synchronization. Do not
-            // use old geometry or reenter a text lock just to handle a wheel.
-            if(i.field->native->geometry().textRevision()!=i.field->document.revision())return true;
+            // A TSF write may precede its owner notice: scrollBy lays the new
+            // text out before it reads its base, and declines under a lock.
             if(i.field->native->scrollBy(localDelta)){if(!i.field->itemID)s->scrollOffset=i.field->native->scrollOffset();++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}
             return true;
         }
