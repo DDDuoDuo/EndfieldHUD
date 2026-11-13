@@ -29,7 +29,9 @@ __pycache__/
 # Local development records; retained on this Mac.
 /Tests/
 /tests/
-/.github/workflows/
+/.github/workflows/*
+# The Windows release workflow is public: SignPath signs only what it builds.
+!/.github/workflows/windows-release.yml
 /DEVELOPMENT.md
 /TESTING.md
 /docs/account-api-research.md

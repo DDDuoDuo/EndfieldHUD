@@ -1,0 +1,334 @@
+name: Windows release files
+# Builds the Windows release files (setup, portable zip, SHA256SUMS) of one
+# commit on GitHub-hosted runners and, when started by hand with signing
+# test or release, has them signed through SignPath (free code signing by
+# SignPath.io, certificate by SignPath Foundation): first EndfieldHUD.exe and
+# uninstall.exe, then the setup packed from them. The setup stub stays
+# unsigned, and SHA256SUMS is written from the final bytes. Nothing here
+# creates a tag, release or Mac update: the files are a workflow artifact,
+# published by hand.
+#
+# Phases of windows/packaging/stage_release.cmake: build (tree), package,
+# finish. The SignPath requests run in their own jobs, so waiting for an
+# approval holds no Windows runner and nothing is rebuilt; "Re-run failed
+# jobs" retries a sign job with the same artifacts. A request left pending
+# after a failed run is denied in SignPath.
+on:
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: 'none: unsigned; test: SignPath test certificate; release: SignPath Foundation certificate (main only, needs tag)'
+        type: choice
+        options: [none, test, release]
+        default: none
+      tag:
+        description: 'Release signing only: the vX.Y.Z tag on this commit'
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - '.github/workflows/windows-release.yml'
+      - 'windows/packaging/**'
+      - 'windows/cmake/modules/packaging.cmake'
+      - 'windows/tools/package_payload.cpp'
+      - 'windows/inputs/**'
+permissions:
+  contents: read
+  # The SignPath action reads the job details and downloads the artifact to sign.
+  actions: read
+concurrency:
+  # Never cancelled: a run may be waiting for a SignPath approval.
+  group: windows-release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Build, test and stage the tree (windows-2025)
+    # Pinned image: see windows.yml (the OS ICU suites).
+    runs-on: windows-2025
+    timeout-minutes: 180
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      stem: ${{ steps.version.outputs.stem }}
+      product-version: ${{ steps.version.outputs.product-version }}
+      to-sign-id: ${{ steps.to-sign.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Choose the signing mode
+        id: mode
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          SIGNING: ${{ inputs.signing }}
+        run: |
+          $mode = if ($env:EVENT -eq 'workflow_dispatch') { $env:SIGNING } else { 'none' }
+          if ($mode -notin @('none', 'test', 'release')) { throw "Unknown signing mode '$mode'" }
+          "mode=$mode" >> $env:GITHUB_OUTPUT
+          "Signing: $mode"
+      - name: Check the release commit (release signing)
+        if: steps.mode.outputs.mode == 'release'
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          if ($env:REF -ne 'refs/heads/main') { throw "Release signing runs on main only, not $env:REF" }
+          if ($env:TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "The tag '$env:TAG' is not vX.Y.Z" }
+          $tagged = git rev-parse --verify --quiet "refs/tags/$($env:TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0 -or $tagged -ne $env:GITHUB_SHA) { throw "The tag $env:TAG is not this commit ($env:GITHUB_SHA)" }
+          $release = (Get-Content windows/source-authority.json -Raw | ConvertFrom-Json).release
+          if ($release -ne $env:TAG) { throw "windows/source-authority.json names $release, not $env:TAG" }
+      - name: Verify current macOS source authority
+        run: python windows/tools/check_source_authority.py
+      - name: Verify the frozen shell inputs
+        run: python windows/tools/check_source_authority.py --inputs
+      - name: Configure (MSVC, x64)
+        run: cmake -S windows -B build/windows -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/windows --config Release --parallel -- /nodeReuse:false
+      - name: Check the OS ICU and time-zone data
+        shell: pwsh
+        run: |
+          & build/windows/Release/package_os_capabilities.exe --requirements windows/packaging/os-requirements.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test
+        # Serial: hidden-window, WARP and installer suites share the session.
+        run: ctest --test-dir build/windows -C Release --output-on-failure --timeout 900
+      - name: Stage the tree
+        run: >-
+          cmake -DPHASE=tree -DSOURCE=windows -DOUT=release -DBUILD=build/windows -DCONFIG=Release
+          -DPACKER=build/windows/Release/package_payload.exe -DSTUB=build/windows/Release/EndfieldHUD-Setup-stub.exe
+          -DUNINSTALLER=build/windows/Release/uninstall.exe -DSYMBOLS=build/windows/Release/EndfieldHUD.pdb
+          -P windows/packaging/stage_release.cmake
+      - name: Keep the install check with the stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/checker | Out-Null
+          Copy-Item build/windows/Release/packaging_installer_tests.exe release/checker/
+      - name: Read the version of the programs to sign
+        # SignPath checks the signed files against this string (artifact
+        # configurations "binaries" and "setup", parameter productVersion).
+        id: version
+        shell: pwsh
+        run: |
+          $versions = @('release/to-sign/EndfieldHUD.exe', 'release/to-sign/uninstall.exe', 'release/stage/EndfieldHUD-Setup-stub.exe') |
+            ForEach-Object { (Get-Item $_).VersionInfo.ProductVersion } | Sort-Object -Unique
+          if (@($versions).Count -ne 1 -or -not $versions) { throw "The programs disagree on ProductVersion: $($versions -join ' / ')" }
+          $authority = Get-Content windows/source-authority.json -Raw | ConvertFrom-Json
+          $stem = "EndfieldHUD-$($authority.release -replace '^v', '')-build$($authority.windowsBuild)-windows-x64"
+          "product-version=$versions" >> $env:GITHUB_OUTPUT
+          "stem=$stem" >> $env:GITHUB_OUTPUT
+          "ProductVersion: $versions, files: $stem"
+      - name: Upload the stage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the programs to sign
+        id: to-sign
+        if: steps.mode.outputs.mode != 'none'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: to-sign
+          path: release/to-sign/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-binaries:
+    name: Sign EndfieldHUD.exe and uninstall.exe (SignPath)
+    needs: build
+    if: needs.build.outputs.mode != 'none'
+    runs-on: ubuntu-24.04
+    # Waits for the approval; the action checks every 20 minutes at most.
+    timeout-minutes: 340
+    steps:
+      - name: Submit the signing request and wait
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && vars.SIGNPATH_RELEASE_POLICY_SLUG || vars.SIGNPATH_TEST_POLICY_SLUG }}
+          artifact-configuration-slug: binaries
+          github-artifact-id: ${{ needs.build.outputs.to-sign-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 19800
+          output-artifact-directory: signed-binaries
+          parameters: |
+            productVersion: ${{ toJSON(needs.build.outputs.product-version) }}
+      - name: Upload the signed programs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-binaries
+          path: signed-binaries/
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Portable zip and setup (windows-2025)
+    needs: [build, sign-binaries]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.sign-binaries.result == 'success' || (needs.build.outputs.mode == 'none' && needs.sign-binaries.result == 'skipped')) }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      setup-id: ${{ steps.setup.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage
+          path: release
+      - if: needs.build.outputs.mode != 'none'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-binaries
+          path: signed-binaries
+      - name: Package
+        shell: pwsh
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          SIGNER: ${{ vars.SIGNPATH_RELEASE_SIGNER }}
+        run: |
+          $arguments = @('-DPHASE=package', '-DSOURCE=windows', '-DOUT=release', "-DMODE=$env:MODE")
+          if ($env:MODE -ne 'none') { $arguments += '-DSIGNED=signed-binaries' }
+          if ($env:MODE -eq 'release') { $arguments += "-DSIGNER=$env:SIGNER" }
+          cmake @arguments -P windows/packaging/stage_release.cmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload the package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaged
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the setup to sign
+        # Not zipped, so the setup itself is what SignPath signs (artifact
+        # configuration "setup"); the artifact is named after the file.
+        id: setup
+        if: needs.build.outputs.mode != 'none'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: release/${{ needs.build.outputs.stem }}-setup.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-setup:
+    name: Sign the setup (SignPath)
+    needs: [build, package]
+    if: ${{ !cancelled() && needs.package.result == 'success' && needs.build.outputs.mode != 'none' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - name: Submit the signing request and wait
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && vars.SIGNPATH_RELEASE_POLICY_SLUG || vars.SIGNPATH_TEST_POLICY_SLUG }}
+          artifact-configuration-slug: setup
+          github-artifact-id: ${{ needs.package.outputs.setup-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 19800
+          output-artifact-directory: signed-setup
+          skip-decompress: true
+          parameters: |
+            productVersion: ${{ toJSON(needs.build.outputs.product-version) }}
+      - name: Upload the signed setup
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-setup
+          path: signed-setup/
+          if-no-files-found: error
+          retention-days: 7
+
+  finish:
+    name: Check the setup, size report and SHA256SUMS (windows-2025)
+    needs: [build, package, sign-setup]
+    if: ${{ !cancelled() && needs.package.result == 'success' && (needs.sign-setup.result == 'success' || (needs.build.outputs.mode == 'none' && needs.sign-setup.result == 'skipped')) }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packaged
+          path: release
+      - if: needs.build.outputs.mode != 'none'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-setup
+          path: signed-setup
+      - name: Finish
+        shell: pwsh
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          SIGNER: ${{ vars.SIGNPATH_RELEASE_SIGNER }}
+        run: |
+          $arguments = @('-DPHASE=finish', '-DSOURCE=windows', '-DOUT=release', "-DMODE=$env:MODE", '-DCHECKER=release/checker/packaging_installer_tests.exe')
+          if ($env:MODE -ne 'none') {
+            $signed = @(Get-ChildItem signed-setup -Recurse -File -Filter '*.exe')
+            if ($signed.Count -ne 1) { throw "Expected one signed setup, found $($signed.Count)" }
+            $arguments += "-DSETUP=$($signed[0].FullName)"
+          }
+          if ($env:MODE -eq 'release') { $arguments += "-DSIGNER=$env:SIGNER" }
+          cmake @arguments -P windows/packaging/stage_release.cmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item -Recurse -Force release/checker
+      - name: Name the result
+        id: result
+        shell: pwsh
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          STEM: ${{ needs.build.outputs.stem }}
+        run: |
+          $suffix = @{ none = 'unsigned'; test = 'test-signed'; release = 'release-signed' }[$env:MODE]
+          "name=$env:STEM-$suffix" >> $env:GITHUB_OUTPUT
+      - name: Upload the release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.result.outputs.name }}
+          path: |
+            release/${{ needs.build.outputs.stem }}-setup.exe
+            release/${{ needs.build.outputs.stem }}-portable.zip
+            release/${{ needs.build.outputs.stem }}-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload the symbols and size report (never published)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.result.outputs.name }}-symbols-and-size-report
+          path: |
+            release/${{ needs.build.outputs.stem }}-symbols.zip
+            release/${{ needs.build.outputs.stem }}-symbols-SHA256SUMS.txt
+            release/${{ needs.build.outputs.stem }}-size-report.json
+            release/${{ needs.build.outputs.stem }}-size-report.md
+          if-no-files-found: error
+          retention-days: 90
