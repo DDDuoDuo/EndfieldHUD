@@ -18,7 +18,7 @@ GitHub Actions builds these files from the release's tagged commit of this repos
 EndfieldHUD has no telemetry and sends no data about you or your computer to the project. It talks to other systems only for these features:
 
 - **Updates:** once a day by default, and when you check by hand, the Windows version asks GitHub (`api.github.com`) for the latest release. Installing an update downloads it from GitHub
-- **Now Playing:** while a song is playing, its title and artist are sent to [LRCLIB](https://lrclib.net) and NetEase Cloud Music (`music.163.com`) to find its lyrics and cover art
-- **Account:** only when you sign in, your HYPERGRYPH/SKLAND account details go to HYPERGRYPH's services (`hypergryph.com`, `skland.com`, `skport.com`) to show your game data, and the sign-in's human check loads from Geetest
+- **Now Playing:** while a song is playing, its title, artist, album and length are sent to [LRCLIB](https://lrclib.net), and its title and artist to NetEase Cloud Music (`music.163.com`), to find its lyrics and cover art. Covers are downloaded from NetEase (`music.126.net`)
+- **Account:** only after you sign in to your HYPERGRYPH or GRYPHLINE account, the app talks to their services (`hypergryph.com`, `gryphline.com`, `skland.com`, `skport.com` and their image servers) to show your game data. The sign-in page's human check loads from Geetest
 
 Your notes, settings and other data stay on your computer

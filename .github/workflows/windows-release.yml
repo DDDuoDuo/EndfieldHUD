@@ -238,6 +238,8 @@ jobs:
         if: needs.build.outputs.mode != 'none'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          # The same name the upload gives it, so overwrite deletes this artifact.
+          name: ${{ needs.build.outputs.stem }}-setup.exe
           path: release/${{ needs.build.outputs.stem }}-setup.exe
           archive: false
           if-no-files-found: error
