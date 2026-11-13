@@ -1343,6 +1343,27 @@ void swapDropsWheel(RecordedMeasurer& measurer) {
         && canvas.magnify({300, 300}, 1.1, w.now) && canvas.magnifications == 2, "Landed, the page scrolls and zooms again");
 }
 
+// A settled swap lands without an entrance (Mac 89b8735): a re-render after
+// it does not replay the module entrance the swap cut short.
+void settledSwapEntrance(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    for (const bool concealed : {false, true}) {
+        FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+        canvas.show(w.now); canvas.setActive(true, w.now);
+        canvas.playEntrance({0, 24}, w.now);
+        w.advance(.05);
+        canvas.depth = 1; canvas.navigate(1);
+        canvas.settleSwap(concealed);
+        if (concealed) canvas.show(w.now);                    // the module shows again: the waiting page lands
+        const int entrances = canvas.pageEntrances;
+        canvas.rows += 1; canvas.rerender();
+        bool entering = false;
+        for (const auto* layer : canvas.page().staggered()) entering = entering || layer->animating(w.now);
+        check(!canvas.transitioning() && canvas.pageEntrances == entrances && !entering,
+            std::string(concealed ? "A concealed" : "A") + " settled swap's page re-rendered inside the old entrance replays no entrance");
+    }
+}
+
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
 // selection): every page that replaces another while the two are never in
 // the tree together takes its layer ids, so the scene finds unchanged parts
@@ -1824,6 +1845,7 @@ int main(int argc, char** argv) {
         concealedSettles(measurer);
         swapDropsKeys(measurer);
         swapDropsWheel(measurer);
+        settledSwapEntrance(measurer);
         popupsLeaveWithModule(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

@@ -324,6 +324,9 @@ void Canvas::completeSwap() {
 void Canvas::settleSwap(bool concealed) {
     if (!swapDeadline_) return;
     env().deadlines.cancel(swapToken_); swapToken_ = 0; swapDeadline_.reset();
+    // The settled page lands without an entrance: a later re-render must not
+    // replay the previous page's (Mac 89b8735).
+    entrance_.reset();
     if (concealed) {
         concealedSwap_ = true;
         if (leaving_) leaving_->setValue(Channel::opacity, 0);
