@@ -420,6 +420,45 @@ void swapKeepsPlayerKeys() {
     check(!canvas.transitioning() && textOf(canvas.root(), "nowPlaying.cover.title") == "Ember Road", "The new page lands");
 }
 
+// A track change that cuts a seek drag short (Mac 89b8735): the leaving page
+// keeps the old track's title, cover and time as drawn, also when the clock
+// ticks or the snapshot changes during the swap; the page that lands shows
+// the newest track.
+void swapKeepsLeavingPage() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false);
+    Controller ctl; ctl.input = Controller::playing(w.now);
+    const auto frame = [](unsigned side) { auto f = std::make_shared<endfield::native::NotesImageFrame>(); f->width = f->height = side; return f; };
+    const auto first = frame(960), second = frame(961);
+    ctl.input.coverAvailable = true; ctl.cover = {first, nullptr, 960, 960}; ctl.input.coverRevision = 1;
+    C canvas(w.context, ctl.services());
+    canvas.setPresented(true, w.now);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    w.now += 1; w.context.advance(w.now);
+    auto* bar = control(canvas, "seek");
+    const auto r = bar->rect(canvas.root());
+    canvas.pointerDown({r.x + 100, r.y + 10}, {}, w.now);
+    canvas.pointerDragged({r.x + 140, r.y + 10}, w.now);
+    const auto drawn = textOf(canvas.root(), "nowPlaying.elapsed"), artist = textOf(canvas.root(), "nowPlaying.cover.artist");
+    const auto seeks = ctl.sent.size();
+    ctl.input.track->title = "Lanterns"; ctl.input.track->position = 100.95; ctl.input.track->sampledAt = w.now;
+    ctl.cover = {second, nullptr, 961, 961}; ctl.input.coverRevision = 2;
+    canvas.refresh(w.now);
+    check(canvas.transitioning() && ctl.sent.size() == seeks, "The change ends the drag without a seek and swaps the page");
+    const auto leaving = [&] {
+        return textOf(canvas.root(), "nowPlaying.cover.title") == "Signal Fire" && textOf(canvas.root(), "nowPlaying.elapsed") == drawn
+            && textOf(canvas.root(), "nowPlaying.cover.artist") == artist && canvas.coverViews(w.now)[1].image == first && !canvas.coverViews(w.now)[0].image;
+    };
+    check(leaving(), "The leaving page keeps the old title, time and cover after the drag ended");
+    // The clock ticks (a whole second at +.05) and the snapshot changes in place during the swap.
+    w.now += .06; w.context.advance(w.now); canvas.wake(w.now);
+    ctl.input.track->artist = "Talos Choir"; canvas.refresh(w.now);
+    check(canvas.transitioning() && leaving(), "A tick and an in-place update during the swap leave the leaving page as drawn");
+    w.now += .1; w.context.advance(w.now);
+    check(!canvas.transitioning() && textOf(canvas.root(), "nowPlaying.cover.title") == "Lanterns" && textOf(canvas.root(), "nowPlaying.cover.artist") == "Talos Choir"
+        && textOf(canvas.root(), "nowPlaying.elapsed") == "01:41" && canvas.coverViews(w.now)[1].image == second, "The landed page shows the newest track, artist, time and cover");
+}
+
 // --- The Mac oracle (play-canvases-source.json, Now Playing rows) ------------------------------
 struct Oracle {
     const Json& data;
@@ -502,6 +541,7 @@ int main(int argc, char** argv) {
         volumeLeavesWithPage();
         coverLeavesWithPage();
         swapKeepsPlayerKeys();
+        swapKeepsLeavingPage();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"nowPlaying"}, {"text", "layerDefaults"})) {
             Oracle oracle(*data);
             oracleScenes(oracle);

@@ -707,9 +707,13 @@ void NowPlayingCanvas::endScrub(std::optional<double> value) {
     const auto gesture = std::move(seekGesture_);
     seekGesture_.reset();
     const auto& in = input();
-    if (value && gesture && gesture->first == in.session && in.track && in.track->sameIdentity(gesture->second) && services_.perform)
+    const bool sameTrack = !gesture || (gesture->first == in.session && in.track && in.track->sameIdentity(gesture->second));
+    if (value && gesture && sameTrack && services_.perform)
         services_.perform({NowPlayingIntentKind::seek, in.session, *value});
-    update(true);
+    // A track change that cut the drag short re-renders or swaps to the new
+    // track itself (refresh); the leaving page keeps the old one. During a
+    // swap update() writes the staged page, built from the newest snapshot.
+    if (sameTrack) update(true);
 }
 void NowPlayingCanvas::skip(double seconds) {
     const auto& in = input();
