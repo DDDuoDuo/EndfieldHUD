@@ -141,7 +141,6 @@ struct NativeNotesLongEditor::Impl {
     }
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Long editor used outside its creating thread");need(alive&&!stopped,"Long editor is stopped");}
     bool layoutCurrent()const noexcept{return !chunks.empty()&&layoutRevision==owner.revision();}
-    void current()const{onThread();need(layoutCurrent(),"Synchronize long editor text before geometry/navigation");}
     std::u16string_view value()const noexcept{return owner.text();}
     // ---- descriptors --------------------------------------------------------
     Json leaf(std::size_t index,const char* kind)const{return Json::Object{{"id",ids[index]},{"class",std::string(kind)=="text"?"CATextLayer":"CAShapeLayer"},{"kind",kind},{"bounds",Json::Array{0,0,style.width,style.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"opacity",1},{"children",Json::Array{}}};}
@@ -549,9 +548,15 @@ ProjectedEditorResult NativeNotesLongEditor::pointerDrag(core::Point point){auto
     const auto at=text::insertionHit(i->geometry,static_cast<std::uint32_t>(i->value().size()),{local->x-i->placement.viewport.x,local->y-i->placement.viewport.y+i->scroll});return at?i->select(*at,true):ProjectedEditorResult{};}
 void NativeNotesLongEditor::pointerUp()noexcept{if(GetCurrentThreadId()==impl_->thread)impl_->dragging=false;}
 const core::text::Layout& NativeNotesLongEditor::geometry()const noexcept{return impl_->geometry;}
-std::span<const core::Rect> NativeNotesLongEditor::selectionRectangles(text::Range range)const{auto i=impl_;i->current();need(range.start<=range.end&&range.end<=i->value().size(),"Long editor ACP range exceeds its document");return i->rectanglesFor(range,0,i->chunks.size());}
-std::uint32_t NativeNotesLongEditor::previousCluster(std::uint32_t acp)const{auto i=impl_;i->current();return i->previousCluster(acp);}
-std::uint32_t NativeNotesLongEditor::nextCluster(std::uint32_t acp)const{auto i=impl_;i->current();return i->nextCluster(acp);}
+// Const geometry never lays text out. Between an IME write and its owner
+// notice the chunks still hold the previous text, so, like TSF's
+// TS_E_NOLAYOUT (geometry().textRevision() tells), there is no geometry yet:
+// no rectangles, and clusters stay where they are. Ranges and ACPs are still
+// checked against the current text.
+std::span<const core::Rect> NativeNotesLongEditor::selectionRectangles(text::Range range)const{auto i=impl_;i->onThread();need(range.start<=range.end&&range.end<=i->value().size(),"Long editor ACP range exceeds its document");
+    if(!i->layoutCurrent()){i->rectangles.clear();return i->rectangles;}return i->rectanglesFor(range,0,i->chunks.size());}
+std::uint32_t NativeNotesLongEditor::previousCluster(std::uint32_t acp)const{auto i=impl_;i->onThread();need(acp<=i->value().size(),"Cluster ACP exceeds document");return i->layoutCurrent()?i->previousCluster(acp):acp;}
+std::uint32_t NativeNotesLongEditor::nextCluster(std::uint32_t acp)const{auto i=impl_;i->onThread();need(acp<=i->value().size(),"Cluster ACP exceeds document");return i->layoutCurrent()?i->nextCluster(acp):acp;}
 double NativeNotesLongEditor::documentHeight()const noexcept{return impl_->height;}
 const text::Placement& NativeNotesLongEditor::placement()const noexcept{return impl_->placement;}
 LayerScene& NativeNotesLongEditor::scene()const noexcept{return *impl_->scene;}

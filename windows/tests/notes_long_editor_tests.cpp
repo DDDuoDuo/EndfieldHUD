@@ -293,6 +293,7 @@ void imeBeforeNotice(HWND hwnd){
                 check(declined(r.editor.applyFormat(green))&&declined(r.editor.undo())&&declined(r.editor.redo()),"Format, undo and redo during the write lock decline");
                 for(const auto c:{C::left,C::right,C::up,C::down,C::documentStart,C::documentEnd,C::backspace,C::deleteForward,C::selectAll})check(declined(r.editor.command(c)),"A command during the write lock declines");
                 check(!r.editor.pointerDown(press).handled&&!r.editor.pointerDrag(press).handled,"A press or drag during the write lock waits for the layout");
+                check(r.editor.selectionRectangles({0,r.end()}).empty()&&r.editor.previousCluster(r.end())==r.end()&&r.editor.nextCluster(0)==0,"Geometry getters during the write lock report no geometry yet");
                 check(r.document.revision()==revision&&r.document.selection()==selection&&!r.laidOut(revision),"Declined calls leave the text, the selection and the pending layout alone");});
             r.editor.pointerUp();r.notice();}},
         {"setPose",[&]{ImeRace r(hwnd,raster,style);const auto w=r.write(r.end(),L"x");check(r.editor.setPose(r.pose)&&r.laidOut(w),"A frame before the owner notice lays out the IME text");}},
@@ -320,6 +321,12 @@ void imeBeforeNotice(HWND hwnd){
         {"pointerDrag",[&]{ImeRace r(hwnd,raster,style);r.editor.setScrollOffset(0);r.editor.setPose(r.pose);const auto press=r.rightOf(0);
             check(r.editor.pointerDown(press).handled&&r.active()==10,"A press right of the first line takes its end");
             const auto w=r.write(0,L"Z");check(r.editor.pointerDrag(press).handled&&r.active()==11&&r.laidOut(w),"A drag pressed before the IME write hits the lengthened first line");r.editor.pointerUp();}},
+        // Const geometry never lays text out: until the notice it reports none
+        // (as TSF's TS_E_NOLAYOUT), then it answers the new text.
+        {"geometry getters",[&]{ImeRace r(hwnd,raster,style);const auto w=r.write(r.end(),L"\xd83d\xde00");const auto end=r.end();
+            check(r.editor.selectionRectangles({end-2,end}).empty()&&r.editor.previousCluster(end)==end&&r.editor.nextCluster(end-2)==end-2&&!r.laidOut(w),"Geometry getters before the owner notice report no geometry and leave the layout pending");
+            rejects([&]{(void)r.editor.selectionRectangles({0,end+1});},"A range beyond the current text is still rejected");rejects([&]{(void)r.editor.previousCluster(end+1);},"An ACP beyond the current text is still rejected");
+            r.notice();check(!r.editor.selectionRectangles({end-2,end}).empty()&&r.editor.previousCluster(end)==end-2&&r.editor.nextCluster(end-2)==end,"After the owner notice the getters answer the IME's new cluster");}},
     };
     for(const auto& [name,run]:cases){try{run();}catch(const std::exception& e){throw std::runtime_error(std::string("IME race, ")+name+": "+e.what());}}
 }

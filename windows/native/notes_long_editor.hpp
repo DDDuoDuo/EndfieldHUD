@@ -83,6 +83,8 @@ public:
     ProjectedEditorResult pointerDrag(core::Point);
     void pointerUp()noexcept;
     // Document-coordinate geometry over the chunk layouts (the Layout TSF reads).
+    // Until text an IME wrote is laid out (geometry().textRevision() behind the
+    // document) the getters report none: no rectangles, clusters unmoved.
     const core::text::Layout& geometry()const noexcept;
     std::span<const core::Rect> selectionRectangles(core::text::Range)const;
     std::uint32_t previousCluster(std::uint32_t)const;
