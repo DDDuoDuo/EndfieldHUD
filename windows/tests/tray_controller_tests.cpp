@@ -100,23 +100,30 @@ void run(){
     // (WM_ACTIVATEAPP FALSE, reported once per change) closes an open HUD.
     // NIM_SETFOCUS stands for Explorer taking the foreground: our thread's
     // deactivation arrives at its next message pump, after the opening began.
-    {bool open{};unsigned focusCloses{};OverlayHost hud;TrayController*hudRoute{};
+    // The click on the icon makes Explorer the foreground before the menu
+    // opens (WM_ACTIVATEAPP FALSE), then the menu's owner takes it (TRUE).
+    // The hand-back after an action stands in for the application's
+    // (Application::Impl::trayReturnsFocus, checked in the hidden run):
+    // after an item that left the HUD not showing.
+    {bool open{},closeOnFocusLost{true};unsigned focusCloses{};OverlayHost hud;TrayController*hudRoute{};
      OverlayOptions options{L"Synthetic tray HUD",0,0,16,16,nullptr};
      options.testVisibility=[](bool shown,bool){return shown;};options.testForeground=[]{return true;};options.testBand=[](bool topmost){return topmost;};
      OverlayCallbacks hudCallbacks;
      hudCallbacks.appMessage=[&](const NativeMessage&m)->std::optional<std::intptr_t>{if(hudRoute&&hudRoute->message(m.message,m.wParam,m.lParam))return 0;return {};};
-     hudCallbacks.applicationActive=[&](bool active){if(!active&&open){open=false;++focusCloses;hud.hide();}};
+     hudCallbacks.applicationActive=[&](bool active){if(!active&&open&&closeOnFocusLost){open=false;++focusCloses;hud.hide();}};
      hud.create(options,hudCallbacks);const auto hudWindow=static_cast<HWND>(hud.hwnd());
      Fake shell;TrayController hudTray(hudWindow,callback+2,explorer,shell.platform());hudRoute=&hudTray;check(hudTray.start(icon,L"Opening"),"The stand-in HUD's tray starts");
      hudTray.setMenu({{TrayAction::openOverlay,L"Open Overlay"},{TrayAction::workMode,L"Work Mode"},{TrayAction::settings,L"Settings"},{TrayAction::previewCharging,L"Preview Charging"},
         {TrayAction::checkUpdates,L"Check for Updates"},{TrayAction::about,L"About"},{TrayAction::quit,L"Quit"}});
      const auto menu=[&](TrayAction choice){
          bool early{};shell.choice=choice;shell.inMenu=[&]{early=hudTray.takeAction().has_value();};const auto notices=shell.notices.size();
-         // The menu's owner takes the foreground: the application is active.
-         SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);SendMessageW(hudWindow,callback+2,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
+         // The click on the icon (Explorer), then the menu's owner, take the foreground.
+         SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
+         shell.focusTaken=hud.stats().visible;SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);SendMessageW(hudWindow,callback+2,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
          const auto action=hudTray.takeAction();
          if(action&&*action!=TrayAction::previewCharging){open=true;hud.show(true);}
-         else if(action&&!hud.stats().visible)hudTray.returnFocus(); // Preview Charging left the HUD hidden
+         else if(action)hudTray.returnFocus(); // Preview Charging left the HUD hidden
+         shell.focusTaken=false;
          check(!early&&shell.menus>0,"No action runs before the menu returns");
          return std::pair{action,notices};};
      const auto shellTookFocus=[&](std::size_t from){return std::find(shell.notices.begin()+from,shell.notices.end(),DWORD(NIM_SETFOCUS))!=shell.notices.end();};
@@ -126,15 +133,29 @@ void run(){
          const bool grabbed=shellTookFocus(notices);if(grabbed)SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
          check(open&&hud.stats().visible&&focusCloses==closes,"Opening from a tray item leaves the HUD open with Close when focus lost on");
          check(!grabbed&&shell.notices.size()==notices&&shell.returns.empty(),"After an opening tray item, no NIM_SETFOCUS and no foreground handed back");
-         // A dismissed menu over the open HUD: the shown HUD takes the
-         // foreground back and keeps it.
-         shell.focusTaken=hud.stats().visible;const auto [dismissed,before]=menu(TrayAction::none);shell.focusTaken=false;
-         const bool taken=shellTookFocus(before);if(taken)SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
-         check(!dismissed&&shell.returns==std::vector<HWND>{hudWindow}&&!taken&&open&&hud.stats().visible,"A dismissed menu over the open HUD leaves it open and in the foreground");
-         shell.returns.clear();
          // A real later click elsewhere still closes it.
          SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
-         check(!open&&!hud.stats().visible&&focusCloses==closes+1,"A deactivation after the opening's activation closes the HUD");}
+         check(!open&&!hud.stats().visible&&focusCloses==closes+1,"A deactivation after the opening's activation closes the HUD");
+         // Close when focus lost off: the HUD stays open through the click on
+         // the icon, and a dismissed menu over it hands the foreground back
+         // to the shown HUD, which keeps it.
+         closeOnFocusLost=false;(void)menu(choice);shell.returns.clear();
+         const auto [dismissed,before]=menu(TrayAction::none);const bool taken=shellTookFocus(before);closeOnFocusLost=true;
+         check(!dismissed&&shell.returns==std::vector<HWND>{hudWindow}&&!taken&&open&&hud.stats().visible&&focusCloses==closes+1,"A dismissed menu over the open HUD (Close when focus lost off) leaves it open and in the foreground");
+         shell.returns.clear();open=false;hud.hide();}
+     // Close when focus lost on: the click on the icon closes an open HUD
+     // before its menu opens (as before; the Mac's status item does not
+     // deactivate the app), so a dismissed menu then finds no shown HUD and
+     // the notification area gets its focus back.
+     {(void)menu(TrayAction::openOverlay);const auto closes=focusCloses;const auto [dismissed,notices]=menu(TrayAction::none);
+      check(!dismissed&&!open&&!hud.stats().visible&&focusCloses==closes+1&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices+1&&shell.notices.back()==NIM_SETFOCUS,
+          "With Close when focus lost on, the click on the icon closes the open HUD and the dismissed menu returns the notification area's focus");
+      shell.returns.clear();}
+     // Projection (the HUD window shown, the HUD itself concealed): Preview
+     // Charging hands the foreground back to the shown window, no NIM_SETFOCUS.
+     {hud.show(false);const auto [action,notices]=menu(TrayAction::previewCharging);
+      check(action==TrayAction::previewCharging&&!open&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices,"Preview Charging over a shown Projection window gives it the foreground back");
+      shell.returns.clear();hud.hide();}
      {const auto [action,notices]=menu(TrayAction::previewCharging);
       check(action==TrayAction::previewCharging&&!hud.stats().visible&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices+1&&shell.notices.back()==NIM_SETFOCUS,
           "Preview Charging leaves the HUD hidden and then returns the notification area's focus");}
