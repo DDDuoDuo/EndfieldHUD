@@ -453,14 +453,16 @@ void volumeCanvas() {
     std::vector<d::AccessibilityItem> items; canvas.accessibilityItems(items);
     const auto offered = std::count_if(items.begin(), items.end(), [](const auto& i) { return i.id.rfind("app:", 0) == 0; });
     check(offered == 2, "Only app sliders inside the list are offered");
-    // MODS-248 (handleScroll :416-420): no guard while a tab swap runs; the wheel still glides the list.
+    // MODS-248 (handleScroll :416-420): the wheel glides the list, except
+    // while a tab swap runs (Mac 89b8735: the leaving page no longer scrolls).
     {
         const auto listPoint = centre(*control(canvas, "app:901"), canvas.root());
         w.appearance(Language::english, false, false);   // the swap animates (no Reduce Motion)
         static_cast<d::Tabs*>(canvas.page().tabs)->select(0, true); canvas.settleSwap();
         static_cast<d::Tabs*>(canvas.page().tabs)->select(1, true);
-        check(canvas.transitioning() && canvas.scroll(listPoint, {0, 46}, w.now), "During the tab swap the wheel glides the app list");
+        check(canvas.transitioning() && !canvas.scroll(listPoint, {0, 46}, w.now), "During the tab swap the wheel is not the canvas's");
         canvas.settleSwap();
+        check(canvas.scroll(listPoint, {0, 46}, w.now), "The landed app list glides on the wheel");
         w.appearance(Language::english);
     }
     // A snapshot during a tab swap: the leaving header keeps the old volume

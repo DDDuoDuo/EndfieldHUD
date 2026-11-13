@@ -697,6 +697,9 @@ public:
     // The page part of every entrance, played or carried (not an oracle event).
     int pageEntrances{};
     void playPageEntrance(Point offset, double delay) override { ++pageEntrances; Canvas::playPageEntrance(offset, delay); }
+    // Pinches the canvas took (not an oracle event).
+    int magnifications{};
+    bool handleMagnify(Point, double) override { ++magnifications; return true; }
 };
 Point centre(const d::Control& c, const d::Layer& root) { const Rect r = c.rect(root); return {r.x + r.width / 2, r.y + r.height / 2}; }
 const char* roleName(d::AccessibilityRole r) {
@@ -1321,6 +1324,25 @@ void swapDropsKeys(RecordedMeasurer& measurer) {
     check(!canvas.transitioning() && canvas.keyDown(keyOf('K', U'k'), w.now) && canvas.keys == std::vector<std::string>{"handleKey k"}, "Landed, keys reach the canvas again");
 }
 
+// Nor does it take the wheel or a pinch (Mac 89b8735): the module's zoom
+// surfaces and the leaving page's lists stay as they are; the landed page
+// scrolls and zooms again.
+void swapDropsWheel(RecordedMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english);
+    FakeCanvas canvas(endfield::core::Module::clipboard, w.context);
+    canvas.show(w.now); canvas.setActive(true, w.now);
+    check(canvas.magnify({300, 300}, 1.1, w.now) && canvas.magnifications == 1, "A shown page zooms");
+    canvas.depth = 1; canvas.navigate(1);
+    auto& list = *canvas.page().scrollAreas()[0];
+    const auto events = canvas.events;
+    check(!canvas.scroll({300, 300}, {0, 120}, w.now) && !canvas.scroll({300, 10}, {0, 50}, w.now) && list.offset() == 0 && canvas.events == events,
+        "The wheel during a swap scrolls no list and reaches no zoom surface (handleScroll)");
+    check(!canvas.magnify({300, 300}, 1.1, w.now) && canvas.magnifications == 1, "A pinch during a swap is not the canvas's");
+    w.advance(.2);
+    check(!canvas.transitioning() && canvas.scroll({300, 300}, {0, 120}, w.now) && canvas.page().scrollAreas()[0]->offset() > 0
+        && canvas.magnify({300, 300}, 1.1, w.now) && canvas.magnifications == 2, "Landed, the page scrolls and zooms again");
+}
+
 // Kept layer ids (the owner's "slight freeze" on Work Mode start and Shelf
 // selection): every page that replaces another while the two are never in
 // the tree together takes its layer ids, so the scene finds unchanged parts
@@ -1801,6 +1823,7 @@ int main(int argc, char** argv) {
         suspendedBar(measurer);
         concealedSettles(measurer);
         swapDropsKeys(measurer);
+        swapDropsWheel(measurer);
         popupsLeaveWithModule(measurer);
         std::sort(measurer.misses.begin(), measurer.misses.end());
         measurer.misses.erase(std::unique(measurer.misses.begin(), measurer.misses.end()), measurer.misses.end());

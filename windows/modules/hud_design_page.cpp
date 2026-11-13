@@ -747,9 +747,11 @@ void Canvas::pointerMoved(std::optional<Point> point, bool buttonDown, double no
 bool Canvas::containsControl(Point point) const { return control(point) != nullptr; }
 Control* Canvas::control(Point point) const { return active_ && !swapDeadline_ && !concealedSwap_ ? router_.control(point, *root_) : nullptr; }
 // Wheel: an open menu (always consumes), a pop-over, the module's zoom surfaces, then scroll areas.
+// The leaving page of a sub-page swap no longer scrolls (presses wait the
+// same way, pointerDown).
 bool Canvas::scroll(Point point, Point delta, double now) {
     begin(now);
-    if (!active_) return false;
+    if (!active_ || swapPending()) return false;
     if (menu_) {
         const double before = menu_->scrollOffset();
         if (inside(menu_->layer().frame(), point)) menu_->scroll(delta.y);
@@ -768,9 +770,10 @@ bool Canvas::scroll(Point point, Point delta, double now) {
     }
     return false;
 }
+// Nor does it zoom.
 bool Canvas::magnify(Point point, double magnification, double now) {
     begin(now);
-    if (!active_ || capturesPointer()) return false;
+    if (!active_ || swapPending() || capturesPointer()) return false;
     return handleMagnify(point, magnification);
 }
 
@@ -792,8 +795,8 @@ bool Canvas::keyDown(const KeyInput& input, double now) {
     }
     if (editingText()) return false;
     const char32_t c = input.character >= U'A' && input.character <= U'Z' ? input.character + 32 : input.character;
-    // During a sub-page swap (the gate presses have, pointerDown) the page a
-    // key is meant for has not landed: module keys (arrows, Space, Return,
+    // During a sub-page swap (presses wait the same way, pointerDown) the
+    // page a key is meant for has not landed: module keys (arrows, Space, Return,
     // digits, their chords) would act on the leaving page, so they are
     // dropped quietly (Mac 89b8735). Esc and plain Q / E retarget the swap as
     // before, and a canvas passes the keys that act outside the page

@@ -491,8 +491,8 @@ bool VolumeCanvas::setGain(double value, const native::VolumeApplication& app) {
 }
 
 // --- Input (:415-440) ------------------------------------------------------------------
-// The wheel glides the app list (Windows A2) instead of jumping, also while a
-// tab swap runs (the Mac has no guard).
+// The wheel glides the app list (Windows A2) instead of jumping; while a tab
+// swap runs the canvas takes no wheel (Canvas::scroll, Mac 89b8735).
 bool VolumeCanvas::handleScroll(d::Point point, d::Point delta) {
     if (!appList_) return false;
     const d::Rect frame = appList_->layer().frame();
