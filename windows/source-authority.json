@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "application": "EndfieldHUD for macOS",
-  "release": "v1.3.1",
-  "build": 20,
-  "windowsBuild": 21,
-  "commit": "3a095f3ee3b7e69a3e56bee9075298787e6e49ee",
+  "release": "v1.3.2",
+  "build": 21,
+  "windowsBuild": 22,
+  "commit": "cc190ca7cf4853c9c6ebe0b0443be13203b23fa7",
   "trees": {
-    "Sources": "78310f3f11131c1851bd74b9f79fa076a2646720",
-    "Resources": "f7ccb5b62907ab1ab95690c7342d41c14ef44d7b"
+    "Sources": "9de09ef720512f8f7f2800f6c97838aa5007174e",
+    "Resources": "f264f60e4eb98fa4634f43119e3b07a3adb99186"
   },
-  "policy": "Port the desktop macOS application. The rejected Windows preview and raw game-only scene are not an application reference. Shared game assets are permitted only as used by this macOS source. Mac 1.3.1 (build 20) is commit 3a095f3ee3b7e69a3e56bee9075298787e6e49ee (the official OrbiPom! MERGE! names, China's outline and land borders on the world map drawn from WGII's official China boundary (AMap data, converted from GCJ-02 to WGS84) with the Spratly Islands and Scarborough Shoal as part of China, map features smaller than a detail level's tolerance left to closer levels, the caret after CJK and IME text, the colour pop-overs closed by their close button, the module dimmed under one blurred still, Music and Spotify volume set through their own sound volume, the battery bar editor with Size and Length, HUD elements placement with Open on and Last opened, scoped Restore, the Close hint switch, the watch icon replacing the battery icon, the shared list reorder, Arrange on HUD, the top layer, the tile and right-click menus, the OS account on the personal cards, module lists starting at the top on return and on Back, Arrange on HUD dragging the tile with the pointer, the module entrance playing as the HUD opens; batch 4: app volume routes kept for momentarily silent apps and ended quietly when the output device changes, app volume on Bluetooth and other output-only stereo devices, audio helper processes named after the app that contains them, the HUD close fading every layer and letting the module, its overlays and the desktop notes leave with it, and no final full stop in the interface; batch 5: module entrances carried across a rebuilt page and late content faded in, motion already playing finishing inside the close, menus and pop-overs leaving with their module, small Now Playing covers drawn whole over a blurred backdrop, Archive video and audio back paused after a leave, app volume on headsets with a microphone, no middle dot separators in the interface and no final full stop in the permission prompts and copyright; and the 1.3.1 version on top of 1.3.0); the pinned commit's Sources and Resources trees are that release's, and the shared Resources/Fonts/manifest.json carries the windows platform for HarmonyOS Sans (the Mac reads the macos platform only)."
+  "policy": "Port the desktop macOS application. The rejected Windows preview and raw game-only scene are not an application reference. Shared game assets are permitted only as used by this macOS source. Mac 1.3.2 (build 21) is commit cc190ca7cf4853c9c6ebe0b0443be13203b23fa7 (Mac 1.3.1 build 20, commit 3a095f3ee3b7e69a3e56bee9075298787e6e49ee, plus: the leaving page of a sub-page swap kept as drawn, re-renders held until the swap's page lands, the leaving Storage page kept on the old disk's readings during a disk switch, input and Now Playing readings kept off the leaving page, a dragged module row or TODO card put back when its page leaves mid-drag, and the 1.3.2 version on top of 1.3.1); the pinned commit's Sources and Resources trees are that release's, and the shared Resources/Fonts/manifest.json carries the windows platform for HarmonyOS Sans (the Mac reads the macos platform only)."
 }
