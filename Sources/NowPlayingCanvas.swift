@@ -168,7 +168,9 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         if structure != renderedStructure { closeVolume(); rerender() }
         else if identity != previous, isActive, root.superlayer != nil { navigate(dx: takeDirection()) }
         else if identity != previous { rerender() }
-        else { update(animated: true) }
+        // The leaving page keeps the old track; the page the swap builds
+        // reads the new one, its cover and lyrics included.
+        else if !isTransitioning { update(animated: true) }
     }
 
     private func takeDirection() -> CGFloat {
@@ -304,7 +306,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
 
     private func update(animated: Bool) {
         let snapshot = controller.snapshot, track = snapshot.track
-        let transport = track != nil && snapshot.failure == nil
+        let transport = canTransport
         let playLabel = playButton?.label
         playButton?.isPlaying = track?.isPlaying == true
         [playButton, previousButton, nextButton].forEach { $0?.isEnabled = transport }
@@ -322,6 +324,10 @@ final class NowPlayingCanvas: HUDDesignCanvas {
         updateClock(animated: animated)
         if playButton?.label != playLabel { context.onInputStateChange?() }
     }
+
+    /// Play / pause and the skip buttons work on a readable track; Space reads
+    /// this too, so it follows the player rather than a leaving page's button.
+    private var canTransport: Bool { controller.snapshot.track != nil && controller.snapshot.failure == nil }
 
     private var canSeek: Bool {
         guard let track = controller.snapshot.track else { return false }
@@ -402,7 +408,8 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     }
 
     private func tick() {
-        guard isPresented else { return }
+        // The page the swap builds restarts the clock from the new track.
+        guard isPresented, !isTransitioning else { return }
         updateClock(animated: true)
         // At the end the player moves on by itself; read the next track once.
         if !requestedEndRefresh, let track = controller.snapshot.track, let duration = track.duration,
@@ -458,7 +465,10 @@ final class NowPlayingCanvas: HUDDesignCanvas {
            snapshot.track?.hasSameIdentity(as: gesture.track) == true {
             controller.perform(.seek(value))
         }
-        update(animated: true)
+        // A track change that cut the drag short re-renders or swaps to the
+        // new track itself; the leaving page keeps the old one.
+        let sameTrack = gesture.map { $0.application == snapshot.application && snapshot.track?.hasSameIdentity(as: $0.track) == true } ?? true
+        if sameTrack, !isTransitioning { update(animated: true) }
     }
 
     private func skip(by seconds: Double) {
@@ -625,6 +635,11 @@ final class NowPlayingCanvas: HUDDesignCanvas {
     }
 
     /// Space plays or pauses, ← / → seek 5 s, Esc closes the volume pop-up.
+    /// Space and ← / → act on the player, so they work while a track change swaps the page.
+    override func handlesKeyDuringSwap(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty && [49, 123, 124].contains(event.keyCode)
+    }
+
     override func handleKey(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
         switch event.keyCode {
@@ -632,7 +647,7 @@ final class NowPlayingCanvas: HUDDesignCanvas {
             guard isVolumeOpen else { return false }
             closeVolume()
         case 49:
-            guard playButton?.isEnabled == true else { return false }
+            guard canTransport else { return false }
             controller.perform(.playPause)
         case 123, 124:
             guard canSeek else { return false }
