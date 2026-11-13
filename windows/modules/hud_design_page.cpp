@@ -748,7 +748,7 @@ void Canvas::pointerMoved(std::optional<Point> point, bool buttonDown, double no
 }
 // An enabled control is drawn under this point: the host gives the press to the module before the shell.
 bool Canvas::containsControl(Point point) const { return control(point) != nullptr; }
-Control* Canvas::control(Point point) const { return active_ && !swapDeadline_ && !concealedSwap_ ? router_.control(point, *root_) : nullptr; }
+Control* Canvas::control(Point point) const { return active_ && !swapPending() ? router_.control(point, *root_) : nullptr; }
 // Wheel: an open menu (always consumes), a pop-over, the module's zoom surfaces, then scroll areas.
 // The leaving page of a sub-page swap no longer scrolls (presses wait the
 // same way, pointerDown).
