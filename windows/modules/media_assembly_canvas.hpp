@@ -118,6 +118,9 @@ public:
     void willLeave() override;
     void didActivate() override;
     void didDeactivate() override;
+    // A stage drag (crop, pan, sticker) ends with the other gestures, so one
+    // held through Esc or Q / E stops editing when its page leaves.
+    void suspendInput() override;
     // A new HUD session (the Mac's new MediaAssemblyCanvas, :14-17, :36):
     // the Adjust tab, and the open source taken as new (no tool, viewport
     // reset, no sticker). Unlike the Mac, a crop tool open at the close does

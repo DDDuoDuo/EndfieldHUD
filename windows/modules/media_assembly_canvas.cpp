@@ -64,6 +64,12 @@ void MediaAssemblyCanvas::didActivate() {
     refreshInPlace();
 }
 void MediaAssemblyCanvas::didDeactivate() { drag_.reset(); stage().setHovered(std::nullopt); stopExportTicker(); }
+void MediaAssemblyCanvas::suspendInput() {
+    Canvas::suspendInput();
+    if (!drag_) return;
+    drag_.reset(); stage().setHovered(std::nullopt);
+    if (context().onInputStateChange) context().onInputStateChange();
+}
 void MediaAssemblyCanvas::resetSession() {
     if (isActive()) return;
     const bool changed = tab_ != Tab::adjust || tool_ || !selectedSticker_.empty() || viewport_.zoom() != 1 || viewport_.pan().x != 0 || viewport_.pan().y != 0;

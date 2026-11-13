@@ -375,8 +375,9 @@ public:
     // end (a slider drag without commit) while the page stays drawn, menus,
     // pop-overs and a running sub-page swap included (the HUD's close: they
     // leave with the module). navigate, prepareToLeave and setActive(false)
-    // run it too.
-    void suspendInput();
+    // run it too. A module with gestures of its own ends them here too
+    // (calling this first), so they stop when the page they act on leaves.
+    virtual void suspendInput();
     // The field's text view stopped being first responder: every editing
     // field of this canvas commits (TextField::editorFocusLost; see
     // Context::editorFocusMoved), and other text it edits ends

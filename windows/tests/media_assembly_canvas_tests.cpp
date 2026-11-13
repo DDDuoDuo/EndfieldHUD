@@ -321,6 +321,38 @@ void motion(d::TextMeasurer& measurer) {
     check(true, "Animated swaps keep every node rect non-negative");
 }
 
+// A stage drag held when its page leaves (Esc closes Crop, Q / E switch the
+// tab) ends with it: no crop edit after the Crop tool closed, no pan of the
+// page that left, and the input lock is released.
+void heldDrag(d::TextMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english, false, false);
+    Editor e(w); e.show();
+    auto& c = *e.canvas;
+    e.import("C:\\oracle\\fixture.png"); w.advance(1);
+    check(e.perform("tool:crop") && c.tool() == m::MediaAssemblyTool::crop, "Crop opens"); e.spin(); w.advance(1);
+    const auto origins = m::MediaAssemblyViewport::cropHandleOrigins(c.displayCropRect(), c.imageRect(), {m::MediaAssemblyStage::size.width, m::MediaAssemblyStage::size.height});
+    const d::Point handle{m::MediaAssemblyCanvas::stageOrigin.x + origins[0].x + 5, m::MediaAssemblyCanvas::stageOrigin.y + origins[0].y + 5};
+    d::PointerInput press; press.clickCount = 1;
+    check(c.pointerDown(handle, press, w.now) && c.inputLocked(), "A crop handle is held");
+    c.pointerDragged({handle.x + 30, handle.y + 20}, w.now);
+    const auto held = e.controller->session().adjustments().crop;
+    check(held != m::MediaAssemblyCrop{}, "Dragging it crops");
+    check(e.key(keyOf(d::key::escape)) && !c.tool() && c.transitioning(), "Esc closes Crop while the handle is held");
+    check(!c.inputLocked(), "The held crop drag ends with the page");
+    c.pointerDragged({handle.x + 60, handle.y + 40}, w.now); c.pointerUp({handle.x + 60, handle.y + 40}, w.now);
+    check(e.controller->session().adjustments().crop == held, "The pointer no longer edits the crop after Crop closed");
+    w.advance(1); e.spin();
+    // A pan held through E (the next tab).
+    check(e.perform("zoomIn") && e.perform("zoomIn") && c.viewport().zoom() > 1, "Zoomed in");
+    const d::Point centre{m::MediaAssemblyCanvas::stageOrigin.x + 224, m::MediaAssemblyCanvas::stageOrigin.y + 206};
+    check(c.pointerDown(centre, press, w.now) && c.inputLocked(), "A pan is held");
+    const auto pan = c.viewport().pan();
+    check(e.key(keyOf('E', U'e')) && c.tab() == m::MediaAssemblyCanvas::Tab::filters && c.transitioning(), "E switches to Filters while the pan is held");
+    check(!c.inputLocked(), "The held pan ends with the page");
+    c.pointerDragged({centre.x + 40, centre.y + 30}, w.now); c.pointerUp({centre.x + 40, centre.y + 30}, w.now);
+    check(c.viewport().pan().x == pan.x && c.viewport().pan().y == pan.y, "The pointer no longer pans after the page left");
+}
+
 // --- The Mac oracle -------------------------------------------------------------------
 struct Oracle {
     const Json& data;
@@ -611,6 +643,7 @@ int main(int argc, char** argv) {
         keptParts(fake);
         releasedPreview(fake);
         motion(fake);
+        heldDrag(fake);
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas"}, {"text", "viewport"})) {
             Oracle oracle(*data);
             oracle.viewport();
