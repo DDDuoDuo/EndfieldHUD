@@ -1330,8 +1330,11 @@ void ArchiveCanvas::submitUnlock() {
             refreshWhenPossible();
             break;
         case ArchiveUnlockResult::wrongPassword: {
+            // Only the settled locked page of this document takes the shake
+            // and focus: not a page a swap stages or the module's leaving
+            // one, nor another document's.
             auto* f = passwordField_;
-            if (!f) return;
+            if (!f || swapPending() || leaving_ || !state_->selected() || state_->selected()->id != id) { refreshWhenPossible(); return; }
             f->setInvalid(true);
             if (lockedPanel_) lockedPanel_->shake(clock());
             if (f->editing()) f->endEditing(true);

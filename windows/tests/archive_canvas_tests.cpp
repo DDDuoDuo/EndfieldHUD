@@ -506,6 +506,68 @@ void swapLanding() {
         "The concealed swap lands with both categories");
     w.advance(1); w.queue.drain();
 }
+// Mac 6f87512: a wrong-password result shakes and focuses only the settled
+// locked page of its document, not one a swap is bringing in nor the page
+// leaving the module.
+void wrongPasswordSettled() {
+    World w; w.open();
+    auto& c = *w.canvas;
+    check(w.press("new") && c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "New opens the editor");
+    const auto document = w.state.selected()->id;
+    w.state.classifySelected("correct horse"); w.settle();
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && w.control("password"), "The classified document shows locked");
+    const auto invalid = [&] {
+        auto* field = dynamic_cast<d::TextField*>(w.control("password"));
+        return field && field->frame().state() == d::FieldFrame::State::invalid;
+    };
+    const auto submit = [&] {
+        auto* field = dynamic_cast<d::TextField*>(w.control("password"));
+        field->beginEditing(); w.fields.value = "wrong pass"; field->editorChanged("wrong pass");
+        return c.performAccessibilityAction("unlock", w.now);
+    };
+    // The result arrives while the document's locked page swaps in again.
+    w.reduce(false);
+    check(submit() && w.queue.jobs.size() == 1, "A wrong password is submitted");
+    auto verify = std::move(w.queue.jobs.front()); w.queue.jobs.pop_front();   // held: the result comes later
+    check(c.performAccessibilityAction("back", w.now), "Back before the result");
+    w.queue.drain(); c.stateChanged(); w.advance(.3); w.queue.drain(); c.stateChanged();
+    check(!c.transitioning() && c.displayedPage().kind == m::ArchiveCanvas::PageKind::list, "The list lands");
+    check(c.performAccessibilityAction("doc:" + document, w.now), "The document opens again");
+    for (int n = 0; n < 4 && !c.transitioning(); ++n) { w.queue.drain(); c.stateChanged(); }
+    check(c.transitioning(), "Its locked page swaps in");
+    verify.work(); verify.done(nullptr); c.stateChanged();
+    w.advance(.3); w.settle();
+    check(!c.transitioning() && c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && w.control("password") && !invalid(),
+        "The result during the swap leaves the locked page that lands alone");
+    // The result arrives while the module leaves.
+    check(submit(), "A wrong password is submitted again");
+    c.prepareToLeave(w.now); c.setActive(false, w.now);
+    w.queue.drain(); c.stateChanged();
+    check(!invalid(), "The result after the module left leaves its page alone");
+    w.advance(1); c.show(w.now); c.setActive(true, w.now); w.settle();
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && !invalid(), "The locked page shows again without the error");
+    // Settled: the shake and the red field.
+    check(submit(), "A wrong password on the settled page");
+    w.settle();
+    check(invalid(), "The settled locked page turns the field red");
+    // The result arrives on another document's settled locked page.
+    const auto back = [&] { check(c.performAccessibilityAction("back", w.now), "Back"); w.settle(); };
+    const auto open = [&](const std::string& id) {
+        check(c.performAccessibilityAction("doc:" + id, w.now), "A document opens");
+        w.settle();
+        check(!c.transitioning() && c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && w.control("password") && !invalid(), "Its locked page is settled");
+    };
+    back();
+    check(w.press("new") && c.displayedPage().kind == m::ArchiveCanvas::PageKind::editor, "A second document");
+    const auto other = w.state.selected()->id;
+    w.state.classifySelected("battery staple"); w.settle();
+    back(); open(document);
+    check(submit() && w.queue.jobs.size() == 1, "A wrong password for the first document");
+    auto late = std::move(w.queue.jobs.front()); w.queue.jobs.pop_front();
+    back(); open(other);
+    late.work(); late.done(nullptr); c.stateChanged(); w.settle();
+    check(c.displayedPage().kind == m::ArchiveCanvas::PageKind::locked && !invalid(), "The first document's result leaves the second one's locked page alone");
+}
 void mediaLeave() {
     const auto ask = [](World& w) {
         auto& c = *w.canvas;
@@ -946,7 +1008,7 @@ void archiveOracle(Oracle& or_) {
 
 int main(int argc, char** argv) {
     try {
-        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); swapLanding(); languages(); closedUnseen();
+        richText(); strings(); categories(); editor(); classified(); documentMenu(); posters(); focusMemory(); mediaLeave(); swapLanding(); wrongPasswordSettled(); languages(); closedUnseen();
         if (const auto oracleData = o::loadOracle(argc > 1 ? argv[1] : nullptr, {"archive"}, {"text", "layerDefaults", "families", "lockedLines"})) {
             Oracle oracle(*oracleData);
             archiveOracle(oracle);
