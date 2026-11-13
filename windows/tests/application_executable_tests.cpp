@@ -13,8 +13,7 @@
 //     its .cur frame behind the frame's hot spot, and Windows loads both at
 //     the standard cursor sizes with the palm-centre hot spot.
 //   * VERSIONINFO from windows/source-authority.json (release, windowsBuild, commit;
-//     PrivateBuild names the Mac build too),
-//     flagged prerelease/private and never debug.
+//     Comments names the Mac build too), not flagged prerelease, private or debug.
 //   * One embedded application manifest with the same version, asInvoker,
 //     PerMonitorV2 DPI awareness, long paths, UTF-8 and the Windows 10 GUID.
 // Usage: application_executable_tests EndfieldHUD.exe windows-source-dir
@@ -262,7 +261,7 @@ void versionInfo(const fs::path& exe, const Version& v) {
     check(fixed.dwFileVersionMS == ms && fixed.dwFileVersionLS == ls, "File version equals the ported source release and build");
     check(fixed.dwProductVersionMS == ms && fixed.dwProductVersionLS == ls, "Product version equals the ported source release and build");
     const auto flags = fixed.dwFileFlags & fixed.dwFileFlagsMask;
-    check((flags & VS_FF_PRERELEASE) && (flags & VS_FF_PRIVATEBUILD) && !(flags & VS_FF_DEBUG), "Development build is flagged prerelease/private, not debug");
+    check(!(flags & (VS_FF_PRERELEASE | VS_FF_PRIVATEBUILD | VS_FF_DEBUG)), "Release build is not flagged prerelease, private or debug");
     check(fixed.dwFileOS == VOS_NT_WINDOWS32 && fixed.dwFileType == VFT_APP, "Windows NT application");
     check(VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation", &value, &length) && length >= 4 &&
           static_cast<const WORD*>(value)[0] == 0x0409 && static_cast<const WORD*>(value)[1] == 1200, "US English Unicode string table");
@@ -271,8 +270,9 @@ void versionInfo(const fs::path& exe, const Version& v) {
     check(versionString(block, L"InternalName") == "EndfieldHUD" && versionString(block, L"OriginalFilename") == "EndfieldHUD.exe", "Internal and original file names");
     check(versionString(block, L"CompanyName") == "DDDuoDuo" && versionString(block, L"LegalCopyright") == legalCopyright, "Author and license");
     check(versionString(block, L"FileVersion") == dotted, "FileVersion string");
-    check(versionString(block, L"ProductVersion") == v.release + " (" + std::to_string(v.build) + ") Windows development", "ProductVersion names the ported release");
-    check(versionString(block, L"PrivateBuild").find("build " + std::to_string(v.macBuild) + " (" + v.commit + ")") != std::string::npos, "PrivateBuild names the Mac build and source commit");
+    check(versionString(block, L"ProductVersion") == v.release + " (" + std::to_string(v.build) + ")", "ProductVersion names the release and Windows build");
+    check(versionString(block, L"PrivateBuild").empty(), "No PrivateBuild string");
+    check(versionString(block, L"Comments").find("build " + std::to_string(v.macBuild) + " (" + v.commit + ")") != std::string::npos, "Comments names the Mac build and source commit");
 }
 
 // Setup and the uninstaller carry the same copyright line (their names and descriptions differ).

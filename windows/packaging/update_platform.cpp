@@ -570,7 +570,10 @@ void verifySetup(const fs::path& setup, const std::string& sha256, const Product
         if (!m.complete) throw PackageError("The download is an incomplete developer package");
         if (m.architecture != "x64") throw PackageError("The download is not an x64 package");
     }
-    // Publisher continuity once builds are signed (none are yet).
+    // Publisher continuity: from 1.3.2 on the running build is signed through
+    // SignPath, and only the signer's display name is compared, so any
+    // SignPath Foundation signature passes; the SHA-256 above is the
+    // integrity check. An unsigned running build (1.3.1 and earlier) skips this.
     if (const auto signer = running.empty() ? std::nullopt : authenticodeSigner(running)) {
         const auto other = authenticodeSigner(setup);
         if (!other || *other != *signer) throw PackageError("The download is not signed by this build's publisher");
