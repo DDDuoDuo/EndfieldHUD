@@ -3,6 +3,7 @@
   "application": "EndfieldHUD for macOS",
   "release": "v1.3.1",
   "build": 20,
+  "windowsBuild": 21,
   "commit": "3a095f3ee3b7e69a3e56bee9075298787e6e49ee",
   "trees": {
     "Sources": "78310f3f11131c1851bd74b9f79fa076a2646720",

@@ -24,7 +24,7 @@ BEGIN
       VALUE "InternalName", "@EHUD_SETUP_NAME@"
       VALUE "LegalCopyright", "Copyright (C) 2026 DDDuoDuo. MIT License"
       VALUE "OriginalFilename", "@EHUD_SETUP_FILE@"
-      VALUE "PrivateBuild", "Windows development port of macOS @EHUD_APP_RELEASE@ build @EHUD_APP_BUILD@ (@EHUD_APP_COMMIT@)"
+      VALUE "PrivateBuild", "Windows development port of macOS @EHUD_APP_RELEASE@ build @EHUD_MAC_BUILD@ (@EHUD_APP_COMMIT@)"
       VALUE "ProductName", "EndfieldHUD"
       VALUE "ProductVersion", "@EHUD_APP_RELEASE@ (@EHUD_APP_BUILD@) Windows development"
     END

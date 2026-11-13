@@ -46,7 +46,7 @@ endfunction()
 
 file(READ "${SOURCE}/source-authority.json" ehud_authority)
 string(JSON ehud_release GET "${ehud_authority}" release)
-string(JSON ehud_build GET "${ehud_authority}" build)
+string(JSON ehud_build GET "${ehud_authority}" windowsBuild)
 string(JSON ehud_commit GET "${ehud_authority}" commit)
 string(REGEX REPLACE "^v" "" ehud_release_plain "${ehud_release}")
 set(ehud_stem "EndfieldHUD-${ehud_release_plain}-build${ehud_build}-windows-x64")

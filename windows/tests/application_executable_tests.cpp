@@ -12,7 +12,8 @@
 //     open-hand.cur / closed-hand.cur (tools/hand_cursors.py), each RT_CURSOR
 //     its .cur frame behind the frame's hot spot, and Windows loads both at
 //     the standard cursor sizes with the palm-centre hot spot.
-//   * VERSIONINFO from windows/source-authority.json (release, build, commit),
+//   * VERSIONINFO from windows/source-authority.json (release, windowsBuild, commit;
+//     PrivateBuild names the Mac build too),
 //     flagged prerelease/private and never debug.
 //   * One embedded application manifest with the same version, asInvoker,
 //     PerMonitorV2 DPI awareness, long paths, UTF-8 and the Windows 10 GUID.
@@ -65,19 +66,20 @@ std::string narrow(std::wstring_view value) {
 }
 
 struct Frame { unsigned size{}; std::string bytes; };
-struct Version { unsigned major{}, minor{}, patch{}, build{}; std::string release, commit; };
+struct Version { unsigned major{}, minor{}, patch{}, build{}, macBuild{}; std::string release, commit; };
 
 Version authority(const fs::path& source) {
     const auto json = Json::parse(read(source / "source-authority.json", 64 * 1024));
     Version v;
     v.release = json["release"].string();
     v.commit = json["commit"].string();
-    v.build = unsigned(json["build"].integer());
+    v.build = unsigned(json["windowsBuild"].integer());
+    v.macBuild = unsigned(json["build"].integer());
     std::smatch match;
     const std::regex pattern(R"(^v?([0-9]+)\.([0-9]+)\.([0-9]+)$)");
     check(std::regex_match(v.release, match, pattern), "Source authority release is a version");
     v.major = unsigned(std::stoul(match[1])); v.minor = unsigned(std::stoul(match[2])); v.patch = unsigned(std::stoul(match[3]));
-    check(v.commit.size() == 40 && v.build > 0 && v.build <= 0xffff && v.major <= 0xffff && v.minor <= 0xffff && v.patch <= 0xffff, "Version fields fit VERSIONINFO");
+    check(v.commit.size() == 40 && v.build > 0 && v.build <= 0xffff && v.macBuild > 0 && v.major <= 0xffff && v.minor <= 0xffff && v.patch <= 0xffff, "Version fields fit VERSIONINFO");
     return v;
 }
 
@@ -270,7 +272,7 @@ void versionInfo(const fs::path& exe, const Version& v) {
     check(versionString(block, L"CompanyName") == "DDDuoDuo" && versionString(block, L"LegalCopyright") == legalCopyright, "Author and license");
     check(versionString(block, L"FileVersion") == dotted, "FileVersion string");
     check(versionString(block, L"ProductVersion") == v.release + " (" + std::to_string(v.build) + ") Windows development", "ProductVersion names the ported release");
-    check(versionString(block, L"PrivateBuild").find(v.commit) != std::string::npos, "PrivateBuild names the source commit");
+    check(versionString(block, L"PrivateBuild").find("build " + std::to_string(v.macBuild) + " (" + v.commit + ")") != std::string::npos, "PrivateBuild names the Mac build and source commit");
 }
 
 // Setup and the uninstaller carry the same copyright line (their names and descriptions differ).
