@@ -2175,12 +2175,13 @@ void Application::Impl::finishQuit(double time){
 }
 void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double time,bool fromProjection){
     // Preview Charging during Projection (its hand-off or the shown window)
-    // or over the HUD (opening, open or closing) does nothing, as on the Mac
-    // (AppDelegate.preview guards isSystemOverlayActive, OverlayController.show
-    // isProjectionActive): it is not deferred, so Projection stays, and a
-    // showing HUD takes the foreground back from the menu below.
-    const bool ignored=action==gpu::TrayAction::previewCharging&&(projectionHandoff.active()||lifecycle.active());
-    if(projectionHandoff.active()){if(!ignored){projectionTrayAction=action;refresh(time);}return;}
+    // does nothing, as on the Mac (OverlayController.show guards
+    // isProjectionActive): it is not deferred, so Projection stays. Over the
+    // HUD (opening, open or closing) PowerAlertCoordinator::preview's
+    // systemOverlayActive guard (AppDelegate.preview) makes it do nothing,
+    // and a showing HUD takes the foreground back from the menu below.
+    if(action==gpu::TrayAction::previewCharging&&projectionHandoff.active())return;
+    if(projectionHandoff.active()){projectionTrayAction=action;refresh(time);return;}
     // Mac 2c047e0: during Projection every AppDelegate entry reaches
     // toggleSystemOverlay -> returnFromProjection, whose completion sets the
     // request to the module the HUD left, replacing Settings' or About's.
@@ -2191,7 +2192,7 @@ void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double tim
     case gpu::TrayAction::settings:perform(settingsModule(core::Module::system),time);break;
     case gpu::TrayAction::about:perform(settingsModule(core::Module::about),time);break;
     case gpu::TrayAction::checkUpdates:perform(settingsModule(core::Module::about),time);if(auto*u=updates())(void)isolateService(UpdateService::key,"update check",[&]{(void)u->check(hostTime(time));});break;
-    case gpu::TrayAction::previewCharging:if(auto*p=powerArea();p&&!ignored)(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break;
+    case gpu::TrayAction::previewCharging:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break;
     case gpu::TrayAction::workMode:perform(fromProjection?lifecycle.returnFromProjection(time):lifecycle.openWorkMode(time),time);break;
     default:break;
     }
