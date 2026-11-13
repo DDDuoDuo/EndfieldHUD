@@ -524,6 +524,42 @@ int Application::Impl::runIdleTrace(){
      std::cout<<"Idle trace Windows key close: "<<elapsed<<" s (transition deadline "<<closingTransitionBound<<" s)\n";
      need(closed()&&!host.stats().visible&&elapsed<closingTransitionBound,"The Windows key's focus loss closes the HUD on its frames before the transition deadline");
      SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);}
+    // A press on our tray icon over the open HUD: Explorer takes the
+    // foreground at the press (WM_ACTIVATEAPP FALSE), then the icon's menu's
+    // owner takes it back (TRUE). The trace asks the close as production
+    // does for a press TrayController::iconPressed reports. As on the Mac,
+    // whose status item menu never deactivates the app, the close waits for
+    // the menu (trayFocusLossAt) and the menu's activation claims it.
+    const auto activateApplication=[&](bool active){SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,active?TRUE:FALSE,0);};
+    const auto holdCheck=[&](bool value,const char*why){need(value,why);};
+    openHUD();
+    {activateApplication(false);const auto at=clock();
+     holdCheck(!applicationActive&&!closeForFocusLoss(at,true)&&opened()&&trayFocusLossAt==at+trayPressGrace,"A press on the tray icon over the open HUD waits for its menu instead of closing it");
+     pump(at+trayPressGrace-.05-clock(),{});holdCheck(opened()&&trayFocusLossAt.has_value(),"The HUD stays open while the press waits for its menu");
+     activateApplication(true);holdCheck(applicationActive&&!trayFocusLossAt,"The menu's activation claims the press");
+     pump(.3,{});holdCheck(opened(),"A press the menu claimed closes nothing after the wait");}
+    // A press no menu claims (dragged off the icon, held past the wait, or a
+    // menu refused the foreground): the close follows at the end of the
+    // wait (a host deadline), on its frames.
+    {activateApplication(false);const auto at=OverlayHost::clockNow();
+     holdCheck(!closeForFocusLoss(clock(),true)&&opened()&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+     pump(trayPressGrace+1,[&]{return !opened();});const auto started=OverlayHost::clockNow()-at;
+     holdCheck((lifecycle.phase()==P::closing||closed())&&started>=trayPressGrace-.02,"A press no menu claimed starts the close at the end of the wait, not before");
+     host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);const auto elapsed=OverlayHost::clockNow()-at;
+     std::cout<<"Idle trace unclaimed tray press close: "<<elapsed<<" s (wait "<<trayPressGrace<<" s, transition deadline "<<closingTransitionBound<<" s)\n";
+     holdCheck(closed()&&!host.stats().visible&&!trayFocusLossAt&&elapsed-trayPressGrace<closingTransitionBound,"A press no menu claimed closes the HUD on its frames before the transition deadline");
+     activateApplication(true);}
+    // Asking the shell dispatched the menu's activation (the application is
+    // active again when the close is asked): nothing waits and nothing closes.
+    openHUD();
+    {holdCheck(applicationActive&&!closeForFocusLoss(clock(),true)&&opened()&&!trayFocusLossAt,"A press the menu claimed while the shell was asked waits for nothing");
+     pump(trayPressGrace+.3,{});holdCheck(opened(),"Nothing closes after it");}
+    // Close when focus lost off: a press waits for nothing and nothing closes.
+    {configuration.set("closeOnFocusLost",false);configurationPending=true;applyConfiguration(clock());activateApplication(false);
+     holdCheck(!closeForFocusLoss(clock(),true)&&opened()&&!trayFocusLossAt,"With Close when focus lost off a press on the tray icon waits for nothing");
+     pump(trayPressGrace+.3,{});holdCheck(opened(),"With Close when focus lost off nothing closes after a press on the tray icon");
+     activateApplication(true);configuration.set("closeOnFocusLost",true);configurationPending=true;applyConfiguration(clock());}
+    closeHUD();
     // Reduce Motion (the preference, or Windows "Animation effects" off):
     // the close conceals the source at once and, as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), finishes there
@@ -554,6 +590,13 @@ int Application::Impl::runIdleTrace(){
     openHUD();need(opened(),"A summon after a Reduce Motion close opens the HUD again");
     {const auto framesBefore=host.stats().frames;(void)onKey({KeyKind::down,VK_ESCAPE});
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
+    // A tray press's wait ends with the HUD it held: Escape's close (hidden
+    // inside the request under Reduce Motion) ends it, and so does an opening.
+    openHUD();
+    {activateApplication(false);holdCheck(!closeForFocusLoss(clock(),true)&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+     (void)onKey({KeyKind::down,VK_ESCAPE});holdCheck(closed()&&!trayFocusLossAt,"The HUD's close ends a tray press's wait");activateApplication(true);
+     trayFocusLossAt=clock()+trayPressGrace;summon();holdCheck(!trayFocusLossAt,"An opening ends a tray press's wait left from before");
+     host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");closeHUD();}
     // The Windows key under Reduce Motion (the preference here; Windows
     // "Animation effects" off sets the same flag): Start's focus loss closes
     // inside WM_ACTIVATEAPP, without a frame, and the next summon opens again.
@@ -627,6 +670,8 @@ int Application::Impl::runIdleTrace(){
     // without a display the hand-off ends with the HUD closed.
     // The queued summon reopens on the module the HUD left, over a module
     // chosen under Open on (OverlayController.returnFromProjection).
+    // (With Close when focus lost on, for the tray press during the hand-off.)
+    configuration.set("closeOnFocusLost",true);configurationPending=true;applyConfiguration(clock());
     openHUD();
     {const auto window=static_cast<HWND>(host.hwnd());RECT placed{};need(GetWindowRect(window,&placed)!=FALSE,"The traced window has its place");
      const auto left=lifecycle.viewModule().value_or(core::Module::map);auto layout=configuration.overlayLayout();const auto chosenBefore=layout.openModule;
@@ -641,6 +686,11 @@ int Application::Impl::runIdleTrace(){
       trayAction(gpu::TrayAction::previewCharging,false,clock());
       need(!projectionTrayAction&&projectionHandoff.phase()==phase&&projectionHandoff.generation()==generation,
            "Preview Charging from the tray during Projection's hand-off leaves Projection and its deferred tray action untouched");}
+     // A press on the tray icon during the hand-off waits for nothing:
+     // Projection is exempt from Close when focus lost.
+     {const auto phase=projectionHandoff.phase();activateApplication(false);
+      holdCheck(!closeForFocusLoss(clock(),true)&&!trayFocusLossAt&&projectionHandoff.phase()==phase,"A press on the tray icon during Projection's hand-off waits for nothing");
+      activateApplication(true);}
      (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
      const bool reopened=lifecycle.phase()==P::opening;
      need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),
@@ -652,6 +702,7 @@ int Application::Impl::runIdleTrace(){
      else openHUD();
      layout.openModule=chosenBefore;configuration.setOverlayLayout(layout);
      closeHUD();}
+    configuration.set("closeOnFocusLost",focusLossOriginal);configurationPending=true;applyConfiguration(clock());
     // A fresh memory trace for the rows read below: the transition deadlines
     // by index, and the close rows (at most eight closes).
     memoryTrace=std::make_unique<MemoryTrace>(fs::path{});
@@ -3194,7 +3245,22 @@ int Application::Impl::runHiddenVerification(){
                      perform(lifecycle.toggle(),t);t=run(t,1.2);need(lifecycle.phase()==core::SystemOverlayPhase::closed,"The tray-opened HUD closes again");}
                  // Back to the HUD the checks below start from: open on Notes.
                  perform(lifecycle.openOverlay(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.5);
-                 need(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD opens on Notes again after the tray checks");}
+                 need(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD opens on Notes again after the tray checks");
+                 // Items chosen over the open HUD, which a press on the tray
+                 // icon leaves open (closeForFocusLoss), as the Mac's status
+                 // item menu does: Settings, About, Check for Updates and Work
+                 // Mode select their module, Open Overlay does nothing; the
+                 // HUD keeps showing, so the menu hands no foreground back
+                 // (trayAction shows it again).
+                 const auto overOpenHUD=[&](gpu::TrayAction item,core::Module module,const char*why){
+                     trayAction(item,false,t);trayCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==module&&hudShowing()&&!trayReturnsFocus(false),why);t=run(t,.5);};
+                 overOpenHUD(gpu::TrayAction::openOverlay,core::Module::notes,"Open Overlay over the open HUD does nothing and the HUD keeps the foreground");
+                 overOpenHUD(gpu::TrayAction::settings,core::Module::system,"Settings over the open HUD selects Settings and the HUD keeps the foreground");
+                 overOpenHUD(gpu::TrayAction::about,core::Module::about,"About over the open HUD selects About and the HUD keeps the foreground");
+                 overOpenHUD(gpu::TrayAction::workMode,core::Module::workMode,"Work Mode over the open HUD selects Work Mode and the HUD keeps the foreground");
+                 overOpenHUD(gpu::TrayAction::checkUpdates,core::Module::about,"Check for Updates over the open HUD selects About and the HUD keeps the foreground");
+                 perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.5);
+                 need(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD is back on Notes after the items over it");}
                 // The HUD close's shell (Mac 5b2a9d3, 48584b5): input stops at its start, and
                 // every native layer (they all sample canvasOpacity) fades on the opening's
                 // .24 s fade reversed with an ease-in, ending with the Watch exit clip; the

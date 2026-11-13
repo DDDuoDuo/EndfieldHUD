@@ -362,6 +362,17 @@ struct Application::Impl {
     void prepareGraphics(bool anticipated);
     static constexpr double preparedGraphicsLifetime = 15;
     std::optional<double> preparedGraphicsUntil;
+    // The application is active (WM_ACTIVATEAPP, reported once per change).
+    bool applicationActive{true};
+    // A press on our tray icon made Explorer the foreground over the open
+    // HUD (TrayController::iconPressed): Close when focus lost waits up to
+    // trayPressGrace for the icon's menu, whose owner's activation claims
+    // the press (onApplicationActive), as the Mac's status item menu never
+    // deactivates the app. Still inactive at the end: the close as before
+    // (onDeadline). The grace covers the press, its release, the shell's
+    // callback and the menu taking the foreground.
+    std::optional<double> trayFocusLossAt;
+    static constexpr double trayPressGrace = .8;
     // OverlayController.transitionDeadline: an opening or a close the frames
     // never finished is finished by the host's deadline wake. Armed only while
     // a transition runs (no wake while idle or hidden): at an opening for
@@ -660,8 +671,11 @@ struct Application::Impl {
     void onApplicationActive(bool);
     // Close when focus lost (Windows: another application took the
     // foreground, e.g. Start after the Windows key): closes the HUD unless
-    // an exemption holds; true when the close was asked.
-    bool closeForFocusLoss(double time);
+    // an exemption holds; true when the close was asked. trayPress: the
+    // deactivation was a press on our tray icon, so the close waits for its
+    // menu instead (trayFocusLossAt) while the application stays inactive,
+    // and none follows once it is active again.
+    bool closeForFocusLoss(double time, bool trayPress = false);
     void onDisplayChanged();
     void onCloseRequested();
     void onDeadline(double time);

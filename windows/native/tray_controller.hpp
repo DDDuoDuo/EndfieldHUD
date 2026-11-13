@@ -63,10 +63,11 @@ public:
     // After a menu that leaves no HUD to take the foreground (one dismissed
     // without a choice, or a chosen action that left the HUD not showing:
     // Application::Impl::trayReturnsFocus): a shown HUD window (the HUD,
-    // Projection) takes it back from the menu's owner, otherwise the notification
-    // area gets its focus back (NIM_SETFOCUS). Never after an action that
-    // showed the HUD: the notification area would take the foreground from
-    // it, and Close when focus lost would close it.
+    // the open HUD a press on the icon left open with Close when focus lost
+    // on, Projection) takes it back from the menu's owner, otherwise the
+    // notification area gets its focus back (NIM_SETFOCUS). Never after an
+    // action that showed the HUD: the notification area would take the
+    // foreground from it, and Close when focus lost would close it.
     void returnFocus();
     // Explorer took the foreground with a press on this icon (on the Mac the
     // status item's menu never deactivates the app, so Close when focus

@@ -866,6 +866,7 @@ bool Application::Impl::broadcast(HostEvent::Kind kind,double time,std::uint32_t
 }
 void Application::Impl::concealed(double time){
     presentationPriority.restore(); // a closed HUD never competes with the foreground app
+    trayFocusLossAt.reset(); // a tray press's wait ends with the HUD it held
     // The hidden HUD's deactivation clears the hover kept through the close.
     setClockHovered(false);
     if(concealedBroadcast)return;concealedBroadcast=true;
@@ -1930,7 +1931,7 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
     using K=core::SystemOverlayEffect::Kind;
     for(const auto&e:effects){time=hostTime(time);
         switch(e.kind){
-        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
+        case K::open:lifecycleOpening=e.token;lifecycleClosing.reset();trayFocusLossAt.reset();transitionDeadline=time+openingTransitionBound;openPresentation(e.module,time);break;
         case K::close:lifecycleClosing=e.token;lifecycleOpening.reset();
             // At the request, before the close runs (a Reduce Motion close finishes inside it).
             if(lifecycleTraced()&&memoryTrace->closes<8)recordMemory("close-"+std::to_string(++memoryTrace->closes),false);
@@ -2345,7 +2346,7 @@ void Application::Impl::scheduleDeadline(){if(!liveScheduling()||!ready||stoppin
     if(!graphicsIdleAt&&idleGraphicsAttempted&&session->phase()==core::VisibilityPhase::concealed&&renderer.stats().initialized&&!renderer.deviceSuspended()&&
        !projectionHandoff.active()&&!projectionShown()&&(idleDeviceSuspended||(idleGraphicsRefused&&renderer.deviceReleasable()))){
         idleGraphicsAttempted=false;graphicsIdleAt=now()+std::min(closedGraphicsRelease,closedGraphicsGrace());}
-    include(calendarNextWake);include(graphicsIdleAt);if(lifecycleOpening||lifecycleClosing)include(transitionDeadline);include(preparedGraphicsUntil);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
+    include(calendarNextWake);include(graphicsIdleAt);if(lifecycleOpening||lifecycleClosing)include(transitionDeadline);include(preparedGraphicsUntil);include(trayFocusLossAt);if(projection)include(projection->dismissalDeadline());include(headerClock.nextDeadline());include(registry.nextWakeTime(now()));
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(activityProbe)include(activityPlan.nextWakeTime());include(lifecycle.nextWakeTime());host.setDeadline(next);
 }
 void Application::Impl::refresh(double time){if(liveScheduling()&&ready&&!stopping){
