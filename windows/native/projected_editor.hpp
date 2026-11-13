@@ -136,7 +136,6 @@ public:
     LayerScene& scene()const noexcept;
     std::uint64_t paintRevision()const noexcept;
 private:
-    bool preparePointer();
     struct Impl;std::shared_ptr<Impl> impl_;
 };
 } // namespace endfield::native
