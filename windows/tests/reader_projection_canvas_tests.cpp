@@ -115,11 +115,12 @@ struct Source final : m::ReaderDocumentSource {
     std::string opened;
     std::shared_ptr<m::ReaderPagePixels> pixels = std::make_shared<m::ReaderPagePixels>();
     int count{5}; std::optional<std::int64_t> pageCount; unsigned renders{};
+    bool illustrated{};                          // synthetic pages are pictures (zoom and pan)
     Source() { pixels->width = pixels->height = 200; pixels->bytes.resize(200 * 200 * 4); }  // the smallest raster the state accepts
     void open(const m::ReaderBook& book, const std::function<bool()>&) override { opened = book.id; }
     m::ReaderPage synthetic(int index) const {
         m::ReaderPage p; p.location.section = index; p.progress = count > 1 ? double(index) / (count - 1) : 0;
-        p.summary = "Synthetic page " + std::to_string(index + 1); p.pixels = pixels; p.pageCount = pageCount;
+        p.summary = "Synthetic page " + std::to_string(index + 1); p.pixels = pixels; p.pageCount = pageCount; p.illustration = illustrated;
         if (!pageCount) p.textHeight = 200;
         if (index + 1 < count) p.next = m::ReaderLocation{index + 1};
         if (index > 0) p.previous = m::ReaderLocation{index - 1};
@@ -395,6 +396,62 @@ void readerSwapLanding() {
     check(!canvas.transitioning() && canvas.header().counterText() == "02", "The fading Library header keeps its count");
     canvas.show(w.now); r.sync();
     check(canvas.tab() == m::ReaderCanvas::Tab::reading && canvas.header().counterText() == "P. 50", "The concealed swap lands with the turned page");
+    r.activate(false);
+}
+
+// Mac 6f87512: the tab bar shows the target while Reading opens from a book
+// or a bookmark, so Q / E during the swap cycle from it; a tab change drops
+// what the wheel gathered; an image pan held through Q / E ends with the page.
+void readerTabTargets() {
+    FakeMeasurer measurer;
+    World w(measurer);
+    d::Context::Appearance a; a.language = Language::english; a.reduceMotion = false; w.context.apply(a, w.now);
+    auto library = syntheticLibrary(2);
+    ReaderRig r(w, library);
+    r.source->illustrated = true;
+    auto& canvas = *r.canvas;
+    const auto key = [&](char32_t c) { d::KeyInput k; k.virtualKey = std::uint32_t(c - 32); k.character = c; return canvas.keyDown(k, w.now); };
+    const auto land = [&] { r.sync(); w.advance(.3); r.sync(); };
+    r.show(); r.activate(true);
+    check(canvas.tab() == m::ReaderCanvas::Tab::library, "An unread library opens on Library");
+    need(canvas, "book:" + bookID(1)).activate(); r.sync();
+    check(canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::reading && static_cast<d::Canvas&>(canvas).page().tabs->selectedIndex() == 2,
+        "Opening a book shows Reading in the leaving bar");
+    check(key(U'e') && canvas.tab() == m::ReaderCanvas::Tab::marks, "E during the swap cycles from Reading to Marks");
+    land();
+    check(!canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::marks, "Marks lands");
+    tab(canvas, 2); land();
+    need(canvas, "bookmark").activate(); r.sync();
+    const auto mark = r.state->book()->bookmarks.front().id;
+    tab(canvas, 3); land();
+    need(canvas, "mark:" + mark + ":go").activate(); r.sync();
+    check(canvas.transitioning() && canvas.tab() == m::ReaderCanvas::Tab::reading && static_cast<d::Canvas&>(canvas).page().tabs->selectedIndex() == 2,
+        "Go on a bookmark shows Reading in the leaving bar");
+    check(key(U'q') && canvas.tab() == m::ReaderCanvas::Tab::library, "Q during the swap cycles from Reading to Library");
+    land();
+    tab(canvas, 2); land();
+    // Paged: a wheel below a detent, a tab change and back, then another one.
+    auto prefs = r.state->library().preferences; prefs.setVertical(false); r.state->setPreferences(prefs); r.sync();
+    const d::Point paper{295, m::ReaderCanvas::pageFrame.y + 100};
+    const auto turns = canvas.pageTurnSequence();
+    canvas.scroll(paper, {10, 0}, w.now); r.sync();
+    tab(canvas, 3); land(); tab(canvas, 2); land();
+    canvas.scroll(paper, {10, 0}, w.now); r.sync();
+    check(canvas.pageTurnSequence() == turns, "What the wheel gathered before a tab change turns no page after it");
+    canvas.scroll(paper, {10, 0}, w.now); r.sync();
+    check(canvas.pageTurnSequence() == turns + 1, "A full detent on the new tab turns one page");
+    land();
+    // A pan held through E.
+    check(canvas.magnify(paper, 1, w.now) && canvas.imageView().zoom > 1, "The picture zooms in");
+    land();
+    d::PointerInput press; press.clickCount = 1;
+    check(canvas.pointerDown(paper, press, w.now) && canvas.inputLocked(), "A pan is held");
+    const auto pan = canvas.imageView().pan;
+    check(key(U'e') && canvas.tab() == m::ReaderCanvas::Tab::marks && canvas.transitioning(), "E switches to Marks while the pan is held");
+    check(!canvas.inputLocked(), "The held pan ends with the page");
+    canvas.pointerDragged({paper.x + 40, paper.y + 30}, w.now); canvas.pointerUp({paper.x + 40, paper.y + 30}, w.now);
+    check(canvas.imageView().pan.x == pan.x && canvas.imageView().pan.y == pan.y, "The pointer no longer pans after the page left");
+    land();
     r.activate(false);
 }
 
@@ -747,6 +804,7 @@ int main(int argc, char** argv) {
         readerContracts();
         readerKeepsPages();
         readerSwapLanding();
+        readerTabTargets();
         projectionContracts();
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas", "projection"}, {"text", "layerDefaults", "reader", "readerFinal", "store"})) {
             Oracle oracle(*data);

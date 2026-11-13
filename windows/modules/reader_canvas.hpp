@@ -156,6 +156,9 @@ public:
     bool handlePointerDown(design::Point, const design::PointerInput&) override;
     void handlePointerDragged(design::Point) override;
     void handlePointerUp(design::Point) override;
+    // An image pan held through Q / E ends with the other gestures, so the
+    // leaving page stops following the pointer and the input lock is released.
+    void suspendInput() override;
     bool handleRightPointerDown(design::Point) override;
     bool handleScroll(design::Point, design::Point delta) override;
     bool handleMagnify(design::Point, double) override;

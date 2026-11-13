@@ -156,16 +156,23 @@ void ReaderCanvas::resetSession() {
     if (changed && renderedLanguage()) rerender();
 }
 
-// tab didSet (:19-21): any change settles the tab and remembers Reading.
+// tab didSet (:19-27): any change settles the tab and remembers Reading. A
+// swipe that began elsewhere (or during the swap) never pages the new tab:
+// the wheel starts again (the Mac's (0, true, 0)). A wheel has no gesture
+// phases here, so the next notch re-arms it at once; what the old tab
+// gathered below a detent is dropped.
 void ReaderCanvas::setTab(Tab next) {
     if (next == tab_) return;
     tab_ = next;
     tabSettled_ = true;
     state_->setReading(tab_ == Tab::reading);
+    wheel_ = {0, true, 0};
 }
+// The bar shows the target during the leave, so Q / E then cycle from it.
 void ReaderCanvas::select(Tab next) {
     if (next == tab_) return;
     const double direction = int(next) > int(tab_) ? 1 : -1;
+    if (auto* tabs = d::Canvas::page().tabs) tabs->select(int(next), false);
     setTab(next);
     navigate(direction);
 }
@@ -737,8 +744,7 @@ void ReaderCanvas::buildMarks(d::Page& page) {
         const auto location = mark.location;
         go.onActivate = [this, location] {
             state_->jump(location);
-            setTab(Tab::reading);
-            navigate(-1);
+            select(Tab::reading);
         };
         auto& remove = page.make<d::IconButton>("mark:" + mark.id + ":remove", text("Remove bookmark", "移除书签") + " P. " + std::to_string(number), d::Icon::x);
         const std::string id = mark.id;
@@ -779,8 +785,7 @@ void ReaderCanvas::openBook(const ReaderBook& book) {
     if (missing_.count(book.id)) { relink(book); return; }
     const auto* open = state_->book();
     if (!open || open->id != book.id) { awaitingBook_ = book.id; state_->select(book.id); }
-    setTab(Tab::reading);
-    navigate(1);
+    if (tab_ == Tab::reading) navigate(1); else select(Tab::reading);
 }
 void ReaderCanvas::openBookMenu(const ReaderBook& book, Rect anchorRect, const d::Control* anchor) {
     auto open = item("open", text("Open", "打开")), relinkItem = item("relink", text("Relink…", "重新链接…")),
@@ -1077,6 +1082,12 @@ void ReaderCanvas::handlePointerDragged(Point point) {
     setImageView(view);
 }
 void ReaderCanvas::handlePointerUp(Point) { panStart_.reset(); }
+void ReaderCanvas::suspendInput() {
+    Canvas::suspendInput();
+    if (!panStart_) return;
+    panStart_.reset();
+    if (context().onInputStateChange) context().onInputStateChange();
+}
 // A right-click on a Library book (or its ⋯) opens the menu its ⋯ opens (:976-984).
 bool ReaderCanvas::handleRightPointerDown(Point point) {
     if (tab_ != Tab::library || transitioning()) return false;
