@@ -465,8 +465,11 @@ void contracts() {
         };
         const auto saves = w.saved.size();
         auto grip = hold();
+        auto& held = rowOf("notes");
         d::KeyInput escape; escape.virtualKey = d::key::escape;
         check(canvas.keyDown(escape, w.now) && canvas.section() == "main", "Esc leaves Modules mid-drag");
+        check(std::abs(held.frame().y + held.value(d::Channel::translateY) - 3 * 56) < 1e-9 && held.zPosition() == 0,
+            "The leaving page's held row goes back to its saved slot");
         canvas.pointerUp({grip.x, grip.y - 2 * 56}, w.now);
         check(w.saved.size() == saves && committed().moduleLayout().order == savedOrder, "Esc mid-drag does not save the half-finished order");
         w.activate(M::display, "modules");
