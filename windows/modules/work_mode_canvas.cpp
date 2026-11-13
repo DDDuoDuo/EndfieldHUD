@@ -266,7 +266,7 @@ void WorkModeCanvas::setFocusStatusMessage(std::optional<std::string> value, boo
 }
 void WorkModeCanvas::reduceMotionChanged() {
     if (!renderedLanguage()) return;
-    rerender(); applyBlink();
+    rerender();
 }
 
 // --- Lifecycle (:219-245) -------------------------------------------------------------
@@ -326,7 +326,7 @@ void WorkModeCanvas::controllerChanged() {
 // it lands with the newest state.
 void WorkModeCanvas::refresh(bool animated) {
     if (!renderedLanguage()) return;
-    if (structure() != renderedStructure_) { rerender(); applyBlink(); return; }
+    if (structure() != renderedStructure_) { rerender(); return; }
     const auto value = snapshot();
     if (timerText_) d::editText(*timerText_, [&](d::TextBlock& block) { block.setText(timeText(value)); });
     if (ring_) ring_->set(workModeDial::fraction(value), animated && isActive());
@@ -446,6 +446,9 @@ void WorkModeCanvas::buildState(d::Page& page, const WorkModeSnapshot& value) {
     page.layer().add(group);
     if (alert) page.add(*alert);
     stateDot_ = &dot;
+    // Every page built blinks while a session runs: one rebuilt in place by
+    // a palette, scale or structure change, and a swap's staged page.
+    applyBlink();
     page.stagger(group);
 }
 void WorkModeCanvas::buildPresets(d::Page& page, const WorkModeSnapshot& value) {

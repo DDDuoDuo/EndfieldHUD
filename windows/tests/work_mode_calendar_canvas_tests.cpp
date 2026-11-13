@@ -516,6 +516,17 @@ void workMode(Run& run) {
         w.canvas->setFocusStatusMessage("   "); snap("focusCleared", w);
     }
     {
+        // Every page built while a session runs blinks, one an accent change
+        // rebuilds in place included (Mac 6f87512: applyBlink at the build).
+        WorkWorld w(run.measurer);
+        w.canvas->primaryAction(); w.advance(1);
+        const auto built = w.harness.context.pagesBuilt();
+        auto a = w.harness.context.appearance(); a.accentHex = "22A6F2"; w.harness.context.apply(a, w.now);
+        const auto* dot = findLayer(w.canvas->root(), "workMode.state.dot");
+        check(w.harness.context.pagesBuilt() == built + 1 && dot && dot->tracks().slots[std::size_t(d::MotionSlot::effect)][0].present(),
+            "A page rebuilt for a new accent while the session runs blinks FOCUS ON");
+    }
+    {
         // A Focus message during a kind swap: the leaving page stays as it was
         // and the page the swap lands shows the alert (the Mac builds that
         // page when the swap lands); the same for a swap the HUD's close
