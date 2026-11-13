@@ -157,6 +157,54 @@ void reorderTimings() {
     w.context.advance(w.now);
     check(store->document().tasks[0].id == tasks[2].id && w.context.pagesBuilt() == reduced + 1, "Under Reduce Motion the page is rebuilt at once");
 }
+// Q / E or closing the HUD while a TODO card is held (Mac b7a5443): the drag
+// ends inside cancelGestures, so the card goes back to its saved slot and the
+// half-finished order is not saved.
+void reorderCancelledByLeaving() {
+    FakeMeasurer measurer;
+    World w(measurer); w.appearance(Language::english, false, false, false);
+    auto store = storeOf(three());
+    m::NotesCanvas canvas(w.context, *store, {});
+    w.show(canvas);
+    w.now += 2; w.context.advance(w.now);
+    const double pitch = canvas.cardHeight + d::metric::rowGap;
+    const auto tasks = store->document().tasks;
+    const auto saved = [&] {
+        std::vector<std::string> ids;
+        for (const auto& task : store->document().tasks) ids.push_back(task.id);
+        return ids;
+    };
+    const auto order = saved();
+    const auto lift = [&] {
+        const auto r = control(canvas, "task:" + tasks[0].id + ":grip")->rect(canvas.root());
+        const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+        d::PointerInput press; press.point = grip;
+        check(canvas.pointerDown(grip, press, w.now), "The TODO grip takes the press");
+        canvas.pointerDragged({grip.x, grip.y + 6}, w.now);
+        canvas.pointerDragged({grip.x, grip.y + 2 * pitch + 10}, w.now);
+        return grip;
+    };
+    // Q mid-drag: the leaving page's card is back in its slot, the order is unsaved.
+    const auto grip = lift();
+    auto& first = canvas.taskCard(tasks[0].id)->layer();
+    check(first.zPosition() == 10, "The first card is lifted");
+    d::KeyInput q; q.character = U'q';
+    check(canvas.keyDown(q, w.now), "Q switches the tab");
+    check(store->document().tab == data::NotesCentreDocument::Tab::text, "Q opened the TEXT tab");
+    check(saved() == order, "Q mid-drag does not save the half-finished order");
+    check(first.value(d::Channel::translateY) == 0 && first.zPosition() == 0 && first.value(d::Channel::scaleX) == 1, "The held card goes back to its slot");
+    canvas.pointerUp({grip.x, grip.y + 2 * pitch + 10}, w.now);
+    check(saved() == order, "The release that follows saves nothing");
+    w.now += 2; w.context.advance(w.now);
+    d::KeyInput e; e.character = U'e';
+    check(canvas.keyDown(e, w.now) && store->document().tab == data::NotesCentreDocument::Tab::todo, "E returns to the TODO tab");
+    w.now += 2; w.context.advance(w.now);
+    // Closing the HUD mid-drag puts the card back too.
+    const auto again = lift();
+    canvas.setActive(false, w.now);
+    canvas.pointerUp({again.x, again.y + 2 * pitch + 10}, w.now);
+    check(saved() == order, "Closing the HUD mid-drag does not save the half-finished order");
+}
 // The TEXT note's editor is drawn by its host right after the note area's
 // part (NativeDesignScene::setInsertion keys on part roots, d::partRoots):
 // the area, nested in the note box, roots a part with a surface in every
@@ -457,6 +505,7 @@ int main(int argc, char** argv) {
     try {
         rules();
         reorderTimings();
+        reorderCancelledByLeaving();
         noteEditorPart(""); noteEditorPart("Field note"); noteEditorClip();
         recordingWipe(); unavailable(); cardControls();
         if (const auto oracleData = loadOracle(argc > 1 ? argv[1] : nullptr, {"notes"}, {"text", "layerDefaults", "formatBar"})) {

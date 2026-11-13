@@ -379,6 +379,8 @@ void NotesCanvas::dragTask(const std::string& id, d::DragGrip::Phase phase, Poin
         break;
     case d::DragGrip::Phase::ended: {
         if (!reorder_ || reorder_->id() != id) return;
+        // Q / E, leaving the module or closing the HUD mid-drag puts the card back.
+        if (cancellingGestures()) { cancelReorder(); return; }
         const d::ListReorder state = std::move(*reorder_);
         reorder_.reset();
         auto* card = taskCard(id);
