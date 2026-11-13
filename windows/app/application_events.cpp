@@ -569,14 +569,15 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             const bool hotkey=m.message==WM_HOTKEY;const auto time=now();
             if(!(hotkey&&lastHookSummon&&time-*lastHookSummon<.3))trayAction(*action,hotkey,time);
             // A menu item whose action left the HUD not showing (Preview
-            // Charging, which does nothing during Projection, an opening a
-            // closing HUD ignores, an action Projection defers): the menu's
-            // never-shown owner holds the foreground, so the shown window
-            // (Projection, the closing HUD, which hands it on as it hides)
-            // takes it back, or else the notification area, as after a
-            // dismissed menu. An item that showed the HUD keeps it, as does
-            // one chosen over the open HUD a press on the icon left open
-            // (closeForFocusLoss): trayAction shows it again.
+            // Charging, which does nothing during Projection or over a
+            // closing HUD, an opening a closing HUD ignores, an action
+            // Projection defers): the menu's never-shown owner holds the
+            // foreground, so the shown window (Projection, the closing HUD,
+            // which hands it on as it hides) takes it back, or else the
+            // notification area, as after a dismissed menu. An item that
+            // showed the HUD keeps it, as does one chosen over the open HUD
+            // a press on the icon left open (closeForFocusLoss): trayAction
+            // shows it again.
             if(tray&&trayReturnsFocus(hotkey))tray->returnFocus();
         }
         return 0;

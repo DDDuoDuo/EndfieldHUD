@@ -148,8 +148,10 @@ void run(){
          SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
          shell.focusTaken=hud.stats().visible;SendMessageW(hudWindow,WM_ACTIVATEAPP,TRUE,0);SendMessageW(hudWindow,callback+2,MAKELPARAM(1,1),MAKELPARAM(NIN_SELECT,1));
          const auto action=hudTray.takeAction();
-         if(action&&*action!=TrayAction::previewCharging){open=true;hud.show(true);}
-         else if(action)hudTray.returnFocus(); // Preview Charging left the HUD hidden
+         // Preview Charging does nothing (Application::Impl::trayAction): over
+         // the open HUD that HUD is shown again, otherwise it leaves the HUD hidden.
+         if(action&&(*action!=TrayAction::previewCharging||open)){open=true;hud.show(true);}
+         else if(action)hudTray.returnFocus();
          shell.focusTaken=false;
          check(!early&&shell.menus>0,"No action runs before the menu returns");
          return std::pair{action,notices};};
@@ -183,7 +185,7 @@ void run(){
        expire();check(open&&focusCloses==closes,"A press the menu claimed closes nothing at the end of the wait");shell.returns.clear();}
       // (b) Items chosen over the open HUD: it stays open, no hand-back and
       // no NIM_SETFOCUS; a later deactivation off the icon still closes at once.
-      for(const auto choice:{TrayAction::openOverlay,TrayAction::settings,TrayAction::workMode,TrayAction::about,TrayAction::checkUpdates}){
+      for(const auto choice:{TrayAction::openOverlay,TrayAction::settings,TrayAction::workMode,TrayAction::about,TrayAction::checkUpdates,TrayAction::previewCharging}){
           const auto closes=focusCloses;const auto [action,notices]=menu(choice);
           check(action==choice&&open&&hud.stats().visible&&focusCloses==closes&&!pending&&!shellTookFocus(notices)&&shell.returns.empty(),
               "An item chosen over the open HUD after a press on the icon leaves it open with the foreground");}

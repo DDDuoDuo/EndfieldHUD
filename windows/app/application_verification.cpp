@@ -3249,12 +3249,13 @@ int Application::Impl::runHiddenVerification(){
                  // Items chosen over the open HUD, which a press on the tray
                  // icon leaves open (closeForFocusLoss), as the Mac's status
                  // item menu does: Settings, About, Check for Updates and Work
-                 // Mode select their module, Open Overlay does nothing; the
-                 // HUD keeps showing, so the menu hands no foreground back
-                 // (trayAction shows it again).
+                 // Mode select their module, Open Overlay and Preview Charging
+                 // do nothing; the HUD keeps showing, so the menu hands no
+                 // foreground back (trayAction shows it again).
                  const auto overOpenHUD=[&](gpu::TrayAction item,core::Module module,const char*why){
                      trayAction(item,false,t);trayCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==module&&hudShowing()&&!trayReturnsFocus(false),why);t=run(t,.5);};
                  overOpenHUD(gpu::TrayAction::openOverlay,core::Module::notes,"Open Overlay over the open HUD does nothing and the HUD keeps the foreground");
+                 overOpenHUD(gpu::TrayAction::previewCharging,core::Module::notes,"Preview Charging over the open HUD does nothing and the HUD keeps the foreground");
                  overOpenHUD(gpu::TrayAction::settings,core::Module::system,"Settings over the open HUD selects Settings and the HUD keeps the foreground");
                  overOpenHUD(gpu::TrayAction::about,core::Module::about,"About over the open HUD selects About and the HUD keeps the foreground");
                  overOpenHUD(gpu::TrayAction::workMode,core::Module::workMode,"Work Mode over the open HUD selects Work Mode and the HUD keeps the foreground");
