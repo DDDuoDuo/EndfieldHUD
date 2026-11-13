@@ -442,10 +442,9 @@ void EventLogCanvas::confirmClear() {
     });
 }
 // The wheel over the list scrolls it and brings the next rows in. While a
-// filter swap runs the Mac has no list (`select` dropped it); the page built
-// for the swap here is not scrolled before it lands.
+// filter swap runs the canvas takes no wheel (Canvas::scroll, Mac 89b8735).
 bool EventLogCanvas::handleScroll(d::Point point, d::Point delta) {
-    if (!list_ || transitioning()) return false;
+    if (!list_) return false;
     const auto local = d::convert(point, root(), list_->layer());
     const auto b = list_->layer().bounds();
     if (!local || local->x < 0 || local->y < 0 || local->x >= b.width || local->y >= b.height) return false;
@@ -460,7 +459,7 @@ void EventLogCanvas::scrollList(double delta) {
 }
 // Down / Up one row, Page Down / Page Up one view, End / Home.
 bool EventLogCanvas::handleKey(const d::KeyInput& key) {
-    if (!list_ || transitioning() || key.commandModifiers() || key.shift) return false;
+    if (!list_ || key.commandModifiers() || key.shift) return false;
     constexpr double view = listHeight - 30;
     constexpr double infinity = std::numeric_limits<double>::infinity();
     switch (key.virtualKey) {
