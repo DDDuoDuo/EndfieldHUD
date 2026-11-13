@@ -355,6 +355,21 @@ void heldDrag(d::TextMeasurer& measurer) {
     check(!c.inputLocked(), "The held pan ends with the page");
     c.pointerDragged({centre.x + 40, centre.y + 30}, w.now); c.pointerUp({centre.x + 40, centre.y + 30}, w.now);
     check(c.viewport().pan().x == pan.x && c.viewport().pan().y == pan.y, "The pointer no longer pans after the page left");
+    w.advance(1); e.spin();
+    // A sticker move held through Q (the previous tab).
+    check(e.perform("zoomReset") && e.perform("mediaTab:2") && c.tab() == m::MediaAssemblyCanvas::Tab::stickers, "Stickers tab"); w.advance(1); e.spin();
+    check(e.perform("sticker:sticker_bp_1") && e.controller->session().adjustments().stickers.size() == 1, "A sticker is added"); w.advance(1); e.spin();
+    const auto image = c.imageRect();
+    const d::Point body{m::MediaAssemblyCanvas::stageOrigin.x + image.x + image.width / 2, m::MediaAssemblyCanvas::stageOrigin.y + image.y + image.height / 2};
+    check(c.pointerDown(body, press, w.now) && c.inputLocked(), "The sticker is held");
+    c.pointerDragged({body.x + 20, body.y + 10}, w.now);
+    const auto moved = e.controller->session().adjustments().stickers;
+    check(moved.size() == 1 && moved[0].x > .5, "Dragging it moves the sticker");
+    check(e.key(keyOf('Q', U'q')) && c.tab() == m::MediaAssemblyCanvas::Tab::filters && c.transitioning(), "Q switches to Filters while the sticker is held");
+    check(!c.inputLocked(), "The held sticker drag ends with the page");
+    c.pointerDragged({body.x + 60, body.y + 40}, w.now); c.pointerUp({body.x + 60, body.y + 40}, w.now);
+    const auto after = e.controller->session().adjustments().stickers;
+    check(after.size() == 1 && after[0].x == moved[0].x && after[0].y == moved[0].y, "The pointer no longer moves the sticker after the page left");
 }
 
 // Until a sub-page swap lands the leaving page and the shared header keep
