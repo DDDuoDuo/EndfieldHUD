@@ -61,6 +61,9 @@ public:
     ITextStoreACP* textStore()const noexcept;
     bool syncContent();
     bool setStyle(const ProjectedEditorStyle&);
+    // Pose, scroll, format, undo, redo, commands and pointer input first lay out
+    // text an IME wrote before its owner notice, and decline unchanged while a
+    // TSF lock prevents that (as NativeProjectedEditor).
     bool setPose(const ProjectedEditorPose&);
     bool setScrollOffset(double);
     bool scrollBy(double);

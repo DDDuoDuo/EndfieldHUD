@@ -1,5 +1,6 @@
 #include "native/notes_long_editor.hpp"
 #ifdef _WIN32
+#include "native/projected_editor_sync.hpp"
 #include "core/source_camera.hpp"
 #include <dwrite.h>
 #include <algorithm>
@@ -13,6 +14,7 @@
 namespace endfield::native {
 namespace {
 namespace text=core::text;using Json=ehud::data::Json;
+using projected_editor_sync::syncLayout;using projected_editor_sync::preparePointer;
 void need(bool value,const char* reason){if(!value)throw std::invalid_argument(reason);}
 void checked(HRESULT hr,const char* reason){if(FAILED(hr))throw std::runtime_error(reason);}
 bool high(char16_t c){return c>=0xd800&&c<=0xdbff;}bool low(char16_t c){return c>=0xdc00&&c<=0xdfff;}
@@ -138,7 +140,8 @@ struct NativeNotesLongEditor::Impl {
         slotRevision.assign(slotCount(),0);slotTranslate.assign(slotCount(),0);slotLayout.resize(slotCount());slotEmpty.assign(slotCount(),true);owned.assign(slotCount(),0);
     }
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Long editor used outside its creating thread");need(alive&&!stopped,"Long editor is stopped");}
-    void current()const{onThread();need(!chunks.empty()&&layoutRevision==owner.revision(),"Synchronize long editor text before geometry/navigation");}
+    bool layoutCurrent()const noexcept{return !chunks.empty()&&layoutRevision==owner.revision();}
+    void current()const{onThread();need(layoutCurrent(),"Synchronize long editor text before geometry/navigation");}
     std::u16string_view value()const noexcept{return owner.text();}
     // ---- descriptors --------------------------------------------------------
     Json leaf(std::size_t index,const char* kind)const{return Json::Object{{"id",ids[index]},{"class",std::string(kind)=="text"?"CATextLayer":"CAShapeLayer"},{"kind",kind},{"bounds",Json::Array{0,0,style.width,style.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"opacity",1},{"children",Json::Array{}}};}
@@ -446,7 +449,7 @@ bool NativeNotesLongEditor::setStyle(const ProjectedEditorStyle& style){
     auto painted=style;painted.cornerRadius=i->style.cornerRadius;i->styleDirty|=painted!=i->style;i->style=style;i->poseReady=false;return true;
 }
 bool NativeNotesLongEditor::setPose(const ProjectedEditorPose& pose){
-    auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Long editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1&&pose.clip.size()<=ProjectedEditorPose::maximumClips,"Invalid long editor pose");
+    auto i=impl_;if(!syncLayout(*i))return false;need(i->scene->contentRevision()==i->structureRevision,"Long editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1&&std::isfinite(pose.caretOpacity)&&pose.caretOpacity>=0&&pose.caretOpacity<=1&&pose.clip.size()<=ProjectedEditorPose::maximumClips,"Invalid long editor pose");
     const auto inverse=core::source::inverseSourceMatrix(pose.localToScreen);
     const auto clips=pose.clip.size();const bool sameClip=std::equal(pose.clip.begin(),pose.clip.end(),i->pose.clip.begin(),i->pose.clip.end());
     const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{0,i->scroll},pose.visible,i->style.cornerRadius};
@@ -457,7 +460,8 @@ bool NativeNotesLongEditor::setPose(const ProjectedEditorPose& pose){
         auto&caret=i->placements[i->caretLeaf()];const auto selection=i->owner.selection();
         caret.opacity=(pose.visible&&pose.ownerFocused&&pose.caretVisible&&selection.range.start==selection.range.end)?pose.opacity*pose.caretOpacity:0.f;
         i->scene->setPlacements(i->placements);i->pose.caretOpacity=pose.caretOpacity;return true;}
-    const auto placementResult=i->input->setPlacement(placement);if(!i->alive)return false;checked(placementResult,"Update long editor candidate plane");
+    const auto placementResult=i->input->setPlacement(placement);if(!i->alive||placementResult==TS_E_NOLOCK)return false;checked(placementResult,"Update long editor candidate plane");
+    if(!i->layoutCurrent())return false; // A synchronous TSF layout notification can edit the text again.
     const auto selection=i->owner.selection();const bool selectionVisible=selection.range.start!=selection.range.end;
     for(std::size_t k=0;k<i->surfaces.size();++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;out.opacity=pose.visible?pose.opacity:0;
         if(k==i->caretLeaf())out.world=out.world*core::Matrix4::translation(i->caretRect.x,i->caretRect.y-i->scroll);
@@ -472,18 +476,20 @@ bool NativeNotesLongEditor::setPose(const ProjectedEditorPose& pose){
 }
 bool NativeNotesLongEditor::setScrollOffset(double offset){
     // Wheel deltas accumulate exactly; only the painted offset is snapped.
-    auto i=impl_;i->current();need(std::isfinite(offset)&&std::abs(offset)<1e9,"Invalid long editor document offset");i->revealPending=false;i->wanted=std::clamp(offset,0.,i->maximumScroll());const auto next=std::clamp(i->snap(i->wanted),0.,i->maximumScroll());if(next==i->scroll)return false;
+    auto i=impl_;if(!syncLayout(*i))return false;need(std::isfinite(offset)&&std::abs(offset)<1e9,"Invalid long editor document offset");i->revealPending=false;i->wanted=std::clamp(offset,0.,i->maximumScroll());const auto next=std::clamp(i->snap(i->wanted),0.,i->maximumScroll());if(next==i->scroll)return false;
     const auto oldPlacement=i->placement;const auto oldScroll=i->scroll;const bool hadPose=i->poseSet;
     {auto nextPlacement=oldPlacement;nextPlacement.scroll={0,next};const auto hr=i->input->setPlacement(nextPlacement);if(hr==TS_E_NOLOCK||!i->alive)return false;checked(hr,"Scroll long editor candidate plane");i->placement=nextPlacement;}
     i->scroll=next;i->viewportDirty=true;
     try{i->sync();if(hadPose&&i->alive)setPose(i->pose);}catch(...){i->scroll=oldScroll;i->viewportDirty=true;i->poseReady=false;if(i->alive){i->input->setPlacement(oldPlacement);i->placement=oldPlacement;}throw;}return true;
 }
-bool NativeNotesLongEditor::scrollBy(double delta){need(std::isfinite(delta),"Invalid long editor scroll delta");return setScrollOffset((impl_->snap(impl_->wanted)==impl_->scroll?impl_->wanted:impl_->scroll)+delta);}
+// The wheel moves from the offset the new text's layout reveals, so the
+// layout (and its caret reveal) must be current before the base is read.
+bool NativeNotesLongEditor::scrollBy(double delta){need(std::isfinite(delta),"Invalid long editor scroll delta");auto i=impl_;if(!syncLayout(*i))return false;return setScrollOffset((i->snap(i->wanted)==i->scroll?i->wanted:i->scroll)+delta);}
 double NativeNotesLongEditor::scrollOffset()const noexcept{return impl_->scroll;}
 double NativeNotesLongEditor::maximumScrollOffset()const noexcept{return impl_->maximumScroll();}
 bool NativeNotesLongEditor::revealCaret(){auto i=impl_;i->onThread();i->revealPending=true;const bool changed=i->sync();if(changed&&i->poseSet&&i->alive)setPose(i->pose);return changed;}
 ProjectedEditorResult NativeNotesLongEditor::applyFormat(const core::notes::FormatChange& change){
-    auto i=impl_;i->current();if(!i->rich)return {};bool changed{};
+    auto i=impl_;if(!syncLayout(*i))return {true,false,false};if(!i->rich)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{
         const auto oldLayout=i->richLayout;const auto revision=i->rich->revision();
         auto paragraphs=oldLayout?i->spacedSelection():std::vector<text::Range>{};
@@ -498,13 +504,13 @@ ProjectedEditorResult NativeNotesLongEditor::applyFormat(const core::notes::Form
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Format long rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeNotesLongEditor::undo(){
-    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    auto i=impl_;if(!syncLayout(*i))return {true,false,false};if(!i->history)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->owner.text());changed=i->history->undo();if(!changed)return {};i->revealPending=true;
         if(before==i->owner.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->owner.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Undo long rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeNotesLongEditor::redo(){
-    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    auto i=impl_;if(!syncLayout(*i))return {true,false,false};if(!i->history)return {};bool changed{};
     const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->owner.text());changed=i->history->redo();if(!changed)return {};i->revealPending=true;
         if(before==i->owner.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->owner.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Redo long rich document");return {true,changed,false};
@@ -514,7 +520,9 @@ bool NativeNotesLongEditor::richLayoutEnabled()const noexcept{return impl_->rich
 ProjectedEditorResult NativeNotesLongEditor::command(ProjectedEditorCommand command,bool extend){
     auto i=impl_;i->onThread();i->highUnit.reset();
     if(command==ProjectedEditorCommand::finish){if(i->owner.composition()){const auto hr=i->input->cancelComposition();if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Cancel unconsumed IME composition");return {true,true,false};}return {true,false,true};}
-    if(i->owner.composition())return {};i->current();const auto selection=i->owner.selection();auto range=selection.range;const auto at=selection.activeEnd==text::ActiveEnd::start?range.start:range.end;
+    if(i->owner.composition())return {};
+    if(!syncLayout(*i)||i->owner.composition())return {true,false,false};
+    const auto selection=i->owner.selection();auto range=selection.range;const auto at=selection.activeEnd==text::ActiveEnd::start?range.start:range.end;
     switch(command){
     case ProjectedEditorCommand::selectAll:{const auto n=std::uint32_t(i->value().size());const auto hr=i->input->selectFromHost({{0,n},text::ActiveEnd::end,false});if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select entire long document");i->revealPending=true;return {true,true,false};}
     case ProjectedEditorCommand::left:case ProjectedEditorCommand::right:{const bool left=command==ProjectedEditorCommand::left;const auto target=!extend&&range.start!=range.end?(left?range.start:range.end):(left?i->previousCluster(at):i->nextCluster(at));return i->select(target,extend);}
@@ -535,8 +543,8 @@ ProjectedEditorResult NativeNotesLongEditor::character(std::uint32_t value,bool 
     return i->replace(i->owner.selection().range,{units.data(),size});}
 ProjectedEditorResult NativeNotesLongEditor::replaceTextFromHost(text::Range range,std::u16string_view value){auto i=impl_;i->onThread();i->highUnit.reset();return i->replace(range,value);}
 ProjectedEditorResult NativeNotesLongEditor::setSelectionFromHost(text::Selection selection){auto i=impl_;i->onThread();i->highUnit.reset();const auto previous=i->owner.selection();const auto hr=i->input->selectFromHost(selection);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Restore long editor selection");if(i->alive)i->revealPending=true;return {true,selection!=previous,false};}
-ProjectedEditorResult NativeNotesLongEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set long editor pose before pointer input");if(i->owner.composition())return {};const auto at=text::projectedInsertion(i->document,i->geometry,point,i->placement);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
-ProjectedEditorResult NativeNotesLongEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->owner.composition()||!i->poseReady||!i->placement.visible)return {};
+ProjectedEditorResult NativeNotesLongEditor::pointerDown(core::Point point,bool extend){auto i=impl_;if(!preparePointer(*this,*i))return {};const auto at=text::projectedInsertion(i->document,i->geometry,point,i->placement);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
+ProjectedEditorResult NativeNotesLongEditor::pointerDrag(core::Point point){auto i=impl_;if(!i->dragging||!preparePointer(*this,*i)||!i->placement.visible)return {};
     const auto local=i->placement.projection.unproject(point);if(!local)return {};
     const auto at=text::insertionHit(i->geometry,static_cast<std::uint32_t>(i->value().size()),{local->x-i->placement.viewport.x,local->y-i->placement.viewport.y+i->scroll});return at?i->select(*at,true):ProjectedEditorResult{};}
 void NativeNotesLongEditor::pointerUp()noexcept{if(GetCurrentThreadId()==impl_->thread)impl_->dragging=false;}

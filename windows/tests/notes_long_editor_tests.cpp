@@ -9,11 +9,13 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Paragraph-chunked Notes editor contracts. Hidden owned window, synthetic
@@ -245,6 +247,82 @@ void textServices(HWND hwnd){
     {notes::RichDocument tooLong(std::u16string(70000,u'q'),std::nullopt,1u<<22);gpu::LayerScene rejectedScene(raster);
      bool rejected{};try{gpu::NativeNotesLongEditor bad(hwnd,tooLong,rejectedScene,raster,style,rasterOptions(),WM_APP+304,22);}catch(const gpu::NativeNotesLongParagraphError&){rejected=true;}check(rejected,"Opening a paragraph beyond the leaf limit reports its own capacity error");}
 }
+// An IME write raises the document revision before its posted owner notice
+// lays the new text out. A call inside the write lock declines unchanged and
+// leaves the layout to that notice; a call after the lock and before the
+// notice lays out the new text first and acts on it. Nothing throws.
+struct ImeRace{
+    notes::RichDocument document;gpu::LayerScene scene;gpu::NativeNotesLongEditor editor;gpu::ProjectedEditorPose pose;Microsoft::WRL::ComPtr<Sink> sink;ITextStoreACP* store{};HWND hwnd;
+    static constexpr UINT message=WM_APP+307;static constexpr UINT_PTR generation=51;
+    ImeRace(HWND h,gpu::LayerRasterizer& raster,const gpu::ProjectedEditorStyle& style)
+        :document(u"first line\n"+mixed(40,17),std::nullopt,1u<<22),scene(raster),editor(h,document,scene,raster,style,rasterOptions(),message,generation,gpu::ProjectedEditorTextMode::rich,smallChunks),hwnd(h){
+        pose.localToScreen=core::Matrix4::translation(30,40);pose.screenToClip=gpu::layerViewportProjection(800,600)*core::Matrix4::scale(2,2,1);pose.pixelWidth=800;pose.pixelHeight=600;pose.ownerFocused=true;
+        check(editor.setPose(pose),"Pose the IME race fixture");sink.Attach(new Sink);store=editor.textStore();ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_LAYOUT_CHANGE),"Advise the IME's fake sink");}
+    ~ImeRace(){store->UnadviseSink(sink.Get());editor.stop();}
+    std::uint32_t end()const{return static_cast<std::uint32_t>(document.text().size());}
+    std::uint32_t active()const{const auto s=document.selection();return s.activeEnd==text::ActiveEnd::start?s.range.start:s.range.end;}
+    bool laidOut(std::uint64_t revision)const{return editor.geometry().textRevision()==revision;}
+    // The IME's synchronous write lock; a failed check inside it is reported as itself.
+    void locked(const std::function<void()>& during){
+        std::exception_ptr failure;sink->onLock=[&](DWORD){try{during();}catch(...){failure=std::current_exception();}return S_OK;};
+        HRESULT session{};const auto hr=store->RequestLock(TS_LF_SYNC|TS_LF_READWRITE,&session);sink->onLock={};
+        if(failure)std::rethrow_exception(failure);ok(hr,"Request the IME write lock");ok(session,"The IME write lock completes");
+    }
+    // Writes value at an ACP, runs during inside the same lock, and returns the written revision.
+    std::uint64_t write(std::uint32_t at,std::wstring_view value,const std::function<void()>& during={}){
+        locked([&]{TS_TEXTCHANGE delta{};ok(store->SetText(0,LONG(at),LONG(at),value.data(),ULONG(value.size()),&delta),"The IME writes before the owner notice");
+            check(editor.geometry().textRevision()!=document.revision(),"The IME write leaves the previous layout pending");if(during)during();});
+        return document.revision();
+    }
+    // What the field's owner does when the posted change arrives.
+    void notice(){editor.takeChanges(generation);drain(hwnd,message);editor.syncContent();editor.setPose(pose);check(laidOut(document.revision()),"The owner notice lays out the text");}
+    // The client point right of a line (document y at scroll 0): a press there takes the line's end.
+    core::Point rightOf(std::uint32_t at)const{const auto caret=editor.geometry().bounds({at,at});check(caret&&caret->bounds.height>0,"The line has a caret");
+        const auto client=editor.placement().projection.project({editor.placement().viewport.width-2,caret->bounds.y+caret->bounds.height*.5});check(client.has_value(),"The line projects to the client");return *client;}
+};
+void imeBeforeNotice(HWND hwnd){
+    gpu::LayerRasterizer raster;const auto style=notesStyle(raster,222,87);using C=gpu::ProjectedEditorCommand;
+    notes::FormatChange green;green.kind=notes::FormatKind::color;green.color={0,1,0,1};
+    const auto declined=[](gpu::ProjectedEditorResult r){return r.handled&&!r.changed&&!r.finishRequested;};
+    const std::vector<std::pair<const char*,std::function<void()>>> cases{
+        {"inside the write lock",[&]{ImeRace r(hwnd,raster,style);r.editor.setScrollOffset(0);r.editor.setPose(r.pose);
+            const auto press=r.rightOf(0);check(r.editor.pointerDown(press).handled,"A press before the IME write starts a drag");const auto scroll=r.editor.scrollOffset();
+            r.write(r.end(),L"\n\n\n\n\x4e2d\x6587",[&]{const auto revision=r.document.revision();const auto selection=r.document.selection();
+                check(!r.editor.setPose(r.pose),"A frame during the write lock keeps the previous layout");
+                check(!r.editor.scrollBy(40)&&!r.editor.setScrollOffset(40)&&r.editor.scrollOffset()==scroll,"A wheel or scroll during the write lock declines");
+                check(declined(r.editor.applyFormat(green))&&declined(r.editor.undo())&&declined(r.editor.redo()),"Format, undo and redo during the write lock decline");
+                for(const auto c:{C::left,C::right,C::up,C::down,C::documentStart,C::documentEnd,C::backspace,C::deleteForward,C::selectAll})check(declined(r.editor.command(c)),"A command during the write lock declines");
+                check(!r.editor.pointerDown(press).handled&&!r.editor.pointerDrag(press).handled,"A press or drag during the write lock waits for the layout");
+                check(r.document.revision()==revision&&r.document.selection()==selection&&!r.laidOut(revision),"Declined calls leave the text, the selection and the pending layout alone");});
+            r.editor.pointerUp();r.notice();}},
+        {"setPose",[&]{ImeRace r(hwnd,raster,style);const auto w=r.write(r.end(),L"x");check(r.editor.setPose(r.pose)&&r.laidOut(w),"A frame before the owner notice lays out the IME text");}},
+        {"scrollBy",[&]{ImeRace r(hwnd,raster,style);check(r.editor.setSelectionFromHost({{r.end(),r.end()},text::ActiveEnd::end,false}).handled,"Caret at the end");r.notice();r.editor.setScrollOffset(0);r.editor.setPose(r.pose);
+            const auto w=r.write(r.end(),std::wstring(16,L'\n'));
+            // The append leaves the caret at the end, so the new layout reveals it at
+            // the bottom; the wheel then moves up from there, not from the stale top.
+            check(r.editor.scrollBy(-40)&&r.laidOut(w)&&r.editor.maximumScrollOffset()>40,"A wheel before the owner notice lays out the new lines first");
+            const auto wheeled=r.editor.scrollOffset();(void)r.editor.revealCaret();
+            check(wheeled>0&&std::abs(r.editor.scrollOffset()-wheeled-40)<1e-6,"The wheel scrolls from the offset that reveals the IME's caret, not from the stale one");}},
+        {"setScrollOffset",[&]{ImeRace r(hwnd,raster,style);check(r.editor.setSelectionFromHost({{r.end(),r.end()},text::ActiveEnd::end,false}).handled,"Caret at the end");r.notice();
+            const auto w=r.write(r.end(),L"x");check(r.editor.setScrollOffset(0)&&r.editor.scrollOffset()==0&&r.laidOut(w),"A scroll offset before the owner notice lays out the new text first");}},
+        {"applyFormat",[&]{ImeRace r(hwnd,raster,style);const auto at=r.end();
+            const auto w=r.write(at,L"\x4e2d\x6587",[&]{TS_SELECTION_ACP s{LONG(at),LONG(at+2),{TS_AE_END,FALSE}};ok(r.store->SetSelection(1,&s),"The IME selects its characters");});
+            check(r.editor.applyFormat(green).changed&&r.laidOut(w),"A format before the owner notice lays out the IME text first");
+            const auto runs=r.document.runs();check(std::any_of(runs.begin(),runs.end(),[&](const auto& run){return run.location<=at&&run.location+run.length>=at+2&&run.style.color&&run.style.color->green==1&&run.style.color->red==0;}),"The IME characters take the format");}},
+        {"undo and redo",[&]{ImeRace r(hwnd,raster,style);const auto w=r.write(r.end(),L"!");const auto appended=std::u16string(r.document.text());
+            check(r.editor.undo().changed&&r.laidOut(w)&&r.document.text()!=appended,"Undo before the owner notice lays out the IME text first, then undoes it");
+            const auto undone=r.document.revision();check(r.editor.redo().changed&&r.laidOut(undone)&&r.document.text()==appended,"Redo before the owner notice lays out the undone text first, then redoes it");
+            r.notice();const auto again=r.write(r.end(),L"?");check(declined(r.editor.redo())&&r.laidOut(again),"Redo after an IME write lays out its text and finds nothing to redo");}},
+        {"command",[&]{ImeRace r(hwnd,raster,style);const auto w=r.write(r.end(),L"\xd83d\xde00");const auto end=r.end();
+            check(r.editor.command(C::left).changed&&r.document.selection().range==text::Range{end-2,end-2}&&r.laidOut(w),"A command before the owner notice moves over the IME's new cluster");}},
+        {"pointerDown",[&]{ImeRace r(hwnd,raster,style);r.editor.setScrollOffset(0);r.editor.setPose(r.pose);const auto press=r.rightOf(0);
+            const auto w=r.write(0,L"XY\n");check(r.editor.pointerDown(press).handled&&r.document.selection().range==text::Range{2,2}&&r.laidOut(w),"A press before the owner notice hits the IME's new first line");r.editor.pointerUp();}},
+        {"pointerDrag",[&]{ImeRace r(hwnd,raster,style);r.editor.setScrollOffset(0);r.editor.setPose(r.pose);const auto press=r.rightOf(0);
+            check(r.editor.pointerDown(press).handled&&r.active()==10,"A press right of the first line takes its end");
+            const auto w=r.write(0,L"Z");check(r.editor.pointerDrag(press).handled&&r.active()==11&&r.laidOut(w),"A drag pressed before the IME write hits the lengthened first line");r.editor.pointerUp();}},
+    };
+    for(const auto& [name,run]:cases){try{run();}catch(const std::exception& e){throw std::runtime_error(std::string("IME race, ")+name+": "+e.what());}}
+}
 double median(std::vector<double> v){std::sort(v.begin(),v.end());return v[v.size()/2];}
 double p95(std::vector<double> v){std::sort(v.begin(),v.end());return v[(v.size()-1)*95/100];}
 // Typing cost follows the edited chunk: bounded layouts per keystroke and a
@@ -320,7 +398,7 @@ void workspace(HWND hwnd){
 } // namespace
 int wmain(int argc,wchar_t** argv){
     try{check(argc==2,"Usage: notes_long_editor_tests <hud.hlsl>");Apartment apartment;Window window;const std::filesystem::path shader(argv[1]);
-        parity(window.value,shader);verticalMoves(window.value);archiveParity(window.value);textServices(window.value);workspace(window.value);longDocuments(window.value,shader);
+        parity(window.value,shader);verticalMoves(window.value);archiveParity(window.value);textServices(window.value);imeBeforeNotice(window.value);workspace(window.value);longDocuments(window.value,shader);
         std::cout<<"Passed "<<checks<<" chunked Notes editor contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Chunked Notes editor contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}
 }
