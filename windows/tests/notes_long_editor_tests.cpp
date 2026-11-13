@@ -327,6 +327,14 @@ void imeBeforeNotice(HWND hwnd){
             check(r.editor.selectionRectangles({end-2,end}).empty()&&r.editor.previousCluster(end)==end&&r.editor.nextCluster(end-2)==end-2&&!r.laidOut(w),"Geometry getters before the owner notice report no geometry and leave the layout pending");
             rejects([&]{(void)r.editor.selectionRectangles({0,end+1});},"A range beyond the current text is still rejected");rejects([&]{(void)r.editor.previousCluster(end+1);},"An ACP beyond the current text is still rejected");
             r.notice();check(!r.editor.selectionRectangles({end-2,end}).empty()&&r.editor.previousCluster(end)==end-2&&r.editor.nextCluster(end-2)==end,"After the owner notice the getters answer the IME's new cluster");}},
+        // With the layout current, a lock still blocks the candidate plane: a
+        // moved pose declines unchanged, then applies once the lock is gone.
+        {"pose inside a lock",[&]{ImeRace r(hwnd,raster,style);auto moved=r.pose;moved.localToScreen=core::Matrix4::translation(31,42);const auto before=r.editor.placement();
+            r.locked([&]{check(!r.editor.setPose(moved)&&r.editor.placement()==before,"A moved pose inside a lock that wrote nothing declines and keeps the placement");});
+            check(r.editor.setPose(moved)&&r.editor.placement()!=before,"After the lock the moved pose applies");}},
+        {"pointer before the first pose",[&]{notes::RichDocument document(u"first line\nsecond line",std::nullopt,1u<<22);gpu::LayerScene scene(raster);
+            gpu::NativeNotesLongEditor editor(hwnd,document,scene,raster,style,rasterOptions(),ImeRace::message+1,ImeRace::generation+1,gpu::ProjectedEditorTextMode::rich,smallChunks);
+            const auto selection=document.selection();check(!editor.pointerDown({100,60}).handled&&!editor.pointerDrag({120,80}).handled&&document.selection()==selection,"A press or drag before the first pose declines unchanged");editor.stop();}},
     };
     for(const auto& [name,run]:cases){try{run();}catch(const std::exception& e){throw std::runtime_error(std::string("IME race, ")+name+": "+e.what());}}
 }
