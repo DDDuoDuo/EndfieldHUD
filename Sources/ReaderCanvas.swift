@@ -17,7 +17,13 @@ final class ReaderCanvas: HUDDesignCanvas {
     /// The Reader opens where it was left: on the open book when it was being
     /// read (across module switches, HUD reopenings and relaunches).
     private(set) var tab: Tab {
-        didSet { if tab != oldValue { tabSettled = true; controller.setReading(tab == .reading) } }
+        didSet {
+            guard tab != oldValue else { return }
+            tabSettled = true; controller.setReading(tab == .reading)
+            // A swipe that began elsewhere (or during the swap) never pages the
+            // new tab: paging waits for the next swipe's start or wheel notch.
+            wheel = (0, true, 0)
+        }
     }
     /// A tab was chosen (or restored); a library that loads later no longer moves it.
     private var tabSettled = false
@@ -174,6 +180,8 @@ final class ReaderCanvas: HUDDesignCanvas {
     private func select(_ next: Tab) {
         guard next != tab else { return }
         let direction: CGFloat = next.rawValue > tab.rawValue ? 1 : -1
+        // The bar shows the target during the leave, so Q / E then cycle from it.
+        page.tabs?.select(next.rawValue, notify: false)
         tab = next
         navigate(dx: direction)
     }
@@ -627,8 +635,7 @@ final class ReaderCanvas: HUDDesignCanvas {
             go.onActivate = { [weak self] in
                 guard let self else { return }
                 self.controller.jump(to: mark.location)
-                self.tab = .reading
-                self.navigate(dx: -1)
+                self.select(.reading)
             }
             let remove = HUDIconButton(id: "mark:\(mark.id.uuidString):remove", label: L10n.text("Remove bookmark", "移除书签") + " P. \(number)", icon: .x, env: env)
             remove.onActivate = { [weak self] in self?.controller.removeBookmark(mark.id) }
@@ -664,8 +671,7 @@ final class ReaderCanvas: HUDDesignCanvas {
     private func openBook(_ book: ReaderBook) {
         if missing.contains(book.id) { relink(book); return }
         if controller.book?.id != book.id { awaitingBook = book.id; controller.select(book.id) }
-        tab = .reading
-        navigate(dx: 1)
+        if tab == .reading { navigate(dx: 1) } else { select(.reading) }
     }
 
     /// A Library book's menu, from its ⋯ (`anchor`) or a right-click at a point.
@@ -985,6 +991,14 @@ final class ReaderCanvas: HUDDesignCanvas {
     }
 
     override func handlePointerUp(at point: CGPoint) { panStart = nil }
+
+    /// An image pan held through Q / E ends with the other gestures, so the
+    /// leaving page stops following the pointer.
+    override func suspendInput() {
+        super.suspendInput()
+        guard panStart != nil else { return }
+        panStart = nil; context.onInputStateChange?()
+    }
 
     /// A right-click on a Library book opens the menu its ⋯ opens.
     override func handleRightPointerDown(at point: CGPoint) -> Bool {

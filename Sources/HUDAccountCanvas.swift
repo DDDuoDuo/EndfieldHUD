@@ -137,7 +137,8 @@ final class HUDAccountCanvas: HUDDesignCanvas {
         if !wanted { clock?.invalidate(); clock = nil; return }
         guard clock == nil else { return }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self else { return }
+            // A region swap's leaving plate keeps its own region's sanity.
+            guard let self, !self.isTransitioning else { return }
             self.sanity?.render(self.sanityPresentation, at: self.now())
         }
         timer.tolerance = 0.1
