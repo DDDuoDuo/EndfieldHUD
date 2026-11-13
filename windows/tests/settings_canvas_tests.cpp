@@ -449,6 +449,36 @@ void contracts() {
     check(std::abs(rowOf("archive").frame().y + rowOf("archive").value(d::Channel::translateY) - 2 * 56) < 1e-9, "The others reflow to the preview order");
     canvas.pointerUp({26, 164 + 3 * 56}, w.now);
     check(committed().moduleLayout().order[3] == "notes" && rowOf("notes").zPosition() == 0, "Dropping saves the slot");
+    {
+        // Esc or closing the HUD while a row is held (Mac b7a5443): the drag ends
+        // inside cancelGestures, so the row goes back and the half-finished order is not saved.
+        const auto savedOrder = committed().moduleLayout().order;
+        const auto hold = [&] {
+            const auto r = w.control(M::display, "grip:notes").rect(canvas.root());
+            const d::Point grip{r.x + r.width / 2, r.y + r.height / 2};
+            d::PointerInput down; down.point = grip;
+            check(canvas.pointerDown(grip, down, w.now), "The grip takes the press");
+            canvas.pointerDragged({grip.x, grip.y + 4}, w.now);
+            canvas.pointerDragged({grip.x, grip.y - 2 * 56}, w.now);
+            check(rowOf("notes").zPosition() == 10, "The notes row is held");
+            return grip;
+        };
+        const auto saves = w.saved.size();
+        auto grip = hold();
+        d::KeyInput escape; escape.virtualKey = d::key::escape;
+        check(canvas.keyDown(escape, w.now) && canvas.section() == "main", "Esc leaves Modules mid-drag");
+        canvas.pointerUp({grip.x, grip.y - 2 * 56}, w.now);
+        check(w.saved.size() == saves && committed().moduleLayout().order == savedOrder, "Esc mid-drag does not save the half-finished order");
+        w.activate(M::display, "modules");
+        grip = hold();
+        w.hide(M::display);
+        canvas.pointerUp({grip.x, grip.y - 2 * 56}, w.now);
+        check(w.saved.size() == saves && committed().moduleLayout().order == savedOrder, "Closing the HUD mid-drag does not save the half-finished order");
+        w.show(M::display);
+        if (canvas.section() != "modules") w.activate(M::display, "modules");
+        check(std::abs(rowOf("notes").frame().y + rowOf("notes").value(d::Channel::translateY) - 3 * 56) < 1e-9 && rowOf("notes").zPosition() == 0,
+            "The row is back in its saved slot");
+    }
     // At least one module stays visible.
     w.update([](Settings& s) { auto l = s.moduleLayout(); for (const auto& name : ehud::data::ModuleLayout::configurable) if (name != "power") l.setHidden(name, true); s.setModuleLayout(l); });
     check(!w.control(M::display, "show:power").enabled() && w.control(M::display, "show:notes").enabled(), "The last visible module's switch is disabled");

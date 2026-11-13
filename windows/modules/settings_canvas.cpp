@@ -629,7 +629,8 @@ void SettingsCanvas::dragModule(const std::string& module, d::DragGrip::Phase ph
         const int slot = moduleDrag_->slot;
         moduleDrag_.reset();
         d::motion::animate(plate, d::Channel::opacity, 1, d::duration::hover, env().clock());
-        update([&](Settings& s) { auto l = s.moduleLayout(); l.move(module, slot); s.setModuleLayout(l); });
+        // Leaving the page or closing the HUD mid-drag puts the row back.
+        if (!cancellingGestures()) update([&](Settings& s) { auto l = s.moduleLayout(); l.move(module, slot); s.setModuleLayout(l); });
         // The update re-ran the binders (an unchanged order does not): settle every row.
         layoutModuleRows(config().moduleLayout().order, true);
         plate.setZPosition(0);
