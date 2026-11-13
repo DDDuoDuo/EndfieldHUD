@@ -844,10 +844,11 @@ int Application::Impl::runIdleTrace(){
         shutdownVisible();
         return 0;
     }
-    // The tray's Quit under Reduce Motion ends the run without a frame.
+    // The tray's Quit (its menu item over the open HUD) under Reduce Motion
+    // ends the run without a frame, and the menu hands no foreground back.
     reduceMotion(true);openHUD();
-    {const auto framesBefore=host.stats().frames;perform(lifecycle.requestTermination(),clock());
-     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore,"Quit under Reduce Motion closes the HUD and stops without a frame");
+    {const auto framesBefore=host.stats().frames;trayAction(gpu::TrayAction::quit,false,clock());
+     need(stopping&&lifecycle.phase()==P::closed&&!host.stats().visible&&host.stats().frames==framesBefore&&!trayReturnsFocus(false),"Quit under Reduce Motion closes the HUD and stops without a frame");
      const auto request="close-"+std::to_string(memoryTrace->closes);
      need(row(request)&&row("quit-1")&&*row(request)<*row("quit-1")&&tracedIs(request,"lifecycle","closing")&&tracedTrue(request,"terminating"),
           "The memory trace records Quit's close request, then the quit");}
