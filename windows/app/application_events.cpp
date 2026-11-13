@@ -240,12 +240,15 @@ bool Application::Impl::closeForFocusLoss(double time,bool trayMenuWait){
     // A press on our tray icon: the Mac's status item opens its menu without
     // deactivating the app, so the HUD stays open and key. The close waits
     // for the menu's owner to take the foreground (onApplicationActive), and
-    // follows after the grace if it never does (onDeadline). The shell
+    // follows after the grace if it never does (endTrayPressWait). The shell
     // is asked only here, once a close would follow. Asking it can dispatch
     // its messages: when one of them opened the menu and activated us
     // meanwhile, nothing waits and nothing closes.
     if(trayMenuWait&&tray&&tray->iconPressed()){if(!applicationActive){trayFocusLossAt=time+trayPressGrace;scheduleDeadline();}return false;}
     perform(lifecycle.close(),time);return true;
+}
+void Application::Impl::endTrayPressWait(double time){
+    trayFocusLossAt.reset();if(!applicationActive)(void)closeForFocusLoss(time,false);
 }
 
 void Application::Impl::onDisplayChanged(){
@@ -285,9 +288,9 @@ void Application::Impl::onDeadline(double time){
     if(preparedGraphicsUntil&&*preparedGraphicsUntil<=time){preparedGraphicsUntil.reset();
         if(session->phase()==core::VisibilityPhase::concealed)(void)renderer.discardPreparedDevice();}
     // A press on the tray icon that no menu claimed (dragged off the icon,
-    // held past the grace, or a menu refused the foreground): the close
-    // Close when focus lost would have made at the press.
-    if(trayFocusLossAt&&*trayFocusLossAt<=time){trayFocusLossAt.reset();if(!applicationActive)(void)closeForFocusLoss(time,false);}
+    // held past the grace); a menu refused the foreground ends it from its
+    // own loop (onAppMessage's trayPressTimer).
+    if(trayFocusLossAt&&*trayFocusLossAt<=time)endTrayPressWait(time);
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(hostTime(time))||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,hostTime(time));}},"deadline");
     time=hostTime(time);
     if(artwork)automationChanged();
@@ -564,7 +567,26 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         const auto event=LOWORD(static_cast<DWORD>(m.lParam));
         if(event==WM_MOUSEMOVE||event==WM_LBUTTONDOWN||event==WM_RBUTTONDOWN||event==WM_CONTEXTMENU||event==NIN_SELECT||event==NIN_KEYSELECT)prepareGraphics(true);
     }
-    if(ready&&tray&&tray->message(m.message,m.wParam,m.lParam)){
+    // The end of a tray press's wait inside the tray's menu (below).
+    if(m.message==WM_TIMER&&m.wParam==trayPressTimer){
+        KillTimer(static_cast<HWND>(host.hwnd()),trayPressTimer);
+        if(ready&&!stopping&&trayFocusLossAt){endTrayPressWait(hostTime(OverlayHost::clockNow()));scheduleDeadline();}
+        return 0;
+    }
+    // A press on the icon still waiting while the tray runs its menu: the
+    // menu's modal loop dispatches this thread's messages instead of the
+    // host's pump, so the host's deadline never ends the wait there, and a
+    // menu whose owner was refused the foreground (no activation claims the
+    // press) would keep the HUD over the application the user went to for
+    // as long as the menu stays up. A window timer, which the loop
+    // dispatches, ends the wait at the same time.
+    const auto window=static_cast<HWND>(host.hwnd());
+    const bool trayMenuTimed=ready&&tray&&m.message==trayMessage&&trayFocusLossAt&&
+        SetTimer(window,trayPressTimer,static_cast<UINT>(std::ceil(std::max(0.,*trayFocusLossAt-hostTime(OverlayHost::clockNow()))*1000)),nullptr)!=0;
+    bool trayHandled{};
+    try{trayHandled=ready&&tray&&tray->message(m.message,m.wParam,m.lParam);}catch(...){if(trayMenuTimed)KillTimer(window,trayPressTimer);throw;}
+    if(trayMenuTimed)KillTimer(window,trayPressTimer);
+    if(trayHandled){
         if(const auto action=tray->takeAction()){
             const bool hotkey=m.message==WM_HOTKEY;const auto time=now();
             if(!(hotkey&&lastHookSummon&&time-*lastHookSummon<.3))trayAction(*action,hotkey,time);

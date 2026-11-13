@@ -369,10 +369,14 @@ struct Application::Impl {
     // trayPressGrace for the icon's menu, whose owner's activation claims
     // the press (onApplicationActive), as the Mac's status item menu never
     // deactivates the app. Still inactive at the end: the close as before
-    // (onDeadline). The grace covers the press, its release, the shell's
-    // callback and the menu taking the foreground.
+    // (endTrayPressWait, from onDeadline, or inside the tray's menu loop
+    // from trayPressTimer). The grace covers the press, its release, the
+    // shell's callback and the menu taking the foreground.
     std::optional<double> trayFocusLossAt;
     static constexpr double trayPressGrace = .8;
+    // The HUD window's timer that ends the wait while the tray's menu runs
+    // (its modal loop dispatches it; the host's deadline never comes there).
+    static constexpr UINT_PTR trayPressTimer = 0x45485450;
     // OverlayController.transitionDeadline: an opening or a close the frames
     // never finished is finished by the host's deadline wake. Armed only while
     // a transition runs (no wake while idle or hidden): at an opening for
@@ -677,6 +681,9 @@ struct Application::Impl {
     // waits for its menu instead (trayFocusLossAt) while the application
     // stays inactive, and none follows once it is active again.
     bool closeForFocusLoss(double time, bool trayMenuWait = true);
+    // The end of a tray press's wait: the close, unless the application is
+    // active again.
+    void endTrayPressWait(double time);
     void onDisplayChanged();
     void onCloseRequested();
     void onDeadline(double time);

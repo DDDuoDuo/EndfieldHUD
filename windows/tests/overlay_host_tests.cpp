@@ -1104,7 +1104,7 @@ void nativeWindow() {
     std::vector<KeyEvent> keys;
     std::vector<bool> focus,applicationActivation;
     std::vector<ClientMetrics> sizes;
-    unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0, timeChanges=0, settingChanges=0;
+    unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0, timeChanges=0, settingChanges=0, ownerTimers=0;
     OverlayCallbacks callbacks;
     callbacks.frame = [&](double) { ++frames; };
     callbacks.pointer = [&](const auto& event) { pointer.push_back(event); return true; };
@@ -1117,6 +1117,7 @@ void nativeWindow() {
     callbacks.beforeKeyTranslation=[&](const NativeMessage& event){++filtered;return event.wParam=='D';};
     callbacks.appMessage=[&](const NativeMessage& event)->std::optional<std::intptr_t>{
         if(event.message==WM_TIMECHANGE){++timeChanges;return 0;}
+        if(event.message==WM_TIMER){check(event.wParam==0x4548,"An owner timer keeps its id");++ownerTimers;return 0;}
         if(event.message==WM_SETTINGCHANGE){++settingChanges;if(event.lParam)check(std::wstring(reinterpret_cast<const wchar_t*>(event.lParam))==L"intl","Named system setting payload reaches owner synchronously");return 0;}
         if(event.message!=WM_APP+21)return {};check(event.wParam==123,"Private owner notification preserves generation token");++privateMessages;return 45;};
     callbacks.displayChanged=[&]{++displayChanges;};
@@ -1202,6 +1203,10 @@ void nativeWindow() {
     const auto timeChangeTimerArms=host.stats().timerArms;
     SendMessageW(window,WM_TIMECHANGE,0,0);
     check(timeChanges==1&&host.stats().timerArms==timeChangeTimerArms,"System time changes reach the owner without adding a polling timer");
+    // The owner's own window timer (a nested modal loop dispatches it where
+    // the host's deadline never comes) reaches it; the frame gate's does not.
+    SendMessageW(window,WM_TIMER,0x4548,0);SendMessageW(window,WM_TIMER,0x45484744,0);
+    check(ownerTimers==1,"The owner's window timer reaches it and the frame gate's stays the host's");
     SendMessageW(window,WM_SETTINGCHANGE,0,reinterpret_cast<LPARAM>(L"intl"));
     SendMessageW(window,WM_SETTINGCHANGE,SPI_SETWHEELSCROLLLINES,0);
     check(settingChanges==2&&host.stats().timerArms==timeChangeTimerArms,"System setting changes reach the existing owner without polling or frame demand");

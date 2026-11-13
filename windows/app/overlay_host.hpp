@@ -223,6 +223,9 @@ struct OverlayCallbacks {
     // WM_POWERBROADCAST, WM_CLIPBOARDUPDATE, WM_TIMECHANGE, WM_DEVICECHANGE
     // (volume arrival / removal, sent to every top-level window) and (when the owner
     // registered for it) WM_WTSSESSION_CHANGE; frame tickets stay reserved.
+    // WM_TIMER of the owner's own window timers on this window (a nested
+    // modal loop, such as a menu's, dispatches them where the deadline
+    // below never comes); the frame gate's timer stays the host's.
     // Returning no value leaves default handling in place. These routes add no
     // service registrations and work while the overlay is hidden.
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;

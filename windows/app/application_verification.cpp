@@ -531,28 +531,46 @@ int Application::Impl::runIdleTrace(){
     // and the menu's activation claims it. The trace asks the focus-loss
     // close WM_ACTIVATEAPP asks in production (above), and has no tray icon
     // of its own: a tray over a stand-in platform answers whether the
-    // deactivation is a press on its icon (TrayController::iconPressed).
+    // deactivation is a press on its icon (TrayController::iconPressed) and
+    // runs a stand-in menu through the production routing (onAppMessage).
     const auto activateApplication=[&](bool active){SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,active?TRUE:FALSE,0);};
     const auto holdCheck=[&](bool value,const char*why){need(value,why);};
-    bool iconPressed{};unsigned pressQueries{};std::function<void()>duringPress;
+    bool iconPressed{};unsigned pressQueries{};std::function<void()>duringPress,inMenu;
     const auto withTray=[&](const std::function<void()>&body){need(!tray,"The idle trace has no tray of its own");
-        const auto reset=[&]{tray.reset();iconPressed=false;duringPress={};};
+        const auto reset=[&]{tray.reset();iconPressed=false;duringPress={};inMenu={};};
         tray=std::make_unique<gpu::TrayController>(static_cast<HWND>(host.hwnd()),trayMessage,RegisterWindowMessageW(L"TaskbarCreated"),gpu::TrayPlatform{
             [](DWORD,NOTIFYICONDATAW&){return true;},[](HWND,int,UINT,UINT){return true;},[](HWND,int){},
-            [](HWND,POINT,const std::vector<gpu::TrayMenuItem>&){return gpu::TrayAction::none;},[]{return DWORD{};},[](HWND){return false;},
+            [&](HWND,POINT,const std::vector<gpu::TrayMenuItem>&){if(inMenu)inMenu();return gpu::TrayAction::none;},[]{return DWORD{};},[](HWND){return false;},
             [&](HWND){++pressQueries;if(duringPress)duringPress();return iconPressed;}});
         try{need(tray->start(LoadIconW(nullptr,IDI_APPLICATION),L"Idle trace"),"The trace's tray starts");tray->setMenu({{gpu::TrayAction::openOverlay,L"Open overlay"}});body();}
         catch(...){reset();throw;}
         reset();};
+    // The icon's menu (NIN_SELECT): its owner takes the foreground when
+    // Windows lets it (granted), then its modal loop dispatches this
+    // thread's messages, never the host's pump, until the menu is dismissed
+    // after the given seconds or the HUD's close starts. True when the close
+    // started inside it.
+    const auto openTrayMenu=[&](bool granted,double seconds){bool closedInMenu{};
+        inMenu=[&]{if(granted)activateApplication(true);const auto until=clock()+seconds;MSG message{};
+            while(opened()&&clock()<until){
+                if(!PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){(void)MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);continue;}
+                if(message.message==WM_QUIT){PostQuitMessage(static_cast<int>(message.wParam));break;}
+                TranslateMessage(&message);DispatchMessageW(&message);}
+            closedInMenu=!opened();};
+        (void)onAppMessage(NativeMessage{host.hwnd(),trayMessage,0,MAKELPARAM(NIN_SELECT,1)});inMenu={};return closedInMenu;};
     withTray([&]{iconPressed=true;openHUD();
     {activateApplication(false);const auto at=clock();
      holdCheck(!applicationActive&&!closeForFocusLoss(at)&&opened()&&trayFocusLossAt==at+trayPressGrace,"A press on the tray icon over the open HUD waits for its menu instead of closing it");
      pump(at+trayPressGrace-.05-clock(),{});holdCheck(opened()&&trayFocusLossAt.has_value(),"The HUD stays open while the press waits for its menu");
      activateApplication(true);holdCheck(applicationActive&&!trayFocusLossAt,"The menu's activation claims the press");
      pump(.3,{});holdCheck(opened(),"A press the menu claimed closes nothing after the wait");}
-    // A press no menu claims (dragged off the icon, held past the wait, or a
-    // menu refused the foreground): the close follows at the end of the
-    // wait (a host deadline), on its frames.
+    // Through the icon's menu: its owner takes the foreground, the menu
+    // stays up past the wait and is dismissed; the HUD stays open.
+    {activateApplication(false);holdCheck(!closeForFocusLoss(clock())&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+     holdCheck(!openTrayMenu(true,trayPressGrace+.3)&&opened()&&applicationActive&&!trayFocusLossAt,"The open HUD stays open through a menu whose owner took the foreground");
+     pump(.3,{});holdCheck(opened(),"Nothing closes after that menu");}
+    // A press no menu claims (dragged off the icon, held past the wait): the
+    // close follows at the end of the wait (a host deadline), on its frames.
     {activateApplication(false);const auto at=OverlayHost::clockNow();
      holdCheck(!closeForFocusLoss(clock())&&opened()&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
      pump(trayPressGrace+1,[&]{return !opened();});const auto started=OverlayHost::clockNow()-at;
@@ -561,6 +579,18 @@ int Application::Impl::runIdleTrace(){
      std::cout<<"Idle trace unclaimed tray press close: "<<elapsed<<" s (wait "<<trayPressGrace<<" s, transition deadline "<<closingTransitionBound<<" s)\n";
      holdCheck(closed()&&!host.stats().visible&&!trayFocusLossAt&&elapsed-trayPressGrace<closingTransitionBound,"A press no menu claimed closes the HUD on its frames before the transition deadline");
      activateApplication(true);}
+    // A menu whose owner was refused the foreground: no activation claims
+    // the press, and that menu (which then ignores clicks outside it) may
+    // stay up for as long as the user leaves it. The host's deadline never
+    // comes inside its loop; the HUD's close starts there at the end of the
+    // wait.
+    openHUD();
+    {activateApplication(false);const auto at=OverlayHost::clockNow();
+     holdCheck(!closeForFocusLoss(clock())&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+     const bool closedInMenu=openTrayMenu(false,trayPressGrace+1);const auto started=OverlayHost::clockNow()-at;
+     holdCheck(closedInMenu&&!trayFocusLossAt&&started>=trayPressGrace-.02,"A menu refused the foreground starts the HUD's close inside its loop at the end of the press's wait");
+     host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);
+     holdCheck(closed()&&!host.stats().visible,"The HUD closes after a menu refused the foreground");activateApplication(true);}
     // Asking the shell dispatched the menu's activation (the application is
     // active again when the tray answers): nothing waits and nothing closes.
     openHUD();

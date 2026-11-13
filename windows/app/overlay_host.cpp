@@ -605,7 +605,7 @@ struct OverlayHost::Impl {
         const auto handlers = callbacks;
         // WM_WTSSESSION_CHANGE (0x02B1) arrives only after the owner registered
         // for session notifications (lock/disconnect suspend the HUD).
-        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE||message==WM_DEVICECHANGE||message==0x02B1;
+        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||(message==WM_TIMER&&w!=gateTimer)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE||message==WM_DEVICECHANGE||message==0x02B1;
         if(ownerNotice&&ready&&handlers&&handlers->appMessage){
             const auto result=handlers->appMessage({target,message,w,l});
             if(result)return static_cast<LRESULT>(*result);

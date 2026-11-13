@@ -197,7 +197,8 @@ void run(){
       {const auto closes=focusCloses;const auto [action,notices]=menu(TrayAction::quit);
        check(action==TrayAction::quit&&open&&focusCloses==closes&&!pending&&shell.returns.empty()&&shell.notices.size()==notices,"Quit chosen over the open HUD after a press on the icon is the application's to run");}
       // (e) A press no menu claims (dragged off the icon, or a menu refused
-      // the foreground): the close follows at the end of the wait.
+      // the foreground): the close follows at the end of the wait (the
+      // application's, inside a menu's loop too: checked in its idle trace).
       {const auto closes=focusCloses;SendMessageW(hudWindow,WM_ACTIVATEAPP,FALSE,0);
        check(open&&hud.stats().visible&&pending&&focusCloses==closes,"A press on the icon waits for the menu");
        expire();check(!open&&!hud.stats().visible&&focusCloses==closes+1,"A press no menu claimed closes the HUD at the end of the wait");
