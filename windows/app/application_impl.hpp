@@ -438,10 +438,12 @@ struct Application::Impl {
     // shows it (trayAction, forwardedActivation).
     bool hudShowing() const noexcept;
     // After a tray menu item's trayAction (never the summon hotkey): the
-    // HUD it left not showing (Preview Charging, an opening a closing HUD
-    // ignores, an action Projection defers) takes no foreground, so the
-    // tray hands it back (TrayController::returnFocus) from the menu's
-    // never-shown owner. An item that showed the HUD keeps it.
+    // HUD it left not showing (Preview Charging over a hidden or closing
+    // HUD or during Projection, an opening a closing HUD ignores, an action
+    // Projection defers) takes no foreground, so the tray hands it back
+    // (TrayController::returnFocus) from the menu's never-shown owner. An
+    // item that showed the HUD keeps it, as does any item chosen over the
+    // open HUD a press on the icon left open (trayAction shows it again).
     bool trayReturnsFocus(bool hotkey) const noexcept;
     void forwardedActivation(std::span<const std::string>);
     void updateTrayMenu();
