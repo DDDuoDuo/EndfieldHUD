@@ -47,11 +47,19 @@ TrayPlatform nativeTrayPlatform(){return {
     },[]{return GetLastError();},
     // The menu's owner holds the foreground: an open HUD takes it back, as
     // when the menu took the foreground for the HUD window itself.
-    [](HWND owner){return IsWindowVisible(owner)&&SetForegroundWindow(owner)!=FALSE;}};}
+    [](HWND owner){return IsWindowVisible(owner)&&SetForegroundWindow(owner)!=FALSE;},
+    // The taskbar's process holds the foreground (a press anywhere on the
+    // taskbar, the notification area included) and the cursor is on our
+    // icon. The icon's rectangle is asked only then, while Explorer runs.
+    [](HWND owner){
+        DWORD front{},shell{};const auto foreground=GetForegroundWindow();const auto taskbar=FindWindowW(L"Shell_TrayWnd",nullptr);
+        if(!foreground||!taskbar||!GetWindowThreadProcessId(foreground,&front)||!GetWindowThreadProcessId(taskbar,&shell)||front!=shell)return false;
+        NOTIFYICONIDENTIFIER id{};id.cbSize=sizeof(id);id.hWnd=owner;id.uID=iconID;RECT icon{};POINT cursor{};
+        return SUCCEEDED(Shell_NotifyIconGetRect(&id,&icon))&&GetCursorPos(&cursor)&&PtInRect(&icon,cursor);}};}
 TrayController::TrayController(HWND owner,UINT callback,UINT taskbarCreated,TrayPlatform platform):owner_(owner),thread_(GetCurrentThreadId()),callback_(callback),taskbarCreated_(taskbarCreated),platform_(std::move(platform)){
     need(owner&&IsWindow(owner)&&GetWindowThreadProcessId(owner,nullptr)==thread_,"Tray needs its existing owner-thread window");
     need(callback>=WM_APP&&callback<=0xbfff&&taskbarCreated>=0xc000&&taskbarCreated<=0xffff,"Tray needs dedicated native message IDs");
-    need(platform_.notify&&platform_.registerHotkey&&platform_.unregisterHotkey&&platform_.menu&&platform_.lastError&&platform_.returnFocus,"Tray platform is incomplete");
+    need(platform_.notify&&platform_.registerHotkey&&platform_.unregisterHotkey&&platform_.menu&&platform_.lastError&&platform_.returnFocus&&platform_.iconPressed,"Tray platform is incomplete");
     // Without it (Windows out of window resources) the menu falls back to
     // the icon's own window rather than losing the tray.
     menuOwner_=createMenuOwner();

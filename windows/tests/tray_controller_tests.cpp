@@ -15,13 +15,17 @@ struct Fake {
     unsigned registrations{},menus{};bool registrationFails{},shellFails{},legacy{},focusTaken{};
     POINT anchor{};HWND menuOwner{};TrayAction choice{TrayAction::none};std::function<void()>inMenu;
     std::vector<HWND>returns;std::size_t returnedAt{};
+    // iconPressed: the answer, a stand-in for messages Explorer sends while
+    // the icon's rectangle is asked, and the windows it was asked for.
+    bool pressed{};std::function<void()>duringPress;std::vector<HWND>pressQueries;
     TrayPlatform platform(){return {
         [this](DWORD kind,NOTIFYICONDATAW&v){notices.push_back(kind);data.push_back(v);return !shellFails&&!(legacy&&kind==NIM_SETVERSION);},
         [this](HWND,int id,UINT modifiers,UINT key){++registrations;if(registrationFails)return false;check(!keys.contains(id),"Hotkey replacement never overwrites a registered ID");keys.emplace(id,TrayHotkey{modifiers,key});return true;},
         [this](HWND,int id){check(keys.erase(id)==1,"Only own registered hotkeys are released");},
         [this](HWND owner,POINT p,const std::vector<TrayMenuItem>&){++menus;anchor=p;menuOwner=owner;if(inMenu)inMenu();return choice;},
         []{return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);},
-        [this](HWND owner){returns.push_back(owner);returnedAt=notices.size();return focusTaken;}};}
+        [this](HWND owner){returns.push_back(owner);returnedAt=notices.size();return focusTaken;},
+        [this](HWND owner){pressQueries.push_back(owner);if(duringPress)duringPress();return pressed;}};}
 };
 void run(){
     constexpr UINT callback=WM_APP+210;const auto explorer=RegisterWindowMessageW(L"EndfieldHUD.Isolated.Tray.Restart");
@@ -34,6 +38,12 @@ void run(){
     check(tray.start(icon,L"EndfieldHUD"),"One explicit start registers a tray icon");
     check(fake.notices==std::vector<DWORD>{NIM_ADD,NIM_SETVERSION}&&fake.data[0].uCallbackMessage==callback&&fake.data[1].uVersion==NOTIFYICON_VERSION_4,"Shell version is negotiated after each add");
     check(!tray.updateIcon(icon,L"EndfieldHUD")&&fake.notices.size()==2,"Unchanged icon produces no Shell traffic");
+    // A press on the icon is asked of the shell for the icon's own window.
+    fake.pressed=true;check(tray.iconPressed()&&fake.pressQueries==std::vector<HWND>{hwnd},"A press on the installed icon is asked for the icon's own window");
+    fake.pressed=false;check(!tray.iconPressed()&&fake.pressQueries.size()==2,"No press on the icon is reported as none");
+    {auto incomplete=fake.platform();incomplete.iconPressed={};rejects([&]{TrayController missing(hwnd,callback+5,explorer,std::move(incomplete));},"A tray platform without iconPressed is incomplete");}
+    // Natively: a window with no icon is never pressed (no input is injected).
+    check(!nativeTrayPlatform().iconPressed(hwnd),"The native press check answers false for a window with no icon");
     fake.shellFails=true;check(!tray.updateIcon(replacement,L"测试")&&tray.lastError()!=0,"Failed Shell update is observable");fake.shellFails=false;
     check(tray.updateIcon(replacement,L"测试")&&fake.data.back().hIcon==replacement,"Explicit retry sends a previously failed icon value");
     tray.setMenu({{TrayAction::none,L"Battery",false},{TrayAction::none,{},false,false,true},{TrayAction::openOverlay,L"打开浮层\tCtrl + `"},{TrayAction::quit,L"退出 EndfieldHUD"},{TrayAction::checkUpdates,L"检查更新",false}});
@@ -87,6 +97,10 @@ void run(){
      check(fake.returns.size()==5&&fake.notices.size()==notices+1,"A shown HUD that takes the foreground back keeps it");}
     const auto before=fake.notices.size();const auto registered=fake.registrations;SendMessageW(hwnd,explorer,0,0);
     check(fake.notices.size()==before+2&&fake.notices[before]==NIM_ADD&&fake.notices.back()==NIM_SETVERSION&&fake.registrations==registered,"Explorer restart restores icon without duplicating shortcut or polling");
+    // An Explorer restart whose add fails leaves no icon to press until the next one.
+    {fake.shellFails=true;SendMessageW(hwnd,explorer,0,0);fake.shellFails=false;fake.pressed=true;const auto queries=fake.pressQueries.size();
+     check(!tray.visible()&&!tray.iconPressed()&&fake.pressQueries.size()==queries,"An icon a failed restart did not add is never pressed and the shell is not asked");
+     SendMessageW(hwnd,explorer,0,0);fake.pressed=false;check(tray.visible(),"The next Explorer restart adds the icon again");}
     SendMessageW(hwnd,WM_CLIPBOARDUPDATE,0,0);SendMessageW(hwnd,WM_POWERBROADCAST,PBT_APMPOWERSTATUSCHANGE,0);check(serviceEvents==2,"Existing hidden host routes native service notifications");
     rejects([&]{tray.setMenu({{TrayAction::quit,L"one"},{TrayAction::quit,L"two"}});},"Duplicate action is rejected before mutation");
     rejects([&]{tray.setHotkey(TrayHotkey{MOD_CONTROL,VK_F12});},"Windows-reserved debugger shortcut is not registered");
@@ -162,6 +176,7 @@ void run(){
           "Preview Charging leaves the HUD hidden and then returns the notification area's focus");}
      hudTray.stop();hudRoute=nullptr;hud.destroy();}
     tray.stop();const auto stopped=fake.notices.size();tray.stop();tray.returnFocus();check(fake.notices.size()==stopped&&fake.notices.back()==NIM_DELETE&&!tray.message(explorer,0,0),"Stop removes icon once and ignores queued lifecycle messages and focus hand-backs");
+    {fake.pressed=true;const auto queries=fake.pressQueries.size();check(!tray.iconPressed()&&fake.pressQueries.size()==queries,"A stopped tray's icon is never pressed and the shell is not asked");fake.pressed=false;}
     fake.legacy=true;check(tray.start(icon,L"Legacy"),"Version negotiation failure retains legacy icon");fake.choice=TrayAction::openOverlay;
     tray.message(callback,1,WM_LBUTTONUP);check(tray.takeAction()==TrayAction::openOverlay,"Legacy icon callback remains usable");tray.stop();route=nullptr;host.destroy();
 }

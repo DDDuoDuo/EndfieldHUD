@@ -29,6 +29,12 @@ struct TrayPlatform {
     // owner, only while it is shown: a hidden HUD window never becomes the
     // foreground. Answers whether the shown HUD window took it.
     std::function<bool(HWND)>returnFocus;
+    // Whether the deactivation being handled is a press on the shell HWND's
+    // (the HUD window's) own icon: the foreground window is in the
+    // taskbar's process (Shell_TrayWnd, looked up on every call) and the
+    // cursor is on the icon's rectangle. A press on the HUD itself activates
+    // our own process, never the taskbar's.
+    std::function<bool(HWND)>iconPressed;
 };
 TrayPlatform nativeTrayPlatform();
 // Borrows the persistent shell HWND and HICON; creates no timer or worker,
@@ -62,6 +68,11 @@ public:
     // showed the HUD: the notification area would take the foreground from
     // it, and Close when focus lost would close it.
     void returnFocus();
+    // Explorer took the foreground with a press on this icon (on the Mac the
+    // status item's menu never deactivates the app, so Close when focus
+    // lost holds for the menu: Application::Impl::closeForFocusLoss). False
+    // once stopped and while the icon is not installed.
+    bool iconPressed()const{onThread();return running_&&installed_&&platform_.iconPressed(owner_);}
     void stop()noexcept;
     bool visible()const noexcept{return installed_;}
     std::optional<TrayHotkey>hotkey()const noexcept{return hotkey_;}
