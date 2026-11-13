@@ -3164,6 +3164,30 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // The tray's foreground hand-back after a menu item's trayAction
+                // (onAppMessage asks trayReturnsFocus): none after an item that
+                // opens the HUD, which keeps the foreground as on the Mac (a
+                // NIM_SETFOCUS would give it to the notification area and Close
+                // when focus lost would close the HUD), nor after the summon
+                // hotkey; one after an item that leaves the HUD hidden and after
+                // an opening the closing HUD ignores. TrayAction::none stands for
+                // Preview Charging, which changes no lifecycle (its preview shows
+                // the charge window); Check for Updates opens About as About does.
+                {const auto trayCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                 perform(lifecycle.toggle(),t);trayAction(gpu::TrayAction::settings,false,t);
+                 trayCheck(closing&&lifecycle.phase()==core::SystemOverlayPhase::closing&&!hudShowing()&&trayReturnsFocus(false)&&!trayReturnsFocus(true),
+                     "A tray item the closing HUD ignores hands the foreground back from the menu; the summon hotkey never does");
+                 t=run(t,1.2);trayAction(gpu::TrayAction::none,false,t);
+                 trayCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&!hudShowing()&&trayReturnsFocus(false)&&!trayReturnsFocus(true),
+                     "A tray item that leaves the HUD hidden hands the foreground back from the menu; the summon hotkey never does");
+                 for(const auto item:{gpu::TrayAction::openOverlay,gpu::TrayAction::settings,gpu::TrayAction::about,gpu::TrayAction::workMode}){
+                     trayAction(item,false,t);
+                     trayCheck(lifecycle.phase()==core::SystemOverlayPhase::opening&&hudShowing()&&!trayReturnsFocus(false),"A tray item that opens the HUD leaves the foreground with it");
+                     t=run(t,1.2);trayCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&!trayReturnsFocus(false),"The tray-opened HUD opens and keeps the foreground");
+                     perform(lifecycle.toggle(),t);t=run(t,1.2);need(lifecycle.phase()==core::SystemOverlayPhase::closed,"The tray-opened HUD closes again");}
+                 // Back to the HUD the checks below start from: open on Notes.
+                 perform(lifecycle.openOverlay(),t);t=run(t,1.2);perform(lifecycle.selectModule(core::Module::notes),t);t=run(t,.5);
+                 need(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"The HUD opens on Notes again after the tray checks");}
                 // The HUD close's shell (Mac 5b2a9d3, 48584b5): input stops at its start, and
                 // every native layer (they all sample canvasOpacity) fades on the opening's
                 // .24 s fade reversed with an ease-in, ending with the Watch exit clip; the

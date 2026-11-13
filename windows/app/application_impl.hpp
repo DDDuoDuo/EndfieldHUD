@@ -419,6 +419,15 @@ struct Application::Impl {
     // finished (ProjectionHandoff's external action), so its opening is the
     // return to the module the HUD left (lifecycle.returnFromProjection).
     void trayAction(gpu::TrayAction, bool hotkey, double time, bool fromProjection = false);
+    // The HUD is opening or open (not hidden, not closing): an activation
+    // shows it (trayAction, forwardedActivation).
+    bool hudShowing() const noexcept;
+    // After a tray menu item's trayAction (never the summon hotkey): the
+    // HUD it left not showing (Preview Charging, an opening a closing HUD
+    // ignores, an action Projection defers) takes no foreground, so the
+    // tray hands it back (TrayController::returnFocus) from the menu's
+    // never-shown owner. An item that showed the HUD keeps it.
+    bool trayReturnsFocus(bool hotkey) const noexcept;
     void forwardedActivation(std::span<const std::string>);
     void updateTrayMenu();
     void sessionEnding(SessionEnd, std::uint32_t reason);

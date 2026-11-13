@@ -2188,8 +2188,10 @@ void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double tim
     case gpu::TrayAction::workMode:perform(fromProjection?lifecycle.returnFromProjection(time):lifecycle.openWorkMode(time),time);break;
     default:break;
     }
-    if(visibleMode()&&session->phase()!=core::VisibilityPhase::concealed&&!closing&&!stopping){host.show();refresh(time);}
+    if(visibleMode()&&hudShowing()&&!stopping){host.show();refresh(time);}
 }
+bool Application::Impl::hudShowing()const noexcept{return session->phase()!=core::VisibilityPhase::concealed&&!closing;}
+bool Application::Impl::trayReturnsFocus(bool hotkey)const noexcept{return !hotkey&&!stopping&&!hudShowing();}
 void Application::Impl::forwardedActivation(std::span<const std::string>values){
     if(!ready||stopping)return;
     std::vector<std::string_view>views(values.begin(),values.end());
@@ -2201,13 +2203,13 @@ void Application::Impl::forwardedActivation(std::span<const std::string>values){
     case core::ForwardedActivation::reopen:
         if(projectionHandoff.active()){projectionTrayAction=gpu::TrayAction::openOverlay;refresh(time);break;}
         perform(lifecycle.reopen(),time);
-        if(visibleMode()&&session->phase()!=core::VisibilityPhase::concealed&&!closing){host.show();refresh(time);}
+        if(visibleMode()&&hudShowing()){host.show();refresh(time);}
         break;
     case core::ForwardedActivation::toggle:
         // The summon hotkey's open/close toggle (the section 9 gate drives it).
         if(projectionHandoff.active()){projectionTrayAction=gpu::TrayAction::openOverlay;refresh(time);break;}
         perform(lifecycle.toggle(),time);
-        if(visibleMode()&&session->phase()!=core::VisibilityPhase::concealed&&!closing){host.show();refresh(time);}
+        if(visibleMode()&&hudShowing()){host.show();refresh(time);}
         break;
     case core::ForwardedActivation::none:break;
     }
