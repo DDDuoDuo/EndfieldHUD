@@ -227,10 +227,9 @@ void Application::Impl::onApplicationActive(bool active){
     if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
     if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendarSystemChanged();updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
-    // The shell is asked about a press on the icon only while the HUD shows.
-    if(ready&&visibleMode()&&!active)(void)closeForFocusLoss(now(),hudShowing()&&tray&&tray->iconPressed());
+    if(ready&&visibleMode()&&!active)(void)closeForFocusLoss(now());
 }
-bool Application::Impl::closeForFocusLoss(double time,bool trayPress){
+bool Application::Impl::closeForFocusLoss(double time,bool trayMenuWait){
     if(!ready||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return false;
     // Source exempts its own file panels and active shelf drag/drop (the drag
     // loop and its retract, hidden and restore presentation: hiding the
@@ -241,10 +240,11 @@ bool Application::Impl::closeForFocusLoss(double time,bool trayPress){
     // A press on our tray icon: the Mac's status item opens its menu without
     // deactivating the app, so the HUD stays open and key. The close waits
     // for the menu's owner to take the foreground (onApplicationActive), and
-    // follows after the grace if it never does (onDeadline). Asking the
-    // shell can dispatch its messages: when one of them opened the menu and
-    // activated us meanwhile, nothing waits and nothing closes.
-    if(trayPress){if(!applicationActive){trayFocusLossAt=time+trayPressGrace;scheduleDeadline();}return false;}
+    // follows after the grace if it never does (onDeadline). The shell
+    // is asked only here, once a close would follow. Asking it can dispatch
+    // its messages: when one of them opened the menu and activated us
+    // meanwhile, nothing waits and nothing closes.
+    if(trayMenuWait&&tray&&tray->iconPressed()){if(!applicationActive){trayFocusLossAt=time+trayPressGrace;scheduleDeadline();}return false;}
     perform(lifecycle.close(),time);return true;
 }
 
@@ -287,7 +287,7 @@ void Application::Impl::onDeadline(double time){
     // A press on the tray icon that no menu claimed (dragged off the icon,
     // held past the grace, or a menu refused the foreground): the close
     // Close when focus lost would have made at the press.
-    if(trayFocusLossAt&&*trayFocusLossAt<=time){trayFocusLossAt.reset();if(!applicationActive)(void)closeForFocusLoss(time);}
+    if(trayFocusLossAt&&*trayFocusLossAt<=time){trayFocusLossAt.reset();if(!applicationActive)(void)closeForFocusLoss(time,false);}
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(hostTime(time))||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,hostTime(time));}},"deadline");
     time=hostTime(time);
     if(artwork)automationChanged();

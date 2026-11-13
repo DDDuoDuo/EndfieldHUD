@@ -526,15 +526,27 @@ int Application::Impl::runIdleTrace(){
      SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,TRUE,0);}
     // A press on our tray icon over the open HUD: Explorer takes the
     // foreground at the press (WM_ACTIVATEAPP FALSE), then the icon's menu's
-    // owner takes it back (TRUE). The trace asks the close as production
-    // does for a press TrayController::iconPressed reports. As on the Mac,
-    // whose status item menu never deactivates the app, the close waits for
-    // the menu (trayFocusLossAt) and the menu's activation claims it.
+    // owner takes it back (TRUE). As on the Mac, whose status item menu never
+    // deactivates the app, the close waits for the menu (trayFocusLossAt)
+    // and the menu's activation claims it. The trace asks the focus-loss
+    // close WM_ACTIVATEAPP asks in production (above), and has no tray icon
+    // of its own: a tray over a stand-in platform answers whether the
+    // deactivation is a press on its icon (TrayController::iconPressed).
     const auto activateApplication=[&](bool active){SendMessageW(static_cast<HWND>(host.hwnd()),WM_ACTIVATEAPP,active?TRUE:FALSE,0);};
     const auto holdCheck=[&](bool value,const char*why){need(value,why);};
-    openHUD();
+    bool iconPressed{};unsigned pressQueries{};std::function<void()>duringPress;
+    const auto withTray=[&](const std::function<void()>&body){need(!tray,"The idle trace has no tray of its own");
+        const auto reset=[&]{tray.reset();iconPressed=false;duringPress={};};
+        tray=std::make_unique<gpu::TrayController>(static_cast<HWND>(host.hwnd()),trayMessage,RegisterWindowMessageW(L"TaskbarCreated"),gpu::TrayPlatform{
+            [](DWORD,NOTIFYICONDATAW&){return true;},[](HWND,int,UINT,UINT){return true;},[](HWND,int){},
+            [](HWND,POINT,const std::vector<gpu::TrayMenuItem>&){return gpu::TrayAction::none;},[]{return DWORD{};},[](HWND){return false;},
+            [&](HWND){++pressQueries;if(duringPress)duringPress();return iconPressed;}});
+        try{need(tray->start(LoadIconW(nullptr,IDI_APPLICATION),L"Idle trace"),"The trace's tray starts");tray->setMenu({{gpu::TrayAction::openOverlay,L"Open overlay"}});body();}
+        catch(...){reset();throw;}
+        reset();};
+    withTray([&]{iconPressed=true;openHUD();
     {activateApplication(false);const auto at=clock();
-     holdCheck(!applicationActive&&!closeForFocusLoss(at,true)&&opened()&&trayFocusLossAt==at+trayPressGrace,"A press on the tray icon over the open HUD waits for its menu instead of closing it");
+     holdCheck(!applicationActive&&!closeForFocusLoss(at)&&opened()&&trayFocusLossAt==at+trayPressGrace,"A press on the tray icon over the open HUD waits for its menu instead of closing it");
      pump(at+trayPressGrace-.05-clock(),{});holdCheck(opened()&&trayFocusLossAt.has_value(),"The HUD stays open while the press waits for its menu");
      activateApplication(true);holdCheck(applicationActive&&!trayFocusLossAt,"The menu's activation claims the press");
      pump(.3,{});holdCheck(opened(),"A press the menu claimed closes nothing after the wait");}
@@ -542,7 +554,7 @@ int Application::Impl::runIdleTrace(){
     // menu refused the foreground): the close follows at the end of the
     // wait (a host deadline), on its frames.
     {activateApplication(false);const auto at=OverlayHost::clockNow();
-     holdCheck(!closeForFocusLoss(clock(),true)&&opened()&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+     holdCheck(!closeForFocusLoss(clock())&&opened()&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
      pump(trayPressGrace+1,[&]{return !opened();});const auto started=OverlayHost::clockNow()-at;
      holdCheck((lifecycle.phase()==P::closing||closed())&&started>=trayPressGrace-.02,"A press no menu claimed starts the close at the end of the wait, not before");
      host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);const auto elapsed=OverlayHost::clockNow()-at;
@@ -550,16 +562,20 @@ int Application::Impl::runIdleTrace(){
      holdCheck(closed()&&!host.stats().visible&&!trayFocusLossAt&&elapsed-trayPressGrace<closingTransitionBound,"A press no menu claimed closes the HUD on its frames before the transition deadline");
      activateApplication(true);}
     // Asking the shell dispatched the menu's activation (the application is
-    // active again when the close is asked): nothing waits and nothing closes.
+    // active again when the tray answers): nothing waits and nothing closes.
     openHUD();
-    {holdCheck(applicationActive&&!closeForFocusLoss(clock(),true)&&opened()&&!trayFocusLossAt,"A press the menu claimed while the shell was asked waits for nothing");
-     pump(trayPressGrace+.3,{});holdCheck(opened(),"Nothing closes after it");}
-    // Close when focus lost off: a press waits for nothing and nothing closes.
-    {configuration.set("closeOnFocusLost",false);configurationPending=true;applyConfiguration(clock());activateApplication(false);
-     holdCheck(!closeForFocusLoss(clock(),true)&&opened()&&!trayFocusLossAt,"With Close when focus lost off a press on the tray icon waits for nothing");
+    {activateApplication(false);duringPress=[&]{activateApplication(true);};const auto queries=pressQueries;
+     holdCheck(!closeForFocusLoss(clock())&&pressQueries==queries+1&&applicationActive&&opened()&&!trayFocusLossAt,"A press the menu claimed while the shell was asked waits for nothing");
+     duringPress={};pump(trayPressGrace+.3,{});holdCheck(opened(),"Nothing closes after it");}
+    // Close when focus lost off: the shell is not asked and nothing closes.
+    {configuration.set("closeOnFocusLost",false);configurationPending=true;applyConfiguration(clock());activateApplication(false);const auto queries=pressQueries;
+     holdCheck(!closeForFocusLoss(clock())&&pressQueries==queries&&opened()&&!trayFocusLossAt,"With Close when focus lost off the tray is not asked about a press and nothing waits");
      pump(trayPressGrace+.3,{});holdCheck(opened(),"With Close when focus lost off nothing closes after a press on the tray icon");
      activateApplication(true);configuration.set("closeOnFocusLost",true);configurationPending=true;applyConfiguration(clock());}
-    closeHUD();
+    // A deactivation that is no press on the icon closes the HUD at once.
+    {iconPressed=false;activateApplication(false);
+     holdCheck(closeForFocusLoss(clock())&&!trayFocusLossAt&&(lifecycle.phase()==P::closing||closed()),"A deactivation that is no press on the tray icon closes the HUD at once");
+     host.setFrameDemand(demand(clock()));host.invalidate();pump(closingTransitionBound+1,closed);need(closed(),"The traced HUD closed");activateApplication(true);}});
     // Reduce Motion (the preference, or Windows "Animation effects" off):
     // the close conceals the source at once and, as on the Mac
     // (HUDSourceWatchAnimation.close calls its completion), finishes there
@@ -592,11 +608,11 @@ int Application::Impl::runIdleTrace(){
      need(closed()&&!host.stats().visible&&host.stats().frames==framesBefore,"Escape closes the Reduce Motion HUD without a frame");}
     // A tray press's wait ends with the HUD it held: Escape's close (hidden
     // inside the request under Reduce Motion) ends it, and so does an opening.
-    openHUD();
-    {activateApplication(false);holdCheck(!closeForFocusLoss(clock(),true)&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
+    withTray([&]{iconPressed=true;openHUD();
+     activateApplication(false);holdCheck(!closeForFocusLoss(clock())&&trayFocusLossAt.has_value(),"A press on the tray icon waits for its menu");
      (void)onKey({KeyKind::down,VK_ESCAPE});holdCheck(closed()&&!trayFocusLossAt,"The HUD's close ends a tray press's wait");activateApplication(true);
      trayFocusLossAt=clock()+trayPressGrace;summon();holdCheck(!trayFocusLossAt,"An opening ends a tray press's wait left from before");
-     host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");closeHUD();}
+     host.setFrameDemand(demand(clock()));pump(10,opened);need(opened(),"The traced HUD opened");closeHUD();});
     // The Windows key under Reduce Motion (the preference here; Windows
     // "Animation effects" off sets the same flag): Start's focus loss closes
     // inside WM_ACTIVATEAPP, without a frame, and the next summon opens again.
@@ -686,11 +702,11 @@ int Application::Impl::runIdleTrace(){
       trayAction(gpu::TrayAction::previewCharging,false,clock());
       need(!projectionTrayAction&&projectionHandoff.phase()==phase&&projectionHandoff.generation()==generation,
            "Preview Charging from the tray during Projection's hand-off leaves Projection and its deferred tray action untouched");}
-     // A press on the tray icon during the hand-off waits for nothing:
-     // Projection is exempt from Close when focus lost.
-     {const auto phase=projectionHandoff.phase();activateApplication(false);
-      holdCheck(!closeForFocusLoss(clock(),true)&&!trayFocusLossAt&&projectionHandoff.phase()==phase,"A press on the tray icon during Projection's hand-off waits for nothing");
-      activateApplication(true);}
+     // A press on the tray icon during the hand-off waits for nothing and
+     // the tray is not asked: Projection is exempt from Close when focus lost.
+     withTray([&]{iconPressed=true;const auto phase=projectionHandoff.phase();activateApplication(false);const auto queries=pressQueries;
+      holdCheck(!closeForFocusLoss(clock())&&pressQueries==queries&&!trayFocusLossAt&&projectionHandoff.phase()==phase,"A press on the tray icon during Projection's hand-off waits for nothing and the tray is not asked");
+      activateApplication(true);});
      (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
      const bool reopened=lifecycle.phase()==P::opening;
      need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),

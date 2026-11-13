@@ -671,11 +671,12 @@ struct Application::Impl {
     void onApplicationActive(bool);
     // Close when focus lost (Windows: another application took the
     // foreground, e.g. Start after the Windows key): closes the HUD unless
-    // an exemption holds; true when the close was asked. trayPress: the
-    // deactivation was a press on our tray icon, so the close waits for its
-    // menu instead (trayFocusLossAt) while the application stays inactive,
-    // and none follows once it is active again.
-    bool closeForFocusLoss(double time, bool trayPress = false);
+    // an exemption holds; true when the close was asked. With trayMenuWait,
+    // once no exemption holds, the tray is asked whether the deactivation
+    // was a press on its icon (TrayController::iconPressed): then the close
+    // waits for its menu instead (trayFocusLossAt) while the application
+    // stays inactive, and none follows once it is active again.
+    bool closeForFocusLoss(double time, bool trayMenuWait = true);
     void onDisplayChanged();
     void onCloseRequested();
     void onDeadline(double time);
