@@ -101,8 +101,13 @@ void MediaAssemblyCanvas::controllerChanged() {
 void MediaAssemblyCanvas::processChange() {
     const auto& document = controller_->session().document();
     if ((document ? std::optional(document->id) : std::nullopt) != sourceID_) sourceChanged();
-    // A pending page swap builds from the latest state anyway.
-    else if (!quiet_ && !transitioning() && renderedLanguage() && structure() != renderedStructure_) rerender();
+    // The Mac builds a sub-page swap's page when it lands, from the latest
+    // state; Windows built it when the swap started (Canvas::navigate). Until
+    // it lands (in flight, or settled concealed by the HUD's close) a changed
+    // structure builds that staged page again (Canvas::rerender during a
+    // swap), as StorageCanvas::changed does; renderedStructure_ is the staged
+    // build's.
+    else if (!quiet_ && renderedLanguage() && structure() != renderedStructure_) rerender();
     else refreshInPlace();
     reportError();
 }
@@ -122,9 +127,12 @@ void MediaAssemblyCanvas::sourceChanged() {
     if (!renderedLanguage()) return;
     if (document && !reload && isActive()) navigate(0, 1); else rerender();
 }
+// Until a sub-page swap lands the leaving page and the shared header keep
+// their readings: header() would reach the leaving header, and the binders
+// belong to the staged page (its build replaced them).
 void MediaAssemblyCanvas::refreshInPlace() {
     if (!renderedLanguage()) return;
-    header().setCounter(counterText());
+    if (!swapPending()) header().setCounter(counterText());
     for (const auto& binder : binders_) binder();
     layoutStage();
 }
@@ -664,6 +672,9 @@ void MediaAssemblyCanvas::scheduleExportTick() {
 void MediaAssemblyCanvas::stopExportTicker() { if (exportTicker_) cancel(exportTicker_); exportTicker_ = 0; }
 void MediaAssemblyCanvas::exportTick() {
     if (!exportShown_) { stopExportTicker(); return; }
+    // The gauge holds until a sub-page swap lands: the landed page shows it
+    // and the next tick carries on from there.
+    if (swapPending()) return;
     double shown = *exportShown_;
     const auto& session = controller_->session();
     const double target = session.exporting() ? session.progress() : (exportOutcome_ ? 1 : shown);

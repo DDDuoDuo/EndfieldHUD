@@ -77,7 +77,11 @@ struct Engine final : m::MediaAssemblyEngine {
         const unsigned w = unsigned(std::lround(fw * cw)), h = unsigned(std::lround(fh * ch));
         return {w, h, std::vector<std::uint8_t>(std::size_t(w) * h * 4, 128)};
     }
-    std::string exportMedia(const m::MediaAssemblyExportRequest&, m::MediaAssemblyExportTicket&) override { throw m::MediaAssemblyFailure(m::MediaAssemblyError::exportFailed); }
+    bool exports{};   // an export writes its destination (false: it fails)
+    std::string exportMedia(const m::MediaAssemblyExportRequest& r, m::MediaAssemblyExportTicket&) override {
+        if (exports) return r.destination;
+        throw m::MediaAssemblyFailure(m::MediaAssemblyError::exportFailed);
+    }
     void clearCaches() noexcept override {}
     bool heicEncoder() const override { return false; }
     bool samePath(const std::string& a, const std::string& b) const override { return a == b; }
@@ -351,6 +355,54 @@ void heldDrag(d::TextMeasurer& measurer) {
     check(!c.inputLocked(), "The held pan ends with the page");
     c.pointerDragged({centre.x + 40, centre.y + 30}, w.now); c.pointerUp({centre.x + 40, centre.y + 30}, w.now);
     check(c.viewport().pan().x == pan.x && c.viewport().pan().y == pan.y, "The pointer no longer pans after the page left");
+}
+
+// Until a sub-page swap lands the leaving page and the shared header keep
+// their readings, and the page that lands shows the newest export state: an
+// export that starts while Adjust leaves builds the staged page again (the
+// Windows staged page was built when the swap started), and the gauge holds
+// during the leave, then carries on from the landed page.
+void swapReadings(d::TextMeasurer& measurer) {
+    World w(measurer); w.appearance(Language::english, false, false);
+    Editor e(w); e.engine->exports = true; e.show();
+    auto& c = *e.canvas;
+    const auto label = [&](std::string_view id) {
+        std::vector<d::AccessibilityItem> items; c.accessibilityItems(items);
+        for (const auto& i : items) if (i.id == id) return i.label;
+        return std::string();
+    };
+    e.import("C:\\oracle\\fixture.png"); w.advance(1);
+    check(e.perform("tool:adjust") && e.perform("export") && e.perform("export:saveAs") && !e.panels.empty() && e.panels.back().starts_with("save "), "Save As asks for a file");
+    w.advance(1);
+    check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Adjust");
+    c.panelFinished("C:\\out\\copy.png", w.now);
+    check(c.isExporting() && c.transitioning() && c.header().counterText() == "IMG 01", "The leaving header keeps IMG 01 when an export starts (" + c.header().counterText() + ")");
+    e.q.run();
+    check(c.transitioning() && c.header().counterText() == "IMG 01", "It keeps it when the export's write finishes meanwhile (" + c.header().counterText() + ")");
+    w.advance(.2);
+    check(!c.transitioning() && c.header().counterText() == c.counterText() && c.header().counterText().ends_with("%") && label("export") == "Cancel",
+        "The landed page and header show the export (" + c.header().counterText() + ", " + label("export") + ")");
+    for (int n = 0; n < 30; ++n) w.advance(.1);
+    check(!c.isExporting() && c.header().counterText() == "IMG 01", "The export finishes");
+    w.context.overlay().clearToast();
+    // The gauge holds while the page leaves.
+    check(e.perform("tool:adjust") && e.perform("export") && e.perform("export:saveAs"), "Save As again");
+    w.advance(1);
+    c.panelFinished("C:\\out\\copy 2.png", w.now);
+    e.q.run(); w.advance(.09);
+    const auto first = c.exportShown();
+    check(first && *first > 0 && *first < 1 && c.header().counterText() == c.counterText(), "The gauge eases toward 100 % (" + c.header().counterText() + ")");
+    const auto shown = c.header().counterText();
+    check(e.key(keyOf(d::key::escape)) && c.transitioning(), "Esc leaves Adjust while the gauge runs");
+    w.advance(.09);
+    check(c.transitioning() && c.exportShown() == first && c.header().counterText() == shown && c.stage().exportText() == "Exporting " + shown,
+        "The gauge, the leaving header and the stage hold during the leave (" + c.header().counterText() + ")");
+    w.advance(.05);
+    check(!c.transitioning() && c.header().counterText() == shown, "The landed header shows the held reading");
+    w.advance(.05);
+    check(c.exportShown() > first && c.header().counterText() == c.counterText() && c.header().counterText() != shown, "The next tick carries on from the landed page (" + c.header().counterText() + ")");
+    for (int n = 0; n < 30; ++n) w.advance(.1);
+    check(!c.isExporting() && c.header().counterText() == "IMG 01", "The second export finishes");
 }
 
 // --- The Mac oracle -------------------------------------------------------------------
@@ -644,6 +696,7 @@ int main(int argc, char** argv) {
         releasedPreview(fake);
         motion(fake);
         heldDrag(fake);
+        swapReadings(fake);
         if (const auto data = loadOracle(argc > 1 ? argv[1] : nullptr, {"canvas"}, {"text", "viewport"})) {
             Oracle oracle(*data);
             oracle.viewport();
