@@ -37,7 +37,8 @@ permissions:
   # The SignPath action reads the job details and downloads the artifact to sign.
   actions: read
 concurrency:
-  # Never cancelled: a run may be waiting for a SignPath approval.
+  # Never cancelled: a run may be waiting for a SignPath approval. A further
+  # dispatch on the same ref waits behind it (GitHub keeps one pending run).
   group: windows-release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 jobs:
@@ -81,8 +82,14 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           REF: ${{ github.ref }}
+          SIGNER: ${{ vars.SIGNPATH_RELEASE_SIGNER }}
+          RELEASE_POLICY: ${{ secrets.SIGNPATH_RELEASE_POLICY_SLUG }}
         run: |
           if ($env:REF -ne 'refs/heads/main') { throw "Release signing runs on main only, not $env:REF" }
+          # Checked before any approval: the sign jobs would otherwise fall back
+          # to the test policy, and the package and finish jobs compare the signer.
+          if (-not $env:RELEASE_POLICY) { throw "The repository secret SIGNPATH_RELEASE_POLICY_SLUG is not set" }
+          if (-not $env:SIGNER) { throw "The repository variable SIGNPATH_RELEASE_SIGNER (the release certificate's name) is not set" }
           if ($env:TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "The tag '$env:TAG' is not vX.Y.Z" }
           $tagged = git rev-parse --verify --quiet "refs/tags/$($env:TAG)^{commit}"
           if ($LASTEXITCODE -ne 0 -or $tagged -ne $env:GITHUB_SHA) { throw "The tag $env:TAG is not this commit ($env:GITHUB_SHA)" }
@@ -135,6 +142,7 @@ jobs:
           name: stage
           path: release/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
       - name: Upload the programs to sign
         id: to-sign
@@ -144,6 +152,7 @@ jobs:
           name: to-sign
           path: release/to-sign/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   sign-binaries:
@@ -158,9 +167,9 @@ jobs:
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && vars.SIGNPATH_RELEASE_POLICY_SLUG || vars.SIGNPATH_TEST_POLICY_SLUG }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && secrets.SIGNPATH_RELEASE_POLICY_SLUG || secrets.SIGNPATH_TEST_POLICY_SLUG }}
           artifact-configuration-slug: binaries
           github-artifact-id: ${{ needs.build.outputs.to-sign-id }}
           wait-for-completion: true
@@ -174,6 +183,7 @@ jobs:
           name: signed-binaries
           path: signed-binaries/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   package:
@@ -219,6 +229,7 @@ jobs:
           name: packaged
           path: release/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
       - name: Upload the setup to sign
         # Not zipped, so the setup itself is what SignPath signs (artifact
@@ -230,6 +241,7 @@ jobs:
           path: release/${{ needs.build.outputs.stem }}-setup.exe
           archive: false
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   sign-setup:
@@ -243,9 +255,9 @@ jobs:
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && vars.SIGNPATH_RELEASE_POLICY_SLUG || vars.SIGNPATH_TEST_POLICY_SLUG }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ needs.build.outputs.mode == 'release' && secrets.SIGNPATH_RELEASE_POLICY_SLUG || secrets.SIGNPATH_TEST_POLICY_SLUG }}
           artifact-configuration-slug: setup
           github-artifact-id: ${{ needs.package.outputs.setup-id }}
           wait-for-completion: true
@@ -260,6 +272,7 @@ jobs:
           name: signed-setup
           path: signed-setup/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   finish:
@@ -320,6 +333,7 @@ jobs:
             release/${{ needs.build.outputs.stem }}-portable.zip
             release/${{ needs.build.outputs.stem }}-SHA256SUMS.txt
           if-no-files-found: error
+          overwrite: true
           retention-days: 90
       - name: Upload the symbols and size report (never published)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -331,4 +345,5 @@ jobs:
             release/${{ needs.build.outputs.stem }}-size-report.json
             release/${{ needs.build.outputs.stem }}-size-report.md
           if-no-files-found: error
+          overwrite: true
           retention-days: 90

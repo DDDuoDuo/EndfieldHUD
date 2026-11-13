@@ -72,6 +72,21 @@ foreach(required IN LISTS ehud_required)
     message(FATAL_ERROR "stage_release: ${required} is required")
   endif()
 endforeach()
+# Paths given relative to the current folder (the release workflow passes
+# OUT=release) made absolute: the zip steps run in other folders.
+foreach(ehud_path SOURCE OUT BUILD PACKER STUB UNINSTALLER SYMBOLS SIGNED SETUP CHECKER)
+  if(${ehud_path})
+    cmake_path(ABSOLUTE_PATH ${ehud_path} BASE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" NORMALIZE)
+  endif()
+endforeach()
+# The tree phase empties OUT: only a staging folder of this script's own.
+if("tree" IN_LIST ehud_phases AND IS_DIRECTORY "${OUT}")
+  file(GLOB ehud_existing RELATIVE "${OUT}" "${OUT}/*")
+  list(FILTER ehud_existing EXCLUDE REGEX "^(EndfieldHUD-.*-windows-x64-.*|stage|to-sign|checker)$")
+  if(ehud_existing)
+    message(FATAL_ERROR "stage_release: ${OUT} holds files this script did not stage (${ehud_existing}); give an empty or staging folder")
+  endif()
+endif()
 
 function(ehud_stage_run what)
   execute_process(COMMAND ${ARGN} RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
@@ -85,7 +100,10 @@ endfunction()
 function(ehud_check_signature file)
   set(ENV{EHUD_SIGNATURE_FILE} "${file}")
   # Called directly, not through ehud_stage_run: the script's semicolons
-  # would split it into list items there.
+  # would split it into list items there. Without PSModulePath Windows
+  # PowerShell builds its own module path: one inherited from PowerShell 7
+  # (the workflow's shell) would load the wrong Microsoft.PowerShell.Security.
+  set(ENV{PSModulePath} "")
   execute_process(COMMAND powershell -NoProfile -NonInteractive -Command
     "$s = Get-AuthenticodeSignature -LiteralPath $env:EHUD_SIGNATURE_FILE; $n = ''; if ($s.SignerCertificate) { $n = $s.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) }; Write-Output ('{0}|{1}' -f $s.Status, $n)"
     RESULT_VARIABLE result OUTPUT_VARIABLE signature ERROR_VARIABLE errors)
