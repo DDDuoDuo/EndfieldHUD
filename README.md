@@ -90,7 +90,7 @@
 </table>
 
 > [!WARNING]
-> If Windows SmartScreen shows **Windows protected your PC**, choose **More info → Run anyway**. The app isn't code-signed yet.
+> If Windows SmartScreen shows **Windows protected your PC**, choose **More info → Run anyway**. The app is signed, but SmartScreen can still warn about a new release until enough people have run it
 
 <br>
 
@@ -241,6 +241,8 @@ Allow permissions when you use the features that need them:
 </table>
 
 <sub>※ An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners.</sub>
+
+<sub>Windows: free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a>. <a href="CODE-SIGNING.md">Code signing policy</a></sub>
 
 <br>
 

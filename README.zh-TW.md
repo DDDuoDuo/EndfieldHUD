@@ -90,7 +90,7 @@
 </table>
 
 > [!WARNING]
-> 如果 Windows SmartScreen 跳出**Windows 已保護您的電腦**，點**其他資訊 → 仍要執行**。這是因為 App 目前還沒有進行簽署
+> 如果 Windows SmartScreen 跳出**Windows 已保護您的電腦**，點**其他資訊 → 仍要執行**。App 已經過簽署，但新版本在執行的人夠多之前，SmartScreen 仍可能提示
 
 <br>
 
@@ -241,6 +241,8 @@
 </table>
 
 <sub>※ 這是一個非官方同人專案。遊戲素材和品牌標誌歸鷹角網路及各自的權利人所有</sub>
+
+<sub>Windows 版由 <a href="https://about.signpath.io/">SignPath.io</a> 免費提供程式碼簽署，憑證由 <a href="https://signpath.org/">SignPath Foundation</a> 核發。<a href="CODE-SIGNING.md">程式碼簽署政策</a></sub>
 
 <br>
 

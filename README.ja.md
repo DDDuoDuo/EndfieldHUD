@@ -90,7 +90,7 @@
 </table>
 
 > [!WARNING]
-> Windows SmartScreen に **Windows によって PC が保護されました** と表示された場合は、**詳細情報 → 実行**を選んでください。アプリがまだコード署名されていないためです
+> Windows SmartScreen に **Windows によって PC が保護されました** と表示された場合は、**詳細情報 → 実行**を選んでください。アプリは署名済みですが、新しいバージョンは実行した人が十分に増えるまで SmartScreen が警告することがあります
 
 <br>
 
@@ -241,6 +241,8 @@
 </table>
 
 <sub>※ 非公式のファンプロジェクトです。ゲームの画像やブランドの権利は HYPERGRYPH および各権利者に帰属します</sub>
+
+<sub>Windows 版のコード署名は <a href="https://about.signpath.io/">SignPath.io</a> が無償で提供し、証明書は <a href="https://signpath.org/">SignPath Foundation</a> が発行しています。<a href="CODE-SIGNING.md">コード署名ポリシー</a></sub>
 
 <br>
 

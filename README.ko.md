@@ -90,7 +90,7 @@
 </table>
 
 > [!WARNING]
-> Windows SmartScreen에 **Windows의 PC 보호** 창이 뜨면 **추가 정보 → 실행**을 누르세요. 아직 코드 서명을 하지 않은 앱이기 때문이에요
+> Windows SmartScreen에 **Windows의 PC 보호** 창이 뜨면 **추가 정보 → 실행**을 누르세요. 앱은 서명되어 있지만, 새 버전은 실행한 사람이 충분히 많아지기 전까지 SmartScreen이 경고할 수 있어요
 
 <br>
 
@@ -241,6 +241,8 @@
 </table>
 
 <sub>※ 비공식 팬 프로젝트예요. 게임 아트워크와 브랜드의 권리는 HYPERGRYPH와 각 권리자에게 있어요</sub>
+
+<sub>Windows 버전의 코드 서명은 <a href="https://about.signpath.io/">SignPath.io</a>가 무료로 제공하고, 인증서는 <a href="https://signpath.org/">SignPath Foundation</a>이 발급해요. <a href="CODE-SIGNING.md">코드 서명 정책</a></sub>
 
 <br>
 
