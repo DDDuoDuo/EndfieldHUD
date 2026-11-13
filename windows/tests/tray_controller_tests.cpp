@@ -152,7 +152,8 @@ void run(){
           "With Close when focus lost on, the click on the icon closes the open HUD and the dismissed menu returns the notification area's focus");
       shell.returns.clear();}
      // Projection (the HUD window shown, the HUD itself concealed): Preview
-     // Charging hands the foreground back to the shown window, no NIM_SETFOCUS.
+     // Charging, which Projection ignores (Application::Impl::trayAction),
+     // hands the foreground back to the shown window, no NIM_SETFOCUS.
      {hud.show(false);const auto [action,notices]=menu(TrayAction::previewCharging);
       check(action==TrayAction::previewCharging&&!open&&shell.returns==std::vector<HWND>{hudWindow}&&shell.notices.size()==notices,"Preview Charging over a shown Projection window gives it the foreground back");
       shell.returns.clear();hud.hide();}

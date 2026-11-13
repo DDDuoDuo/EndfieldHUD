@@ -634,6 +634,13 @@ int Application::Impl::runIdleTrace(){
      const auto framesBefore=host.stats().frames;
      const auto command=projectionHandoff.open({session->phase()==core::VisibilityPhase::visible,quitRequested,pendingClose,false},{hudDisplay,previousApplication});
      need(command&&command->action==ProjectionHandoff::Action::closeHUD,"Projection's hand-off closes the HUD first");
+     // Preview Charging from the tray during the hand-off does nothing (Mac
+     // OverlayController.show guards isProjectionActive): no deferred action
+     // closes Projection for it, and the hand-off goes on as it was.
+     {const auto phase=projectionHandoff.phase();const auto generation=projectionHandoff.generation();
+      trayAction(gpu::TrayAction::previewCharging,false,clock());
+      need(!projectionTrayAction&&projectionHandoff.phase()==phase&&projectionHandoff.generation()==generation,
+           "Preview Charging from the tray during Projection's hand-off leaves Projection and its deferred tray action untouched");}
      (void)projectionHandoff.external(static_cast<std::uint64_t>(gpu::TrayAction::openOverlay));projectionCommand(*command,clock());
      const bool reopened=lifecycle.phase()==P::opening;
      need(!projectionHandoff.active()&&!lifecycleClosing&&host.stats().frames==framesBefore&&(reopened||closedWithoutFrame(framesBefore)),

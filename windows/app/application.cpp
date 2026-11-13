@@ -2173,6 +2173,10 @@ void Application::Impl::finishQuit(double time){
     stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
 }
 void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double time,bool fromProjection){
+    // Preview Charging during Projection (its hand-off or the shown window)
+    // does nothing, as on the Mac (OverlayController.show guards
+    // isProjectionActive): it is not deferred, so Projection stays.
+    if(action==gpu::TrayAction::previewCharging&&projectionHandoff.active())return;
     if(projectionHandoff.active()){projectionTrayAction=action;refresh(time);return;}
     // Mac 2c047e0: during Projection every AppDelegate entry reaches
     // toggleSystemOverlay -> returnFromProjection, whose completion sets the
