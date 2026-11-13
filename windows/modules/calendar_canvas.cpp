@@ -204,7 +204,7 @@ void CalendarCanvas::didDeactivate() { syncController(); }
 void CalendarCanvas::resetSession() {
     if (isActive()) return;
     selected_ = state_->today(); month_ = {selected_.year, selected_.month, 1};
-    editingID_.reset(); draft_ = {};
+    editingID_.reset(); draft_ = {}; restoresDraft_ = false;
     if (titleField_) { titleField_->setText({}); titleField_->setInvalid(false); }
     if (detailsField_) detailsField_->setText({});
     Canvas::resetSession();
@@ -411,8 +411,12 @@ void CalendarCanvas::buildEvents(d::Page& page) {
     for (const auto& bind : binders_) bind();
     page.stagger(column);
 }
-// The lazy fields' placement (:256-263) once their page is installed.
+// The lazy fields' placement (:256-263) once their page is installed. The
+// Mac restores a month change's draft when it builds the next page, at the
+// landing; here that page is built when the swap starts and the fields stay
+// with the leaving page until it installs, so the draft returns here.
 void CalendarCanvas::didInstall(d::Page& page) {
+    if (restoresDraft_) restoreDraft();
     if (fieldSlot_.page != &page || !fieldSlot_.column) return;
     auto& title = titleField();
     auto& details = detailsField();
@@ -447,7 +451,7 @@ void CalendarCanvas::changeMonth(int step) {
     if (!next || next->year < 1900 || next->year > 9999) return;
     month_ = {next->year, next->month, 1};
     selected_ = month_;
-    stopEditing();
+    stopEditing(true);
     navigate(step);
 }
 // Today enters from the side its month lies on, or re-renders in place.
@@ -455,8 +459,8 @@ void CalendarCanvas::goToday() {
     const auto today = state_->today();
     const CalendarDay target{today.year, today.month, 1};
     selected_ = today;
-    stopEditing();
-    if (target == month_) { refresh(); return; }
+    if (target == month_) { stopEditing(); refresh(); return; }
+    stopEditing(true);
     const bool forward = target > month_;
     month_ = target;
     navigate(forward ? 1 : -1);
@@ -528,14 +532,14 @@ void CalendarCanvas::pick(CalendarDay first) {
     if (target == month_) { if (day != selected_) showDay(day); return; }
     const bool forward = target > month_;
     month_ = target; selected_ = day;
-    stopEditing();
+    stopEditing(true);
     navigate(forward ? 1 : -1);
 }
 void CalendarCanvas::showDay(CalendarDay day) {
     if (day.year != month_.year || day.month != month_.month) {
         const bool forward = day > month_;
         month_ = {day.year, day.month, 1};
-        selected_ = day; stopEditing(); navigate(forward ? 1 : -1);
+        selected_ = day; stopEditing(true); navigate(forward ? 1 : -1);
         return;
     }
     selected_ = day;
@@ -563,9 +567,13 @@ void CalendarCanvas::toggle(const std::string& id) {
     titleField().setInvalid(false);
     refresh();
 }
-void CalendarCanvas::stopEditing() {
+void CalendarCanvas::stopEditing(bool leaving) {
     if (!editingID_) return;
     editingID_.reset();
+    if (leaving) restoresDraft_ = true; else restoreDraft();
+}
+void CalendarCanvas::restoreDraft() {
+    restoresDraft_ = false;
     titleField().setText(draft_.first); detailsField().setText(draft_.second);
     titleField().setInvalid(false);
 }

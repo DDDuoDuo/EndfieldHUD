@@ -895,6 +895,24 @@ void calendar(Run& run) {
         w.canvas->show(t);
         check(w.canvas->month().month == 12 && w.canvas->header().counterText() == "08 EVENTS", "The concealed swap lands counting the new event");
     }
+    {
+        // A month change while an event is open (Mac 6f87512): the leaving
+        // page keeps the event's fields as drawn, and the page the swap lands
+        // shows the draft typed before the event opened.
+        CalendarWorld w(run.measurer, run.data, true);
+        double t = 10;
+        const auto step = [&](double seconds) { t += seconds; w.harness.context.advance(t); };
+        w.canvas->titleField().setText("Synthetic draft");
+        w.canvas->perform("event:" + uuid(1));
+        check(w.canvas->titleField().text() == "Planning review", "The open event fills the fields");
+        w.canvas->perform("nextMonth");
+        step(.05);
+        check(w.canvas->transitioning() && !w.canvas->editingID() && w.canvas->titleField().text() == "Planning review",
+            "The leaving page keeps the open event's fields during the month swap");
+        step(.1);
+        check(!w.canvas->transitioning() && w.canvas->month().month == 11 && w.canvas->titleField().text() == "Synthetic draft"
+            && w.canvas->detailsField().text().empty(), "The landed month shows the draft again");
+    }
 }
 }
 

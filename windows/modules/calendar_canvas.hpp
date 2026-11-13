@@ -75,6 +75,7 @@ private:
     CalendarDay selected_, month_;
     std::optional<std::string> editingID_;
     std::pair<std::string, std::string> draft_;    // typed for a new event while another is open
+    bool restoresDraft_{};                         // the fields show the draft again when the next page installs
     bool presented_{}, controllerActive_{};
     std::optional<std::pair<std::optional<CalendarErrorCode>, std::string>> lastError_;
     std::optional<Structure> renderedStructure_;
@@ -102,7 +103,10 @@ private:
     void pick(CalendarDay first);
     void showDay(CalendarDay);
     void toggle(const std::string& id);
-    void stopEditing();
+    // `leaving`: the month changes, so the leaving page keeps the fields as
+    // drawn and the page the swap installs shows the draft again.
+    void stopEditing(bool leaving = false);
+    void restoreDraft();
     void addEvent();
     void saveEvent();
     void confirmDelete();
