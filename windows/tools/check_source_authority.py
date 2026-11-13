@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check Mac source identity without reading app data or running the app."""
+"""Check Mac source identity without reading app data or running the app.
+
+With --inputs, check the frozen Mac-exported shell inputs instead
+(windows/inputs/shell/inputs.json: every file, its size and SHA-256).
+"""
 import hashlib
 import json
 from pathlib import Path
@@ -45,10 +49,37 @@ def verify(root):
     return authority
 
 
+INPUTS = "windows/inputs/shell"
+
+
+def verify_inputs(root):
+    folder = root / INPUTS
+    manifest = json.loads((folder / "inputs.json").read_text(encoding="utf-8"))
+    failures = []
+    for relative, expected in manifest["files"].items():
+        path = folder / relative
+        if path.is_symlink() or not path.is_file():
+            failures.append(f"Missing input: {relative}")
+            continue
+        content = path.read_bytes()
+        if len(content) != expected["bytes"] or hashlib.sha256(content).hexdigest() != expected["sha256"]:
+            failures.append(f"Changed input: {relative}")
+    present = {p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()}
+    failures.extend(f"Unlisted input: {path}" for path in sorted(present - set(manifest["files"]) - {"inputs.json"}))
+    if failures:
+        raise ValueError("\n".join(failures[:20]) + (f"\n… {len(failures)} failures" if len(failures) > 20 else ""))
+    return manifest
+
+
 if __name__ == "__main__":
+    root = Path(__file__).resolve().parents[2]
     try:
-        authority = verify(Path(__file__).resolve().parents[2])
-        print(f"Mac source verified: {authority['release']} build {authority['build']} ({authority['commit'][:12]})")
+        if sys.argv[1:] == ["--inputs"]:
+            manifest = verify_inputs(root)
+            print(f"Shell inputs verified: {len(manifest['files'])} files exported {manifest['exported']} (Mac {manifest['provenance']['macCommit'][:12]})")
+        else:
+            authority = verify(root)
+            print(f"Mac source verified: {authority['release']} build {authority['build']} ({authority['commit'][:12]})")
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f"Source authority check failed: {error}", file=sys.stderr)
         sys.exit(1)

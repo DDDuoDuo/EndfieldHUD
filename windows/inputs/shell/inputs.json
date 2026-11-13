@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "description": "Frozen Mac-exported shell inputs of EndfieldHUD.exe, shipped unchanged by every Windows release since 1.2.0. CMake stages runtime-compiled-animation/ as shell/runtime-input and profile-outline-catalog.ehscene as shell/catalog.ehscene; windows/tools/check_source_authority.py --inputs checks every file below",
+  "exported": "2026-10-07",
+  "provenance": {
+    "macCommit": "6552e53e2cbdfda616bc0ff610f48c738a7f2863",
+    "swift": "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5), arm64-apple-macosx15.0",
+    "shellPacketManifestSHA256": "aa022fbe09a784de7fb23a3d80ac47e59588a60c360a4a87e2e11e46527d379e",
+    "chromeSHA256": "325eb6b1cbf66b11c4f97bac054d24aaeee9d3b1224f3cae11fd0995ee6de47e",
+    "compiledShaderManifestSHA256": "e9e82d7194bc4602df118aa7576e3ad865cf84a243c33ac2e5623843f6e42c73",
+    "catalogFrame": "desktop-shell-1280x800-top",
+    "catalogFrameSHA256": "289d57161f2c05db547b5011b09c47e3974d6ecea8e43b4c0a8dd266644899ff"
+  },
+  "recipe": [
+    "windows/tools/export_shell_packet.sh (macOS, Metal) writes the shell packet (shell-packet.json above)",
+    "windows/tools/desktop_chrome_reference.sh (macOS) writes chrome.json",
+    "windows/tools/build_watch_runtime_input.py <packet> runtime-compiled-animation --chrome chrome.json --animation-compiler compile_source_animation",
+    "windows/tools/translate_source_shaders.py, then compile_source_shaders (Windows, d3dcompiler) write compiled-shaders.json",
+    "compile_source_scene <packet> compiled-shaders.json desktop-shell-1280x800-top profile-outline-catalog.ehscene --desktop-resources --desktop-templates --profile-hover-outline-mask --include-frame desktop-shell-1280x800-arbitrary-0 --include-frame desktop-shell-1280x800-arbitrary-2"
+  ],
+  "recipeNote": "Reconstructed from the exports' own reports (provenance.json, the catalog report, runtime-input.json sourcePins); the original command lines were not recorded",
+  "catalog": "profile-outline-catalog.ehscene",
+  "files": {
+    "profile-outline-catalog.ehscene": {
+      "bytes": 8364314,
+      "sha256": "64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8"
+    },
+    "runtime-compiled-animation/parts/chrome.json": {
+      "bytes": 269680,
+      "sha256": "d86b428439a1e91b60dc02f284e1feb0e95ce2fe6996db60b3e5ef361507c3a6"
+    },
+    "runtime-compiled-animation/parts/controllerTransitions.json": {
+      "bytes": 285652,
+      "sha256": "7d7b9b5c5629297d24ace81574eb1442b0dbad5874cb91961db58ad4b03da8f6"
+    },
+    "runtime-compiled-animation/parts/frameBuilder.json": {
+      "bytes": 721153,
+      "sha256": "059bce5df4b5785746796cfaa37d784446a1b2e7c82ca62e3e4e7e9c94c47f0f"
+    },
+    "runtime-compiled-animation/parts/library.ehanim": {
+      "bytes": 1991308,
+      "sha256": "762cf845f19fd62387a62ad1eea433e7bb956000c2ccf98e345b5ced93b9b5b9"
+    },
+    "runtime-compiled-animation/parts/mountedDocument.json": {
+      "bytes": 1555716,
+      "sha256": "0eeafc7134021530c9571b5b7ca900c03684e30b7e34d12f66cb61a6a0b8c318"
+    },
+    "runtime-compiled-animation/parts/nativeBottom.json": {
+      "bytes": 381381,
+      "sha256": "8a818378e182a494f1eac88a23112f674fe25fd4a658e7cda6ac6215fe3c8749"
+    },
+    "runtime-compiled-animation/parts/nativeTop.json": {
+      "bytes": 381412,
+      "sha256": "6ca24647747400fa7e77546c11b7f6995fd22d8ae292f4462776b1b058108fc1"
+    },
+    "runtime-compiled-animation/parts/runtimeRoot.json": {
+      "bytes": 55256,
+      "sha256": "3fa05ffdebf8bf55c84bb48599019b36b7192f8cb706d39634f6bb4850b4197c"
+    },
+    "runtime-compiled-animation/parts/scene.json": {
+      "bytes": 630495,
+      "sha256": "fcfe466bc8c70eb458e8a2e6d98504d1ca8801afba13e3efb16294f29bb88ff0"
+    },
+    "runtime-compiled-animation/raster/0c12af2efa8990d09f93a5520dd969269f6e913a89b433c2358a8a8e508467e1.png": {
+      "bytes": 5729,
+      "sha256": "0c12af2efa8990d09f93a5520dd969269f6e913a89b433c2358a8a8e508467e1"
+    },
+    "runtime-compiled-animation/raster/1af11ea867000cc042076c8e57093c2c9a426c00d64cb388b2139fce87b0c29a.png": {
+      "bytes": 1649,
+      "sha256": "1af11ea867000cc042076c8e57093c2c9a426c00d64cb388b2139fce87b0c29a"
+    },
+    "runtime-compiled-animation/raster/2a66dfdbe2ff7172760d9d7677de6d605009411aa34e675442fbae8d47d52723.png": {
+      "bytes": 2356,
+      "sha256": "2a66dfdbe2ff7172760d9d7677de6d605009411aa34e675442fbae8d47d52723"
+    },
+    "runtime-compiled-animation/raster/3cd913622a8a2386e3ddc7bd74f97e4c5d32ec9ee63dc9d2dc0033db7f933f76.png": {
+      "bytes": 3103,
+      "sha256": "3cd913622a8a2386e3ddc7bd74f97e4c5d32ec9ee63dc9d2dc0033db7f933f76"
+    },
+    "runtime-compiled-animation/raster/46e015a307a6b73dd9478e9b67bc21ad54b3e1483da15b2e6443368ad880e1d8.png": {
+      "bytes": 3330,
+      "sha256": "46e015a307a6b73dd9478e9b67bc21ad54b3e1483da15b2e6443368ad880e1d8"
+    },
+    "runtime-compiled-animation/raster/5c3a623c7b7991118b38c434f92d8db2c6723b831a92a5d11d6b585b845581fc.png": {
+      "bytes": 3712,
+      "sha256": "5c3a623c7b7991118b38c434f92d8db2c6723b831a92a5d11d6b585b845581fc"
+    },
+    "runtime-compiled-animation/raster/6a21c099ac58166d3f1e28008f7f0d8cfdf84e5df2f1f3eec5b3e4c43888c0f9.png": {
+      "bytes": 2733,
+      "sha256": "6a21c099ac58166d3f1e28008f7f0d8cfdf84e5df2f1f3eec5b3e4c43888c0f9"
+    },
+    "runtime-compiled-animation/raster/6ce4c279e35365aad94faf74dff1376fc77801db7d87049f65bc7a09cf7d2f72.png": {
+      "bytes": 2470,
+      "sha256": "6ce4c279e35365aad94faf74dff1376fc77801db7d87049f65bc7a09cf7d2f72"
+    },
+    "runtime-compiled-animation/raster/8482ae6ac80a9195ea78786f463fd3efd652c5c8ce5331445bf3ea81222c83ce.png": {
+      "bytes": 4057,
+      "sha256": "8482ae6ac80a9195ea78786f463fd3efd652c5c8ce5331445bf3ea81222c83ce"
+    },
+    "runtime-compiled-animation/raster/84f47f1eb35224762220e96d583a3241de7c599bff5c730e34ffbbfd7561c9c0.png": {
+      "bytes": 3887,
+      "sha256": "84f47f1eb35224762220e96d583a3241de7c599bff5c730e34ffbbfd7561c9c0"
+    },
+    "runtime-compiled-animation/raster/884a46ec23d4f4f40c9faf807b60d5d11a7f469a07f726aa1701378dc4218f04.png": {
+      "bytes": 3221,
+      "sha256": "884a46ec23d4f4f40c9faf807b60d5d11a7f469a07f726aa1701378dc4218f04"
+    },
+    "runtime-compiled-animation/raster/a3d30ab72b11be44d91823c5d60780f2c3cf138905d1429a3a58cd9eb6d51991.png": {
+      "bytes": 1851,
+      "sha256": "a3d30ab72b11be44d91823c5d60780f2c3cf138905d1429a3a58cd9eb6d51991"
+    },
+    "runtime-compiled-animation/raster/bd49b2a3c77e4fb72c90800df25b7045b4e3616c3068f0ad4666e36763e75b01.png": {
+      "bytes": 4715,
+      "sha256": "bd49b2a3c77e4fb72c90800df25b7045b4e3616c3068f0ad4666e36763e75b01"
+    },
+    "runtime-compiled-animation/raster/c1801a116429fb004d1b5062e15e02b4fcbf8949cdb23fbcefada0673760b9d9.png": {
+      "bytes": 3647,
+      "sha256": "c1801a116429fb004d1b5062e15e02b4fcbf8949cdb23fbcefada0673760b9d9"
+    },
+    "runtime-compiled-animation/raster/dd546686ff63f9f93bcc64fdd3e653dacb3a91b9068369efd57de3ce8be9f3ac.png": {
+      "bytes": 3320,
+      "sha256": "dd546686ff63f9f93bcc64fdd3e653dacb3a91b9068369efd57de3ce8be9f3ac"
+    },
+    "runtime-compiled-animation/raster/ee67a8ee0d29f7fa0a96931c7a1c1036bfe5e0da070cb79ae3e583ee3720d1e4.png": {
+      "bytes": 2644,
+      "sha256": "ee67a8ee0d29f7fa0a96931c7a1c1036bfe5e0da070cb79ae3e583ee3720d1e4"
+    },
+    "runtime-compiled-animation/runtime-input.json": {
+      "bytes": 4732,
+      "sha256": "1a7b8d20520b5f553fede34ad3e61beab66a734fcc3191d09efe6f83819bc664"
+    }
+  }
+}

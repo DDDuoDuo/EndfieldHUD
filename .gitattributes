@@ -4,3 +4,6 @@ Resources/OrbiPom/Matter-LICENSE.txt -text
 # The shared font folder holds unmodified upstream files whose sizes and
 # SHA-256 hashes are pinned in its manifest; never convert line endings.
 Resources/Fonts/** -text
+# The frozen Mac-exported shell inputs are pinned byte for byte
+# (windows/inputs/shell/inputs.json); never convert line endings.
+windows/inputs/** -text

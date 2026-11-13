@@ -21,17 +21,12 @@ endif()
 # The same cut over the packaged source shell at rest on several displays:
 # the runtime scene's plates are found, the Map's circle reaches over them,
 # and with the presented frame they are drawn and pressed above the Map.
-set(ehud_map_layer_inputs "${EHUD_APP_INPUT_DIR}")
-if(NOT ehud_map_layer_inputs AND EHUD_MAP_RESOURCE_DIR)
-  get_filename_component(ehud_map_layer_inputs "${EHUD_MAP_RESOURCE_DIR}" DIRECTORY)
-endif()
-if(WIN32 AND BUILD_TESTING AND TARGET hud_map_owner AND TARGET hud_watch_runtime
-   AND EXISTS "${ehud_map_layer_inputs}/runtime-compiled-animation/runtime-input.json")
+if(WIN32 AND BUILD_TESTING AND TARGET hud_map_owner AND TARGET hud_watch_runtime)
   add_executable(map_occlusion_tests tests/map_occlusion_tests.cpp)
   target_compile_definitions(map_occlusion_tests PRIVATE UNICODE _UNICODE NOMINMAX)
   target_link_libraries(map_occlusion_tests PRIVATE hud_map_owner hud_watch_runtime)
   add_test(NAME map_occlusion_contracts COMMAND map_occlusion_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl
-    "${ehud_map_layer_inputs}/runtime-compiled-animation")
+    "${ehud_app_inputs}/runtime-compiled-animation")
   set_tests_properties(map_occlusion_contracts PROPERTIES TIMEOUT 300)
 endif()
 # Pin pulse cadence: the pulse is ambient motion presented at the host's 30 Hz

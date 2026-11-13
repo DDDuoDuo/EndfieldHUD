@@ -183,21 +183,20 @@ if(WIN32)
   cmake_language(DEFER CALL ehud_app_write_resource_specs)
 endif()
 
-# Runtime inputs exported on the Mac (runtime-compiled-animation,
-# profile-outline-catalog.ehscene, source-cursor.png and
-# fixtures/watch-blur.json). Defaults to the folder that holds the map inputs.
-set(EHUD_APP_INPUT_DIR "" CACHE PATH "Mac-exported EndfieldHUD runtime inputs for EndfieldHUD.exe staging")
+# Shell inputs exported on the Mac (runtime-compiled-animation and
+# profile-outline-catalog.ehscene): the frozen export tracked in inputs/shell
+# (inputs.json lists every file's SHA-256), or a folder of the same layout
+# given explicitly, for example a new export under test. The cursor and the
+# watch blur come from the Mac's own Resources/WatchSource.
+set(EHUD_APP_INPUT_DIR "" CACHE PATH "Mac-exported shell inputs of EndfieldHUD.exe (empty: windows/inputs/shell)")
 set(ehud_app_inputs "${EHUD_APP_INPUT_DIR}")
-if(NOT ehud_app_inputs AND EHUD_MAP_RESOURCE_DIR)
-  get_filename_component(ehud_inputs_parent "${EHUD_MAP_RESOURCE_DIR}" DIRECTORY)
-  if(EXISTS "${ehud_inputs_parent}/runtime-compiled-animation/runtime-input.json")
-    set(ehud_app_inputs "${ehud_inputs_parent}")
-  endif()
+if(NOT ehud_app_inputs)
+  set(ehud_app_inputs "${CMAKE_CURRENT_SOURCE_DIR}/inputs/shell")
+endif()
+if(NOT EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json" OR NOT EXISTS "${ehud_app_inputs}/profile-outline-catalog.ehscene")
+  message(FATAL_ERROR "The shell inputs folder lacks runtime-compiled-animation/runtime-input.json or profile-outline-catalog.ehscene: ${ehud_app_inputs}")
 endif()
 set(ehud_watch_blur "${CMAKE_CURRENT_SOURCE_DIR}/../Resources/WatchSource/Scene/watch-blur.json")
-if(NOT EXISTS "${ehud_watch_blur}" AND ehud_app_inputs)
-  set(ehud_watch_blur "${ehud_app_inputs}/fixtures/watch-blur.json")
-endif()
 
 if(WIN32)
   add_library(hud_single_instance app/single_instance.cpp app/application_login_item.cpp)
@@ -269,13 +268,10 @@ if(WIN32)
   target_link_libraries(watch_session_preview PRIVATE hud_application_coverage_areas hud_resource_locator)
 
   # Runtime package next to the executable: resources/ + resources.json, one
-  # resource per module asset folder (app/application_package.hpp). Map and
-  # Minigame inputs are external build inputs.
-  if(ehud_app_inputs)
-    ehud_app_resource(shell.runtimeInput directory "${ehud_app_inputs}/runtime-compiled-animation" "shell/runtime-input")
-    ehud_app_resource(shell.catalog file "${ehud_app_inputs}/profile-outline-catalog.ehscene" "shell/catalog.ehscene")
-    ehud_app_resource(shell.cursor file "${ehud_app_inputs}/source-cursor.png" "shell/cursor.png")
-  endif()
+  # resource per module asset folder (app/application_package.hpp).
+  ehud_app_resource(shell.runtimeInput directory "${ehud_app_inputs}/runtime-compiled-animation" "shell/runtime-input")
+  ehud_app_resource(shell.catalog file "${ehud_app_inputs}/profile-outline-catalog.ehscene" "shell/catalog.ehscene")
+  ehud_app_resource(shell.cursor file "${CMAKE_CURRENT_SOURCE_DIR}/../Resources/WatchSource/Cursor/player-default-icon_mouse.png" "shell/cursor.png")
   ehud_app_resource(shell.shader file "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "shell/hud.hlsl")
   ehud_app_resource(shell.watchBlur file "${ehud_watch_blur}" "shell/watch-blur.json")
   foreach(ehud_common IN ITEMS notesFormat:notes-format applicationIcons:application-icons
@@ -380,50 +376,46 @@ if(WIN32)
     add_dependencies(application_executable_tests EndfieldHUD endfieldhud_setup_stub endfieldhud_uninstaller)
     add_test(NAME application_executable_contracts COMMAND application_executable_tests "$<TARGET_FILE:EndfieldHUD>" "${CMAKE_CURRENT_SOURCE_DIR}"
       "$<TARGET_FILE:endfieldhud_setup_stub>" "$<TARGET_FILE:endfieldhud_uninstaller>")
-    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json")
-      # Production Notes/File Shelf roots: the real owners on temporary roots
-      # that already hold an earlier run's records, across a restart.
-      add_executable(application_data_root_tests tests/application_data_root_tests.cpp)
-      target_compile_definitions(application_data_root_tests PRIVATE ${EHUD_APP_DEFINITIONS})
-      target_link_libraries(application_data_root_tests PRIVATE hud_notes_preview hud_shelf_owner hud_overlay_host ole32)
-      if(MSVC)
-        target_compile_options(application_data_root_tests PRIVATE /W4 /permissive- /EHsc)
-      endif()
-      add_test(NAME application_data_root_contracts COMMAND application_data_root_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
-      set_tests_properties(application_data_root_contracts PROPERTIES TIMEOUT 300)
+    # Production Notes/File Shelf roots: the real owners on temporary roots
+    # that already hold an earlier run's records, across a restart.
+    add_executable(application_data_root_tests tests/application_data_root_tests.cpp)
+    target_compile_definitions(application_data_root_tests PRIVATE ${EHUD_APP_DEFINITIONS})
+    target_link_libraries(application_data_root_tests PRIVATE hud_notes_preview hud_shelf_owner hud_overlay_host ole32)
+    if(MSVC)
+      target_compile_options(application_data_root_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
-    if(ehud_app_inputs AND EXISTS "${ehud_app_inputs}/runtime-compiled-animation/runtime-input.json" AND EXISTS "${ehud_watch_blur}")
-      # The production package staged from the configured inputs verifies.
-      add_test(NAME endfieldhud_package_contracts COMMAND EndfieldHUD --verify-package)
-      # A --login launch without an input desktop gets past choosing its display.
-      add_test(NAME endfieldhud_login_launch_contracts COMMAND "${CMAKE_COMMAND}" "-DAPP=$<TARGET_FILE:EndfieldHUD>"
-        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/login-launch-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_login_launch_check.cmake")
-      set_tests_properties(endfieldhud_login_launch_contracts PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "login launch check skipped")
-      # Hidden module coverage plus the production lifecycle/quit flow.
-      add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
-        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=22 -DHOST_CHECKS=471 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
-      set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
-      # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
-      add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
-        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=16 -DHOST_CHECKS=470 -DEXTRA=--session-end-coverage
-        "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
-      set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
-      # The same owner's memory and thread census (launch, every module,
-      # closing, ten more cycles) with the lifecycle growth bounds.
-      if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake" AND ehud_app_memory_sources)
-        add_test(NAME application_memory_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
-          "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/memory-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-          "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake")
-        set_tests_properties(application_memory_trace PROPERTIES TIMEOUT 600)
-      endif()
-      add_test(NAME endfieldhud_install_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
-        "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/endfieldhud-install-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_install_check.cmake")
+    add_test(NAME application_data_root_contracts COMMAND application_data_root_tests "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl"
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/notes-format")
+    set_tests_properties(application_data_root_contracts PROPERTIES TIMEOUT 300)
+    # The production package staged from the configured inputs verifies.
+    add_test(NAME endfieldhud_package_contracts COMMAND EndfieldHUD --verify-package)
+    # A --login launch without an input desktop gets past choosing its display.
+    add_test(NAME endfieldhud_login_launch_contracts COMMAND "${CMAKE_COMMAND}" "-DAPP=$<TARGET_FILE:EndfieldHUD>"
+      "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/login-launch-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_login_launch_check.cmake")
+    set_tests_properties(endfieldhud_login_launch_contracts PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "login launch check skipped")
+    # Hidden module coverage plus the production lifecycle/quit flow.
+    add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+      "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=22 -DHOST_CHECKS=471 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
+    set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
+    # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
+    add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+      "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=16 -DHOST_CHECKS=470 -DEXTRA=--session-end-coverage
+      "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
+    set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
+    # The same owner's memory and thread census (launch, every module,
+    # closing, ten more cycles) with the lifecycle growth bounds.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake" AND ehud_app_memory_sources)
+      add_test(NAME application_memory_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/memory-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake")
+      set_tests_properties(application_memory_trace PROPERTIES TIMEOUT 600)
     endif()
+    add_test(NAME endfieldhud_install_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/endfieldhud-install-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_install_check.cmake")
   endif()
 endif()
 

@@ -11,6 +11,7 @@ foreach(required PREVIEW WORK INPUTS SOURCE CHECKS)
     message(FATAL_ERROR "${required} is required")
   endif()
 endforeach()
+include("${CMAKE_CURRENT_LIST_DIR}/shell_catalog_pin.cmake")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 set(package_arguments "")
@@ -24,7 +25,7 @@ set(resources "${SOURCE}/resources")
 execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${INPUTS}/profile-outline-catalog.ehscene" "${SOURCE}/native/hud.hlsl"
   --runtime-input --module-coverage --reader --calendar
   --map-geography "${MAP}" --map-player-assets "${resources}/map-player" --orbipom-assets "${ORBIPOM}"
-  --benchmark "${WORK}/module-coverage.json" --compiled-sha 64852432949d3354e50c43ebb983cfa5afcf5dae29a4512879aca974902a9ba8
+  --benchmark "${WORK}/module-coverage.json" --compiled-sha ${ehud_catalog_sha}
   --notes-data "${WORK}/notes-data" --notes-format-assets "${resources}/notes-format"
   --shelf-data "${WORK}/shelf-data"
   --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
