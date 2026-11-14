@@ -34,9 +34,9 @@ namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,animationTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesData,notesFormatAssets,shelfData,liveDiagnostics,residentIcons,settingsAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin;unsigned animationTraceDpi{},animationTraceLaunchOpen{},idleTraceQuit{};bool animationTraceModules{},visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},clipboardFixture{},nativeActivity{},activityFixture{},nativeStorage{},storageFixture{},readerScrollTrace{},readerModule{},archiveModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {bool startupTraceCold{};double idleTraceSeconds{30},idleTraceRefresh{165};std::optional<double>idleTraceGrace,idleTraceClosed;fs::path idleTrace,animationTrace,memoryTrace,package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesData,notesFormatAssets,shelfData,liveDiagnostics,residentIcons,settingsAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin;unsigned animationTraceDpi{},animationTraceLaunchOpen{},idleTraceQuit{};bool animationTraceModules{},visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},hardwareGpuOnly{},nativeClipboard{},clipboardFixture{},nativeActivity{},activityFixture{},nativeStorage{},storageFixture{},readerScrollTrace{},readerModule{},archiveModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
-    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-fixture | --native-storage (visible)] [--activity-fixture | --native-activity (visible)]");
+    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--hardware-gpu-only] [--storage-fixture | --native-storage (visible)] [--activity-fixture | --native-activity (visible)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
         if(arg==L"--archive"){need(!o.archiveModule,"Duplicate Archive mode");o.archiveModule=true;}
@@ -64,6 +64,7 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--volume-fixture"){need(!o.volumeFixture,"Duplicate Volume fixture");o.volumeFixture=true;}
         else if(arg==L"--coverage"){need(!o.coverage,"Duplicate coverage mode");o.coverage=true;}
         else if(arg==L"--session-end-coverage"){need(!o.sessionEndCoverage,"Duplicate session-end coverage");o.sessionEndCoverage=true;}
+        else if(arg==L"--hardware-gpu-only"){need(!o.hardwareGpuOnly,"Duplicate hardware GPU mode");o.hardwareGpuOnly=true;}
         else if(arg==L"--benchmark-size"&&i+2<argc){auto dimension=[&]{const std::wstring token=argv[++i];std::size_t used{};const auto value=std::stoul(token,&used);need(used==token.size()&&value>=64&&value<=4096,"Benchmark dimensions must be 64...4096 pixels");return static_cast<std::uint32_t>(value);};o.benchmarkWidth=dimension();o.benchmarkHeight=dimension();}
         else if(arg==L"--benchmark-epoch"&&i+1<argc){const std::wstring token=argv[++i];std::size_t used{};o.benchmarkEpoch=std::stod(token,&used);need(used==token.size()&&std::isfinite(o.benchmarkEpoch)&&o.benchmarkEpoch>=0&&o.benchmarkEpoch<=1e9,"Invalid bounded synthetic epoch");}
         else if(arg==L"--runtime-input"){need(!o.runtimeInput,"Duplicate runtime-input mode");o.runtimeInput=true;}
@@ -266,7 +267,7 @@ app::ApplicationOptions applicationOptions(const Options&o){
     a.reader=o.readerModule;a.calendar=o.calendarModule;a.projection=o.projectionModule;
     a.nativeClipboard=o.nativeClipboard;a.clipboardFixture=o.clipboardFixture;a.nativeActivity=o.nativeActivity;a.activityFixture=o.activityFixture;a.nativeStorage=o.nativeStorage;a.storageFixture=o.storageFixture;
     a.volumeFixture=o.volumeFixture;a.eventLogFixture=o.eventLogFixture;a.workModeFixture=o.workModeFixture;a.batteryFixture=o.batteryFixture;
-    a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;
+    a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;a.hardwareGpuOnly=o.hardwareGpuOnly;
     a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;a.memoryTrace=o.memoryTrace;a.idleTrace=o.idleTrace;a.animationTrace=o.animationTrace;a.animationTraceModules=o.animationTraceModules;a.animationTraceDpi=o.animationTraceDpi;a.animationTraceLaunchOpen=o.animationTraceLaunchOpen;a.idleTraceSeconds=o.idleTraceSeconds;a.idleTraceRefreshRate=o.idleTraceRefresh;a.idleTraceClosedSeconds=o.idleTraceClosed;a.idleTraceQuit=o.idleTraceQuit;if(o.idleTraceGrace)a.closedGraphicsGrace=*o.idleTraceGrace;
     a.benchmarkWidth=o.benchmarkWidth;a.benchmarkHeight=o.benchmarkHeight;a.benchmarkEpoch=o.benchmarkEpoch;
     // Development previews keep failures fatal so hidden coverage cannot pass
@@ -306,8 +307,10 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         }
         settings.fixtures=[](std::string_view id){return app::registeredCoverageFixture(id);};
     }
-    int result{};
-    {app::Application application(std::move(settings));result=args.visible?application.run():application.runHiddenVerification();}
+    int result{};bool skipped{};
+    {app::Application application(std::move(settings));result=args.visible?application.run():application.runHiddenVerification();skipped=application.hardwareGpuSkipped();}
+    // A suite that skipped itself on a software adapter ran no coverage steps.
+    if(skipped)return result;
     // A startup or memory trace runs no coverage steps: the coverage audits do not apply.
     if(!args.startupTrace.empty()||!args.memoryTrace.empty()||!args.idleTrace.empty()||!args.animationTrace.empty())return result;
     if(probe)need(probe->resize>0&&probe->appearance>0&&probe->opened>0&&probe->closed>0&&probe->updates>0&&probe->uploads>0&&probe->releases==1&&probe->contextResources,

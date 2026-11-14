@@ -966,14 +966,16 @@ struct Renderer::Impl {
         checked(device.As(&dxgi), "Get DXGI device");
         if (!offscreen) checked(dxgi->SetMaximumFrameLatency(1), "Bound presentation latency");
         ComPtr<IDXGIAdapter> adapter; checked(dxgi->GetAdapter(&adapter), "Read selected renderer adapter");
-        DXGI_ADAPTER_DESC description{}; checked(adapter->GetDesc(&description), "Read selected renderer identity");
+        ComPtr<IDXGIAdapter1> identified; checked(adapter.As(&identified), "Read selected renderer adapter");
+        DXGI_ADAPTER_DESC1 description{}; checked(identified->GetDesc1(&description), "Read selected renderer identity");
         description.Description[127] = 0;
         const auto length = static_cast<int>(std::wcslen(description.Description));
         const auto bytes = WideCharToMultiByte(CP_UTF8, 0, description.Description, length, nullptr, 0, nullptr, nullptr);
         std::string name(static_cast<std::size_t>(std::max(bytes, 0)), '\0');
         if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, description.Description, length, name.data(), bytes, nullptr, nullptr);
         adapterInfo = {std::move(name), description.VendorId, description.DeviceId,
-            static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory)};
+            static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory),
+            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0};
         adapterLuid = description.AdapterLuid;
         if (gpuThreadPriority) (void)dxgi->SetGPUThreadPriority(gpuThreadPriority);
     }

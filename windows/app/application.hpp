@@ -103,6 +103,9 @@ struct ApplicationOptions {
     bool archive{};   // Archive on dataRoot (production: the module set; previews: --archive)
     // Hidden verification only.
     bool moduleCoverage{}, coverage{}, readerScrollTrace{}, sessionEndCoverage{};
+    // A suite measured on a hardware GPU: on a software adapter (no GPU
+    // driver, as on a hosted CI runner) it prints why and skips itself.
+    bool hardwareGpuOnly{};
     std::filesystem::path report, snapshots, liveDiagnostics;
     std::uint32_t benchmarkWidth{1280}, benchmarkHeight{800};
     double benchmarkEpoch{};
@@ -218,6 +221,9 @@ public:
     // Hidden benchmark/coverage (watch_session_preview only; compiled in the
     // separate hud_application_verification library).
     int runHiddenVerification();
+    // After runHiddenVerification(): the suite skipped itself on a software
+    // adapter (ApplicationOptions::hardwareGpuOnly) and ran no coverage.
+    bool hardwareGpuSkipped() const noexcept;
     // Second-launch activation forwarded by the single-instance guard.
     void activate(std::span<const std::string> arguments);
     // After run() returned: set when a lost GPU device ended the run; the

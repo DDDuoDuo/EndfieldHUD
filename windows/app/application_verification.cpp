@@ -1106,6 +1106,12 @@ bool Application::Impl::composedOnTopLayer(std::span<const gpu::LayerComposition
 
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
+    // Suites measured on a hardware GPU (--hardware-gpu-only) skip themselves
+    // on a software adapter: the Basic Render Driver D3D falls back to when
+    // the machine has no GPU driver (a hosted CI runner), or --warp. Their
+    // real-clock bounds and frame budgets cannot hold there.
+    if(args.hardwareGpuOnly)if(const auto device=renderer.deviceInfo();device.software){
+        std::cout<<"Hardware GPU suite skipped: the render adapter is "<<device.name<<" (software)"<<std::endl;hardwareGpuSkipped=true;return 0;}
     if(!args.idleTrace.empty())return runIdleTrace();
     if(!args.animationTrace.empty())return runAnimationTrace();
     if(!args.startupTrace.empty())return runStartupTrace();
@@ -3926,4 +3932,5 @@ int Application::Impl::runHiddenVerification(){
     return 0;
 }
 int Application::runHiddenVerification(){return impl_->runHiddenVerification();}
+bool Application::hardwareGpuSkipped() const noexcept{return impl_->hardwareGpuSkipped;}
 } // namespace endfield::app

@@ -330,6 +330,7 @@ struct RendererDeviceInfo {
     std::string name;
     std::uint32_t vendorID{}, deviceID{};
     std::uint64_t dedicatedVideoBytes{}, sharedSystemBytes{}; // adapter capacities, not this app's usage
+    bool software{}; // DXGI_ADAPTER_FLAG_SOFTWARE: the Microsoft Basic Render Driver (no GPU driver) or WARP
 };
 struct Readback {
     std::uint32_t width{}, height{}, rowBytes{};

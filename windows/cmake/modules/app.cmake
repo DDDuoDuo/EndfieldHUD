@@ -398,13 +398,13 @@ if(WIN32)
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=22 -DHOST_CHECKS=471 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
-    set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
+    set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "Hardware GPU suite skipped")
     # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
     add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=16 -DHOST_CHECKS=470 -DEXTRA=--session-end-coverage
       "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
-    set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
+    set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "Hardware GPU suite skipped")
     # The same owner's memory and thread census (launch, every module,
     # closing, ten more cycles) with the lifecycle growth bounds.
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake" AND ehud_app_memory_sources)

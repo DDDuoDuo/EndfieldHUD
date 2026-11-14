@@ -30,10 +30,17 @@ execute_process(COMMAND "${PREVIEW}" "${INPUTS}/runtime-compiled-animation" "${I
   --shelf-data "${WORK}/shelf-data"
   --clipboard-fixture --work-mode-fixture --volume-fixture --event-log-fixture --battery-fixture --storage-fixture --activity-fixture
   --settings-assets "${resources}" --archive
-  ${EXTRA} ${package_arguments}
+  --hardware-gpu-only ${EXTRA} ${package_arguments}
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 500)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Owner module coverage failed (${result}):\n${output}\n${errors}")
+endif()
+# On a software adapter (no GPU driver, as on a hosted CI runner) the suite
+# skips itself (--hardware-gpu-only); ctest reports it as skipped.
+if(output MATCHES "Hardware GPU suite skipped[^\n]*")
+  message(STATUS "${CMAKE_MATCH_0}")
+  file(REMOVE_RECURSE "${WORK}")
+  return()
 endif()
 file(READ "${WORK}/module-coverage.json" report)
 string(JSON recording_toggles ERROR_VARIABLE recording_missing GET "${report}" recordingToggle)
