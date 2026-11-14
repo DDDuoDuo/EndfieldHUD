@@ -1109,9 +1109,12 @@ int Application::Impl::runHiddenVerification(){
     // Suites measured on a hardware GPU (--hardware-gpu-only) skip themselves
     // on a software adapter: the Basic Render Driver D3D falls back to when
     // the machine has no GPU driver (a hosted CI runner), or --warp. Their
-    // real-clock bounds and frame budgets cannot hold there.
-    if(args.hardwareGpuOnly)if(const auto device=renderer.deviceInfo();device.software){
-        std::cout<<"Hardware GPU suite skipped: the render adapter is "<<device.name<<" (software)"<<std::endl;hardwareGpuSkipped=true;return 0;}
+    // real-clock bounds and frame budgets cannot hold there. The adapter is
+    // named either way, so a log shows what the suite ran on.
+    if(args.hardwareGpuOnly){
+        const auto device=renderer.deviceInfo();
+        std::cout<<"Render adapter: "<<device.name<<std::hex<<std::uppercase<<" (vendor 0x"<<device.vendorID<<", device 0x"<<device.deviceID<<")"<<std::dec<<std::nouppercase<<std::endl;
+        if(device.software){std::cout<<"Hardware GPU suite skipped: the render adapter is "<<device.name<<" (software)"<<std::endl;hardwareGpuSkipped=true;return 0;}}
     if(!args.idleTrace.empty())return runIdleTrace();
     if(!args.animationTrace.empty())return runAnimationTrace();
     if(!args.startupTrace.empty())return runStartupTrace();

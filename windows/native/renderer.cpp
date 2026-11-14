@@ -409,6 +409,10 @@ public:explicit DeviceSentinel(std::shared_ptr<DeviceLifetimes>lifetimes):lifeti
     ULONG STDMETHODCALLTYPE Release()override{const auto left=--refs_;if(!left){if(armed.load())lifetimes_->destroyed.fetch_add(1,std::memory_order_relaxed);delete this;}return left;}
 };
 // {6F1D3B52-6C07-4E4B-9C2E-0B7A5D4E2A91}
+// Microsoft's PCI vendor ID. Only its own adapters carry it: the Basic Render
+// Driver D3D falls back to without a GPU driver, WARP, and the display-only
+// Basic Display, Hyper-V and remote adapters. None of them is a GPU
+constexpr UINT microsoftAdapterVendor = 0x1414;
 constexpr GUID deviceSentinelID{0x6f1d3b52,0x6c07,0x4e4b,{0x9c,0x2e,0x0b,0x7a,0x5d,0x4e,0x2a,0x91}};
 }
 struct RendererMediaTexture::Impl {
@@ -975,7 +979,7 @@ struct Renderer::Impl {
         if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, description.Description, length, name.data(), bytes, nullptr, nullptr);
         adapterInfo = {std::move(name), description.VendorId, description.DeviceId,
             static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory),
-            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0};
+            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0 || description.VendorId == microsoftAdapterVendor};
         adapterLuid = description.AdapterLuid;
         if (gpuThreadPriority) (void)dxgi->SetGPUThreadPriority(gpuThreadPriority);
     }
