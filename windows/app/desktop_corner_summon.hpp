@@ -5,7 +5,7 @@
 namespace endfield::app {
 // Physical work-area coordinates; supports monitors left/above the primary one.
 inline bool desktopCornerContains(int x,int y,int left,int top,int right,int bottom) noexcept {
-    return x>=left && x<right && x-left<128 && y>=top && y<bottom && bottom-y<=128;
+    return x>=left && x<right && x-left<320 && y>=top && y<bottom && bottom-y<=240;
 }
 class DesktopCornerGesture {
 public:

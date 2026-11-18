@@ -8,7 +8,7 @@ using namespace endfield::app;
 int main(){try{
     int checks=0;auto check=[&](bool value){++checks;if(!value)throw std::runtime_error("Desktop corner gesture regression");};
     check(desktopCornerContains(10,1000,0,0,1920,1040));check(!desktopCornerContains(10,1060,0,0,1920,1040));
-    check(!desktopCornerContains(200,1000,0,0,1920,1040));check(desktopCornerContains(-1900,1000,-1920,0,0,1040));
+    check(desktopCornerContains(200,850,0,0,1920,1040));check(!desktopCornerContains(320,1000,0,0,1920,1040));check(!desktopCornerContains(200,799,0,0,1920,1040));check(desktopCornerContains(-1900,1000,-1920,0,0,1040));
     using E=DesktopCornerGesture::Event;DesktopCornerGesture gesture;
     auto e=[&](E kind,int x,int y,unsigned time,bool desktop=true){return gesture.event(kind,x,y,time,desktop,500,4,4);};
     check(!e(E::down,10,1000,10));check(!e(E::up,10,1000,50));check(!e(E::down,11,1000,200));check(e(E::up,11,1000,240));
