@@ -36,7 +36,6 @@ struct AppShortcutCanvasServices {
     // closes it (the module left), after which no answer is expected.
     std::function<bool()> choose;
     std::function<void()> cancelChooser;
-    std::function<void()> close; // close the HUD through its normal lifecycle
     std::function<void(std::string_view id)> launch;      // OverlayController.requestAppShortcutLaunch (close-first)
     std::function<bool(std::string_view path)> isApplication; // applicationURLs' ".app" filter
     std::function<std::vector<std::string>()> pasteboard; // Ctrl+V: the clipboard's file paths
@@ -107,7 +106,6 @@ public:
     const std::string& selectedGroup() const noexcept { return groupID_; }
     bool interceptPointerDown(design::Point, const design::PointerInput&) override;
     bool handleScroll(design::Point, design::Point) override;
-    bool handleRightPointerDown(design::Point) override;
     void buildPage(design::Page&) override;
     void didActivate() override;
     void didDeactivate() override;

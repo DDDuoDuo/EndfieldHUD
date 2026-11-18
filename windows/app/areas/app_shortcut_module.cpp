@@ -481,7 +481,6 @@ private:
         s.request = [this](const m::AppShortcutRequest& r) { work_.push_back({r, false, {}});pump();return true; };
         s.choose = [this] { return choose(); };
         s.cancelChooser = [this] { cancelChooser(); };
-        s.close = [this] { requestClose(); };
         s.launch = [this](std::string_view id) {
             const auto found = std::find_if(file_.items.begin(), file_.items.end(), [&](const auto& v) { return v.id == id; });
             if (found != file_.items.end()) beginLaunch(*found, now());

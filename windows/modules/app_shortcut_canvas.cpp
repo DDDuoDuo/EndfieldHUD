@@ -336,14 +336,6 @@ void AppShortcutCanvas::removeGroup() {
         (void)submit(std::move(request));
     });
 }
-bool AppShortcutCanvas::handleRightPointerDown(d::Point point) {
-    const auto bounds=hitBounds();
-    if(point.x<bounds.x || point.y<bounds.y || point.x>=bounds.x+bounds.width || point.y>=bounds.y+bounds.height || !services_.close)return false;
-    const auto close=services_.close;
-    endEditing(true);
-    close();
-    return true;
-}
 bool AppShortcutCanvas::interceptPointerDown(d::Point point, const d::PointerInput& input) {
     if (input.button != d::PointerButton::left || menuOpen() || editingText()) return false;
     for (const auto& [id, tile] : tiles_) {

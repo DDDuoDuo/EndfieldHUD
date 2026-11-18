@@ -117,6 +117,12 @@ bool Application::Impl::onPointer(const PointerEvent&e){
             (void)projectionCall("pointer",[&]{handled=projection->pointer(e,hostTime(time));locked=projection->preview()->pointerLocked();});
             if(handled&&e.kind!=PointerKind::move)automationChanged();host.capturePointer(locked);refresh(hostTime(time));}return true;
     }
+    // Apps closes on a right press anywhere in the HUD, before menus/fields or
+    // other module captures can consume it. Use the normal close lifecycle.
+    if(session->inputEnabled() && notes && notes->selected()==core::Module::addApp &&
+       e.kind==PointerKind::down && e.button==PointerButton::right){
+        perform(lifecycle.close(),hostTime(time));return true;
+    }
     using C=ModuleRegistry::Chain;
     // Arrange on HUD: a press Esc or arranging turning off dropped swallows
     // its drags and its release; any new press starts afresh.

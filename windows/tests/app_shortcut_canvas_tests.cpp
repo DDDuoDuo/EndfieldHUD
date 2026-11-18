@@ -46,13 +46,12 @@ struct Owner {
     std::vector<m::AppShortcutRequest> requests;
     std::vector<std::string> launches, clipboard;
     std::map<std::string, bool> icons; std::map<std::string, d::Color> colors;
-    unsigned chooses{}, cancels{}, closes{}; bool refuse{}, chooserBusy{};
+    unsigned chooses{}, cancels{}; bool refuse{}, chooserBusy{};
     m::AppShortcutCanvasServices services() {
         m::AppShortcutCanvasServices s;
         s.request = [this](const m::AppShortcutRequest& r) { if (refuse) return false; requests.push_back(r); return true; };
         s.choose = [this] { ++chooses; return !chooserBusy; };
         s.cancelChooser = [this] { ++cancels; };
-        s.close = [this] { ++closes; };
         s.launch = [this](std::string_view id) { launches.emplace_back(id); };
         s.isApplication = [](std::string_view p) { return p.ends_with(".exe") || p.ends_with(".lnk") || p.starts_with("shell:AppsFolder\\"); };
         s.pasteboard = [this] { return clipboard; };
@@ -142,11 +141,6 @@ void unified(const m::AppShortcutArtwork& art) {
     auto menuItem=[&](const std::string& id){control(canvas,"group:options")->activate();std::vector<d::AccessibilityItem> entries;canvas.accessibilityItems(entries);const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto& entry){return entry.id=="shortcuts:options:"+id;});check(found!=entries.end(),"Action is listed in the single operations menu");return *found;};
     auto enabled=[&](const std::string& id){const auto entry=menuItem(id);canvas.closeMenu();return entry.enabled;};
     auto action=[&](const std::string& id){const auto entry=menuItem(id);const d::Point point{entry.rect.x+entry.rect.width/2,entry.rect.y+entry.rect.height/2};canvas.pointerDown(point,{point,d::PointerButton::left,false,false,1},w.now);canvas.pointerUp(point,w.now);};
-    check(!canvas.rightPointerDown({-20,-20},w.now) && owner.closes==0,"Right click outside Apps does not close it");
-    check(canvas.rightPointerDown(centre(*control(canvas,"group:item:a"),canvas.root()),w.now) && owner.closes==1 && owner.launches.empty(),"Right click on an app closes the HUD without launching");
-    click("group:options");check(canvas.menuOpen(),"Actions opens before right-click dismissal");
-    check(canvas.rightPointerDown({200,200},w.now) && !canvas.menuOpen() && owner.closes==1,"Right click dismisses an open menu before closing the HUD");
-    check(canvas.rightPointerDown({200,200},w.now) && owner.closes==2,"A subsequent right click closes Apps");
     check(canvas.header().controls().size()==1 && control(canvas,"group:options")->label=="Actions","Only Actions is exposed in the page header");
     auto drag=[&](std::string_view id,double dx){const auto start=centre(*control(canvas,id),canvas.root());const d::Point end{start.x+dx,start.y};canvas.pointerDown(start,{start,d::PointerButton::left,false,false,1},w.now);canvas.pointerDragged(end,w.now);canvas.pointerUp(end,w.now);};
     click("group:item:a");check(owner.launches.empty(),"Single click never launches");
