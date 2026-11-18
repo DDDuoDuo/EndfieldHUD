@@ -4,7 +4,7 @@
 #include "native/app_shortcut_service.hpp"
 
 namespace endfield::modules {
-enum class ShortcutTaskKind {load,inspect,edit,save,remove,launch,move};
+enum class ShortcutTaskKind {load,inspect,edit,save,remove,launch,move,saveGroup,removeGroup,moveGroup,membership,selectGroup,scanDesktop,restoreDesktop,metadata};
 struct ShortcutTask {
     std::uint64_t token{};ShortcutTaskKind kind{};
     std::optional<native::AppShortcutSelection> selection;
@@ -14,6 +14,10 @@ struct ShortcutTask {
     std::string name,icon,newID;double createdAt{};
     std::ptrdiff_t index{}; // move: the record's new (clamped) slot
     std::uintptr_t launchOwner{};
+    std::string groupID;
+    std::vector<std::string> ids;
+    std::string sourceGroupID;
+    bool moveMembership{};
 };
 struct ShortcutTaskResult {
     std::uint64_t token{};ShortcutTaskKind kind{};

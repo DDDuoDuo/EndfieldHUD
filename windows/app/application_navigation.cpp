@@ -80,7 +80,7 @@ void Application::Impl::navigationPeers(std::vector<HudButtonPeer>& out) {
             for (const auto& e : navigationEntries) if (e.action == action) { target = e.target; title = e.title; module = e.module; found = true; break; }
             if (!found) for (const auto& e : catalog) if (e.action == action) { target = e.target; title = e.title; found = true; break; }
             if (!found) continue;
-            if (module) title = moduleCaption(target, language, title);
+            if (module && target != "addApp") title = moduleCaption(target, language, title);
             item.peer.id = "navigation:" + id;
             item.peer.name = title;
             item.peer.help = module ? title : core::localized("Open ", "打开 ", language) + title;
@@ -146,7 +146,8 @@ std::vector<std::uint64_t> Application::Impl::layoutRightActions(std::span<const
 }
 // OverlayController: the HUD reopens on moduleLayout.restorable(lastSystemModule).
 core::Module Application::Impl::restorableModule(core::Module last) const {
-    return core::moduleNamed(moduleLayout.restorable(core::moduleIdentifier(last))).value_or(last);
+    const bool swapped=configuration.fields["windowsSwapAppStorage"]==ehud::data::Json(true);
+    return core::moduleNamed(appStorageSlotTarget(moduleLayout.restorable(appStorageSlotTarget(core::moduleIdentifier(last),swapped)),swapped)).value_or(last);
 }
 
 // Read when a client asks (no allocation): the current frame's geometry.
@@ -215,12 +216,12 @@ std::optional<std::string_view> Application::Impl::rightRowTarget(core::Point p)
     const auto action = session->rowActionAt(p, arrangeDrag && arrangeDrag->lifted);
     const auto* entry = action ? navigationEntry(*action) : nullptr;
     if (!entry) return std::nullopt;
-    const std::string_view target = entry->module ? std::string_view(entry->target) : std::string_view();
+    const std::string_view target = entry->module ? appStorageSlotTarget(entry->target, std::as_const(configuration.fields)["windowsSwapAppStorage"]==ehud::data::Json(true)) : std::string_view();
     return ehud::data::ModuleLayout::listsTarget(target) ? std::optional(target) : std::nullopt;
 }
 std::optional<std::string_view> Application::Impl::arrangeableModule(core::Point p) {
     const auto target = rightRowTarget(p);
-    if (!target || target->empty() || *target == "addApp") return std::nullopt;
+    if (!target || target->empty()) return std::nullopt;
     return target;
 }
 void Application::Impl::setModuleArrangement(bool on, double time) {
@@ -300,7 +301,7 @@ void Application::Impl::dragArrangedModule(core::Point p, bool edgeScroll, doubl
 }
 void Application::Impl::moveArrangedTile(core::Point p, double time) {
     if (!arrangeDrag || !arrangeDrag->lifted) return;
-    if (const auto action = moduleAction(arrangeDrag->module)) session->setArrangeDrag(*action, p, true, time);
+    if (const auto action = moduleAction(appStorageSlotTarget(arrangeDrag->module,std::as_const(configuration.fields)["windowsSwapAppStorage"]==ehud::data::Json(true)))) session->setArrangeDrag(*action, p, true, time);
 }
 // onDesktopArrangeScroll: a frame drew the list scrolled under the lifted
 // tile (the wheel's spring or an edge scroll), so the slot under the still

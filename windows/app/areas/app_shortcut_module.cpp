@@ -33,6 +33,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj.h>
 #include <uiautomation.h>
 #include <wrl/client.h>
 
@@ -81,7 +82,7 @@ std::string invalidApplicationText(core::Language l) {
 std::string lower(std::string value) { for (auto& c : value) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return value; }
 std::string suffix(std::string_view path) { const auto dot = path.rfind('.'); return dot == path.npos ? std::string{} : lower(std::string(path.substr(dot))); }
 // A Windows application file the Add App canvas takes (Mac: one .app URL).
-bool applicationFile(std::string_view path) { const auto kind = suffix(path); return kind == ".exe" || kind == ".lnk"; }
+bool applicationFile(std::string_view path) { const auto kind = suffix(path); return kind == ".exe" || kind == ".lnk" || kind == ".url"; }
 // A chosen application: an .exe/.lnk file, or a packaged application named
 // "shell:AppsFolder\<AUMID>" (the shared dialog's applications mode).
 std::optional<g::AppShortcutSelection> chosenApplication(std::string_view path) {
@@ -289,9 +290,14 @@ public:
         tasks_ = makeTasks();
         host_.publish<app::AppShortcutNavigation>(app::appShortcutNavigationService, *this);
         // AppShortcutStore(directory:) at startup: the one initial load.
+        if(!synthetic_) { desktopMessage_=RegisterWindowMessageW(L"EndfieldHUD.DesktopShortcuts.Changed");
+            try{desktopWatch_=g::watchDesktopShortcuts(reinterpret_cast<std::uintptr_t>(window_),desktopMessage_);}catch(const std::exception&){}
+            desktopPending_=true;
+        }
         loadPending_ = true;pump();
     }
     ~AppShortcutArea() override {
+        desktopWatch_.reset();
         *alive_ = false;observer_ = {};
         host_.withdraw(app::appShortcutNavigationService);
         tasks_.reset(); // suppresses completions; accepted writes/launches still finish on the executor
@@ -325,7 +331,8 @@ public:
     void overlayClosing(double t) override { closing(t, true); }
     void update(const app::ModuleFrame& f) override {
         core_->update(f);pump();
-        if (const auto offset = listOffset(); offset != iconOffset_) refreshIcons();
+        constexpr double pitch=m::appGridPitch;
+        if (const auto offset = listOffset(); std::floor(offset/pitch) != std::floor(iconOffset_/pitch) || iconGroup_ != canvas_->selectedGroup()) refreshIcons();
     }
     void prewarm(const app::ModuleFrame& f) override { core_->prewarm(f); }
     bool requiresFrames(double t) const override { return core_->requiresFrames(t); }
@@ -345,18 +352,27 @@ public:
     bool wheel(const app::WheelEvent& e, double t) override { const bool used = core_->wheel(e, t);pump();return used; }
     bool key(const app::KeyEvent& e, double t) override { const bool used = core_->key(e, t);pump();return used; }
     bool filterKey(const app::NativeMessage& m) override { return core_->filterKey(m); }
-    bool message(const app::NativeMessage& m, double t) override { return core_->message(m, t); }
+    bool message(const app::NativeMessage& m, double t) override {
+        if(desktopMessage_ && m.message==desktopMessage_) {
+            PIDLIST_ABSOLUTE* pidls{};LONG event{};
+            if(const auto lock=SHChangeNotification_Lock(reinterpret_cast<HANDLE>(m.wParam),static_cast<DWORD>(m.lParam),&pidls,&event))SHChangeNotification_Unlock(lock);
+            desktopPending_=true;pump();return true;
+        }
+        return core_->message(m,t);
+    }
     void focus(bool value, double t) override { core_->focus(value, t); }
     void cancelInteraction(double t) override { canvas_->setDropTarget(false);core_->cancelInteraction(t); }
     bool finishEditing(double t) override { return core_->finishEditing(t); }
     bool flush(double t) override {
         (void)core_->flush(t);
-        // Bounded durable drain at quit/session end: an accepted save/remove
+        // Drain accepted work at quit/session end: an accepted save/remove
         // (or one retained while the executor was full) reaches the disk.
-        for (unsigned n = 0; n < 16 && tasks_->busy() && inflight_ && durable(inflight_->kind); ++n) {
+        while (!work_.empty() || (tasks_->busy() && inflight_ && durable(inflight_->kind))) {
+            pump();
+            if (!tasks_->busy()) break;
             utility_.waitIdle();utility_.drain();tasks_->queueCapacityAvailable();
         }
-        return !(tasks_->busy() && inflight_ && durable(inflight_->kind));
+        return work_.empty() && !(tasks_->busy() && inflight_ && durable(inflight_->kind));
     }
     // SystemHUDView.performDragOperation -> acceptsAppShortcutDrop: exactly one
     // application over the centre while + Add App is the active canvas ->
@@ -403,14 +419,28 @@ public:
     bool activate(std::uint64_t action, double t) override {
         const auto id = planner_.shortcutID(action);
         if (!id) return false;
+        if (*id == groupsNavigationID_) {
+            host_.selectModule(core::Module::addApp);
+            canvas_->showGroups(); host_.requestFrame();
+            return true;
+        }
         const auto& items = file_.items;
         const auto found = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.id == *id; });
-        if (found != items.end()) beginLaunch(*found, t);
+        const auto group = std::find_if(file_.groups.begin(), file_.groups.end(), [&](const auto& v) { return v.id == *id; });
+        if (group != file_.groups.end()) {
+            canvas_->showGroup(group->id);
+            host_.selectModule(core::Module::addApp);
+            host_.requestFrame();
+        } else if (found != items.end()) beginLaunch(*found, t);
         return true;
     }
+    void showRoot() override {} // Keep the selected group when reopening shortcuts.
     void setObserver(std::function<void()> observer) override { observer_ = std::move(observer); }
 
 private:
+    unsigned desktopMessage_{};bool desktopPending_{};std::shared_ptr<void> desktopWatch_;
+    std::vector<g::WatchAppearanceEntry> plannedEntries_;
+    std::vector<std::uint64_t> plannedRight_;
     enum class Purpose { load, request, verify, launch };
     struct Inflight { std::uint64_t token{}; Purpose purpose{}; m::ShortcutTaskKind kind{}; };
     // Mac pendingAppLaunch / appLaunchInFlight: verify -> closing (our close
@@ -423,7 +453,7 @@ private:
     struct Work { m::AppShortcutRequest request; bool saving{}; std::optional<m::ShortcutCandidate> candidate; };
 
     static bool durable(m::ShortcutTaskKind k) noexcept {
-        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move;
+        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move || k == m::ShortcutTaskKind::saveGroup || k == m::ShortcutTaskKind::removeGroup || k == m::ShortcutTaskKind::moveGroup || k == m::ShortcutTaskKind::membership || k == m::ShortcutTaskKind::selectGroup || k == m::ShortcutTaskKind::scanDesktop || k == m::ShortcutTaskKind::restoreDesktop || k == m::ShortcutTaskKind::metadata;
     }
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
     // Executor completions run outside the registry's isolation: in
@@ -506,11 +536,22 @@ private:
             if (submit(std::move(run), Purpose::launch)) launch_->phase = LaunchPhase::running;
             return false;
         }
+        if(work_.empty() && desktopPending_ && !loadFailed_) {
+            desktopPending_=false;m::AppShortcutRequest request;request.kind=m::AppShortcutRequest::Kind::scanDesktop;
+            work_.push_back({request,false,{}});
+        }
         if (work_.empty()) return false;
         auto& w = work_.front();
         using K = m::AppShortcutRequest::Kind;
         m::ShortcutTask t;
-        if (w.saving) {
+        t.ids=w.request.ids;t.groupID=w.request.groupID;t.sourceGroupID=w.request.sourceGroupID;t.moveMembership=w.request.moveMembership;
+        if(w.request.kind==K::membership || w.request.kind==K::selectGroup || w.request.kind==K::scanDesktop || w.request.kind==K::restoreDesktop) {
+            t.kind=w.request.kind==K::membership?m::ShortcutTaskKind::membership:w.request.kind==K::selectGroup?m::ShortcutTaskKind::selectGroup:w.request.kind==K::scanDesktop?m::ShortcutTaskKind::scanDesktop:m::ShortcutTaskKind::restoreDesktop;
+        } else if (w.request.kind == K::saveGroup || w.request.kind == K::removeGroup || w.request.kind == K::moveGroup) {
+            t.kind = w.request.kind == K::saveGroup ? m::ShortcutTaskKind::saveGroup : w.request.kind == K::moveGroup ? m::ShortcutTaskKind::moveGroup : m::ShortcutTaskKind::removeGroup;
+            t.index = w.request.index;
+            t.groupID = w.request.groupID; t.name = w.request.name; t.newID = ehud::data::makeUUID();
+        } else if (w.saving) {
             // AppShortcutStore.save(candidate:name:iconPreset:editingID:).
             t.kind = m::ShortcutTaskKind::save;t.candidate = w.candidate;
             if (w.request.kind == K::add && w.request.id.empty()) {t.name = w.candidate->name;t.icon = "original";} // importURLs: its own name, the App icon
@@ -522,6 +563,7 @@ private:
                 t.name = w.request.kind == K::add ? current->name : w.request.name;
                 t.icon = w.request.kind == K::add ? current->iconPreset : w.request.icon;
             }
+            t.groupID = w.request.groupID;
             t.newID = ehud::data::makeUUID();t.createdAt = ehud::data::foundationNow();
         } else if (w.request.kind == K::add) {
             const auto selection = chosenApplication(w.request.path);
@@ -532,8 +574,8 @@ private:
             if (!current) {finishWork(std::nullopt, errorText(language_, m::ShortcutErrorCode::missing, false, {}));return true;}
             // save: store.inspect(url: store.resolvedURL(for: id)); remove: store.remove(id:);
             // move: store.move(id:to:), one write in the right-hand order.
-            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::edit : w.request.kind == K::move ? m::ShortcutTaskKind::move : m::ShortcutTaskKind::remove;
-            t.record = *current;t.index = w.request.index;
+            t.kind = w.request.kind == K::save ? m::ShortcutTaskKind::metadata : w.request.kind == K::move ? m::ShortcutTaskKind::move : m::ShortcutTaskKind::remove;
+            t.record = *current;t.index = w.request.index;t.name=w.request.name;t.icon=w.request.icon;
         }
         (void)submit(std::move(t), Purpose::request);
         return false;
@@ -543,7 +585,10 @@ private:
         const auto request = work_.front().request;
         work_.pop_front();
         if (committed) {file_ = *committed;notify();}
-        canvas_->requestFinished(request, std::move(committed), std::move(error));
+        if(canvas_->pendingRequests().end()==std::find(canvas_->pendingRequests().begin(),canvas_->pendingRequests().end(),request)) {
+            if(committed)canvas_->setStore(*committed);
+            else if(error && overlayVisible_)canvas_->showError(*error);
+        } else canvas_->requestFinished(request, std::move(committed), std::move(error));
         host_.requestFrame();
     }
 
@@ -558,7 +603,7 @@ private:
     static app::ApplicationFileRequest chooserRequest(core::Language l) {
         app::ApplicationFileRequest request{text(l, "Choose an application", "选择应用"), text(l, "Choose", "选择"), text(l, "Choose", "选择")};
         request.singleFile = true;request.applications = true;
-        request.filterName = text(l, "Applications", "应用程序");request.filterSpec = "*.exe;*.lnk";
+        request.filterName = text(l, "Applications", "应用程序");request.filterSpec = "*.exe;*.lnk;*.url";
         return request;
     }
     bool choose() {
@@ -687,13 +732,20 @@ private:
         images_->retire(iconKey(id));if (entry.trimmed) images_->retire(navigationKey(id));
         entry.revision = 0;entry.trimmed = false;entry.color.reset();
     }
+    std::string iconGroup_;
     void refreshIcons() {
+        iconGroup_ = canvas_->selectedGroup();
         iconOffset_ = listOffset();
         wanted_.clear();
-        const auto& items = file_.items;
-        for (const auto n : m::shortcutOriginalIconOrder(file_, iconOffset_, maximumIcons,
-                 [](const m::ShortcutRecord& item) { return g::appShortcutIconSelection(item.locator).has_value(); }))
-            if (const auto selection = g::appShortcutIconSelection(items[n].locator)) wanted_.push_back({items[n].id, applicationKey(items[n].locator), *selection});
+        m::ShortcutFile visibleIcons;
+        visibleIcons.items = m::shortcutItems(file_,iconGroup_);
+        const auto& items=visibleIcons.items;
+        constexpr double gridPitch=m::appGridPitch;
+        const auto first=std::min(items.size(),static_cast<std::size_t>(std::max(0.,std::floor(iconOffset_/gridPitch)))*m::appGridColumns);
+        const auto start=first>m::appGridColumns?first-m::appGridColumns:0;
+        // Visible grid rows plus a bounded buffer, not every desktop icon at startup.
+        for(std::size_t n=start;n<std::min(items.size(),first+std::size_t((std::ceil(d::metric::bodyHeight/gridPitch)+1)*m::appGridColumns));++n)
+            if(items[n].iconPreset=="original")if(const auto selection=g::appShortcutIconSelection(items[n].locator))wanted_.push_back({items[n].id,applicationKey(items[n].locator),*selection});
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
         // Removed shortcuts, shortcuts without a Windows target (an imported
         // record restored by a store restart) or the App icon preset, and the
@@ -727,8 +779,14 @@ private:
         return m::ShortcutImageReference{navigationKey(id), found->second.revision};
     }
     Plan planNavigation(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right) {
-        return planner_.plan(modules, right, file_, [this](std::string_view id) { return navigationImage(id); }, images_);
+        plannedEntries_.assign(modules.begin(),modules.end());plannedRight_.assign(right.begin(),right.end());
+        // Preserve the source catalog's slot assignments by default.
+        for(auto& entry:plannedEntries_)if(entry.target=="addApp"){
+            entry.title=text(language_,"Apps","应用");entry.iconKey="shortcut:grid";
+        }
+        return {plannedEntries_,plannedRight_};
     }
+
     void scheduleIcon() {
         if (iconJob_) return;
         for (const auto& w : wanted_) {
@@ -740,7 +798,7 @@ private:
                     auto pixels = extractor(selection, g::appShortcutIconPixels);
                     if (!pixels) return;
                     ExtractedIcon icon{std::move(*pixels), std::nullopt, std::nullopt};
-                    icon.trimmed = m::trimDesktopIcon(icon.pixels.width, icon.pixels.height, icon.pixels.straightRGBA);
+                    // The hub does not publish per-app HUD navigation images.
                     icon.color = m::shortcutTileColor(icon.pixels.width, icon.pixels.height, icon.pixels.straightRGBA);
                     *result = std::move(icon);
                 }, [this, alive, id = w.id, key = w.applicationKey, result](std::exception_ptr error) {
@@ -864,6 +922,7 @@ private:
     std::unique_ptr<m::AppShortcutTasks> tasks_; // destroyed before the canvas its completions update
     m::ShortcutFile file_;                       // the committed list (the store's items)
     std::deque<Work> work_;
+    const std::string groupsNavigationID_{ehud::data::makeUUID()};
     NavigationPlanner planner_;
     std::function<void()> observer_;
     std::optional<Inflight> inflight_;
@@ -926,6 +985,14 @@ struct AppShortcutArea::Driver {
         return nullptr;
     }
     void click(std::string_view id) {
+        const auto operation=id=="group:add"?"add":id=="groups:new"?"new":id=="group:edit"?"edit":id=="group:delete-shortcut"?"delete":"";
+        if(*operation){
+            click("group:options");std::vector<d::AccessibilityItem> entries;canvas().accessibilityItems(entries);
+            const auto found=std::find_if(entries.begin(),entries.end(),[&](const auto& entry){return entry.id==std::string("shortcuts:options:")+operation;});
+            step.check(found!=entries.end() && found->enabled,"Operation is available in the Actions menu");
+            const auto p=project({found->rect.x+found->rect.width/2,found->rect.y+found->rect.height/2});
+            a.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y,0},t);a.pointer({app::PointerKind::up,app::PointerButton::left,p.x,p.y,0},t);frame();return;
+        }
         const auto* c = control(id);
         step.check(c != nullptr, "The + Add App control is shown");
         const auto r = c->rect(canvas().root());
@@ -946,7 +1013,7 @@ struct AppShortcutArea::Driver {
     // Add App -> the chooser -> one application.
     void add(std::string path) {
         const auto before = a.coverageChooserRequests_;
-        click("apps:add");
+        click("group:add");
         step.check(a.coverageChooserRequests_ == before + 1, "Add App requests the one chooser");
         answer({std::move(path)});
     }
@@ -967,16 +1034,14 @@ struct AppShortcutArea::Driver {
     }
     std::string last() const { return file().items.back().id; }
     // Remove -> the shared confirm bar -> Confirm (its 120 ms callback).
-    void remove(std::string_view id) {
-        const auto before = file().items.size();
-        click("apps:" + std::string(id) + ":remove");
-        const auto& request = context().overlay().confirmState().request();
-        step.check(request && request->id == "apps:remove" && request->danger && context().overlay().capturesInput(), "Remove asks through the confirm bar");
-        step.check(context().overlay().decide(d::ConfirmState::Decision::confirm), "The confirm bar takes the decision");
-        t += .2;context().advance(t);settle();frame();
-        step.check(file().items.size() == before - 1 && toast() && toast()->title == text(a.language_, "Shortcut removed", "应用未被卸载"), "The confirmed shortcut is removed and toasted");
-        clearToast();committed("The committed shortcuts.json is exactly the shown list");
+    void remove(const std::string& id) {
+        if(!control("group:delete-shortcut"))click("group:edit");
+        click("group:item:"+id);click("group:delete-shortcut");
+        step.check(context().overlay().confirmState().request().has_value(),"Removal confirms its scope");
+        context().overlay().decide(d::ConfirmState::Decision::confirm);t+=.2;context().advance(t);settle();clearToast();
+        click("group:edit");committed("Removal commits the same canonical list shown in the grid");
     }
+
     // Navigation: the host's plan once it attached its observer, otherwise the
     // same planner over the source catalog order.
     void plan() {
@@ -990,42 +1055,19 @@ struct AppShortcutArea::Driver {
         (void)a.planNavigation(modules, right);
     }
     std::uint64_t action(std::string_view target) const {
-        const auto entries = a.planner_.entries();
+        const auto& entries = a.plannedEntries_;
         const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.target == target; });
         return found == entries.end() ? 0 : found->action;
     }
     void checkNavigation() {
-        plan();
-        const auto right = a.planner_.right();const auto entries = a.planner_.entries();
-        const auto power = action("power"), add = action("addApp");
-        const auto at = std::find(right.begin(), right.end(), power);
-        bool ordered = power && add && !right.empty() && right.back() == add && !entries.empty() && entries.back().target == "addApp" && at != right.end();
-        const auto& items = file().items;
-        for (std::size_t n = 0; ordered && n < items.size(); ++n) {
-            const auto& item = items[n];
-            const auto app = action("app." + item.id);
-            const auto entry = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.action == app; });
-            ordered = app && at + 1 + std::ptrdiff_t(n) < right.end() && *(at + 1 + std::ptrdiff_t(n)) == app && entry != entries.end() && !entry->module &&
-                entry->title == item.name && entry->iconKey == "shortcut:" + item.iconPreset && a.planner_.shortcutID(app) == std::optional<std::string_view>(item.id);
-        }
-        step.check(ordered && std::size_t(right.end() - at) == items.size() + 2, "Saved apps follow Power in their stored order and + Add App stays last");
-        // HUDAppShortcutPresentation.icon trimmed (HUDSourceDesktopIconLayout.image):
-        // the published side-list image for the "original" preset only.
-        bool icons = true;
-        for (const auto& item : items) {
-            const auto app = action("app." + item.id);
-            const auto entry = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.action == app; });
-            if (entry == entries.end()) {icons = false;break;}
-            const auto image = item.iconPreset == "original" ? a.navigationImage(item.id) : std::nullopt;
-            icons = icons && (image ? entry->originalImageKey == image->key && entry->originalImageRevision == image->revision && entry->originalImages == a.images_ &&
-                                          a.images_->acquire(image->key, image->revision) != nullptr
-                                    : entry->originalImageKey.empty() && !entry->originalImageRevision && !entry->originalImages);
-        }
-        step.check(icons, "Navigation entries name exactly the published trimmed App icon images");
+        plan();const auto& right=a.plannedRight_;const auto& entries=a.plannedEntries_;
+        const auto shortcuts=action("addApp"),storage=action("storage");
+        step.check(shortcuts && storage && std::find(right.begin(),right.end(),shortcuts)!=right.end() && std::find(right.begin(),right.end(),storage)==right.end(),"Default navigation preserves Storage below and Apps on the right");
+        step.check(entries.size()==sourceNavigation.size() && std::none_of(entries.begin(),entries.end(),[](const auto& entry){return entry.target.starts_with("app.");}),"Saved shortcuts and groups never expand HUD navigation");
     }
     bool navigationIcon(std::string_view id) {
         plan();
-        const auto entries = a.planner_.entries();const auto app = action("app." + std::string(id));
+        const auto& entries = a.plannedEntries_;const auto app = action("app." + std::string(id));
         const auto entry = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.action == app; });
         return entry != entries.end() && !entry->originalImageKey.empty() && entry->originalImages == a.images_;
     }
@@ -1122,296 +1164,31 @@ struct AppShortcutArea::Driver {
 };
 
 void AppShortcutArea::coverage(app::ModuleCoverage& step) {
-    Driver d{*this, step, step.time};
-    if (!step.module) {
-        // Per-cycle area step: nothing pending, the disk equals the shown
-        // list and the navigation keeps saved apps between Power and Add App.
-        step.check(!tasks_->busy() && !launch_ && !chooser_ && !loadFailed_ && work_.empty() && canvas_->pendingRequests().empty() && !relinkFailures_,
-                   "App shortcuts are idle between cycles");
-        step.check(d.disk() == file_ && canvas_->items() == file_.items, "The data root still holds the shown list");
-        d.checkNavigation();
-        // A navigation launch of the imported record shows its relink error
-        // in + Add App and selects it when another module is shown.
-        const auto& seeded = file_.items.front();
-        const auto selects = coverageSelectRequests_, closes = coverageCloseRequests_;
-        const bool elsewhere = overlayVisible_ && host_.selectedModule() != core::Module::addApp;
-        step.check(activate(d.action("app." + seeded.id), d.t) && !launch_ && d.toast() && d.toast()->title == text(language_, "Notice", "提示") && coverageCloseRequests_ == closes &&
-                   coverageSelectRequests_ == selects + (elsewhere ? 1u : 0u), "A navigation launch of an imported app shows its error in + Add App");
-        d.clearToast();
-        // The original application icons within their memory bound (two
-        // images each: the tile's and the trimmed side-list copy).
-        {
-            const auto icons = images_->stats();
-            step.check(images_->limits().cachedImages > 2 * maximumIcons && icons.cachedImages <= 2 * maximumIcons && icons.cachedBytes <= 2 * maximumIcons * iconBytes &&
-                           icons.liveBytes <= iconLimits.liveBytes, "The original application icons stay within their 128 shortcuts of 96 pixels");
-        }
-        // Memory (Mac OverlayController: systemView = nil on every close): a
-        // hidden + Add App keeps no artwork once the HUD closed; the next
-        // cycle shows it again with the same artwork.
-        if (elsewhere && core_->entries(core::Module::addApp).empty()) {
-            const auto open = core_->sceneStats(core::Module::addApp);const auto shared = raster_.stats();
-            overlayClosing(d.t);(void)hostEvent({app::HostEvent::Kind::overlayConcealed, 0}, d.t);
-            const auto closed = core_->sceneStats(core::Module::addApp);const auto released = raster_.stats();
-            step.check(open && closed && closed->rasterEntries == 0 && closed->residentPixelBytes == 0 && closed->parks >= open->parks,
-                       "Once the HUD is closed the hidden + Add App keeps no canvas artwork");
-            step.check(released.entries <= shared.entries && released.resourceBytes <= shared.resourceBytes, "The released canvas returns its rasters to the shared rasterizer");
-            setOverlayVisible(true, d.t); // this owner's next opening (the harness keeps the HUD open)
-            step.check(core_->entries(core::Module::addApp).empty(), "Opening the HUD on another module draws no + Add App canvas");
-        }
-        d.frame();return;
+    Driver d{*this,step,step.time};d.settle();d.checkNavigation();
+    if(!step.module){
+        step.check(!tasks_->busy() && !launch_ && !chooser_ && work_.empty() && canvas_->pendingRequests().empty(),"Shortcut center is idle between coverage cycles");
+        step.check(d.disk()==file_ && canvas_->items()==m::shortcutItems(file_,canvas_->selectedGroup()),"Persisted hub and selected group agree");return;
     }
-    step.check(*step.module == core::Module::addApp, "App shortcuts present only + Add App");
-    d.settle();d.frames(.1);
-    const auto seeded = file_;
-    step.check(canvas_->isActive() && canvas_->storeAvailable() && !core_->entries(core::Module::addApp).empty() && seeded.items.size() == 1 && !seeded.items[0].native() &&
-               d.disk() == seeded && canvas_->items() == seeded.items && canvas_->header().counterText() == "01", "+ Add App shows the seeded imported Mac shortcut from the data root");
-    // The load reconciled the relink ledger on the repository worker.
-    step.check(relinkSyncs_ >= 1 && lastRelink_ == m::ShortcutRelinkSync{0, 1, 1} && !relinkFailures_, "The load reconciles Migration/relink.json once");
-    d.checkLedger(std::nullopt);
-    d.checkNavigation();
-    const auto applications = coverageRoot_ / "Applications";
-    const auto launched = synthetic_->launched.load();
-    const auto opened = launchesOpened_, reopened = coverageReopenRequests_, closes = coverageCloseRequests_;
-    const auto& imported = seeded.items[0];
-
-    // 1. Add App: an executable is saved at once with its own name and the
-    //    App icon preset (AppShortcutCanvas.importURLs), toasted, listed last.
-    d.add(Driver::utf8(applications / "Alpha.exe"));
-    const auto alphaID = d.last();
-    {
-        const auto& alpha = d.record(alphaID);
-        step.check(file_.items.size() == 2 && alpha.name == "Alpha Synthetic" && alpha.iconPreset == "original" && alpha.native() &&
-                   alpha.locator["windowsTarget"]["kind"] == J("executable") && d.toast() && d.toast()->title == text(language_, "App added", "已添加到右侧列表"),
-                   "An added application is saved with its inspected name and the App icon preset, and toasted");
-        d.clearToast();d.committed("The committed shortcuts.json is exactly the shown list");
-        d.settle();
-        step.check(d.icon(alphaID, applicationKey(alpha.locator)) && d.navigationIcon(alphaID), "The new App icon shortcut shows its own icon in the tile and the side list");
+    step.check(*step.module==core::Module::addApp,"Shortcut center presents its existing module identity");
+    d.frames(.1);const auto seeded=file_;const auto applications=coverageRoot_/"Applications";
+    step.check(canvas_->isActive() && canvas_->storeAvailable() && d.control("groups:overview"),"Unified shortcut page is active");
+    d.add(Driver::utf8(applications/"Alpha.exe"));d.clearToast();
+    const auto app=file_.items.back();step.check(file_.items.size()==seeded.items.size()+1 && app.native(),"Chooser adds an original-icon shortcut to overview");
+    d.click("groups:new");d.settle();const auto group=file_.groups.back().id;
+    step.check(canvas_->selectedGroup()==group && canvas_->items().empty(),"Creating a group selects its empty grid");
+    d.add(Driver::utf8(applications/"Alpha.exe"));d.clearToast();
+    step.check(file_.items.size()==seeded.items.size()+1 && file_.groups.back().itemIDs==std::vector<std::string>{app.id},"Adding the same target to a group reuses its overview record");
+    canvas_->showGroup({});d.settle();d.frames(.1);d.checkNavigation();
+    if(step.cycle==0){
+        const auto before=synthetic_->launched.load();beginLaunch(app,d.t);d.settle();d.close(false);
+        step.check(synthetic_->launched==before+1,"A shortcut launches only after closing the HUD");d.reopen();d.clearToast();
     }
-    d.checkNavigation();
-    const auto alphaAction = d.action("app." + alphaID);
-    // 2. Rename in place (the name field's commit through its accessibility value).
-    step.check(canvas_->setAccessibilityText("apps:" + alphaID + ":name", "  Alpha \xe5\xba\x94\xe7\x94\xa8\n", d.t), "The name field takes a new name");
-    d.settle();d.frame();
-    step.check(d.record(alphaID).name == "Alpha \xe5\xba\x94\xe7\x94\xa8" && d.action("app." + alphaID) == alphaAction, "The trimmed name is saved; the navigation action stays");
-    d.committed("A rename is committed");
-    step.check(canvas_->setAccessibilityText("apps:" + alphaID + ":name", " ", d.t) && !d.working() && d.record(alphaID).name == "Alpha \xe5\xba\x94\xe7\x94\xa8",
-               "An empty name restores the saved one and saves nothing");
-    // 3. Choose icon: the tile opens the 5 x 3 preset grid; Camera is saved.
-    d.click("apps:" + alphaID + ":icon");
-    step.check(canvas_->menuOpen() && core_->capturesPointer(), "The tile opens Choose icon, which captures the pointer");
-    step.check(canvas_->performAccessibilityAction("apps:iconMenu:camera", d.t), "The Camera tile is picked");
-    d.settle();d.frame();
-    step.check(!canvas_->menuOpen() && d.record(alphaID).iconPreset == "camera" && !icons_.contains(alphaID), "A picked preset is saved and the App icon is released");
-    d.committed("The preset is committed");
-    d.checkNavigation();
-
-    // 4. The imported Mac record has no Windows target: Open relinks it (Windows only); cancelled here.
-    {
-        const auto requests = coverageChooserRequests_;
-        d.click("apps:" + imported.id + ":open");
-        step.check(coverageChooserRequests_ == requests + 1 && !launch_ && coverageCloseRequests_ == closes, "Open on an imported shortcut asks for its Windows application instead of closing");
-        d.answer({}, true);
-        step.check(!chooser_ && !canvas_->chooserOpen() && file_ == d.disk() && !canvas_->presentingPanel(), "A cancelled relink changes nothing");
-    }
-    // 5. A missing target fails inspection: an error toast, nothing saved.
-    d.add(Driver::utf8(applications / "Missing.exe"));
-    step.check(file_.items.size() == 2 && d.toast() && d.toast()->title == text(language_, "Notice", "提示"), "A missing application reports its error");
-    d.clearToast();
-    // 6. A packaged application from the chooser's applications mode.
-    const auto logos = synthetic_->logos.load();
-    d.add("shell:AppsFolder\\Synthetic.Packaged_8wekyb3d8bbwe!App");
-    const auto packagedID = d.last();
-    {
-        const auto& packaged = d.record(packagedID);
-        step.check(file_.items.size() == 3 && packaged.name == "Packaged Synthetic" && packaged.locator["windowsTarget"]["kind"] == J("packagedApp") &&
-                   packaged.locator["windowsTarget"]["appUserModelID"] == J("Synthetic.Packaged_8wekyb3d8bbwe!App"), "A chosen packaged application is saved");
-        d.clearToast();d.settle();
-        // Its App icon is the package's logo (the synthetic fixture through
-        // the production decoder): the opaque glyph's exact colour at the centre.
-        const auto found = icons_.find(packagedID);
-        const auto image = d.icon(packagedID, applicationKey(packaged.locator)) ? images_->acquire(iconKey(packagedID), found->second.revision) : nullptr;
-        const auto center = image ? (std::size_t(image->height() / 2) * image->width() + image->width() / 2) * 4 : 0;
-        step.check(image && synthetic_->logos == logos + 1 && image->width() == g::appShortcutIconPixels &&
-                   image->premultipliedBGRA()[center] == 90 && image->premultipliedBGRA()[center + 1] == 160 && image->premultipliedBGRA()[center + 2] == 40 && image->premultipliedBGRA()[center + 3] == 255,
-                   "The packaged shortcut shows its own logo from the package");
-        const auto trimmed = images_->acquire(navigationKey(packagedID), found->second.revision);
-        step.check(trimmed && trimmed->width() <= g::appShortcutIconPixels && trimmed->height() <= g::appShortcutIconPixels && found->second.color, "The side list gets the logo trimmed to its pixels, the tile its average colour");
-    }
-    // 7. A document, or a choice the dialog cannot name, asks for a Windows application.
-    {
-        d.add(Driver::utf8(applications / "Readme.txt"));
-        step.check(file_.items.size() == 3 && d.toast() && d.toast()->caption == invalidApplicationText(language_), "A chosen document asks for a Windows application");
-        d.clearToast();
-        d.click("apps:add");d.answer({});
-        step.check(d.toast() && d.toast()->caption == invalidApplicationText(language_), "A choice that names no application asks for a Windows application");
-        d.clearToast();
-        const auto request = chooserRequest(core::Language::english);
-        step.check(request.applications && request.singleFile && request.filterSpec == "*.exe;*.lnk" && request.filterName == "Applications" && request.title == "Choose an application",
-                   "The chooser asks the shared dialog for one application (AppsFolder) through the application filter");
-    }
-    // 8. A launch that fails after the close reports in + Add App and reopens it.
-    synthetic_->failLaunch = true;
-    d.click("apps:" + packagedID + ":open");
-    step.check(d.toast() && d.toast()->title == text(language_, "Opening", "正在打开"), "Open toasts Opening");
-    d.close(false);
-    synthetic_->failLaunch = false;
-    step.check(!launch_ && launchError_ && coverageReopenRequests_ == reopened + 1 && launchesOpened_ == opened && synthetic_->launched == launched,
-               "A failed launch keeps the shortcut, keeps its error and reopens + Add App");
-    d.reopen();
-    step.check(d.toast() && d.toast()->caption == *launchError_, "The reopened + Add App shows the failed launch's error");
-    d.clearToast();
-    // 9. A shell link keeps the App icon preset and gets its icon; the duplicate is refused.
-    d.add(Driver::utf8(applications / "Beta.lnk"));
-    const auto betaID = d.last();
-    d.clearToast();d.settle();
-    step.check(d.record(betaID).locator["windowsTarget"]["kind"] == J("shellLink") && d.icon(betaID, applicationKey(d.record(betaID).locator)) && !icons_.contains(alphaID) &&
-               !icons_.contains(imported.id) && d.navigationIcon(betaID) && !d.navigationIcon(alphaID), "Only App icon shortcuts with a Windows target show their application's icon");
-    d.add(Driver::utf8(applications / "Alpha.exe"));
-    step.check(file_.items.size() == 4 && d.toast() && d.toast()->title == text(language_, "Notice", "提示"), "The same application cannot be saved twice");
-    d.clearToast();d.checkNavigation();
-    // 10. Drag and drop (SystemHUDView.acceptsAppShortcutDrop): exactly one application over the centre.
-    {
-        const auto inside = d.project({295, 300}), outside = d.project({-160, 300});
-        step.check(covers(inside) && !covers(outside), "Drop points project inside and outside the + Add App canvas");
-        const std::array two{Driver::utf8(applications / "Gamma.exe"), Driver::utf8(applications / "Delta.lnk")};
-        const std::array gamma{two[0]}, document{Driver::utf8(applications / "Readme.txt")};
-        step.check(!drop(two, inside, d.t) && !drop(document, inside, d.t) && !drop(gamma, outside, d.t) && !d.working(), "Two files, a document or a drop beside the canvas are refused");
-        step.check(!dropHover(two, inside, d.t) && !dropHover(document, inside, d.t) && !dropHover(gamma, outside, d.t) && !canvas_->dropTarget(), "They show no drop target");
-        step.check(dropHover(gamma, inside, d.t) && canvas_->dropTarget() && pointerLocked(), "One application over the canvas shows its drop target and holds the plane");
-        d.frame();
-        step.check(!dropHover(gamma, std::nullopt, d.t) && !canvas_->dropTarget(), "Leaving the canvas ends the drop target");
-        step.check(dropHover(gamma, inside, d.t) && drop(gamma, inside, d.t) && !canvas_->dropTarget(), "A dropped application is accepted and ends the drop target");
-        d.settle();d.frame();
-        step.check(file_.items.size() == 5 && d.record(d.last()).name == "Gamma Synthetic" && d.toast() && d.toast()->title == text(language_, "App added", "已添加到右侧列表"),
-                   "A dropped application is added");
-        d.clearToast();
-    }
-    const auto gammaID = d.last();
-    // 11. Ctrl+V (AppShortcutCanvas.handleKey): application files from the synthetic clipboard.
-    {
-        // The canvas takes Ctrl+V through its own key handler (the core reads
-        // Ctrl from the keyboard state of the HUD's key dispatch).
-        d::KeyInput paste;paste.virtualKey = 'V';paste.character = U'v';paste.control = true;
-        const auto reads = syntheticClipboard_->fileReads;
-        syntheticClipboard_->files = {Driver::utf8(applications / "Readme.txt")};
-        step.check(!canvas_->keyDown(paste, d.t) && syntheticClipboard_->fileReads == reads + 1 && file_.items.size() == 5 && !d.toast(), "Ctrl+V without an application is left unhandled");
-        syntheticClipboard_->files = {Driver::utf8(applications / "Gamma.exe"), Driver::utf8(applications / "Delta.lnk")};
-        step.check(canvas_->keyDown(paste, d.t) && d.toast() && d.toast()->caption == text(language_, "Choose one application to customize", "请选择一个应用进行设置"),
-                   "Pasting two applications asks for one");
-        d.clearToast();
-        syntheticClipboard_->files = {Driver::utf8(applications / "Delta.lnk")};
-        step.check(canvas_->keyDown(paste, d.t), "A pasted application is accepted");
-        d.settle();d.frame();
-        step.check(file_.items.size() == 6 && d.record(d.last()).name == "Delta Synthetic", "The pasted application is added");
-        d.clearToast();
-    }
-    const auto deltaID = d.last();
-    // 12. UI Automation over the library tree: the canvas's items, Invoke on a peer.
-    (void)automationRefresh(nullptr);
-    {
-        std::vector<d::AccessibilityItem> items;canvas_->accessibilityItems(items);
-        step.check(automationCount() >= items.size() && items.size() >= 1 + 4 * file_.items.size(), "UIA lists Add App and each row's tile, name, Open and Remove");
-        const auto open = d.peer("apps:" + betaID + ":open");
-        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT name;VariantInit(&name);
-        step.check(SUCCEEDED(open.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &name)) && name.vt == VT_BSTR && std::wstring_view(name.bstrVal).ends_with(L"Beta Synthetic"),
-                   "A row peer is named after its app");
-        VariantClear(&name);
-        const auto addPeer = d.peer("apps:add");
-        Microsoft::WRL::ComPtr<IInvokeProvider> invoke;
-        const auto requests = coverageChooserRequests_;
-        step.check(SUCCEEDED(addPeer.As(&invoke)) && SUCCEEDED(invoke->Invoke()) && coverageChooserRequests_ == requests + 1 && chooser_, "The Add App peer requests the chooser");
-        d.answer({}, true);
-    }
-    automationDisconnect();
-    step.check(automationCount() == 0, "Closing the UIA tree disconnects every peer");
-    // 13. A successful close-first launch records the Event Log entry. Only
-    //     in the first cycle: the shared Event Log then shows the same rows
-    //     in every later cycle (its raster usage must repeat).
-    const unsigned successes = step.cycle == 0 ? 2 : 0;
-    if (successes) {
-        d.click("apps:" + betaID + ":open");
-        d.close(false);
-        step.check(!launch_ && synthetic_->launched == launched + 1 && launchesOpened_ == opened + 1 && coverageReopenRequests_ == reopened + 1,
-                   "The application starts only after the close and is recorded as opened");
-        d.reopen();
-        // Reduce Motion: the host's close finishes inside the verify
-        // completion's request (Impl::close delivers overlayClosing, then
-        // overlayConcealed); the launch still starts once it returns.
-        coverageCloseNow_ = [&d, this] { closing(d.t, true); concealed(d.t); };
-        d.click("apps:" + betaID + ":open");
-        d.settle();coverageCloseNow_ = {};
-        step.check(!launch_ && !overlayVisible_ && synthetic_->launched == launched + 2 && launchesOpened_ == opened + 2 && coverageReopenRequests_ == reopened + 1,
-                   "A close that finishes inside the launch's request (Reduce Motion) still starts the application after it");
-        d.reopen();
-    }
-    d.clearToast();
-    // 14. A navigation activation follows the same handoff; a forced close
-    //     (sleep, session end) cancels it before anything starts.
-    step.check(activate(alphaAction, d.t) && launch_, "The navigation action of a saved app requests its launch");
-    step.check(activate(alphaAction, d.t) && launch_ && launch_->phase == LaunchPhase::verify, "One launch at a time");
-    d.close(true);
-    step.check(!launch_ && synthetic_->launched == launched + successes, "A forced close cancels the pending launch");
-    d.reopen();
-    step.check(!activate(d.action("addApp"), d.t) && !launch_, "Module actions are not app launches");
-    // 15. Quitting cancels a launch whose close has not finished.
-    step.check(activate(d.action("app." + betaID), d.t), "The second app's navigation action requests its launch");
-    d.settle();
-    step.check(launch_ && launch_->phase == LaunchPhase::closing, "The verified launch waits for the close");
-    (void)hostEvent({app::HostEvent::Kind::quitting, 0}, d.t);
-    step.check(!launch_ && synthetic_->launched == launched + successes, "An accepted quit cancels the pending launch");
-    concealed(d.t);
-    step.check(coverageCloseRequests_ == closes + 3 + successes, "Each verified launch requested exactly one close");
-    // 16. Remove the added apps (the confirm bar): the seeded state returns.
-    for (const auto& id : {alphaID, packagedID, betaID, gammaID, deltaID}) d.remove(id);
-    step.check(file_ == seeded && d.disk() == seeded && !d.working(), "The seeded imported shortcut remains alone");
-    step.check(!icons_.contains(alphaID) && !icons_.contains(betaID) && !icons_.contains(packagedID) && !icons_.contains(gammaID) && !icons_.contains(deltaID),
-               "Removed shortcuts release their icon images");
-    d.checkNavigation();
-    step.check(!planner_.shortcutID(alphaAction), "A removed app's action launches nothing");
-    // 17. Relink the imported Mac shortcut (Open -> the chooser): it keeps its
-    //     identity, name, preset, date and position and gains the Windows
-    //     target; Migration/relink.json resolves its row with that application.
-    {
-        const auto relinkedPath = applications / "Relinked.exe";
-        const auto syncs = relinkSyncs_;
-        d.click("apps:" + imported.id + ":open");
-        d.answer({Driver::utf8(relinkedPath)});
-        const auto target = Driver::utf8(relinkedPath);
-        const auto& relinked = d.record(imported.id);
-        step.check(file_.items.size() == 1 && relinked.native() && relinked.name == imported.name && relinked.iconPreset == imported.iconPreset &&
-                   relinked.createdAt == imported.createdAt && relinked.locator["windowsTarget"]["path"] == J(target) && !d.toast(),
-                   "The relinked shortcut keeps its identity and names its Windows application");
-        step.check(relinkSyncs_ == syncs + 1 && lastRelink_ == m::ShortcutRelinkSync{1, 0, 0} && !relinkFailures_, "Saving the relink resolves its ledger row on the repository worker");
-        d.checkLedger(target);
-        d.restartStore();
-        step.check(file_ == seeded && d.disk() == seeded && canvas_->items() == seeded.items, "The restarted store shows the imported Mac shortcut again");
-        d.checkLedger(std::nullopt);
-        d.checkNavigation();
-    }
-    // 18. More saved apps than the list shows: the wheel scrolls the list
-    //     (row-local parts: no repaint), a scrolled row's Remove commits, and
-    //     the seeded file returns.
-    {
-        d.loadStore(d.manyArchive(applications, seeded, 9));
-        const auto many = file_;
-        step.check(many.items.size() == 10 && canvas_->items() == many.items && d.offset() == 0 && d.disk() == many, "Ten saved apps load in their order and the list starts at its top");
-        d.checkNavigation();d.settle();
-        const auto lastID = many.items.back().id;
-        step.check(many.items.back().iconPreset == "original" && d.icon(lastID, applicationKey(many.items.back().locator)) && d.navigationIcon(lastID), "The last saved app shows its own icon");
-        const auto before = core_->sceneStats(core::Module::addApp);
-        step.check(d.wheel(-4) && d.offset() > 0, "The wheel scrolls the list");
-        const auto after = core_->sceneStats(core::Module::addApp);
-        step.check(before && after && after->generations == before->generations, "Scrolling moves the retained rows without a new generation");
-        for (unsigned n = 0; n < 8; ++n) (void)d.wheel(-4);
-        step.check(d.offset() == canvas_->page().scrollAreas().front()->maximumOffset(), "The list reaches its end");
-        d.remove(lastID);
-        step.check(!icons_.contains(lastID), "The removed scrolled row releases its icon");
-        (void)d.wheel(20);
-        step.check(d.offset() == 0, "Wheel notches back return the list to its top");
-        d.restartStore();
-        step.check(file_ == seeded && d.disk() == seeded, "The seeded list returns");
-        d.checkNavigation();
-    }
+    canvas_->showGroups();d.frame();d.click("groups:tab:"+group);d.click("group:delete-shortcut");
+    step.check(d.context().overlay().confirmState().request().has_value(),"Deleting selected group asks for confirmation");
+    d.context().overlay().decide(d::ConfirmState::Decision::confirm);d.t+=.2;d.context().advance(d.t);d.settle();
+    step.check(file_.groups.empty() && file_.items.size()==seeded.items.size()+1,"Deleting the group retains its shortcut in overview");
+    canvas_->showGroup({});d.settle();d.remove(app.id);d.checkNavigation();
+    step.check(file_==seeded && d.disk()==seeded,"Cycle returns to the original imported shortcut without losing metadata");
     d.frames(.2);
 }
 

@@ -34,7 +34,7 @@ std::optional<AppShortcutSelection> appShortcutIconSelection(const J& locator) n
             if (!target["appUserModelID"].isString() || target["appUserModelID"].string().empty()) return {};
             return AppShortcutSelection{AppShortcutSelectionKind::packagedApp, target["appUserModelID"].string()};
         }
-        if ((target["kind"] == J("executable") || target["kind"] == J("shellLink")) && target["path"].isString() &&
+        if ((target["kind"] == J("executable") || target["kind"] == J("shellLink") || target["kind"] == J("internetShortcut")) && target["path"].isString() &&
             ehud::data::validWindowsFilePath(target["path"].string()))
             return AppShortcutSelection{AppShortcutSelectionKind::file, target["path"].string()};
     } catch (...) {}
@@ -89,6 +89,16 @@ bool linkIcon(const std::wstring& path, unsigned size, Icon& icon) {
     if (FAILED(link->GetPath(buffer.data(), static_cast<int>(buffer.size()), nullptr, SLGP_RAWPATH)) || buffer.back() != 0) return false;
     const auto target = expand(buffer.data());
     return executable(target) && extract(target, 0, size, icon);
+}
+bool urlIcon(const std::wstring& path,unsigned size,Icon& icon) {
+    std::vector<wchar_t> buffer(32768,L'\0');
+    GetPrivateProfileStringW(L"InternetShortcut",L"IconFile",L"",buffer.data(),static_cast<DWORD>(buffer.size()),path.c_str());
+    const int index=static_cast<int>(GetPrivateProfileIntW(L"InternetShortcut",L"IconIndex",0,path.c_str()));
+    if(buffer[0] && extract(expand(buffer.data()),index,size,icon))return true;
+    // Explorer's system image list fallback; no network favicon requests.
+    SHFILEINFOW info{};
+    if(!SHGetFileInfoW(path.c_str(),FILE_ATTRIBUTE_NORMAL,&info,sizeof(info),SHGFI_ICON|SHGFI_LARGEICON|SHGFI_USEFILEATTRIBUTES))return false;
+    icon.value=info.hIcon;return icon.value!=nullptr;
 }
 // Fits `source` (width x height) into a centred size x size square of tight
 // straight RGBA (Fant: area averaging, no overshoot). An icon resource scales
@@ -213,7 +223,7 @@ AppShortcutIconExtractor windowsAppShortcutIconExtractor(AppShortcutPackagedLogo
             }
             const auto path = wide(selection.value);
             Icon icon;
-            const bool found = executable(path) ? extract(path, 0, size, icon) : linkIcon(path, size, icon);
+            const bool found = executable(path) ? extract(path, 0, size, icon) : (path.size()>=4 && _wcsicmp(path.c_str()+path.size()-4,L".url")==0) ? urlIcon(path,size,icon) : linkIcon(path, size, icon);
             if (!found) return {};
             return pixels(icon.value, size);
         } catch (const std::bad_alloc&) {

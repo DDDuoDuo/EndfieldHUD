@@ -89,6 +89,18 @@ void relinkLedger(){
         check(results.back().file->items.at(0).name=="Renamed"&&!results.back().relink,"Once no shortcut row is listed, later writes do no ledger work");
     }
     {
+        Temp temp; OS os; a::UtilityExecutor q([]{}); std::vector<m::ShortcutTaskResult> results;
+        const auto groupID = ehud::data::makeUUID();
+        auto grouped = m::decodeShortcuts(J::parse(archive), rules());
+        grouped.groups.push_back({groupID, "Imported",{grouped.items[0].id}});
+        ehud::data::detail::replaceFile(temp.path/"AppShortcuts"/"shortcuts.json", std::nullopt, m::encodeShortcuts(grouped, rules()).encode(), m::shortcutMaximumBytes);
+        ehud::data::detail::replaceFile(temp.path/"Migration"/"relink.json", std::nullopt, mig::MacRelinkLedger::encode({item}), mig::MacRelinkLedger::maximumBytes);
+        m::AppShortcutTasks tasks(q, temp.path/"AppShortcuts", rules(), os.ops(), [&](auto r){results.push_back(std::move(r));}, temp.path);
+        m::ShortcutTask remove; remove.token = 1; remove.kind = m::ShortcutTaskKind::removeGroup; remove.groupID = groupID;
+        tasks.submit(remove); drain(q, tasks);
+        check(results.back().file && results.back().file->items.size()==1 && results.back().relink == m::ShortcutRelinkSync{0,0,1}, "Deleting a group keeps the imported shortcut and its pending relink");
+    }
+    {
         Temp temp;OS os;a::UtilityExecutor q([]{},1);std::vector<m::ShortcutTaskResult>results;seed(temp.path,"{\"version\":1,\"items\":[");
         m::AppShortcutTasks tasks(q,temp.path/"AppShortcuts",rules(),os.ops(),[&](auto r){results.push_back(std::move(r));},temp.path);
         m::ShortcutTask load;load.token=1;load.kind=m::ShortcutTaskKind::load;tasks.submit(load);drain(q,tasks);
@@ -130,4 +142,49 @@ void moves(){
     check(results.back().error&&results.back().code==m::ShortcutErrorCode::changedOnDisk&&!results.back().file&&
           ehud::data::detail::readFile(path,m::shortcutMaximumBytes)==std::optional<std::string>(archive),"A file changed on disk refuses the move and stays as it is");
 }
-int main(){try{run();destroyedSave();relinkLedger();moves();std::cout<<"App shortcut transactions: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+void groupTransactions() {
+    Temp temp; OS os; a::UtilityExecutor queue([] {});
+    std::vector<m::ShortcutTaskResult> results;
+    m::AppShortcutTasks tasks(queue, temp.path, rules(), os.ops(), [&](auto r) { results.push_back(std::move(r)); });
+    m::ShortcutTask group; group.token = 1; group.kind = m::ShortcutTaskKind::saveGroup;
+    group.newID = ehud::data::makeUUID(); group.name = "Work";
+    tasks.submit(group); check(!tasks.cancel(1), "Accepted group writes survive hiding"); drain(queue, tasks);
+    check(results.back().file && results.back().file->groups.size() == 1, "Group creation commits atomically");
+    const auto id = group.newID;
+    m::ShortcutTask inspect; inspect.token = 2; inspect.kind = m::ShortcutTaskKind::inspect; inspect.selection = os.selection;
+    tasks.submit(inspect); drain(queue, tasks);
+    m::ShortcutTask add; add.token = 3; add.kind = m::ShortcutTaskKind::save; add.candidate = results.back().candidate;
+    add.name = "App"; add.icon = "original"; add.newID = ehud::data::makeUUID(); add.createdAt = 1; add.groupID = id;
+    tasks.submit(add); drain(queue, tasks);
+    check(results.back().file && results.back().file->groups[0].itemIDs == std::vector<std::string>{results.back().file->items[0].id}, "Add commits membership with the shortcut");
+    group.token = 4; group.groupID = id; group.name = "Tools";
+    tasks.submit(group); drain(queue, tasks);
+    check(results.back().file->groups[0].name == "Tools", "Group rename persists");
+    group.token = 5; group.kind = m::ShortcutTaskKind::removeGroup;
+    tasks.submit(group); drain(queue, tasks);
+    check(results.back().file->groups.empty() && results.back().file->items.size()==1 && os.launched == 0, "Deleting a group retains its shortcuts in overview");
+    add.token = 6; tasks.submit(add); drain(queue, tasks);
+    check(results.back().code == m::ShortcutErrorCode::missing && !results.back().file, "An add queued for a deleted group fails without orphan data");
+    group.token = 7; group.kind = m::ShortcutTaskKind::saveGroup; group.groupID.clear();
+    tasks.submit(group); drain(queue, tasks);
+    const auto first = group.newID; group.token = 8; group.newID = ehud::data::makeUUID(); group.name = "Second";
+    tasks.submit(group); drain(queue, tasks);
+    group.token = 9; group.kind = m::ShortcutTaskKind::moveGroup; group.groupID = first; group.index = 1;
+    tasks.submit(group); drain(queue, tasks);
+    check(results.back().file && results.back().file->groups[1].id == first, "Group reordering commits the new order");
+    m::ShortcutRepository reopened(temp.path, rules());
+    check(reopened.load().groups[1].id == first, "Group order survives reopening storage");
+    const auto app=results.back().file->items[0];const auto second=results.back().file->groups[0].id;
+    m::ShortcutTask membership;membership.kind=m::ShortcutTaskKind::membership;membership.ids={app.id};membership.groupID=first;membership.token=10;
+    tasks.submit(membership);drain(queue,tasks);membership.token=11;membership.groupID=second;tasks.submit(membership);drain(queue,tasks);
+    check(results.back().file->groups[0].itemIDs==std::vector<std::string>{app.id} && results.back().file->groups[1].itemIDs==std::vector<std::string>{app.id},"One canonical shortcut joins multiple groups");
+    m::ShortcutTask remove;remove.token=12;remove.kind=m::ShortcutTaskKind::remove;remove.record=app;remove.ids={app.id};remove.groupID=first;
+    tasks.submit(remove);drain(queue,tasks);
+    check(results.back().file->items.size()==1 && results.back().file->groups[1].itemIDs.empty() && results.back().file->groups[0].itemIDs.size()==1,"Group removal leaves overview and other memberships intact");
+    m::ShortcutTask rename;rename.token=13;rename.kind=m::ShortcutTaskKind::metadata;rename.record=app;rename.name="Renamed";rename.icon="original";
+    const auto inspections=os.inspected;tasks.submit(rename);drain(queue,tasks);
+    check(results.back().file->items[0].name=="Renamed" && os.inspected==inspections,"Renaming metadata does not reinspect or launch the target");
+    remove.token=14;remove.groupID.clear();tasks.submit(remove);drain(queue,tasks);
+    check(results.back().file->items.empty() && results.back().file->groups[0].itemIDs.empty(),"Overview deletion removes every group membership in one transaction");
+}
+int main(){try{groupTransactions();run();destroyedSave();relinkLedger();moves();std::cout<<"App shortcut transactions: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

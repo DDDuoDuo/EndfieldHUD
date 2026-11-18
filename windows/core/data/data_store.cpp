@@ -296,6 +296,7 @@ bool resets(SettingsScope scope,std::optional<SettingsScope> owner) {
 // SettingsChoices key a known choice, a UUID canonical or nil, and the
 // display name nil without a valid display UUID (else trimmed, nil if empty).
 Json typedSetting(std::string_view key,const Settings& settings) {
+    if(key=="windowsSwapAppStorage")return settings.fields[key]==Json(true);
     const auto& defaults=defaultSettings().fields;
     const auto& raw=settings.fields.contains(key)?settings.fields[key]:defaults[key];
     const std::string text=raw.isString()?raw.string():std::string();
@@ -391,7 +392,7 @@ bool ModuleLayout::listsTarget(std::string_view target) noexcept {return target.
 std::optional<ModuleLayout> ModuleLayout::arranging(std::string_view module,std::optional<std::string_view> target) const {
     if(!configurableModule(module)||isHidden(module)||!target||!listsTarget(*target)) return std::nullopt;
     // Over a saved app or Add App: after the last visible module.
-    std::string other;if(!target->empty()&&*target!="addApp") other=std::string(*target);else if(const auto shown=visible();!shown.empty()) other=shown.back();
+    std::string other;if(!target->empty()) other=std::string(*target);else if(const auto shown=visible();!shown.empty()) other=shown.back();
     if(other.empty()||other==module||isHidden(other)) return std::nullopt;
     const auto index=std::find(order.begin(),order.end(),other);if(index==order.end()) return std::nullopt;
     auto next=*this;if(!next.move(module,index-order.begin())) return std::nullopt;return next;

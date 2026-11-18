@@ -10,7 +10,7 @@ DesktopCaptionPlan sourceDesktopCaption(const DesktopCaptionRequest&r,const Desk
  need(bool(measure)&&r.language!=Language::system,"Caption needs a resolved language and paint font measurement");
  need(ehud::data::Json::validUtf8(r.title)&&ehud::data::Json::validUtf8(r.target),"Invalid source caption UTF-8");
  need(std::isfinite(r.authoredSize.width)&&std::isfinite(r.authoredSize.height)&&r.authoredSize.width>0&&r.authoredSize.height>0,"Invalid authored source caption size");
- const bool bottom=r.module&&(r.target=="storage"||r.target=="activityMonitor"),shelf=r.module&&r.target=="fileShelf";
+ const bool bottom=r.module&&!r.rightSlot&&(r.target=="storage"||r.target=="activityMonitor"||r.target=="addApp"),shelf=r.module&&r.target=="fileShelf";
  DesktopCaptionPlan p;p.text=r.title;p.bold=r.selected&&r.module;p.wrapped=r.module&&!(shelf&&isChinese(r.language));p.ellipsis=!r.module;
  if(r.module&&!isCJK(r.language)){
   if(shelf)p.text="Temporary\nFile Shelf";else if(r.target=="clipboard")p.text="Clipboard\nCache";

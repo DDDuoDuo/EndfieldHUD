@@ -260,6 +260,7 @@ void settingsSchema() {
         auto next = store.value();
         next.set("displayMode", "never");
         next.set("alertMetric", "gpu");
+        next.set("windowsSwapAppStorage", true);
         check(store.update(next) && !store.update(next), "The Windows choices save once");
     }
     const auto written = detail::readFile(root.path / "settings.json", 1024 * 1024);
@@ -271,6 +272,7 @@ void settingsSchema() {
         const SettingsStore reloaded(root.path);
         check(reloaded.value().string("displayMode") == "never" && reloaded.value().string("alertMetric") == "gpu",
               "Don't display and GPU round-trip across a restart");
+        check(reloaded.value().fields["windowsSwapAppStorage"] == Json(true), "HUD placement survives a restart");
     }
     const auto writeSettings = [&](const Json& settings) {
         const auto bytes = Json(Json::Object{{"version", 1}, {"settings", settings}}).encode();
@@ -355,9 +357,9 @@ void settingsVersion130() {
     {
         const SettingsStore store(root.path);
         const auto layout = store.value().moduleLayout();
-        check(layout.order.size() == 17 && layout.order[0] == "map" && layout.order[1] == "notes" && layout.order[2] == "fileShelf" &&
-              layout.hidden == std::vector<std::string>{"notes"} && layout.visible().front() == "map" && layout.restorable("notes") == "map" &&
-              layout.restorable("clock") == "clock", "Unknown/repeated names drop, missing modules append, Add App is not configurable");
+        check(layout.order.size() == 18 && layout.order[0] == "map" && layout.order[1] == "notes" && layout.order[2] == "fileShelf" &&
+              layout.hidden == std::vector<std::string>{"notes", "addApp"} && layout.visible().front() == "map" && layout.restorable("notes") == "map" &&
+              layout.restorable("clock") == "clock", "Unknown/repeated names drop, missing modules append, Apps is configurable");
         check(store.value().fields["hudModuleOrder"].array().size() == 4, "The stored arrays round-trip verbatim until the layout changes");
     }
     writeSettings(Json::Object{{"hudModuleOrder", "notes"}});
@@ -368,12 +370,12 @@ void settingsVersion130() {
         Settings value = Settings::defaults();
         ModuleLayout layout;
         for (const auto name : ModuleLayout::configurable) check(layout.setHidden(name, true) == (name != ModuleLayout::configurable.back()), "Hiding stops at the last visible module");
-        check(layout.visible() == std::vector<std::string>{"power"} && !layout.canSetHidden("power", true), "One module always stays visible");
+        check(layout.visible() == std::vector<std::string>{"addApp"} && !layout.canSetHidden("addApp", true), "One module always stays visible");
         auto all = ModuleLayout::normalized({}, std::vector<std::string>(ModuleLayout::configurable.begin(), ModuleLayout::configurable.end()));
-        check(all.hidden.size() == 16 && !all.isHidden("notes"), "All hidden: the first of the order is shown again");
+        check(all.hidden.size() == 17 && !all.isHidden("notes"), "All hidden: the first of the order is shown again");
         layout = {};check(layout.move("power", -4) && layout.order.front() == "power" && !layout.move("power", 0) && layout.move("notes", 99) && layout.order.back() == "notes", "Moves clamp and report no-ops");
         value.setModuleLayout(layout);
-        check(value.fields["hudModuleOrder"].array().size() == 17 && !value.fields.contains("hudHiddenModules"), "A changed order is stored in full; no hidden key");
+        check(value.fields["hudModuleOrder"].array().size() == 18 && !value.fields.contains("hudHiddenModules"), "A changed order is stored in full; no hidden key");
         layout.setHidden("reader", true);layout.setHidden("archive", true);value.setModuleLayout(layout);
         check(value.fields["hudHiddenModules"] == Json(Json::Array{"archive", "reader"}), "Hidden modules are stored in list order");
         value.setModuleLayout(ModuleLayout{});
@@ -386,7 +388,7 @@ void settingsVersion130() {
               "The right-hand list's tiles: modules, saved apps and Add App");
         ModuleLayout layout;
         const auto overModule = layout.arranging("map", std::string_view("fileShelf"));
-        check(overModule && overModule->order[1] == "map" && overModule->order[2] == "fileShelf" && overModule->order.size() == 17,
+        check(overModule && overModule->order[1] == "map" && overModule->order[2] == "fileShelf" && overModule->order.size() == 18,
               "Over another module the dragged module takes its place");
         const auto down = layout.arranging("notes", std::string_view("archive"));
         check(down && down->order[2] == "archive" && down->order[3] == "notes", "Dragged down it lands where the target was");
@@ -394,14 +396,16 @@ void settingsVersion130() {
         check(overApp && overApp->order.back() == "notes" && overApp->hidden.empty(), "Over a saved app it goes after the last visible module");
         const auto overAdd = layout.arranging("map", std::string_view("addApp"));
         check(overAdd && overAdd->order.back() == "map", "Over Add App it goes after the last visible module");
-        check(!layout.arranging("power", std::string_view("addApp")) && !layout.arranging("power", std::string_view("")),
+        check(!layout.arranging("addApp", std::string_view("addApp")) && !layout.arranging("addApp", std::string_view("")),
               "The last visible module over an app or Add App changes nothing");
         check(!layout.arranging("map", std::nullopt) && !layout.arranging("map", std::string_view("map")) &&
-              !layout.arranging("map", std::string_view("system")) && !layout.arranging("addApp", std::string_view("map")) &&
+              !layout.arranging("map", std::string_view("system")) &&
               !layout.arranging("clock", std::string_view("map")), "Nothing under the pointer, itself, a fixed module or no module: no change");
+        const auto appsMoved=layout.arranging("addApp",std::string_view("notes"));
+        check(appsMoved && appsMoved->order.front()=="addApp","Shortcut Apps can be dragged to the first module slot");
         layout.setHidden("power", true);layout.setHidden("archive", true);
         const auto pastHidden = layout.arranging("notes", std::string_view("addApp"));
-        check(pastHidden && pastHidden->order[15] == "notes" && pastHidden->order[16] == "power" && pastHidden->hidden == std::vector<std::string>{"archive", "power"},
+        check(pastHidden && pastHidden->order.back() == "notes" && pastHidden->order[15] == "power" && pastHidden->hidden == std::vector<std::string>{"archive", "power"},
               "After the last visible module, ahead of a hidden one; the hidden set is unchanged");
         check(!layout.arranging("archive", std::string_view("map")) && !layout.arranging("map", std::string_view("archive")),
               "Hidden modules never move or act as targets");
@@ -479,7 +483,7 @@ void restoreScopes131() {
     written.setProjection({0x22A6F2, 30, true, false});
     written.consumeDailyBootLog("2026-11-07");
     written.setBatteryAlertMethod("always");
-    for (const auto key : {"windowsDisplayID", "windowsDisplayName", "windowsSummonShortcut", "storageVolume", "orbipom.bestScore.v1"}) written.set(key, "set by name");
+    for (const auto key : {"windowsDisplayID", "windowsDisplayName", "windowsSummonShortcut", "windowsSwapAppStorage", "storageVolume", "orbipom.bestScore.v1"}) written.set(key, "set by name");
     const auto listed = [](std::string_view key) { return std::count_if(scopedSettings.begin(), scopedSettings.end(), [&](const ScopedSetting& s) { return s.key == key; }); };
     for (const auto& [key, value] : written.fields.object()) check(listed(key) == 1, "Every written key is in exactly one scope row: " + key);
     check(scopedSettings.size() == written.fields.object().size(),
@@ -574,6 +578,10 @@ void restoreScopes131() {
 // HUDOverlayLayout: Stored decoding, normalization, the default removal.
 void overlayLayout131(const std::function<void(const Json&)>& writeSettings, const fs::path& root) {
     using L = OverlayLayout;
+    const auto migrated = ModuleLayout::normalized({"mediaAssembly", "map", "notes"}, {"mediaAssembly"});
+    check(ModuleLayout::isOpenable("mediaAssembly") && ModuleLayout::listsTarget("mediaAssembly") &&
+          migrated.order.front() == "mediaAssembly" && migrated.hidden == std::vector<std::string>{"mediaAssembly"} && migrated.restorable("mediaAssembly") == "map",
+          "Restored Media Assembly retains its visibility preference");
     check(ModuleLayout::openable.size() == 23 && ModuleLayout::openable[0] == "system" && ModuleLayout::openable[5] == "activityMonitor" &&
           ModuleLayout::openable[6] == "notes" && ModuleLayout::openable.back() == "power" && !ModuleLayout::isOpenable("addApp") &&
           ModuleLayout::isModule("addApp") && ModuleLayout::isOpenable("hotkeys") && !ModuleLayout::isModule("clock"),

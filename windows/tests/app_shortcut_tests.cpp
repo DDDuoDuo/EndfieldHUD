@@ -47,7 +47,7 @@ void source(const J& oracle, const m::ShortcutTextRules& rules) {
             check(m::decodeShortcuts(m::encodeShortcuts(file, rules), rules) == file, "Original accepted Mac archive round trip");
             for (const auto& item : file.items) check(!item.native(), "Mac bookmarks are never treated as executable Windows references");
         } else rejects(status == "newerVersion" ? m::ShortcutErrorCode::newerVersion : m::ShortcutErrorCode::invalidRecord,
-            [&] { (void)m::decodeShortcuts(entry["archive"], rules); }, "Original rejected Mac archive stays rejected");
+            [&] { (void)m::decodeShortcuts([&]{auto a=entry["archive"];if(status=="newerVersion")a["version"]=3;return a;}(), rules); }, "Original rejected Mac archive stays rejected");
     }
     check(oracle["icons"].array().size() == 14, "Original fourteen icon IDs");
     for (const auto& icon : oracle["icons"].array()) check(m::validShortcutIcon(icon.string()), "Each original icon ID retained");
@@ -115,17 +115,70 @@ void persistence(const J& oracle, const m::ShortcutTextRules& rules) {
     write(store.path(), saved); edited.items[0].name = "Conflict";
     rejects(m::ShortcutErrorCode::changedOnDisk, [&] { reload.save(edited); }, "External writes reject replacement atomically");
     check(read(store.path()) == saved, "Failed save preserves external file bytes");
-    write(store.path(), "{\"version\":2,\"items\":[]}");
+    write(store.path(), "{\"version\":3,\"items\":[]}");
     rejects(m::ShortcutErrorCode::newerVersion, [&] { m::ShortcutRepository future(temp.root, rules); future.load(); }, "Future archive preserved without repair/write");
-    check(read(store.path()) == "{\"version\":2,\"items\":[]}", "Future-version file remains byte-identical");
+    check(read(store.path()) == "{\"version\":3,\"items\":[]}", "Future-version file remains byte-identical");
 }
+void groups(const m::ShortcutTextRules& rules) {
+    m::ShortcutFile file;
+    file.groups = {{id(40), "工作"}, {id(41), "游戏"}};
+    m::ShortcutCandidate app{"Application", {}, target("same-app")};
+    m::saveShortcutDraft(file, app, app, "One", "original", {}, id(42), 1, rules, same, id(40));
+    m::saveShortcutDraft(file, app, app, "Two", "original", {}, id(43), 2, rules, same, id(41));
+    check(file.items.size()==1 && file.groups[0].itemIDs==file.groups[1].itemIDs,"One canonical target referenced by both groups");
+    check(file.items[0].name=="One","Adding a membership preserves the custom name");
+    m::saveShortcutDraft(file,app,app,"Again","original",{},id(45),4,rules,same,id(40));
+    check(file.groups[0].itemIDs.size()==1,"Repeated membership does not duplicate a tile");
+    check(m::decodeShortcuts(m::encodeShortcuts(file, rules), rules) == file, "Group names, membership and order round-trip");
+    Temp temp;
+    m::ShortcutRepository repository(temp.root, rules); repository.load(); repository.save(file);
+    m::ShortcutRepository reopened(temp.root, rules);
+    check(reopened.load() == file, "A restart restores all groups and shortcut membership");
+    auto broken = file; broken.items[0].groupID = id(99);
+    rejects(m::ShortcutErrorCode::invalidRecord, [&] { m::encodeShortcuts(broken, rules); }, "Orphan memberships cannot be persisted");
+}
+
+void desktop(const m::ShortcutTextRules& rules) {
+    m::ShortcutFile file;file.groups={{id(50),"Work"},{id(51),"Games"}};
+    m::ShortcutCandidate app{"Desktop",{},target("target")};
+    std::vector<m::DesktopShortcut> snapshot={{R"(C:\Desktop\App.lnk)",app},{R"(C:\Public\App.lnk)",app}};
+    m::mergeDesktopShortcuts(file,snapshot,rules);
+    check(file.items.size()==1 && file.items[0].desktopPaths.size()==2,"User and public duplicate targets coalesce");
+    const auto key=file.items[0].id;file.items[0].name="Custom";
+    m::setShortcutMembership(file,key,id(50),true);m::setShortcutMembership(file,key,id(51),true);
+    m::mergeDesktopShortcuts(file,snapshot,rules);
+    check(file.items[0].id==key && file.items[0].name=="Custom" && file.groups[1].itemIDs[0]==key,"Rescan preserves identity, name and memberships");
+    m::mergeDesktopShortcuts(file,{},rules);
+    check(file.items.size()==1 && file.items[0].unavailable,"Missing desktop links stay marked unavailable when grouped");
+    m::mergeDesktopShortcuts(file,snapshot,rules);
+    check(!file.items[0].unavailable,"Reappearing desktop link recovers in its groups");
+    file.hiddenDesktop={snapshot[0].path,snapshot[1].path};m::removeShortcut(file,key);
+    m::mergeDesktopShortcuts(file,snapshot,rules);check(file.items.empty(),"HUD-removed desktop sources stay suppressed");
+    file.hiddenDesktop.clear();m::mergeDesktopShortcuts(file,snapshot,rules);check(file.items.size()==1,"Restore rediscovery is explicit");
+    m::mergeDesktopShortcuts(file,{},rules);check(file.items.empty(),"Missing ungrouped automatic shortcut disappears");
+    m::mergeDesktopShortcuts(file,snapshot,rules);
+    auto manual=file.items.front();manual.id=id(62);manual.desktopOnly=false;manual.desktopPaths.clear();manual.locator=app.locator;
+    file.items.push_back(manual);m::normalizeShortcutGroups(file);
+    check(file.items.size()==1 && !file.items.front().desktopOnly,"Manual ownership survives merging with a desktop-only record");
+    m::mergeDesktopShortcuts(file,{},rules);check(file.items.size()==1,"Removing desktop links cannot discard a merged manual shortcut");
+    auto args=app;args.locator["windowsTarget"]["launch"]=J::Object{{"arguments","--other"}};
+    check(!m::sameShortcutTarget(app.locator,args.locator),"Different launch arguments stay separate");
+    auto legacy=J::Object{{"version",1},{"groups",J::Array{J::Object{{"id",id(50)},{"name","Work"}},J::Object{{"id",id(51)},{"name","Games"}}}},{"items",J::Array{}}};
+    m::ShortcutRecord row;row.id=id(60);row.name="Keep";row.originalName="App";row.locator=app.locator;
+    m::ShortcutFile rows;rows.items={row};auto serialized=m::encodeShortcuts(rows,rules)["items"].array()[0];serialized["groupID"]=id(50);
+    auto second=serialized;second["id"]=id(61);second["groupID"]=id(51);
+    legacy["items"]=J::Array{serialized,second};auto migrated=m::decodeShortcuts(legacy,rules);
+    check(migrated.items.size()==1 && migrated.groups[0].itemIDs==migrated.groups[1].itemIDs,"v1 duplicated group records migrate without lost membership");
+    check(m::decodeShortcuts(m::encodeShortcuts(migrated,rules),rules)==migrated,"v2 migration roundtrips");
+}
+
 }
 int main(int argc, char** argv) {
     try {
         check(argc == 2, "Expected source fixture path");
         const auto oracle = J::parse(read(std::filesystem::u8path(argv[1])));
         const auto rules = endfield::native::nativeShortcutTextRules();
-        source(oracle, rules); edits(oracle, rules); moves(rules); persistence(oracle, rules);
+        desktop(rules); groups(rules); source(oracle, rules); edits(oracle, rules); moves(rules); persistence(oracle, rules);
         std::cout << "Shortcut model/store passed " << checks << " checks\n"; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << checks << ": " << e.what() << '\n'; return 1; }
 }

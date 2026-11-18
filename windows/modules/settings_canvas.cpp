@@ -231,7 +231,7 @@ void SettingsCanvas::resetSession() {
 SettingsCanvas::Structure SettingsCanvas::structure() const {
     const bool about = module() == core::Module::about;
     return {section_, env().language, stringOr(config(), "language"), displays_, capturingShortcut(), config().applicationIcon(),
-        stringOr(config(), "accentHex"), about && !controller_->updateStatus().releaseURL.empty()};
+        stringOr(config(), "accentHex"), about && !controller_->updateStatus().releaseURL.empty(), flag(config(), "windowsSwapAppStorage")};
 }
 
 // controllerChanged (:103-112). The Mac rebuilds every built canvas at once
@@ -500,7 +500,8 @@ void SettingsCanvas::buildModules(d::Page& page) {
     modulesScroll_ = &scroll;
     std::vector<d::RowPlate*> plates;
     for (const auto& module : layout.order) {
-        const auto title = moduleTitle(module, env().language).value_or(module);
+        const auto shownModule = module=="addApp" && flag(config(), "windowsSwapAppStorage") ? std::string("storage") : module;
+        const auto title = shownModule=="addApp" ? text("Apps","应用") : moduleTitle(shownModule, env().language).value_or(shownModule);
         auto& grip = page.make<d::DragGrip>("grip:" + module, "", d::Size{20, 30}, d::Point{7, 10});
         grip.onDrag = [this, module](d::DragGrip::Phase phase, d::Point point) { dragModule(module, phase, point); };
         auto& up = page.make<d::IconButton>("up:" + module, title + ", " + text("Move up", "上移"), d::Icon::left, d::IconButton::Style::light, false, false, 26., 13.);
@@ -515,7 +516,7 @@ void SettingsCanvas::buildModules(d::Page& page) {
         auto& plate = row("module:" + module, title, {&up.layer(), &down.layer(), &toggle.layer()}, page, {}, {&grip, &up, &down, &toggle});
         d::Layer& glyph = page.makeLayer("module:" + module + ".glyph");
         glyph.setFrame({0, 0, 24, 24}); glyph.setAnimatable();
-        if (const auto found = hooks_.moduleGlyphs.find(module); found != hooks_.moduleGlyphs.end())
+        if (const auto found = hooks_.moduleGlyphs.find(shownModule); found != hooks_.moduleGlyphs.end())
             if (auto node = glyphNode(glyph.id(), found->second, 24)) glyph.setContent(std::move(*node));
         plate.setTitleInset(56);
         const double middle = 10 + (plate.layer().bounds().height - 18) / 2 + 1;
@@ -707,6 +708,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     rows.push_back(&logoRow(page));
     rows.push_back(&openModuleRow(page));
     rows.push_back(&modulesRow(page));
+    if(hooks_.appStoragePlacement)rows.push_back(&toggleRow("appStoragePlacement",text("Swap Storage and Apps positions","互换存储与应用位置"),"windowsSwapAppStorage",page));
     rows.push_back(&navRow("overlay", text("HUD elements", "界面元素"), page, [this] { go(Section::overlay, true); }));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
@@ -786,6 +788,7 @@ d::RowPlate& SettingsCanvas::openModuleRow(d::Page& page) {
     return row("openModule", text("Open on", "打开时显示"), opening, page);
 }
 std::string SettingsCanvas::openModuleTitle(const std::optional<std::string>& module) const {
+    if(module==std::optional<std::string>("addApp"))return text("Apps","应用");
     if (module) if (auto title = moduleTitle(*module, env().language)) return *title;
     return text("Last opened", "上次打开的模块");
 }

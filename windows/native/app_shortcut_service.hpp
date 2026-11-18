@@ -69,6 +69,10 @@ private:struct Impl;std::shared_ptr<Impl>impl_;
 #ifdef _WIN32
 // Caller already owns COM/WinRT initialization; no apartment is created here.
 AppShortcutOS windowsAppShortcutOS();
+// One snapshot on the utility worker; a failed directory read is not an empty desktop.
+std::vector<std::string> windowsDesktopShortcutPaths();
+// Shell notifications are posted to the owner window. No polling or private thread.
+std::shared_ptr<void> watchDesktopShortcuts(std::uintptr_t window, unsigned message);
 NativeAppShortcutPicker::Factory windowsAppShortcutPickerFactory();
 #endif
 }

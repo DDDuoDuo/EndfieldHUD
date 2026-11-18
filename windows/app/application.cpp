@@ -1687,7 +1687,7 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     // Settings on the design library (tools/settings_preview.hpp): four
     // canvases in one design owner, on the shared design Context.
     if(designOverlay){
-    tools::SettingsPreviewOptions options;options.initial=configuration;options.language=settingsLanguage(configuration);
+    tools::SettingsPreviewOptions options;options.hooks.appStoragePlacement=true;options.initial=configuration;options.language=settingsLanguage(configuration);
     // Icon roster (application-icons/) and the right-hand list glyphs (watch-appearance/).
     options.resources=args.settingsAssets;options.appearance=appearanceTemplates.get();
     // Center logo chooser: the presets, the ENDFIELD INDUSTRIES artwork, the managed store; decoded on the shared executor.
@@ -2461,14 +2461,14 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     const auto raised=session->raisedButton();
     for(auto&button:available){const auto found=session->actions().find(button.buttonID);button.enabled=found!=session->actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);
         const auto action=arrangingModules?session->rowAction(button.buttonID):std::nullopt;const auto*entry=action?navigationEntry(*action):nullptr;
-        button.arrangeMark=entry&&entry->module&&std::find(ehud::data::ModuleLayout::configurable.begin(),ehud::data::ModuleLayout::configurable.end(),entry->target)!=ehud::data::ModuleLayout::configurable.end();
-        button.liftedMark=button.arrangeMark&&arrangeDrag&&arrangeDrag->lifted&&entry->target==arrangeDrag->module;button.raised=raised==button.buttonID;}
+        button.arrangeMark=entry&&entry->module&&std::find(ehud::data::ModuleLayout::configurable.begin(),ehud::data::ModuleLayout::configurable.end(),appStorageSlotTarget(entry->target,std::as_const(configuration.fields)["windowsSwapAppStorage"]==ehud::data::Json(true)))!=ehud::data::ModuleLayout::configurable.end();
+        button.liftedMark=button.arrangeMark&&arrangeDrag&&arrangeDrag->lifted&&appStorageSlotTarget(entry->target,std::as_const(configuration.fields)["windowsSwapAppStorage"]==ehud::data::Json(true))==arrangeDrag->module;button.raised=raised==button.buttonID;}
     if(idCard)(void)idCard->advance(time,settings.reduceMotion); // the UID bar's wipe (B2b)
     const core::Rect viewport{0,0,metrics.width,metrics.height};labels->update(*sample->sourceFrame,sample->camera,viewport,available);
     if(arrangeMarks&&designOverlay){const auto marks=labels->marks();arrangeMarkRects.clear();
         for(const auto&mark:marks)arrangeMarkRects.push_back(modules::design::ArchiveTile::arrangeMarkRects({0,0,mark.size[0],mark.size[1]},mark.lifted));
         (void)arrangeMarks->update(marks,arrangeMarkRects,gpu::designLinearTint(designOverlay->context().env().palette.plateInk()));}
-    if(nativeAppearance){watchAppearance.selectedAction=notes?contentCatalog->actionForTarget(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session->actions(),watchAppearance,labels->placements());}
+    if(nativeAppearance){watchAppearance.selectedAction=notes?moduleAction(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session->actions(),watchAppearance,labels->placements());}
     // Chrome samples once per visible second; opacity follows the same
     // ready/close timestamps as the source outer controller.
     const auto frameChrome=chromeSettings(notes?notes->selected():core::Module::power);
@@ -2718,10 +2718,11 @@ void Application::Impl::activate(const WatchActivation&event){
         return;
     }
     if(event.action==closeAction){perform(lifecycle.close(),now());return;}
-    const auto entries=contentCatalog->entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});
+    const auto& entries=navigationEntries;const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});
     // Saved app shortcuts bound between Power and Add App (close-first launch).
     if(entry==entries.end()){if(auto*apps=appNavigation()){bool launched{};(void)isolateService(appShortcutNavigationService,"app shortcut",[&]{launched=apps->activate(event.action,now());});if(launched)return;}}
     need(entry!=entries.end(),"Source activation exceeds exported actions");
+    if(entry->target=="addApp") if(auto* apps=appNavigation()) apps->showRoot();
     // Mac 1.3.0: selecting Projection shows its centre page (ProjectionCanvas);
     // the workspace opens from the page (openProjection, DOCS-600).
     if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){
@@ -2772,6 +2773,7 @@ void Application::Impl::bindNavigation(double time,bool animated){
         try{
             const auto plan=apps->plan(entries,right);
             std::vector<gpu::WatchAppearanceEntry>combined(plan.entries.begin(),plan.entries.end());
+            applyAppStoragePlacement(combined,(configuration.fields.contains("windowsSwapAppStorage") && std::as_const(configuration.fields)["windowsSwapAppStorage"]==ehud::data::Json(true)));
             navigation.rightActions.assign(plan.rightActions.begin(),plan.rightActions.end());
             entries=std::move(combined);
         }catch(const std::exception&e){
