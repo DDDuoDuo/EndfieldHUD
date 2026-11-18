@@ -1,3 +1,4 @@
+#include "app/desktop_corner_summon.hpp"
 #include "app/areas/app_shortcut_module.hpp"
 #include "app/application_host.hpp"
 #include "app/areas/app_shortcut_navigation.hpp"
@@ -294,9 +295,15 @@ public:
             try{desktopWatch_=g::watchDesktopShortcuts(reinterpret_cast<std::uintptr_t>(window_),desktopMessage_);}catch(const std::exception&){}
             desktopPending_=true;
         }
+        if(!synthetic_){
+            desktopCornerMessage_=RegisterWindowMessageW(L"EndfieldHUD.DesktopCorner.Summon");
+            try{desktopCorner_=std::make_unique<app::DesktopCornerSummon>(window_,desktopCornerMessage_);}
+            catch(const std::exception&){OutputDebugStringA("EndfieldHUD desktop corner summon could not start\n");}
+        }
         loadPending_ = true;pump();
     }
     ~AppShortcutArea() override {
+        desktopCorner_.reset();
         desktopWatch_.reset();
         *alive_ = false;observer_ = {};
         host_.withdraw(app::appShortcutNavigationService);
@@ -353,6 +360,7 @@ public:
     bool key(const app::KeyEvent& e, double t) override { const bool used = core_->key(e, t);pump();return used; }
     bool filterKey(const app::NativeMessage& m) override { return core_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override {
+        if(desktopCornerMessage_ && m.message==desktopCornerMessage_){if(!overlayVisible_)requestReopen();return true;}
         if(desktopMessage_ && m.message==desktopMessage_) {
             PIDLIST_ABSOLUTE* pidls{};LONG event{};
             if(const auto lock=SHChangeNotification_Lock(reinterpret_cast<HANDLE>(m.wParam),static_cast<DWORD>(m.lParam),&pidls,&event))SHChangeNotification_Unlock(lock);
@@ -438,6 +446,7 @@ public:
     void setObserver(std::function<void()> observer) override { observer_ = std::move(observer); }
 
 private:
+    unsigned desktopCornerMessage_{};std::unique_ptr<app::DesktopCornerSummon> desktopCorner_;
     unsigned desktopMessage_{};bool desktopPending_{};std::shared_ptr<void> desktopWatch_;
     std::vector<g::WatchAppearanceEntry> plannedEntries_;
     std::vector<std::uint64_t> plannedRight_;
