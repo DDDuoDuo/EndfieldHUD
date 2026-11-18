@@ -4,3 +4,9 @@ Resources/OrbiPom/Matter-LICENSE.txt -text
 # The shared font folder holds unmodified upstream files whose sizes and
 # SHA-256 hashes are pinned in its manifest; never convert line endings.
 Resources/Fonts/** -text
+
+# The shortcut catalog is verified by its exact SHA-256 at runtime.
+windows/resources/app-shortcut/artwork.json text eol=lf
+
+# Media Assembly validates the upstream provenance bytes at runtime.
+Resources/MediaAssembly/provenance.json text eol=lf

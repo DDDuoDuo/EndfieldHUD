@@ -44,6 +44,8 @@ struct SettingsIcon {std::string id,title;design::ImageSource image;};
 // image's pixel size (its proportions place the Center logo field's artwork).
 struct SettingsLogoImage {design::ImageSource image;design::Size pixels;};
 struct SettingsCanvasHooks {
+    // Windows host capability; reference canvases keep their existing rows.
+    bool appStoragePlacement{};
     // HUDDisplayPolicy.connectedDisplays (re-read when the Display menu opens).
     std::function<std::vector<SettingsDisplay>()> displays;
     // HUDSettingsInteraction: the colour wheel (seeded with the current
@@ -135,7 +137,7 @@ private:
         // them here; Windows checks as the HUD opens, so a result that lands
         // during the entrance would rebuild the page): only whether the latest
         // release has a link changes the page.
-        bool capturing;std::string icon,accent;bool releaseLink;
+        bool capturing;std::string icon,accent;bool releaseLink;bool appStorageSwapped;
         bool operator==(const Structure&)const=default;
     };
     struct ModuleRow {design::RowPlate* plate;design::DragGrip* grip;design::Layer* glyph;design::Toggle* toggle;design::IconButton* up;design::IconButton* down;double top;};

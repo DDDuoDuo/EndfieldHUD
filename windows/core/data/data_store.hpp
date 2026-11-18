@@ -37,7 +37,7 @@ std::string makeWindowsMediaReference(std::string path, std::string displayName,
     std::optional<double> duration = {}, int frameCount = 1);
 
 // Mac HUDModuleLayout (Sources/HUDNavigationTarget.swift:84-144): order and
-// visibility of the 17 right-hand modules (Display > Modules), by HUDModule
+// visibility of the right-hand modules (Display > Modules), by HUDModule
 // raw value. Every value is normalized like the Mac init: unknown and
 // repeated names are dropped, configurable modules missing from the order are
 // appended in default order (modules a later version adds), hidden is kept in
@@ -51,14 +51,12 @@ constexpr std::array<std::string_view, A + B> joinedModules(const std::array<std
     return out;
 }
 struct ModuleLayout {
-    static constexpr std::array<std::string_view, 17> configurable{"notes", "fileShelf", "clipboard", "archive", "mediaAssembly",
-        "minigame", "nowPlaying", "volume", "projection", "reader", "workMode", "calendar", "map", "eventLog", "profile", "account", "power"};
+    static constexpr std::array<std::string_view, 18> configurable{"notes", "fileShelf", "clipboard", "archive", "mediaAssembly",
+        "minigame", "nowPlaying", "volume", "projection", "reader", "workMode", "calendar", "map", "eventLog", "profile", "account", "power", "addApp"};
     // HUDDesktopWatchNavigation.fixedModules (Sources/HUDNavigationTarget.swift:59):
     // the modules outside Display > Modules, always in the navigation.
     static constexpr std::array<std::string_view, 6> fixed{"system", "display", "hotkeys", "about", "storage", "activityMonitor"};
-    // HUDOverlayLayout.openableModules: every module the navigation can open,
-    // in navigation order (fixed, then configurable). Add App is an action,
-    // never a place to open on.
+    // Apps is now a page, so it also participates in Display > Open on.
     static constexpr auto openable = joinedModules(fixed, configurable);
     static bool isOpenable(std::string_view module) noexcept;
     // A HUDModule raw value: an openable module or Add App.
@@ -157,7 +155,7 @@ enum class SettingsScope : std::uint8_t { system, display, hudElements };
 // the key (the hotkey has its own Restore; the others are not settings rows).
 // A key not listed here (another build's) is never reset either.
 struct ScopedSetting { std::string_view key; std::optional<SettingsScope> scope; };
-inline constexpr std::array<ScopedSetting, 50> scopedSettings{{
+inline constexpr std::array<ScopedSetting, 52> scopedSettings{{
     // System, plus the Windows display choice beside the Mac one.
     {"language", SettingsScope::system}, {"launchAtLogin", SettingsScope::system}, {"closeOnFocusLost", SettingsScope::system},
     {"openOnActiveDisplay", SettingsScope::system}, {"hudDisplayUUID", SettingsScope::system}, {"hudDisplayName", SettingsScope::system},
@@ -170,6 +168,8 @@ inline constexpr std::array<ScopedSetting, 50> scopedSettings{{
     {"accentHex", SettingsScope::display}, {"ambientAnimation", SettingsScope::display}, {"reduceMotion", SettingsScope::display},
     {"lowPowerVisualMode", SettingsScope::display}, {"recordingMode", SettingsScope::display}, {"dailyBootLog", SettingsScope::display},
     {"showsCloseHint", SettingsScope::display},
+    {"windowsSwapAppStorage", SettingsScope::display},
+    {"windowsDesktopCornerSummon", SettingsScope::display},
     // App / menu bar icon
     {"applicationIcon", SettingsScope::display},
     // Battery alert, with the bar's position, size and length
@@ -265,6 +265,7 @@ struct Settings {
     std::optional<double> chargeBarLength() const;
     void setChargeBarLength(std::optional<double>); // removed when nil, as the Mac does
     bool showsCloseHint() const;
+    bool desktopCornerSummonEnabled() const; // absent in older settings: enabled
     // HUDApplicationIcon(savedValue:): 1.3.0's retired "battery" icon reads as
     // "watch" (loading rewrites nothing; the next save of any setting stores
     // "watch"); absent or not a string reads as "endfield". Any other name is

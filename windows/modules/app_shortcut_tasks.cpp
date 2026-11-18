@@ -1,5 +1,6 @@
 #include "modules/app_shortcut_tasks.hpp"
 #include <algorithm>
+#include <map>
 #ifdef _WIN32
 #include <objbase.h>
 #endif
@@ -7,7 +8,7 @@
 namespace endfield::modules {
 namespace {
 bool durable(ShortcutTaskKind k) {
-    return k==ShortcutTaskKind::save||k==ShortcutTaskKind::remove||k==ShortcutTaskKind::launch||k==ShortcutTaskKind::move;
+    return k==ShortcutTaskKind::save||k==ShortcutTaskKind::remove||k==ShortcutTaskKind::launch||k==ShortcutTaskKind::move||k==ShortcutTaskKind::saveGroup||k==ShortcutTaskKind::removeGroup||k==ShortcutTaskKind::moveGroup||k==ShortcutTaskKind::membership||k==ShortcutTaskKind::selectGroup||k==ShortcutTaskKind::scanDesktop||k==ShortcutTaskKind::restoreDesktop||k==ShortcutTaskKind::metadata;
 }
 struct Apartment {
 #ifdef _WIN32
@@ -19,6 +20,8 @@ struct Apartment {
 }
 struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
     struct Worker {
+        struct DesktopCache { std::filesystem::file_time_type modified;std::uintmax_t size{};ShortcutCandidate candidate; };
+        std::map<std::string,DesktopCache> desktopCache;
         ShortcutRepository repository;ShortcutTextRules rules;
         native::NativeAppShortcutService service;ShortcutFile file;bool loaded{};
         std::filesystem::path relinkRoot;bool relinkListed{true};
@@ -35,6 +38,73 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
             [[maybe_unused]] Apartment apartment;
             if(!loaded){file=repository.load();loaded=true;}
             switch(t.kind){
+            case ShortcutTaskKind::saveGroup:
+            case ShortcutTaskKind::removeGroup:
+            case ShortcutTaskKind::moveGroup: {
+                auto next = file;
+                const auto found = std::find_if(next.groups.begin(), next.groups.end(), [&](const auto& g) { return g.id == t.groupID; });
+                if (t.kind == ShortcutTaskKind::removeGroup) {
+                    const auto ids=t.ids.empty()?std::vector<std::string>{t.groupID}:t.ids;
+                    for(const auto& id:ids) {
+                        std::erase_if(next.groups,[&](const auto& g){return g.id==id;});
+                        if(next.activeGroupID==id)next.activeGroupID.clear();
+                    }
+                } else if (t.kind == ShortcutTaskKind::moveGroup) {
+                    if (found == next.groups.end()) throw ShortcutError(ShortcutErrorCode::missing);
+                    auto group = *found; next.groups.erase(found);
+                    const auto target = std::clamp<std::ptrdiff_t>(t.index, 0, std::ptrdiff_t(next.groups.size()));
+                    next.groups.insert(next.groups.begin() + target, std::move(group));
+                } else {
+                    const auto name = rules.trimmed(t.name);
+                    if (!rules.validName(name)) throw ShortcutError(ShortcutErrorCode::invalidName);
+                    if (t.groupID.empty()) { next.groups.push_back({t.newID, name}); next.activeGroupID=t.newID; }
+                    else if (found != next.groups.end()) found->name = name;
+                    else throw ShortcutError(ShortcutErrorCode::missing);
+                }
+                repository.save(next); file = std::move(next); r.file = file;
+                if (t.kind == ShortcutTaskKind::removeGroup) relinks(r);
+                break;
+            }
+            case ShortcutTaskKind::metadata: {
+                auto next=file;auto found=std::find_if(next.items.begin(),next.items.end(),[&](const auto& item){return t.record && item.id==t.record->id;});
+                if(found==next.items.end())throw ShortcutError(ShortcutErrorCode::missing);
+                const auto name=rules.trimmed(t.name);if(!rules.validName(name))throw ShortcutError(ShortcutErrorCode::invalidName);
+                found->name=name;found->iconPreset=t.icon;repository.save(next);file=std::move(next);r.file=file;break;
+            }
+            case ShortcutTaskKind::membership: {
+                auto next=file;
+                for(const auto& id:t.ids) {
+                    if(!t.groupID.empty())setShortcutMembership(next,id,t.groupID,true);
+                    if(t.moveMembership && !t.sourceGroupID.empty() && t.sourceGroupID!=t.groupID)setShortcutMembership(next,id,t.sourceGroupID,false);
+                }
+                repository.save(next);file=std::move(next);r.file=file;break;
+            }
+            case ShortcutTaskKind::selectGroup: {
+                auto next=file;
+                if(!t.groupID.empty() && std::none_of(next.groups.begin(),next.groups.end(),[&](const auto& g){return g.id==t.groupID;}))throw ShortcutError(ShortcutErrorCode::missing);
+                next.activeGroupID=t.groupID;repository.save(next);file=std::move(next);r.file=file;break;
+            }
+            case ShortcutTaskKind::scanDesktop:
+            case ShortcutTaskKind::restoreDesktop: {
+                auto next=file; if(t.kind==ShortcutTaskKind::restoreDesktop)next.hiddenDesktop.clear();
+#ifdef _WIN32
+                std::vector<DesktopShortcut> snapshot;
+                for(const auto& path:native::windowsDesktopShortcutPaths()) {
+                    DesktopShortcut source{path,{}};
+                    try{
+                        const auto nativePath=std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path.data()),path.size()));
+                        const auto modified=std::filesystem::last_write_time(nativePath);const auto size=std::filesystem::file_size(nativePath);
+                        const auto cached=desktopCache.find(path);
+                        if(cached!=desktopCache.end() && cached->second.modified==modified && cached->second.size==size)source.candidate=cached->second.candidate;
+                        else {source.candidate=service.inspect({native::AppShortcutSelectionKind::file,path});desktopCache[path]={modified,size,*source.candidate};}
+                    }catch(const std::exception&){}
+                    snapshot.push_back(std::move(source));
+                }
+                std::erase_if(desktopCache,[&](const auto& entry){return std::none_of(snapshot.begin(),snapshot.end(),[&](const auto& source){return source.path==entry.first;});});
+                mergeDesktopShortcuts(next,snapshot,rules);
+#endif
+                repository.save(next);file=std::move(next);r.file=file;break;
+            }
             case ShortcutTaskKind::load:r.file=file;relinks(r);break;
             case ShortcutTaskKind::inspect:r.candidate=service.inspect(*t.selection);break;
             case ShortcutTaskKind::edit:
@@ -48,11 +118,19 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
                 const auto current=native?service.reinspect(selected.locator):selected;
                 saveShortcutDraft(next,selected,current,t.name,t.icon,t.editingID,t.newID,t.createdAt,rules,
                     [](const auto&a,const auto&b){return a["referencePlatform"]==ShortcutJson("windows")?
-                        native::NativeAppShortcutService::sameTarget(a,b):a==b;});
+                        native::NativeAppShortcutService::sameTarget(a,b):a==b;},t.groupID);
                 repository.save(next);file=std::move(next);r.file=file;relinks(r);break;
             }
             case ShortcutTaskKind::remove:{
-                auto next=file;if(!removeShortcut(next,t.record->id))throw ShortcutError(ShortcutErrorCode::missing);
+                auto next=file;
+                const auto ids=t.ids.empty()?std::vector<std::string>{t.record->id}:t.ids;
+                for(const auto& id:ids) {
+                    if(!t.groupID.empty()){setShortcutMembership(next,id,t.groupID,false);continue;}
+                    const auto found=std::find_if(next.items.begin(),next.items.end(),[&](const auto& item){return item.id==id;});
+                    if(found==next.items.end())continue;
+                    for(const auto& path:found->desktopPaths)if(std::find(next.hiddenDesktop.begin(),next.hiddenDesktop.end(),path)==next.hiddenDesktop.end())next.hiddenDesktop.push_back(path);
+                    removeShortcut(next,id);
+                }
                 repository.save(next);file=std::move(next);r.file=file;relinks(r);break;
             }
             case ShortcutTaskKind::launch:r.launched=service.launch(*t.record,t.launchOwner);break;
@@ -60,7 +138,14 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
                 // AppShortcutStore.move(id:to:): one write, none for the same
                 // slot or an unknown record; a file changed on disk is refused.
                 auto next=file;
-                if(moveShortcut(next,t.record->id,t.index)){repository.save(next);file=std::move(next);}
+                if(t.groupID.empty())moveShortcut(next,t.record->id,t.index);
+                else {
+                    auto group=std::find_if(next.groups.begin(),next.groups.end(),[&](const auto& g){return g.id==t.groupID;});
+                    if(group==next.groups.end())throw ShortcutError(ShortcutErrorCode::missing);
+                    auto found=std::find(group->itemIDs.begin(),group->itemIDs.end(),t.record->id);
+                    if(found!=group->itemIDs.end()){auto id=*found;group->itemIDs.erase(found);group->itemIDs.insert(group->itemIDs.begin()+std::clamp<std::ptrdiff_t>(t.index,0,group->itemIDs.size()),id);}
+                }
+                repository.save(next);file=std::move(next);
                 r.file=file;break;
             }
             }
@@ -94,7 +179,7 @@ AppShortcutTasks::AppShortcutTasks(app::UtilityExecutor&q,std::filesystem::path 
 AppShortcutTasks::~AppShortcutTasks(){if(impl_)impl_->queue.invalidate(impl_->route,false);}
 bool AppShortcutTasks::submit(ShortcutTask t){
     auto&i=*impl_;if(i.pending||i.running)return false;
-    if(!t.token||t.token<=i.lastToken||t.kind<ShortcutTaskKind::load||t.kind>ShortcutTaskKind::move)throw std::invalid_argument("Application request token must advance and kind must be valid");
+    if(!t.token||t.token<=i.lastToken||t.kind<ShortcutTaskKind::load||t.kind>ShortcutTaskKind::metadata)throw std::invalid_argument("Application request token must advance and kind must be valid");
     if((t.kind==ShortcutTaskKind::inspect&&!t.selection)||
        ((t.kind==ShortcutTaskKind::edit||t.kind==ShortcutTaskKind::remove||t.kind==ShortcutTaskKind::launch||t.kind==ShortcutTaskKind::move)&&!t.record)||
        (t.kind==ShortcutTaskKind::save&&!t.candidate))throw std::invalid_argument("Application request lacks its explicit input");

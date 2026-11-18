@@ -117,6 +117,12 @@ bool Application::Impl::onPointer(const PointerEvent&e){
             (void)projectionCall("pointer",[&]{handled=projection->pointer(e,hostTime(time));locked=projection->preview()->pointerLocked();});
             if(handled&&e.kind!=PointerKind::move)automationChanged();host.capturePointer(locked);refresh(hostTime(time));}return true;
     }
+    // Every HUD page closes on a right press, before menus, fields or module
+    // captures consume it. Projection keeps its separate workspace input route.
+    if(session->inputEnabled() &&
+       e.kind==PointerKind::down && e.button==PointerButton::right){
+        perform(lifecycle.close(),hostTime(time));return true;
+    }
     using C=ModuleRegistry::Chain;
     // Arrange on HUD: a press Esc or arranging turning off dropped swallows
     // its drags and its release; any new press starts afresh.

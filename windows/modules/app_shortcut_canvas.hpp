@@ -1,52 +1,30 @@
 #pragma once
-// App Shortcuts on the design library: the port of AppShortcutCanvas and
-// AppShortcutTile (Sources/AppShortcutCanvas.swift, Mac 1.3.0; SHELL-107..109).
-// It replaces the v1.2.0 Windows page (modules/app_shortcut_state,
-// app_shortcut_presentation, app_shortcut_motion, app_shortcut_trace,
-// native/app_shortcut_scene, native/app_shortcut_automation,
-// native/app_shortcut_field_text, tools/app_shortcut_preview): no edit page any
-// more. The screen lists the saved shortcuts (56 px rows: the grip that
-// reorders them by a drag and opens the item menu on a press, the icon tile
-// with its chooser caret that opens the preset grid, the inline name field,
-// Open and Remove; the list order is the right-hand order); Add App,
-// a dropped application or Ctrl+V adds one at once with its own name and the
-// App icon preset; Remove asks through the shared confirm bar.
-//
-// The Mac calls AppShortcutStore synchronously. Here the store lives on the
-// owner's one transaction worker (modules/app_shortcut_tasks), so the canvas
-// asks its owner (Services::request) and the owner reports the committed
-// file (requestFinished): the same toasts, reloads and notices follow then.
-// Windows adaptations (recorded in the port report):
-//  - A reorder (a grip drop, Move up / Move down) is one move request; the
-//    dropped row has already settled when the owner answers, and the page is
-//    re-rendered once it has landed. While any move is unanswered no other
-//    row lifts and Move up / Move down are disabled (the Mac's write is
-//    synchronous, so its order is never stale).
-//  - Applications are Windows targets (.exe / .lnk, or a packaged application
-//    "shell:AppsFolder\<AUMID>" from the chooser); the owner says which paths
-//    are applications (Services::isApplication) and inspects them.
-//  - An imported Mac shortcut (no Windows target yet) relinks instead of
-//    opening: Open asks for its Windows application through the same chooser
-//    and the chosen one replaces only its target (id, name, preset and order
-//    stay). The Mac has no imported records.
-//  - The tile colour of an application's own icon is computed by the owner
-//    from the extracted pixels (shortcutTileColor) with the icon itself.
+// Windows shortcut center: pinned overview, horizontally scrolling group tabs,
+// original-icon square grid, explicit edit mode and atomic multi-selection actions.
+// The existing design library owns layout/input; the area serializes storage work.
 #include "modules/app_shortcut_artwork.hpp"
 #include "modules/app_shortcut_model.hpp"
 #include "modules/hud_design_page.hpp"
 
 namespace endfield::modules {
+inline constexpr int appGridColumns=6;
+inline constexpr double appGridGap=6;
+inline constexpr double appGridPitch=(design::metric::boxWidth-design::ScrollArea::stripWidth-(appGridColumns-1)*appGridGap)/appGridColumns+appGridGap;
 // One unit of store work (the Mac's synchronous AppShortcutStore calls).
 struct AppShortcutRequest {
     enum class Kind : std::uint8_t {
         add,    // importURLs: inspect `path`, save it with its own name and the App icon preset (`id`: relink that record)
         save,   // rename / Choose icon: reinspect record `id`, save `name` and `icon`
         remove, // the confirmed Remove of record `id`
+        saveGroup, removeGroup, moveGroup, membership, selectGroup, scanDesktop, restoreDesktop,
         move    // record `id` to slot `index` (clamped): a grip drag or Move up / Move down
     };
     Kind kind{Kind::add};
     std::string path, id, name, icon;
     std::ptrdiff_t index{};
+    std::string groupID, sourceGroupID;
+    std::vector<std::string> ids;
+    bool moveMembership{};
     bool operator==(const AppShortcutRequest&) const = default;
 };
 struct AppShortcutCanvasServices {
@@ -120,8 +98,14 @@ public:
     design::DragGrip* rowGrip(std::string_view id) const;
     design::Control* iconTile(std::string_view id) const;
     void dragRow(const std::string& id, int slot);
-    bool reordering() const noexcept { return reorder_.has_value(); }
+    bool reordering() const noexcept { return reorder_.has_value() || !gridDragID_.empty(); }
 
+    void showGroup(std::string id);
+    void showGroups();
+    void createGroup();
+    const std::string& selectedGroup() const noexcept { return groupID_; }
+    bool interceptPointerDown(design::Point, const design::PointerInput&) override;
+    bool handleScroll(design::Point, design::Point) override;
     void buildPage(design::Page&) override;
     void didActivate() override;
     void didDeactivate() override;
@@ -133,6 +117,22 @@ public:
     bool presentingPanel() const override { return chooser_; }
     bool inputLocked() const override { return Canvas::inputLocked() || chooser_ || dropTarget_; }
 private:
+    std::string groupID_, selectedItem_;
+    bool restoredGroup_{};
+    double tabOffset_{}, tabWidth_{118};
+    int tabRows_{1};
+    std::size_t tabColumns_{1};
+    design::Layer* tabContent_{};
+    std::vector<std::pair<std::string, design::Control*>> tabs_;
+    void optionsMenu(const design::Control&);
+    void membershipMenu(const design::Control&, bool move);
+    std::vector<std::string> selectedItems_;
+    void refreshSelection();
+    void confirmRemoveSelected();
+    bool groupsOverview_{}, editingGroup_{};
+    void buildGroupsPage(design::Page&);
+    void buildGroupPage(design::Page&);
+    void removeGroup();
     const AppShortcutArtwork* artwork_;
     AppShortcutCanvasServices services_;
     std::optional<ShortcutFile> store_;
@@ -148,7 +148,13 @@ private:
     design::ScrollArea* list_{};
     std::optional<design::ListReorder> reorder_;
     std::optional<AppShortcutRequest> landing_;  // a dropped order the owner has not answered
-    design::Deadlines::Token timers_{};
+    design::Deadlines::Token timers_{}, gridTimers_{};
+    std::string gridDragID_;
+    std::size_t gridDragTarget_{};
+    design::Point gridDragPoint_{};
+    void previewGridDrag(const std::string&,design::Point);
+    void scrollGridDrag();
+    void cancelGridDrag();
     design::Menu::IconTile artwork(std::string_view preset, const ShortcutRecord&) const;
     design::Color originalColor(const ShortcutRecord&) const;
     design::RowPlate& makeRow(const ShortcutRecord&, double width, design::Page&);

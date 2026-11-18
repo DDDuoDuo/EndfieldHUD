@@ -35,14 +35,30 @@ struct ShortcutRecord {
     ShortcutJson locator{ShortcutJson::Object{}};
     ShortcutJson originalFields{ShortcutJson::Object{}};
     ShortcutJson originalDate;
+    std::string groupID; // Empty means the existing top-level shortcut list.
+    std::vector<std::string> desktopPaths;
+    bool desktopOnly{}, unavailable{};
     bool native() const noexcept;
     bool operator==(const ShortcutRecord&) const;
+};
+struct ShortcutGroup {
+    std::string id, name;
+    std::vector<std::string> itemIDs;
+    bool operator==(const ShortcutGroup&) const = default;
 };
 struct ShortcutFile {
     std::vector<ShortcutRecord> items;
     ShortcutJson originalFields{ShortcutJson::Object{}};
+    std::vector<ShortcutGroup> groups;
+    std::vector<std::string> hiddenDesktop;
+    std::string activeGroupID;
     bool operator==(const ShortcutFile&) const = default;
 };
+bool sameShortcutTarget(const ShortcutJson&, const ShortcutJson&) noexcept;
+void normalizeShortcutGroups(ShortcutFile&);
+std::vector<ShortcutRecord> shortcutItems(const ShortcutFile&, std::string_view groupID);
+bool shortcutGrouped(const ShortcutFile&, std::string_view id);
+void setShortcutMembership(ShortcutFile&, std::string_view id, std::string_view groupID, bool add);
 void validateShortcut(const ShortcutRecord&, const ShortcutTextRules&);
 ShortcutFile decodeShortcuts(const ShortcutJson&, const ShortcutTextRules&);
 ShortcutJson encodeShortcuts(const ShortcutFile&, const ShortcutTextRules&);
@@ -56,11 +72,13 @@ struct ShortcutCandidate {
     ShortcutJson locator{ShortcutJson::Object{}};
     bool operator==(const ShortcutCandidate&) const = default;
 };
+struct DesktopShortcut { std::string path; std::optional<ShortcutCandidate> candidate; };
+void mergeDesktopShortcuts(ShortcutFile&, const std::vector<DesktopShortcut>&, const ShortcutTextRules&);
 using ShortcutSameTarget = std::function<bool(const ShortcutJson&, const ShortcutJson&)>;
 std::string saveShortcutDraft(ShortcutFile&, const ShortcutCandidate& selected,
     const ShortcutCandidate& reinspected, std::string name, std::string icon,
     std::optional<std::string> editingID, std::string newID, double now,
-    const ShortcutTextRules&, const ShortcutSameTarget&);
+    const ShortcutTextRules&, const ShortcutSameTarget&, std::string groupID = {});
 bool removeShortcut(ShortcutFile&, std::string_view);
 // AppShortcutStore.move(id:to:): the shortcut to `index` (clamped) in the
 // list, which is also the right-hand order. False (nothing changed) for an

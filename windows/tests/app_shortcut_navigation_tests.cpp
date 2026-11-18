@@ -1,4 +1,5 @@
 #include "modules/app_shortcut_navigation.hpp"
+#include "app/areas/app_shortcut_navigation.hpp"
 #include <iostream>
 #include <array>
 #include <cmath>
@@ -8,6 +9,16 @@ namespace m=endfield::modules;
 namespace {
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
 template<class F>void rejects(F f){bool yes{};try{f();}catch(const std::exception&){yes=true;}check(yes,"Invalid navigation update rejects atomically");}
+void placement(){
+    check(endfield::app::appStorageSlotTarget("storage",true)=="addApp" && endfield::app::appStorageSlotTarget("addApp",true)=="storage" && endfield::app::appStorageSlotTarget("notes",true)=="notes", "Swapped Storage drag maps to the configurable Apps slot");
+    using E=endfield::native::WatchAppearanceEntry;
+    const std::vector<E> base{{4,"storage","Storage","module:storage"},{9,"notes","Notes","module:notes"},{23,"addApp","Apps","shortcut:grid"}};
+    auto entries=base;endfield::app::applyAppStoragePlacement(entries,false);check(entries==base,"Default setting leaves original navigation unchanged");
+    endfield::app::applyAppStoragePlacement(entries,true);
+    check(entries[0].action==4 && entries[0].target=="addApp" && entries[0].title=="Apps" && entries[0].iconKey=="shortcut:grid:white","Swap uses bottom slot for apps with bottom-style icon");
+    check(entries[2].action==23 && entries[2].target=="storage" && entries[2].iconKey=="module:storage" && entries[1]==base[1],"Swap moves Storage to the app slot without changing other modules");
+    entries=base;entries.pop_back();const auto incomplete=entries;endfield::app::applyAppStoragePlacement(entries,true);check(entries==incomplete,"Missing app module leaves original navigation intact");
+}
 void run(){
     m::ShortcutNavigation nav({{1,"system","System","module:system"},{2,"notes","Notes","module:notes"},{3,"addApp","+ Add App","module:addApp"}},{2,3});
     m::ShortcutFile file;m::ShortcutRecord one,two;one.id="11111111-1111-4111-8111-111111111111";one.name="微信";one.iconPreset="textBubble";two=one;two.id="22222222-2222-4222-8222-222222222222";two.name="Custom user text";two.iconPreset="original";file.items={one,two};
@@ -45,4 +56,4 @@ void icons(){
     check(m::shortcutOriginalIconOrder({},0,10,every).empty()&&m::shortcutOriginalIconOrder(file,std::nan(""),3,every)==std::vector<std::size_t>{0,1,2},"An empty list loads nothing; a nonfinite offset starts at the top");
 }
 }
-int main(){try{run();icons();std::cout<<"Shortcut navigation: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{placement();run();icons();std::cout<<"Shortcut navigation: "<<checks<<" checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -57,6 +57,7 @@ if(BUILD_TESTING)
   if(MSVC)
     target_compile_options(settings_canvas_tests PRIVATE /W4 /permissive- /EHsc)
   endif()
+  add_test(NAME app_storage_placement_contracts COMMAND settings_canvas_tests --app-placement)
   add_test(NAME settings_canvas_contracts COMMAND settings_canvas_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/settings-source.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/watch-appearance/manifest.json" "${CMAKE_CURRENT_SOURCE_DIR}/modules/settings_canvas.cpp")
 endif()

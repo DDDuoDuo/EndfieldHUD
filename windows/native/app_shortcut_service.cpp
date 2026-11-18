@@ -13,6 +13,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <intshcut.h>
 #include <propkey.h>
 #include <propsys.h>
 #include <wrl/client.h>
@@ -28,7 +29,7 @@ bool text(std::string_view value,std::size_t maximum=32768){return value.size()<
 std::string suffix(std::string_view value){const auto dot=value.rfind('.');if(dot==value.npos)return {};std::string result(value.substr(dot));for(auto&c:result)if(c>='A'&&c<='Z')c=char(c-'A'+'a');return result;}
 bool aumid(std::string_view value){return !value.empty()&&text(value)&&value.find_first_of("\\/:\r\n\t") == value.npos;}
 void selection(const AppShortcutSelection&s){
-    if(s.kind==AppShortcutSelectionKind::file)need(text(s.value)&&ehud::data::validWindowsFilePath(s.value)&&(suffix(s.value)==".exe"||suffix(s.value)==".lnk"));
+    if(s.kind==AppShortcutSelectionKind::file)need(text(s.value)&&ehud::data::validWindowsFilePath(s.value)&&(suffix(s.value)==".exe"||suffix(s.value)==".lnk"||suffix(s.value)==".url"));
     else need(s.kind==AppShortcutSelectionKind::packagedApp&&aumid(s.value));
 }
 void resolved(const AppShortcutResolved&r){
@@ -40,7 +41,7 @@ void resolved(const AppShortcutResolved&r){
         need(r.workingDirectory.empty()||ehud::data::validWindowsFilePath(r.workingDirectory));
         if(suffix(r.selection.value)==".exe")need(r.selection.value==r.executablePath&&r.arguments.empty()&&!r.runAsUser);
     }else if(r.launchKind==AppShortcutLaunchKind::shellLink){
-        need(r.selection.kind==AppShortcutSelectionKind::file&&suffix(r.selection.value)==".lnk"&&r.executablePath.empty()&&r.appUserModelID.empty());
+        need(r.selection.kind==AppShortcutSelectionKind::file&&(suffix(r.selection.value)==".lnk"||suffix(r.selection.value)==".url")&&r.executablePath.empty()&&r.appUserModelID.empty());
     }else{
         need(r.launchKind==AppShortcutLaunchKind::packagedApp&&aumid(r.appUserModelID)&&r.executablePath.empty()&&r.workingDirectory.empty()&&!r.runAsUser);
         if(r.selection.kind==AppShortcutSelectionKind::packagedApp)need(r.selection.value==r.appUserModelID&&r.arguments.empty());
@@ -48,7 +49,7 @@ void resolved(const AppShortcutResolved&r){
 }
 J locator(const AppShortcutResolved&r){resolved(r);J::Object target{{"schemaVersion",1},{"applicationKey",r.applicationKey}};
     if(r.selection.kind==AppShortcutSelectionKind::packagedApp){target["kind"]="packagedApp";target["appUserModelID"]=r.selection.value;}
-    else{target["kind"]=suffix(r.selection.value)==".lnk"?"shellLink":"executable";target["path"]=r.selection.value;target["selectedFileKey"]=r.selectedFileKey;}
+    else{target["kind"]=suffix(r.selection.value)==".lnk"?"shellLink":suffix(r.selection.value)==".url"?"internetShortcut":"executable";target["path"]=r.selection.value;target["selectedFileKey"]=r.selectedFileKey;}
     if(!r.resolvedApplicationKey.empty())target["resolvedApplicationKey"]=r.resolvedApplicationKey;
     J::Object launch{{"kind",r.launchKind==AppShortcutLaunchKind::executable?"executable":r.launchKind==AppShortcutLaunchKind::shellLink?"shellLink":"packagedApp"},{"arguments",r.arguments},{"runAsUser",r.runAsUser}};
     if(r.launchKind==AppShortcutLaunchKind::executable){launch["path"]=r.executablePath;launch["workingDirectory"]=r.workingDirectory;}
@@ -61,7 +62,7 @@ AppShortcutSelection selected(const J&value){
     const auto&t=value["windowsTarget"];need(!t.contains("schemaVersion")||t["schemaVersion"]==J(1));
     AppShortcutSelection s;
     if(t["kind"]==J("packagedApp")){s.kind=AppShortcutSelectionKind::packagedApp;need(t["appUserModelID"].isString());s.value=t["appUserModelID"].string();}
-    else{need(t["kind"]==J("executable")||t["kind"]==J("shellLink"));need(t["path"].isString());s.value=t["path"].string();need(suffix(s.value)==(t["kind"]==J("shellLink")?".lnk":".exe"));}
+    else{need(t["kind"]==J("executable")||t["kind"]==J("shellLink")||t["kind"]==J("internetShortcut"));need(t["path"].isString());s.value=t["path"].string();need(suffix(s.value)==(t["kind"]==J("shellLink")?".lnk":t["kind"]==J("internetShortcut")?".url":".exe"));}
     selection(s);return s;
 }
 modules::ShortcutCandidate candidate(const AppShortcutResolved&r){return {r.name,{},locator(r)};}
@@ -78,12 +79,7 @@ modules::ShortcutCandidate NativeAppShortcutService::inspect(const AppShortcutSe
 modules::ShortcutCandidate NativeAppShortcutService::reinspect(const J&value)const{return candidate(verify(os_,value));}
 AppShortcutLaunchReceipt NativeAppShortcutService::launch(const modules::ShortcutRecord&record,std::uintptr_t owner)const{auto target=verify(os_,record.locator);return os_.launch(target,owner);}
 bool NativeAppShortcutService::sameTarget(const J&a,const J&b)noexcept{
-    try{if(a["referencePlatform"]!=J("windows")||b["referencePlatform"]!=J("windows"))return false;const auto&x=a["windowsTarget"];const auto&y=b["windowsTarget"];
-        const auto same=[](const J&a,const J&b){return a.isString()&&b.isString()&&!a.string().empty()&&a==b;};
-        if(same(x["applicationKey"],y["applicationKey"]))return true;
-        const auto&rx=x.contains("resolvedApplicationKey")?x["resolvedApplicationKey"]:x["applicationKey"];
-        const auto&ry=y.contains("resolvedApplicationKey")?y["resolvedApplicationKey"]:y["applicationKey"];return same(rx,ry);
-    }catch(...){return false;}
+    return modules::sameShortcutTarget(a,b);
 }
 struct NativeAppShortcutPicker::Impl {
     const std::thread::id owner=std::this_thread::get_id();Factory factory;std::shared_ptr<AppShortcutPickerDialog>dialog;
@@ -146,6 +142,12 @@ std::string modelID(IShellItem2*item){TaskString value;hr(item->GetString(PKEY_A
 AppShortcutResolved inspectWindows(const AppShortcutSelection&s){selection(s);if(s.kind==AppShortcutSelectionKind::packagedApp)return packaged(s);
     auto hold=std::make_shared<Handles>();auto selectedFile=file(s.value,hold);AppShortcutResolved r;r.selection={AppShortcutSelectionKind::file,selectedFile.path};r.selectedFileKey=selectedFile.key;r.applicationKey=pathKey(selectedFile.path);r.lease=hold;
     if(suffix(selectedFile.path)==".exe"){DWORD type{};need(GetBinaryTypeW(extended(wide(selectedFile.path)).c_str(),&type)&&(type==SCS_32BIT_BINARY||type==SCS_64BIT_BINARY));r.executablePath=selectedFile.path;r.name=description(r.executablePath);return r;}
+    if(suffix(selectedFile.path)==".url") {
+        ComPtr<IUniformResourceLocatorW> link; hr(CoCreateInstance(CLSID_InternetShortcut,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));
+        ComPtr<IPersistFile> persist; hr(link.As(&persist)); hr(persist->Load(wide(selectedFile.path).c_str(),STGM_READ));
+        TaskString url; hr(link->GetURL(&url.value)); need(url.value && *url.value);
+        r.resolvedApplicationKey="url:"+utf8(url.value); r.name=fileName(selectedFile.path); r.launchKind=AppShortcutLaunchKind::shellLink; return r;
+    }
     need(suffix(selectedFile.path)==".lnk");ComPtr<IShellLinkW>link;hr(CoCreateInstance(CLSID_ShellLink,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&link)));ComPtr<IPersistFile>persist;hr(link.As(&persist));hr(persist->Load(extended(wide(selectedFile.path)).c_str(),STGM_READ));
     // Inspection reads recorded fields only. Normal Shell execution of the
     // selected .lnk later handles installer-managed targets and arguments.
@@ -211,6 +213,46 @@ public:
     }
     void cancel()noexcept override{canceled_=true;if(dialog_)dialog_->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));}
 };
+}
+namespace {
+std::vector<std::filesystem::path> desktopFolders() {
+    std::vector<std::filesystem::path> folders;
+    for(const auto& id:{FOLDERID_Desktop,FOLDERID_PublicDesktop}) {
+        TaskString path; hr(SHGetKnownFolderPath(id,KF_FLAG_DEFAULT,nullptr,&path.value));
+        if(path.value && std::find(folders.begin(),folders.end(),std::filesystem::path(path.value))==folders.end())folders.emplace_back(path.value);
+    }
+    return folders;
+}
+struct DesktopWatch {
+    std::vector<ULONG> registrations;
+    ~DesktopWatch(){for(auto id:registrations)SHChangeNotifyDeregister(id);}
+};
+}
+std::vector<std::string> windowsDesktopShortcutPaths() {
+    std::vector<std::string> paths;
+    for(const auto& folder:desktopFolders()) {
+        std::error_code error;
+        // Public desktop may legitimately not exist on a new user installation.
+        if(!std::filesystem::exists(folder,error) && !error)continue;
+        std::filesystem::directory_iterator it(folder,error); if(error)throw std::system_error(error);
+        for(const auto& entry:it) {
+            const auto path=utf8(entry.path().wstring()), ext=suffix(path);
+            if(ext==".lnk" || ext==".url")paths.push_back(path);
+        }
+    }
+    std::sort(paths.begin(),paths.end()); return paths;
+}
+std::shared_ptr<void> watchDesktopShortcuts(std::uintptr_t window,unsigned message) {
+    auto watch=std::make_shared<DesktopWatch>();
+    for(const auto& folder:desktopFolders()) {
+        std::error_code error;if(!std::filesystem::exists(folder,error))continue;
+        PIDLIST_ABSOLUTE pidl{}; if(FAILED(SHParseDisplayName(folder.c_str(),nullptr,&pidl,0,nullptr)))continue;
+        SHChangeNotifyEntry entry{pidl,FALSE};
+        const auto id=SHChangeNotifyRegister(reinterpret_cast<HWND>(window),SHCNRF_ShellLevel|SHCNRF_InterruptLevel|SHCNRF_NewDelivery,
+            SHCNE_CREATE|SHCNE_DELETE|SHCNE_RENAMEITEM|SHCNE_UPDATEITEM|SHCNE_UPDATEDIR,message,1,&entry);
+        CoTaskMemFree(pidl); if(id)watch->registrations.push_back(id);
+    }
+    return watch;
 }
 AppShortcutOS windowsAppShortcutOS(){return {[](const AppShortcutSelection&s){
     try{return inspectWindows(s);}catch(const winrt::hresult_error&e){throw std::system_error(static_cast<int>(e.code()),std::system_category(),"Windows application metadata failed");}

@@ -24,12 +24,34 @@
 // other items, never reuse a removed action and never alias a module action.
 #include "native/watch_appearance.hpp"
 #include <cstdint>
+#include <algorithm>
 #include <functional>
 #include <span>
 #include <string_view>
 
 namespace endfield::app {
 inline constexpr std::string_view appShortcutNavigationService = "appShortcuts.navigation";
+
+// The right-hand Apps slot keeps one order/visibility preference when swapped.
+inline std::string_view appStorageSlotTarget(std::string_view target,bool swapped) noexcept {
+    if(!swapped)return target;
+    if(target=="addApp")return "storage";
+    if(target=="storage")return "addApp";
+    return target;
+}
+
+// Optional Windows placement override. Run on freshly planned entries only.
+// Physical action slots/right-side ordering remain exactly those of the source HUD.
+inline void applyAppStoragePlacement(std::span<native::WatchAppearanceEntry> entries, bool swap) {
+    if(!swap)return;
+    const auto storage=std::find_if(entries.begin(),entries.end(),[](const auto& e){return e.module&&e.target=="storage";});
+    const auto apps=std::find_if(entries.begin(),entries.end(),[](const auto& e){return e.module&&e.target=="addApp";});
+    if(storage==entries.end()||apps==entries.end())return;
+    const auto storageSlot=storage->action,appsSlot=apps->action;
+    std::swap(*storage,*apps);storage->action=storageSlot;apps->action=appsSlot;
+    storage->iconKey="shortcut:grid:white";
+}
+
 
 class AppShortcutNavigation {
 public:
@@ -50,6 +72,7 @@ public:
     // imported target shows its error in Add App instead of closing).
     virtual bool activate(std::uint64_t action, double time) = 0;
     // The host's single observer (empty removes it).
+    virtual void showRoot() {}
     virtual void setObserver(std::function<void()>) = 0;
 
 protected:

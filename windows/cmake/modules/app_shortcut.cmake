@@ -29,6 +29,8 @@ if(TARGET hud_shortcuts)
     if(MSVC)
       target_compile_options(app_shortcut_canvas_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
+    add_test(NAME app_shortcut_group_contracts COMMAND app_shortcut_canvas_tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/app-shortcut-source.json" "${CMAKE_CURRENT_SOURCE_DIR}/resources/app-shortcut" --groups)
     add_test(NAME app_shortcut_canvas_contracts COMMAND app_shortcut_canvas_tests
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/app-shortcut-source.json" "${CMAKE_CURRENT_SOURCE_DIR}/resources/app-shortcut")
   endif()
@@ -87,7 +89,7 @@ endif()
 # The area: tools::DesignOwnerCore over the canvas (hud_design_native, declared
 # later by cmake/modules/hud_design.cmake whenever WIN32 builds hud_native).
 if(WIN32 AND TARGET hud_app_shortcut_canvas AND TARGET hud_app_shortcut_tasks AND TARGET hud_app_shortcut_icons)
-  add_library(hud_app_shortcut_area STATIC app/areas/app_shortcut_module.cpp)
+  add_library(hud_app_shortcut_area STATIC app/areas/app_shortcut_module.cpp app/desktop_corner_summon.cpp)
   target_include_directories(hud_app_shortcut_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_app_shortcut_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_app_shortcut_area PUBLIC hud_module_registry hud_utility hud_app_shortcut_canvas hud_design_native hud_app_shortcut_tasks hud_app_shortcut_icons hud_data hud_localization
@@ -108,4 +110,15 @@ if(WIN32 AND TARGET hud_app_shortcut_canvas AND TARGET hud_app_shortcut_tasks AN
   # The tile artwork (artwork.json and the Mac's preset rasters, hash-pinned by
   # native/app_shortcut_assets.cpp), staged into the verified package.
   ehud_app_resource(appShortcut.assets directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/app-shortcut" "common/app-shortcut")
+endif()
+
+if(BUILD_TESTING)
+  add_executable(desktop_corner_summon_tests tests/desktop_corner_summon_tests.cpp)
+  target_include_directories(desktop_corner_summon_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(WIN32)
+    target_sources(desktop_corner_summon_tests PRIVATE app/desktop_corner_summon.cpp)
+    target_compile_definitions(desktop_corner_summon_tests PRIVATE UNICODE _UNICODE NOMINMAX _WIN32_WINNT=0x0A00)
+    target_link_libraries(desktop_corner_summon_tests PRIVATE user32)
+  endif()
+  add_test(NAME desktop_corner_summon_contracts COMMAND desktop_corner_summon_tests)
 endif()

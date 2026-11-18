@@ -110,11 +110,25 @@ void comparePage(World& w, core::Module module, const Json& row, std::vector<std
     const auto strip = [](const std::string& f) {
         return f.find("Mac draws artwork (0, 95, 4, 38)") != std::string::npos || f.find("about.hero.strip") != std::string::npos;
     };
-    for (auto& f : local) if (!strip(f)) failures.push_back(std::move(f));
+    // Windows adds one configurable Apps slot. Keep all other Mac scene checks;
+    // the changed badge and appended row are covered by contracts() and appStoragePlacement().
+    const bool modulePage=module==core::Module::display && canvas.section()=="modules";
+    const auto appsDifference=[&](const std::string& f){
+        if(module!=core::Module::display)return false;
+        if(f.find("@openModule.openModule:addApp.menu.item.text")!=f.npos)return true; // new choice is checked by contracts()
+        if(!modulePage)return f.find("hud.control.modules/")!=f.npos || f.find("display.page0.modules.")!=f.npos || f.ends_with(": item modules") || f.find(": label of modules ")!=f.npos;
+        for(const auto part:{":addApp", "down:power", "modulesReset", "/header/header.rule/", "display.header.header.rule."})if(f.find(part)!=f.npos)return true;
+        return f.ends_with(": control count");
+    };
+    if(modulePage){
+        check(canvas.page().controls().size()==row["controls"].array().size()+5,"Apps adds exactly one row and four controls to the source module roster");
+        check(canvas.header().counterText()=="18","Modules counter includes Apps");
+    }
+    for (auto& f : local) if (!strip(f) && !appsDifference(f)) failures.push_back(std::move(f));
     const auto& h = row["header"];
     const auto [title, subtitle] = canvas.header().titleTexts();
     if (title != h["title"].string() || subtitle != h["subtitle"].string()) failures.push_back(label + ": header title '" + title + "' / '" + subtitle + "'");
-    if (canvas.header().counterText() != h["counter"].string()) failures.push_back(label + ": counter '" + canvas.header().counterText() + "'");
+    if (!modulePage && canvas.header().counterText() != h["counter"].string()) failures.push_back(label + ": counter '" + canvas.header().counterText() + "'");
     std::vector<std::string> crumbs;
     for (const auto& c : h["crumbs"].array()) crumbs.push_back(c.string());
     if (canvas.header().crumbTexts() != crumbs) failures.push_back(label + ": crumbs");
@@ -423,11 +437,11 @@ void contracts() {
     w.hide(M::system);
     // --- Display > Modules (HUDSettingsCanvas.buildModules, under Display) -----
     w.show(M::display);
-    check(w.control(M::display, "modules").label == "Modules, 17 / 17", "Display's Modules row speaks the shown / total count");
+    check(w.control(M::display, "modules").label == "Modules, 18 / 18", "Display's Modules row speaks the shown / total count");
     w.activate(M::display, "modules");
     check(w[M::display].section() == "modules", "Modules opens");
     auto& notes = w.control(M::display, "up:notes");
-    check(!notes.enabled() && w.control(M::display, "down:power").enabled() == false, "The first row cannot move up, the last cannot move down");
+    check(!notes.enabled() && w.control(M::display, "down:addApp").enabled() == false, "The first row cannot move up, the last cannot move down");
     w.activate(M::display, "down:notes");
     check(committed().moduleLayout().order[1] == "notes" && committed().fields["hudModuleOrder"].isArray(), "Move down saves the order");
     const auto rowOf = [&](std::string_view module) -> d::Layer& { return w.control(M::display, "row:module:" + std::string(module)).layer(); };
@@ -723,7 +737,7 @@ void contracts() {
         std::vector<std::string> expected{"last"};
         for (const auto module : ehud::data::ModuleLayout::openable) expected.emplace_back(module);
         check(ids == expected && labels.front() == "Last opened" && labels[1] == "System" && labels[7] == "Notes", "Open on lists Last opened, then every openable module by its title");
-        check(std::find(ids.begin(), ids.end(), "addApp") == ids.end(), "Add App is never a choice");
+        check(std::find(ids.begin(), ids.end(), "addApp") != ids.end() && labels.back()=="Apps", "Apps is a named Open on choice");
         const auto last = std::find_if(items.begin(), items.end(), [](const auto& i) { return i.id == "openModule:last"; });
         check(last != items.end() && last->on, "Last opened is selected while nothing is chosen");
     }
@@ -741,6 +755,8 @@ void contracts() {
         w.activate(M::display, "openModule");
         check(w[M::display].performAccessibilityAction("openModule:calendar", w.now) && w.saved.size() == saves, "Choosing the current module writes nothing");
     }
+    w.activate(M::display,"openModule");
+    check(w[M::display].performAccessibilityAction("openModule:addApp",w.now) && committed().overlayLayout().openModule==std::optional<std::string>("addApp") && accessibilityValue(M::display,"openModule")=="Apps","Choosing Apps persists the initial page and shows its title");
     w.activate(M::display, "openModule");
     check(w[M::display].performAccessibilityAction("openModule:last", w.now) && !committed().overlayLayout().openModule && !committed().fields.contains("hudOverlayLayout"),
         "Last opened clears the choice (the layout at its defaults is removed)");
@@ -977,6 +993,39 @@ void contracts() {
 // The owner suite's sequence (tests/settings_owner_tests.cpp) on the portable
 // layer: pages built, menus opened and closed, a sub-page visited, then the
 // layout prompt's deadline passing with every deferred item due at once.
+void appStoragePlacement(){
+    RecordedMeasurer measurer;m::SettingsCanvasHooks hooks;hooks.appStoragePlacement=true;
+    World w(measurer,hooks,{});const auto module=core::Module::display;w.show(module);
+    const auto corner="windowsDesktopCornerSummon";
+    check(w.controller->committed().desktopCornerSummonEnabled(),"Older settings keep desktop double-click enabled");
+    check(w.control(module,"desktopCornerSummon").label=="Double-click desktop corner to open Apps","Display exposes the desktop summon toggle");
+    w.activate(module,"desktopCornerSummon");check(!w.saved.back().desktopCornerSummonEnabled(),"Desktop summon toggle saves off");
+    w.activate(module,"desktopCornerSummon");check(w.saved.back().desktopCornerSummonEnabled(),"Desktop summon toggle saves on");
+    auto cornerSettings=Settings::defaults();cornerSettings.set(corner,false);
+    check(!cornerSettings.isDefault(Settings::Scope::display),"Disabling desktop summon customizes Display");
+    check(cornerSettings.restoring(Settings::Scope::display).desktopCornerSummonEnabled(),"Restore Display enables desktop summon");
+    cornerSettings.set(corner,"invalid");check(cornerSettings.desktopCornerSummonEnabled(),"Invalid optional values use the enabled default");
+    const auto key="windowsSwapAppStorage";
+    check(!w.controller->committed().fields.contains(key),"Old/default settings need no new layout key");
+    check(w.control(module,"appStoragePlacement").label=="Swap Storage and Apps positions","Display exposes the host placement option");
+    w.activate(module,"appStoragePlacement");
+    check(!w.saved.empty() && w.saved.back().fields[key]==Json(true),"Enabling swap persists through the existing settings controller");
+    w.activate(module,"appStoragePlacement");check(w.saved.back().fields[key]==Json(false),"Disabling swap persists the original layout");
+    w.activate(module,"modules");
+    check(w.control(module,"show:addApp").label=="Apps","Module configuration exposes the shortcut Apps page");
+    w.activate(module,"up:addApp");
+    check(w.controller->committed().moduleLayout().order[16]=="addApp","Apps uses the existing module order controls");
+    w.update([&](Settings& s){s.set(key,true);});
+    check(w.control(module,"show:addApp").label=="Storage","Swapped module configuration exposes Storage in the same slot");
+    w.activate(module,"show:addApp");
+    check(w.controller->committed().moduleLayout().isHidden("addApp"),"Swapped Storage uses existing visibility settings");
+    w.update([&](Settings& s){s.set(key,false);});
+    check(w.control(module,"show:addApp").label=="Apps","Switching back restores the Apps label");
+    auto original=Settings::defaults();original.set(key,false);check(original.isDefault(Settings::Scope::display),"Explicit off has the same defaults as an absent key");
+    original.set(key,true);check(!original.isDefault(Settings::Scope::display),"Enabled swap marks Display as customized");
+    check(!original.restoring(Settings::Scope::display).fields.contains(key),"Restore Display defaults disables swap without adding a source setting");
+}
+
 void deferredWork() {
     using M = core::Module;
     RecordedMeasurer measurer;
@@ -1085,11 +1134,13 @@ void catalogPairs(const char* source) {
 
 int main(int argc, char** argv) {
     try {
+        if(argc==2 && std::string_view(argv[1])=="--app-placement"){appStoragePlacement();std::cout<<"App placement settings: "<<checks<<" checks passed\n";return 0;}
         check(argc == 4, "Pass tests/fixtures/settings-source.json, resources/watch-appearance/manifest.json and modules/settings_canvas.cpp");
         const auto data = loadOracle(argv[1], {"pages", "requests"}, {"text", "layerDefaults", "logos", "about", "icons"});
         check(data.has_value(), "Read the Settings oracle");
         std::ifstream in(argv[2], std::ios::binary); std::ostringstream text; text << in.rdbuf();
         const auto manifest = Json::parse(text.str(), 8u * 1024 * 1024);
+        appStoragePlacement();
         replay(*data, manifest);
         contracts();
         deferredWork();
