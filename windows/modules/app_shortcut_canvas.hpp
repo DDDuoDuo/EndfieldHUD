@@ -98,7 +98,7 @@ public:
     design::DragGrip* rowGrip(std::string_view id) const;
     design::Control* iconTile(std::string_view id) const;
     void dragRow(const std::string& id, int slot);
-    bool reordering() const noexcept { return reorder_.has_value(); }
+    bool reordering() const noexcept { return reorder_.has_value() || !gridDragID_.empty(); }
 
     void showGroup(std::string id);
     void showGroups();
@@ -120,6 +120,8 @@ private:
     std::string groupID_, selectedItem_;
     bool restoredGroup_{};
     double tabOffset_{}, tabWidth_{118};
+    int tabRows_{1};
+    std::size_t tabColumns_{1};
     design::Layer* tabContent_{};
     std::vector<std::pair<std::string, design::Control*>> tabs_;
     void optionsMenu(const design::Control&);
@@ -146,7 +148,13 @@ private:
     design::ScrollArea* list_{};
     std::optional<design::ListReorder> reorder_;
     std::optional<AppShortcutRequest> landing_;  // a dropped order the owner has not answered
-    design::Deadlines::Token timers_{};
+    design::Deadlines::Token timers_{}, gridTimers_{};
+    std::string gridDragID_;
+    std::size_t gridDragTarget_{};
+    design::Point gridDragPoint_{};
+    void previewGridDrag(const std::string&,design::Point);
+    void scrollGridDrag();
+    void cancelGridDrag();
     design::Menu::IconTile artwork(std::string_view preset, const ShortcutRecord&) const;
     design::Color originalColor(const ShortcutRecord&) const;
     design::RowPlate& makeRow(const ShortcutRecord&, double width, design::Page&);
