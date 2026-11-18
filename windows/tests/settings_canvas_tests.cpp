@@ -115,6 +115,7 @@ void comparePage(World& w, core::Module module, const Json& row, std::vector<std
     const bool modulePage=module==core::Module::display && canvas.section()=="modules";
     const auto appsDifference=[&](const std::string& f){
         if(module!=core::Module::display)return false;
+        if(f.find("@openModule.openModule:addApp.menu.item.text")!=f.npos)return true; // new choice is checked by contracts()
         if(!modulePage)return f.find("hud.control.modules/")!=f.npos || f.find("display.page0.modules.")!=f.npos || f.ends_with(": item modules") || f.find(": label of modules ")!=f.npos;
         for(const auto part:{":addApp", "down:power", "modulesReset", "/header/header.rule/", "display.header.header.rule."})if(f.find(part)!=f.npos)return true;
         return f.ends_with(": control count");
@@ -736,7 +737,7 @@ void contracts() {
         std::vector<std::string> expected{"last"};
         for (const auto module : ehud::data::ModuleLayout::openable) expected.emplace_back(module);
         check(ids == expected && labels.front() == "Last opened" && labels[1] == "System" && labels[7] == "Notes", "Open on lists Last opened, then every openable module by its title");
-        check(std::find(ids.begin(), ids.end(), "addApp") == ids.end(), "Add App is never a choice");
+        check(std::find(ids.begin(), ids.end(), "addApp") != ids.end() && labels.back()=="Apps", "Apps is a named Open on choice");
         const auto last = std::find_if(items.begin(), items.end(), [](const auto& i) { return i.id == "openModule:last"; });
         check(last != items.end() && last->on, "Last opened is selected while nothing is chosen");
     }
@@ -754,6 +755,8 @@ void contracts() {
         w.activate(M::display, "openModule");
         check(w[M::display].performAccessibilityAction("openModule:calendar", w.now) && w.saved.size() == saves, "Choosing the current module writes nothing");
     }
+    w.activate(M::display,"openModule");
+    check(w[M::display].performAccessibilityAction("openModule:addApp",w.now) && committed().overlayLayout().openModule==std::optional<std::string>("addApp") && accessibilityValue(M::display,"openModule")=="Apps","Choosing Apps persists the initial page and shows its title");
     w.activate(M::display, "openModule");
     check(w[M::display].performAccessibilityAction("openModule:last", w.now) && !committed().overlayLayout().openModule && !committed().fields.contains("hudOverlayLayout"),
         "Last opened clears the choice (the layout at its defaults is removed)");
@@ -993,6 +996,15 @@ void contracts() {
 void appStoragePlacement(){
     RecordedMeasurer measurer;m::SettingsCanvasHooks hooks;hooks.appStoragePlacement=true;
     World w(measurer,hooks,{});const auto module=core::Module::display;w.show(module);
+    const auto corner="windowsDesktopCornerSummon";
+    check(w.controller->committed().desktopCornerSummonEnabled(),"Older settings keep desktop double-click enabled");
+    check(w.control(module,"desktopCornerSummon").label=="Double-click desktop corner to open Apps","Display exposes the desktop summon toggle");
+    w.activate(module,"desktopCornerSummon");check(!w.saved.back().desktopCornerSummonEnabled(),"Desktop summon toggle saves off");
+    w.activate(module,"desktopCornerSummon");check(w.saved.back().desktopCornerSummonEnabled(),"Desktop summon toggle saves on");
+    auto cornerSettings=Settings::defaults();cornerSettings.set(corner,false);
+    check(!cornerSettings.isDefault(Settings::Scope::display),"Disabling desktop summon customizes Display");
+    check(cornerSettings.restoring(Settings::Scope::display).desktopCornerSummonEnabled(),"Restore Display enables desktop summon");
+    cornerSettings.set(corner,"invalid");check(cornerSettings.desktopCornerSummonEnabled(),"Invalid optional values use the enabled default");
     const auto key="windowsSwapAppStorage";
     check(!w.controller->committed().fields.contains(key),"Old/default settings need no new layout key");
     check(w.control(module,"appStoragePlacement").label=="Swap Storage and Apps positions","Display exposes the host placement option");

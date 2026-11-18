@@ -296,6 +296,7 @@ bool resets(SettingsScope scope,std::optional<SettingsScope> owner) {
 // SettingsChoices key a known choice, a UUID canonical or nil, and the
 // display name nil without a valid display UUID (else trimmed, nil if empty).
 Json typedSetting(std::string_view key,const Settings& settings) {
+    if(key=="windowsDesktopCornerSummon")return settings.desktopCornerSummonEnabled();
     if(key=="windowsSwapAppStorage")return settings.fields[key]==Json(true);
     const auto& defaults=defaultSettings().fields;
     const auto& raw=settings.fields.contains(key)?settings.fields[key]:defaults[key];
@@ -344,6 +345,7 @@ bool Settings::summonHotkeyEnabled() const {return flag(fields,"summonHotkeyEnab
 bool Settings::recordingMode() const {return flag(fields,"recordingMode",false);}
 bool Settings::dailyBootLog() const {return flag(fields,"dailyBootLog",true);}
 bool Settings::facilityAlerts() const {return flag(fields,"facilityAlerts",true);}
+bool Settings::desktopCornerSummonEnabled() const {return flag(fields,"windowsDesktopCornerSummon",true);}
 bool Settings::showsCloseHint() const {return flag(fields,"showsCloseHint",true);}
 std::string Settings::applicationIcon() const {
     const auto& value=fields["applicationIcon"];

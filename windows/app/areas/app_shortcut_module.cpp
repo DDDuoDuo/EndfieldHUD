@@ -297,8 +297,7 @@ public:
         }
         if(!synthetic_){
             desktopCornerMessage_=RegisterWindowMessageW(L"EndfieldHUD.DesktopCorner.Summon");
-            try{desktopCorner_=std::make_unique<app::DesktopCornerSummon>(window_,desktopCornerMessage_);}
-            catch(const std::exception&){OutputDebugStringA("EndfieldHUD desktop corner summon could not start\n");}
+            updateDesktopCorner();
         }
         loadPending_ = true;pump();
     }
@@ -360,7 +359,7 @@ public:
     bool key(const app::KeyEvent& e, double t) override { const bool used = core_->key(e, t);pump();return used; }
     bool filterKey(const app::NativeMessage& m) override { return core_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override {
-        if(desktopCornerMessage_ && m.message==desktopCornerMessage_){if(!overlayVisible_)requestReopen();return true;}
+        if(desktopCornerMessage_ && m.message==desktopCornerMessage_){if(desktopCorner_ && host_.settings().desktopCornerSummonEnabled() && !overlayVisible_)requestReopen();return true;}
         if(desktopMessage_ && m.message==desktopMessage_) {
             PIDLIST_ABSOLUTE* pidls{};LONG event{};
             if(const auto lock=SHChangeNotification_Lock(reinterpret_cast<HANDLE>(m.wParam),static_cast<DWORD>(m.lParam),&pidls,&event))SHChangeNotification_Unlock(lock);
@@ -412,6 +411,7 @@ public:
         using K = app::HostEvent::Kind;
         bool changed = core_->hostEvent(e, t);
         switch (e.kind) {
+        case K::settingsChanged: updateDesktopCorner();return changed;
         case K::utilityCompleted:
             tasks_->queueCapacityAvailable();pump();scheduleIcon();
             return std::exchange(contentChanged_, false) || changed; // completions ran in the drain: re-list UI Automation
@@ -700,6 +700,17 @@ private:
             if (mode_ == ApplicationAreaMode::production) (void)AllowSetForegroundWindow(ASFW_ANY);
             pump();
         } else if (launch_->phase == LaunchPhase::closing) cancelPendingLaunch(t);
+    }
+    void updateDesktopCorner() {
+        if(synthetic_)return;
+        if(!host_.settings().desktopCornerSummonEnabled()){
+            desktopCorner_.reset(); // unhook and join: disabled means no background mouse listener
+            MSG pending{};while(desktopCornerMessage_ && PeekMessageW(&pending,window_,desktopCornerMessage_,desktopCornerMessage_,PM_REMOVE)){}
+            return;
+        }
+        if(desktopCorner_ || !desktopCornerMessage_)return;
+        try{desktopCorner_=std::make_unique<app::DesktopCornerSummon>(window_,desktopCornerMessage_);}
+        catch(const std::exception&){OutputDebugStringA("EndfieldHUD desktop corner summon could not start\n");}
     }
     void requestClose() {
         if (coverageMode()) {++coverageCloseRequests_;if (coverageCloseNow_) coverageCloseNow_();return;} // the coverage harness owns the lifecycle

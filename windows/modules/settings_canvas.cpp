@@ -42,6 +42,7 @@ bool flag(const Settings& s, std::string_view key) {
     if (key == "recordingMode") return s.recordingMode();
     if (key == "dailyBootLog") return s.dailyBootLog();
     if (key == "facilityAlerts") return s.facilityAlerts();
+    if (key == "windowsDesktopCornerSummon") return s.desktopCornerSummonEnabled();
     if (key == "showsCloseHint") return s.showsCloseHint();
     const auto& v = s.fields[key];
     return v.isBool() && v.boolean();
@@ -709,6 +710,7 @@ void SettingsCanvas::buildDisplay(d::Page& page) {
     rows.push_back(&openModuleRow(page));
     rows.push_back(&modulesRow(page));
     if(hooks_.appStoragePlacement)rows.push_back(&toggleRow("appStoragePlacement",text("Swap Storage and Apps positions","互换存储与应用位置"),"windowsSwapAppStorage",page));
+    if(hooks_.appStoragePlacement)rows.push_back(&toggleRow("desktopCornerSummon",text("Double-click desktop corner to open Apps","双击桌面左下角呼出"),"windowsDesktopCornerSummon",page));
     rows.push_back(&navRow("overlay", text("HUD elements", "界面元素"), page, [this] { go(Section::overlay, true); }));
     rows.push_back(&navRow("appIcon", text("App / menu bar icon", "应用 / 菜单栏图标"), page, [this] { go(Section::icons, true); }));
     rows.push_back(&paletteRow(page));
