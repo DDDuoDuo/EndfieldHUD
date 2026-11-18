@@ -129,6 +129,131 @@ void artworkOracle(const Json& data, const m::AppShortcutArtwork& art, const cha
     check(c && mac && near((*c)[0], mac->r, 1. / 255) && near((*c)[1], mac->g, 1. / 255) && near((*c)[2], mac->b, 1. / 255), "The tile colour is the Mac's 8 x 8 sample");
 }
 
+void overviewEditing(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner; m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    m::ShortcutFile file; file.groups = {{"one", "One"}, {"two", "Two"}};
+    canvas.setStore(file); w.show(canvas); canvas.showGroups();
+    control(canvas, "groups:edit")->activate();
+    control(canvas, "groups:item:one")->activate(); control(canvas, "groups:item:two")->activate();
+    check(canvas.selectedGroup().empty() && control(canvas, "groups:delete")->enabled(), "Overview edit selects multiple groups without opening them");
+    const d::Point blank{d::metric::boxWidth - 20, d::metric::boxHeight - 30};
+    canvas.pointerDown(blank, {blank, d::PointerButton::left, false, false, 1}, w.now); canvas.pointerUp(blank, w.now);
+    check(!control(canvas, "groups:delete")->enabled(), "Overview blank click clears all selections");
+    auto* tile = control(canvas, "groups:item:one"); const auto start = centre(*tile, canvas.root());
+    const d::Point end{start.x + tile->layer().bounds().width + 12, start.y};
+    canvas.pointerDown(start, {start, d::PointerButton::left, false, false, 1}, w.now);
+    canvas.pointerDragged(end, w.now); canvas.pointerUp(end, w.now);
+    const auto move = owner.requests.back();
+    check(move.kind == m::AppShortcutRequest::Kind::moveGroup && move.groupID == "one" && move.index == 1, "Overview drag requests the new group order");
+    std::swap(file.groups[0], file.groups[1]); canvas.requestFinished(move, file, std::nullopt);
+    check(control(canvas, "groups:item:two")->rect(canvas.root()).x < control(canvas, "groups:item:one")->rect(canvas.root()).x, "Committed group order updates the grid");
+    control(canvas, "groups:item:one")->activate(); control(canvas, "groups:item:two")->activate();
+    control(canvas, "groups:delete")->activate();
+    check(w.context.overlay().confirmState().request()->title == "Delete 2 groups?", "Group deletion confirms the selected count");
+    const auto before = owner.requests.size(); w.context.overlay().decide(d::ConfirmState::Decision::confirm);
+    check(owner.requests.size() == before + 2 && owner.requests[before].kind == m::AppShortcutRequest::Kind::removeGroup && owner.requests[before+1].kind == m::AppShortcutRequest::Kind::removeGroup && owner.requests[before].groupID != owner.requests[before+1].groupID, "Multi-delete targets each selected group once");
+    control(canvas, "groups:edit")->activate();
+    const auto click = centre(*control(canvas, "groups:item:one"), canvas.root());
+    canvas.pointerDown(click, {click, d::PointerButton::left, false, false, 1}, w.now);
+    canvas.pointerUp(click, w.now);
+    check(canvas.selectedGroup() == "one", "Done restores single-click group navigation");
+}
+
+void mixedRootOrder(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner; m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    m::ShortcutFile file; file.groups = {{"group", "Group"}};
+    auto grouped = record("grouped", "Grouped", "folder"); grouped.groupID = "group";
+    file.items = {grouped, record("first", "First", "star"), grouped, record("last", "Last", "star")};
+    file.items[2].id = "other-grouped";
+    canvas.setStore(file); w.show(canvas); canvas.dragRow("first", 1);
+    check(owner.requests.size() == 1 && owner.requests.back().index == 3, "Original-list drag maps filtered rows to shared storage positions");
+}
+
+void groupRules(const m::AppShortcutArtwork& art) {
+    FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
+    Owner owner; m::AppShortcutCanvas canvas(w.context, art, owner.services());
+    m::ShortcutFile file; file.groups = {{"group-a", "Work"}, {"group-b", "Games"}};
+    auto root = record("root", "Root", "star");
+    auto a = record("a", "Editor", "original"); a.groupID = "group-a";
+    auto b = record("b", "Browser", "globe"); b.groupID = "group-a";
+    auto game = record("game", "Game", "game"); game.groupID = "group-b";
+    file.items = {root, a, b, game}; canvas.setStore(file); w.show(canvas);
+    check(canvas.items().size() == 1 && canvas.items()[0].id == "root", "Grouped items leave the original list");
+    check(!control(canvas, "apps:new-group"), "Group creation is independent of the Add App page");
+    canvas.showGroups();
+    check(control(canvas, "groups:new") && control(canvas, "groups:item:group-a") && control(canvas, "groups:item:group-b"), "Groups overview lists every group and its creation action");
+    check(canvas.items().empty(), "Overview does not display ungrouped shortcuts");
+    control(canvas, "groups:item:group-a")->activate();
+    check(canvas.items().size() == 2 && canvas.selectedGroup() == "group-a", "Opening a group shows only its members");
+    auto* tile = control(canvas, "group:item:a"); check(tile != nullptr, "A group exposes its shortcut tile");
+    const auto bounds = tile->layer().bounds(); check(near(bounds.width, bounds.height), "Shortcut tiles are square");
+    const auto point = centre(*tile, canvas.root());
+    canvas.pointerDown(point, {point, d::PointerButton::left, false, false, 1}, w.now);
+    canvas.pointerUp(point, w.now);
+    check(owner.launches.empty(), "A single click only selects the shortcut");
+    canvas.pointerDown(point, {point, d::PointerButton::left, false, false, 2}, w.now);
+    check(owner.launches == std::vector<std::string>{"a"}, "Double-click launches the selected shortcut once");
+    w.context.overlay().clearToast();
+    const std::array paths{std::string("C:\\A.exe"), std::string("C:\\B.lnk")};
+    check(canvas.importPaths(paths) && owner.requests.size() == 2 && owner.requests[0].groupID == "group-a" && owner.requests[1].groupID == "group-a", "Batch imports retain the originating group");
+    auto* name = dynamic_cast<d::TextField*>(control(canvas, "group:name"));
+    name->onCommit("Renamed");
+    const auto rename = owner.requests.back(); file.groups[0].name = "Renamed";
+    canvas.requestFinished(rename, file, std::nullopt);
+    check(dynamic_cast<d::TextField*>(control(canvas, "group:name"))->text() == "Renamed", "Committed group rename updates the editor");
+    check(!control(canvas, "group:options:a"), "Tiles have no individual operation button");
+    tile = control(canvas, "group:item:a");
+    const auto beforeDrag = owner.requests.size();
+    auto start = centre(*tile, canvas.root());
+    canvas.pointerDown(start, {start, d::PointerButton::left, false, false, 1}, w.now);
+    canvas.pointerDragged({start.x + bounds.width + 12, start.y}, w.now);
+    canvas.pointerUp({start.x + bounds.width + 12, start.y}, w.now);
+    check(owner.requests.size() == beforeDrag, "Normal mode does not reorder shortcuts");
+    control(canvas, "group:edit")->activate();
+    check(control(canvas, "group:delete-shortcut") && !control(canvas, "group:delete-shortcut")->enabled(), "Edit mode offers disabled Delete until selection");
+    tile = control(canvas, "group:item:a");
+    tile->activate();
+    check(control(canvas, "group:delete-shortcut")->enabled(), "Single selection enables the page Delete action");
+    start = centre(*tile, canvas.root());
+    canvas.pointerDown(start, {start, d::PointerButton::left, false, false, 2}, w.now);
+    canvas.pointerUp(start, w.now);
+    check(owner.launches.size() == 1, "Double click does not launch while editing");
+    tile->activate(); // The second click toggled the previous selection off.
+    control(canvas, "group:item:b")->activate();
+    const d::Point blank{d::metric::boxWidth - 20, d::metric::boxHeight - 30};
+    canvas.pointerDown(blank, {blank, d::PointerButton::left, false, false, 1}, w.now); canvas.pointerUp(blank, w.now);
+    check(!control(canvas, "group:delete-shortcut")->enabled(), "Clicking blank canvas clears all selected shortcuts");
+    tile->activate(); control(canvas, "group:item:b")->activate();
+    control(canvas, "group:delete-shortcut")->activate();
+    check(w.context.overlay().confirmState().isOpen() && w.context.overlay().confirmState().request()->title == "Remove 2 shortcuts?", "Delete confirms the complete multi-selection");
+    w.context.overlay().dismissConfirm();
+    const auto from = centre(*tile, canvas.root());
+    const d::Point to{from.x + bounds.width + 12, from.y};
+    canvas.pointerDown(from, {from, d::PointerButton::left, false, false, 1}, w.now);
+    canvas.pointerDragged(to, w.now); canvas.pointerUp(to, w.now);
+    const auto move = owner.requests.back();
+    check(move.kind == m::AppShortcutRequest::Kind::move && move.id == "a" && move.index == 2, "Dragging maps grid position to the shared store index");
+    std::swap(file.items[1], file.items[2]); canvas.requestFinished(move, file, std::nullopt);
+    check(canvas.items()[0].id == "b", "Committed drag updates group order");
+    const auto beforeDelete = owner.requests.size();
+    control(canvas, "group:delete-shortcut")->activate();
+    w.context.overlay().decide(d::ConfirmState::Decision::confirm);
+    check(owner.requests.size() == beforeDelete + 2 && owner.requests[beforeDelete].kind == m::AppShortcutRequest::Kind::remove && owner.requests[beforeDelete + 1].kind == m::AppShortcutRequest::Kind::remove && owner.requests[beforeDelete].id != owner.requests[beforeDelete + 1].id, "Confirmation queues each selected shortcut exactly once");
+    check(!control(canvas, "group:delete-shortcut")->enabled(), "Batch deletion clears the selection");
+    canvas.showGroup("group-b"); check(canvas.items().size() == 1 && canvas.items()[0].id == "game", "Switching groups replaces the grid");
+    check(!control(canvas, "group:back"), "Group detail header has no redundant Groups button");
+    canvas.showGroups();
+    check(control(canvas, "groups:new") && control(canvas, "groups:item:group-b"), "Groups navigation opens the overview");
+    control(canvas, "groups:new")->activate();
+    const auto create = owner.requests.back();
+    check(create.kind == m::AppShortcutRequest::Kind::saveGroup && create.groupID.empty(), "Overview creates a new group");
+    file.groups.push_back({"group-c", "New group"}); canvas.requestFinished(create, file, std::nullopt);
+    check(canvas.selectedGroup() == "group-c" && control(canvas, "group:add"), "Creation opens the new group");
+    canvas.showGroup({}); check(canvas.items().size() == 1 && control(canvas, "apps:add"), "Returning restores the original top-level list");
+}
+
 // --- Canvas rules (Swift-derived) -----------------------------------------------------------
 void canvasRules(const m::AppShortcutArtwork& art) {
     FakeMeasurer measurer; World w(measurer); w.appearance(Language::english);
@@ -582,6 +707,12 @@ int main(int argc, char** argv) {
         layoutRules();
         if (argc < 3) throw std::runtime_error("usage: app_shortcut_canvas_tests ORACLE RESOURCES");
         const auto packaged = assets(argv[2]);
+        groupRules(packaged->artwork());
+        overviewEditing(packaged->artwork());
+        mixedRootOrder(packaged->artwork());
+        if (argc > 3 && std::string_view(argv[3]) == "--groups") {
+            std::cout << "Shortcut group UI: " << checks << " checks passed\n"; return 0;
+        }
         canvasRules(packaged->artwork());
         reorderRules(packaged->artwork());
         lateIcons(packaged->artwork());

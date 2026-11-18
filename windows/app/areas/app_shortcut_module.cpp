@@ -325,7 +325,7 @@ public:
     void overlayClosing(double t) override { closing(t, true); }
     void update(const app::ModuleFrame& f) override {
         core_->update(f);pump();
-        if (const auto offset = listOffset(); offset != iconOffset_) refreshIcons();
+        if (const auto offset = listOffset(); offset != iconOffset_ || iconGroup_ != canvas_->selectedGroup()) refreshIcons();
     }
     void prewarm(const app::ModuleFrame& f) override { core_->prewarm(f); }
     bool requiresFrames(double t) const override { return core_->requiresFrames(t); }
@@ -351,12 +351,14 @@ public:
     bool finishEditing(double t) override { return core_->finishEditing(t); }
     bool flush(double t) override {
         (void)core_->flush(t);
-        // Bounded durable drain at quit/session end: an accepted save/remove
+        // Drain accepted work at quit/session end: an accepted save/remove
         // (or one retained while the executor was full) reaches the disk.
-        for (unsigned n = 0; n < 16 && tasks_->busy() && inflight_ && durable(inflight_->kind); ++n) {
+        while (!work_.empty() || (tasks_->busy() && inflight_ && durable(inflight_->kind))) {
+            pump();
+            if (!tasks_->busy()) break;
             utility_.waitIdle();utility_.drain();tasks_->queueCapacityAvailable();
         }
-        return !(tasks_->busy() && inflight_ && durable(inflight_->kind));
+        return work_.empty() && !(tasks_->busy() && inflight_ && durable(inflight_->kind));
     }
     // SystemHUDView.performDragOperation -> acceptsAppShortcutDrop: exactly one
     // application over the centre while + Add App is the active canvas ->
@@ -403,11 +405,22 @@ public:
     bool activate(std::uint64_t action, double t) override {
         const auto id = planner_.shortcutID(action);
         if (!id) return false;
+        if (*id == groupsNavigationID_) {
+            host_.selectModule(core::Module::addApp);
+            canvas_->showGroups(); host_.requestFrame();
+            return true;
+        }
         const auto& items = file_.items;
         const auto found = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.id == *id; });
-        if (found != items.end()) beginLaunch(*found, t);
+        const auto group = std::find_if(file_.groups.begin(), file_.groups.end(), [&](const auto& v) { return v.id == *id; });
+        if (group != file_.groups.end()) {
+            canvas_->showGroup(group->id);
+            host_.selectModule(core::Module::addApp);
+            host_.requestFrame();
+        } else if (found != items.end()) beginLaunch(*found, t);
         return true;
     }
+    void showRoot() override { canvas_->showGroup({}); }
     void setObserver(std::function<void()> observer) override { observer_ = std::move(observer); }
 
 private:
@@ -423,7 +436,7 @@ private:
     struct Work { m::AppShortcutRequest request; bool saving{}; std::optional<m::ShortcutCandidate> candidate; };
 
     static bool durable(m::ShortcutTaskKind k) noexcept {
-        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move;
+        return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch || k == m::ShortcutTaskKind::move || k == m::ShortcutTaskKind::saveGroup || k == m::ShortcutTaskKind::removeGroup || k == m::ShortcutTaskKind::moveGroup;
     }
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
     // Executor completions run outside the registry's isolation: in
@@ -510,7 +523,11 @@ private:
         auto& w = work_.front();
         using K = m::AppShortcutRequest::Kind;
         m::ShortcutTask t;
-        if (w.saving) {
+        if (w.request.kind == K::saveGroup || w.request.kind == K::removeGroup || w.request.kind == K::moveGroup) {
+            t.kind = w.request.kind == K::saveGroup ? m::ShortcutTaskKind::saveGroup : w.request.kind == K::moveGroup ? m::ShortcutTaskKind::moveGroup : m::ShortcutTaskKind::removeGroup;
+            t.index = w.request.index;
+            t.groupID = w.request.groupID; t.name = w.request.name; t.newID = ehud::data::makeUUID();
+        } else if (w.saving) {
             // AppShortcutStore.save(candidate:name:iconPreset:editingID:).
             t.kind = m::ShortcutTaskKind::save;t.candidate = w.candidate;
             if (w.request.kind == K::add && w.request.id.empty()) {t.name = w.candidate->name;t.icon = "original";} // importURLs: its own name, the App icon
@@ -522,6 +539,7 @@ private:
                 t.name = w.request.kind == K::add ? current->name : w.request.name;
                 t.icon = w.request.kind == K::add ? current->iconPreset : w.request.icon;
             }
+            t.groupID = w.request.groupID;
             t.newID = ehud::data::makeUUID();t.createdAt = ehud::data::foundationNow();
         } else if (w.request.kind == K::add) {
             const auto selection = chosenApplication(w.request.path);
@@ -687,11 +705,17 @@ private:
         images_->retire(iconKey(id));if (entry.trimmed) images_->retire(navigationKey(id));
         entry.revision = 0;entry.trimmed = false;entry.color.reset();
     }
+    std::string iconGroup_;
     void refreshIcons() {
+        iconGroup_ = canvas_->selectedGroup();
         iconOffset_ = listOffset();
         wanted_.clear();
-        const auto& items = file_.items;
-        for (const auto n : m::shortcutOriginalIconOrder(file_, iconOffset_, maximumIcons,
+        m::ShortcutFile visibleIcons;
+        if (!iconGroup_.empty()) for (const auto& item : file_.items) if (item.groupID == iconGroup_) visibleIcons.items.push_back(item);
+        for (const auto& item : file_.items) if (item.groupID.empty()) visibleIcons.items.push_back(item);
+        const auto& items = visibleIcons.items;
+        const double offset = iconGroup_.empty() ? iconOffset_ : std::floor(iconOffset_ / 150.) * 4 * 62;
+        for (const auto n : m::shortcutOriginalIconOrder(visibleIcons, offset, maximumIcons,
                  [](const m::ShortcutRecord& item) { return g::appShortcutIconSelection(item.locator).has_value(); }))
             if (const auto selection = g::appShortcutIconSelection(items[n].locator)) wanted_.push_back({items[n].id, applicationKey(items[n].locator), *selection});
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
@@ -727,7 +751,17 @@ private:
         return m::ShortcutImageReference{navigationKey(id), found->second.revision};
     }
     Plan planNavigation(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right) {
-        return planner_.plan(modules, right, file_, [this](std::string_view id) { return navigationImage(id); }, images_);
+        m::ShortcutFile navigation;
+        for (const auto& item : file_.items) if (item.groupID.empty()) navigation.items.push_back(item);
+        for (const auto& group : file_.groups) {
+            m::ShortcutRecord entry; entry.id = group.id; entry.name = group.name; entry.iconPreset = "folder";
+            navigation.items.push_back(std::move(entry));
+        }
+        // A navigation-only command, never persisted as a shortcut or group.
+        m::ShortcutRecord create; create.id = groupsNavigationID_;
+        create.name = text(language_, "Groups", "分组"); create.iconPreset = "folder";
+        navigation.items.push_back(std::move(create));
+        return planner_.plan(modules, right, navigation, [this](std::string_view id) { return navigationImage(id); }, images_);
     }
     void scheduleIcon() {
         if (iconJob_) return;
@@ -864,6 +898,7 @@ private:
     std::unique_ptr<m::AppShortcutTasks> tasks_; // destroyed before the canvas its completions update
     m::ShortcutFile file_;                       // the committed list (the store's items)
     std::deque<Work> work_;
+    const std::string groupsNavigationID_{ehud::data::makeUUID()};
     NavigationPlanner planner_;
     std::function<void()> observer_;
     std::optional<Inflight> inflight_;
@@ -1008,7 +1043,7 @@ struct AppShortcutArea::Driver {
             ordered = app && at + 1 + std::ptrdiff_t(n) < right.end() && *(at + 1 + std::ptrdiff_t(n)) == app && entry != entries.end() && !entry->module &&
                 entry->title == item.name && entry->iconKey == "shortcut:" + item.iconPreset && a.planner_.shortcutID(app) == std::optional<std::string_view>(item.id);
         }
-        step.check(ordered && std::size_t(right.end() - at) == items.size() + 2, "Saved apps follow Power in their stored order and + Add App stays last");
+        step.check(ordered && std::size_t(right.end() - at) == items.size() + 3 && right[right.size() - 2] == action("app." + a.groupsNavigationID_), "Saved apps precede the independent Groups and Add App actions");
         // HUDAppShortcutPresentation.icon trimmed (HUDSourceDesktopIconLayout.image):
         // the published side-list image for the "original" preset only.
         bool icons = true;

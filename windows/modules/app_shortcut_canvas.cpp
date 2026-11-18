@@ -8,11 +8,55 @@
 namespace endfield::modules {
 namespace d = design;
 namespace {
-// The 40 x 40 app icon tile (:442-480): the shortcut's artwork with an inset
-// ring rgba(0,0,0,.25) and, on its lower right corner, a dark chip with the
-// yellow chooser caret of the dropdowns (Display > Center logo), so it reads
-// as a chooser; it opens Choose icon. The caret turns while that menu is open
-// (MenuAnchor) and nudges on hover.
+// Layered translucent plates matching the HUD right-side navigation tiles.
+class ShortcutGridTile final : public d::Control {
+public:
+    ShortcutGridTile(d::Builder& b, std::string id, std::string name, double side, d::Menu::IconTile art)
+        : Control(b.env, id, name, b.layer(id)), picture_(&b.layer(id + ".picture")),
+          plate_(&b.layer(id + ".plate")), ring_(&b.layer(id + ".ring")) {
+        layer().setBounds({side, side}); layer().setPartRoot(true); setTarget({0, 0, side, side});
+        auto& rear = b.layer(id + ".rear");
+        rear.setFrame({1, 11, side - 10, side - 13});
+        d::setBorder(rear, d::white(.20), d::white(.55), 1.5, 7); layer().add(rear);
+        auto& rearRing = b.layer(id + ".rearRing");
+        rearRing.setFrame({4, 14, side - 16, side - 19});
+        d::setBorder(rearRing, std::nullopt, d::black(.28), 1, 5); layer().add(rearRing);
+        plate_->setFrame({7, 1, side - 9, side - 12}); layer().add(*plate_);
+        ring_->setFrame({10, 4, side - 15, side - 18}); layer().add(*ring_);
+        picture_->setFrame({(side - 50) / 2 + 2, 18, 50, 50}); layer().add(*picture_);
+        setArtwork(art);
+        const auto caption = b.env.characters.count(name) > 12 ? b.env.characters.prefix(name, 11) + "…" : name;
+        layer().add(d::makeText(b, id + ".label", caption,
+            d::TextStyle{15, d::FontWeight::medium, d::rgb(0x151716)}, {13, side - 52, side - 24, 28}, d::TextAlignment::center));
+        redraw();
+    }
+    void setArtwork(const d::Menu::IconTile& art) {
+        if (!art.image.key.empty()) picture_->setContent(d::image(picture_->id(), d::localBounds(*picture_), art.image, "resizeAspect", std::nullopt, true));
+        else picture_->clearContent();
+    }
+    void setSelected(bool selected) { selected_ = selected; redraw(); }
+    void hoverChanged() override { redraw(); }
+    void pressChanged() override { redraw(); }
+    std::function<void(d::Point)> onDrop;
+    bool pointerDown(d::Point p) override { start_ = p; dragged_ = false; return enabled(); }
+    void pointerDragged(d::Point p) override { if (std::abs(p.x-start_.x) + std::abs(p.y-start_.y) > 8) dragged_ = true; }
+    void pointerUp(d::Point p) override {
+        const bool dragged = std::exchange(dragged_, false);
+        const d::Point delta{p.x-start_.x, p.y-start_.y};
+        // Either callback can rebuild the page and destroy this control.
+        if (dragged) { const auto drop = onDrop; if (drop) drop(delta); }
+        else Control::pointerUp(p);
+    }
+private:
+    void redraw() {
+        const bool highlighted = selected_ || hovered();
+        d::setBorder(*plate_, d::white(pressed() ? .62 : highlighted ? .90 : .78),
+            selected_ ? env().palette.yellow() : d::white(.75), 1.5, 7);
+        d::setBorder(*ring_, std::nullopt, selected_ ? d::black(.55) : d::black(.33), 1, 5);
+    }
+    d::Layer *picture_, *plate_, *ring_; d::Point start_{}; bool dragged_{}, selected_{};
+};
+
 class AppShortcutTile final : public d::Control, public d::MenuAnchor {
 public:
     static constexpr double badgeSide = 14;
@@ -72,7 +116,7 @@ AppShortcutCanvas::~AppShortcutCanvas() = default;
 // MARK: Store (:27-46)
 void AppShortcutCanvas::setStore(ShortcutFile file) { store_ = std::move(file); storeError_.reset(); reload(*store_); }
 void AppShortcutCanvas::setStoreError(std::string message) {
-    store_.reset(); storeError_ = std::move(message);
+    store_.reset(); groupID_.clear(); items_.clear(); storeError_ = std::move(message);
     if (renderedLanguage()) rerender();
 }
 void AppShortcutCanvas::didActivate() {
@@ -83,8 +127,10 @@ void AppShortcutCanvas::didDeactivate() { cancelReorder(); closeChooser(); dropT
 // reload (:40-46): rebuilds from the store when its records changed.
 void AppShortcutCanvas::reload(const ShortcutFile& file) {
     if (store_) store_ = file;
-    if (file.items == items_ && renderedLanguage()) return;
-    items_ = file.items;
+    if (!groupID_.empty() && std::none_of(file.groups.begin(), file.groups.end(), [&](const auto& g) { return g.id == groupID_; })) { groupID_.clear(); groupsOverview_ = true; }
+    items_.clear();
+    for (const auto& item : file.items) if (!groupsOverview_ && item.groupID == groupID_) items_.push_back(item);
+    std::erase_if(selectedItems_, [this, &file](const auto& id) { return groupsOverview_ ? std::none_of(file.groups.begin(), file.groups.end(), [&](const auto& group) { return group.id == id; }) : !item(id); });
     if (renderedLanguage()) rerender();
 }
 void AppShortcutCanvas::resetSession() {
@@ -110,7 +156,7 @@ void AppShortcutCanvas::setDropTarget(bool value) {
     if (renderedLanguage()) rerender();
 }
 bool AppShortcutCanvas::acceptsApplications(std::span<const std::string> paths) const {
-    return paths.size() == 1 && services_.isApplication && services_.isApplication(paths.front());
+    return !groupsOverview_ && !paths.empty() && (paths.size() == 1 || !groupID_.empty()) && services_.isApplication && std::all_of(paths.begin(), paths.end(), services_.isApplication);
 }
 bool AppShortcutCanvas::importDrop(std::span<const std::string> paths) {
     if (!isActive() || chooser_) return false;
@@ -119,9 +165,15 @@ bool AppShortcutCanvas::importDrop(std::span<const std::string> paths) {
     return !urls.empty() && importPaths(urls);
 }
 bool AppShortcutCanvas::importPaths(std::span<const std::string> paths) {
+    if (groupsOverview_) return false;
     if (!store_) { showError(text("Shortcut storage is unavailable", "快捷方式存储不可用")); return false; }
-    if (paths.size() != 1) { showError(text("Choose one application to customize", "请选择一个应用进行设置")); return false; }
-    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::add; request.path = paths.front();
+    if (paths.size() != 1) {
+        if (groupID_.empty() || relink_) { showError(text("Choose one application to customize", "请选择一个应用进行设置")); return false; }
+        bool accepted = false;
+        for (const auto& path : paths) accepted = importPaths(std::span<const std::string>(&path, 1)) || accepted;
+        return accepted;
+    }
+    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::add; request.path = paths.front(); request.groupID = groupID_;
     if (relink_) request.id = *std::exchange(relink_, std::nullopt);
     return submit(std::move(request));
 }
@@ -146,11 +198,25 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
         // save: a failed rename shows the saved name again (:224-226); move:
         // a refused write (the file changed on disk) puts the rows back in
         // the saved order (:229-230, :256-258).
-        if (request.kind == K::save || request.kind == K::move) rerender();
+        if (request.kind == K::save || request.kind == K::move || request.kind == K::saveGroup || request.kind == K::moveGroup) rerender();
         return;
     }
     // AppShortcutStore.save / remove committed.
     switch (request.kind) {
+    case K::saveGroup: {
+        const auto before = store_->groups;
+        store_ = *committed;
+        if (request.groupID.empty()) {
+            const auto created = std::find_if(committed->groups.begin(), committed->groups.end(), [&](const auto& g) {
+                return std::none_of(before.begin(), before.end(), [&](const auto& old) { return old.id == g.id; });
+            });
+            if (created != committed->groups.end()) { groupID_ = created->id; groupsOverview_ = false; }
+        }
+        reload(*committed); break;
+    }
+    case K::moveGroup:
+    case K::removeGroup:
+        reload(*committed); break;
     case K::add: {
         const auto before = items_;
         revealsEnd_ = request.id.empty();
@@ -159,7 +225,10 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
             return request.id.empty() ? std::none_of(before.begin(), before.end(), [&](const auto& b) { return b.id == v.id; }) : v.id == request.id; });
         if (saved != items_.rend() && onSaved) onSaved(*saved);
         // Windows relink of an imported shortcut: its row updates, no toast.
-        if (request.id.empty()) toast(d::Icon::plus, "App added", "已添加到右侧列表", text("Click the icon to change it", "点击图标即可更换"));
+        if (request.id.empty()) {
+            if (groupID_.empty()) toast(d::Icon::plus, "App added", "已添加到右侧列表", text("Click the icon to change it", "点击图标即可更换"));
+            else toast(d::Icon::plus, "Shortcut added", "已添加快捷方式");
+        }
         revealsEnd_ = false;
         break;
     }
@@ -178,7 +247,8 @@ void AppShortcutCanvas::requestFinished(const AppShortcutRequest& request, std::
             // dragRow's drop (:256-265): the rows already show the new order;
             // the page order (accessibility) follows once the row has landed.
             if (store_) store_ = *committed;
-            items_ = committed->items;
+            items_.clear();
+            for (const auto& entry : committed->items) if (!groupsOverview_ && entry.groupID == groupID_) items_.push_back(entry);
             if (onReordered) onReordered();
             after(d::ListReorder::landingDelay(env().reduceMotion), timers_, [this] { if (isActive() && !reorder_) rerender(); });
             break;
@@ -204,8 +274,99 @@ std::vector<std::string> AppShortcutCanvas::itemIDs() const {
     return ids;
 }
 
+void AppShortcutCanvas::showGroup(std::string id) {
+    endEditing(true); closeMenu(); closeChooser();
+    editingGroup_ = false; groupsOverview_ = false; groupID_ = std::move(id); selectedItem_.clear(); selectedItems_.clear();
+    if (store_) reload(*store_);
+}
+void AppShortcutCanvas::showGroups() {
+    endEditing(true); closeMenu(); closeChooser();
+    editingGroup_ = false; groupsOverview_ = true; groupID_.clear(); selectedItem_.clear(); selectedItems_.clear(); items_.clear();
+    if (renderedLanguage()) rerender();
+}
+void AppShortcutCanvas::createGroup() {
+    if (!store_) { showError(text("Shortcut storage is unavailable", "快捷方式存储不可用")); return; }
+    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::saveGroup;
+    request.name = text("New group", "新建分组");
+    (void)submit(std::move(request));
+}
+void AppShortcutCanvas::removeGroup() {
+    const auto id = groupID_;
+    d::ConfirmRequest prompt; prompt.id = "apps:delete-group";
+    prompt.title = text("Delete this group?", "删除这个分组？");
+    prompt.message = text("Remove the group and its shortcut references", "移除分组及其中的快捷方式引用");
+    prompt.confirmTitle = text("Delete", "删除"); prompt.danger = true; prompt.icon = d::Icon::trash;
+    confirm(std::move(prompt), [this, id] {
+        AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::removeGroup; request.groupID = id;
+        (void)submit(std::move(request));
+    });
+}
+bool AppShortcutCanvas::interceptPointerDown(d::Point point, const d::PointerInput& input) {
+    if ((groupID_.empty() && !groupsOverview_) || input.button != d::PointerButton::left || menuOpen() || editingText()) return false;
+    for (const auto& [id, tile] : tiles_) {
+        if (!d::isUnclipped(tile->layer(), point, root())) continue;
+        const auto local = d::convert(point, root(), tile->layer());
+        if (!local || !tile->contains(*local)) continue;
+        if (!editingGroup_) selectedItem_ = id;
+        if (input.clickCount == 2 && !editingGroup_ && !groupsOverview_) { if (const auto* entry = item(id)) open(*entry); return true; }
+        return false;
+    }
+    // Buttons, fields and scroll controls retain selection; empty canvas clears it.
+    const auto hit = [&](d::Control* control) {
+        const auto local = d::convert(point, root(), control->layer());
+        return local && d::isUnclipped(control->layer(), point, root()) && control->contains(*local);
+    };
+    for (auto* control : header().controls()) if (hit(control)) return false;
+    for (auto* control : page().controls()) if (hit(control)) return false;
+    selectedItem_.clear(); selectedItems_.clear(); refreshSelection();
+    return false;
+}
+void AppShortcutCanvas::refreshSelection() {
+    for (const auto& [id, control] : tiles_)
+        static_cast<ShortcutGridTile*>(control)->setSelected(editingGroup_ ? std::find(selectedItems_.begin(), selectedItems_.end(), id) != selectedItems_.end() : selectedItem_ == id);
+    for (auto* control : header().controls()) if ((control->id() == "group:delete-shortcut" || control->id() == "groups:delete")) control->setEnabled(editingGroup_ && !selectedItems_.empty());
+}
+void AppShortcutCanvas::confirmRemoveSelected() {
+    if (!editingGroup_ || selectedItems_.empty()) return;
+    if (groupsOverview_) {
+        const auto selected = selectedItems_;
+        d::ConfirmRequest prompt; prompt.id = "groups:remove-groups";
+        const auto count = std::to_string(selected.size());
+        const std::array<std::string_view, 1> arguments{count};
+        prompt.title = text("Delete {0} groups?", "删除选中的 {0} 个分组？", arguments);
+        prompt.message = text("Groups and their shortcut references are removed; original files are kept", "删除分组及其中的快捷方式引用，原文件保持不变");
+        prompt.confirmTitle = text("Delete", "删除"); prompt.danger = true; prompt.icon = d::Icon::trash;
+        confirm(std::move(prompt), [this, selected] {
+            selectedItems_.clear(); refreshSelection();
+            for (const auto& id : selected) {
+                AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::removeGroup; request.groupID = id;
+                (void)submit(std::move(request));
+            }
+        });
+        return;
+    }
+    std::vector<ShortcutRecord> selected;
+    for (const auto& id : selectedItems_) if (const auto* record = item(id)) selected.push_back(*record);
+    if (selected.empty()) return;
+    d::ConfirmRequest prompt; prompt.id = "groups:remove-selected";
+    const auto count = std::to_string(selected.size());
+    const std::array<std::string_view, 1> arguments{count};
+    prompt.title = text("Remove {0} shortcuts?", "移除选中的 {0} 个快捷方式？", arguments);
+    prompt.message = text("Original files and applications are kept", "原文件和应用不会被删除");
+    prompt.confirmTitle = text("Remove", "移除"); prompt.danger = true; prompt.icon = d::Icon::trash;
+    confirm(std::move(prompt), [this, selected] {
+        selectedItems_.clear(); selectedItem_.clear(); refreshSelection();
+        for (const auto& record : selected) {
+            AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::remove;
+            request.id = record.id; request.name = record.name; (void)submit(std::move(request));
+        }
+    });
+}
+
 // MARK: Page (:99-145)
 void AppShortcutCanvas::buildPage(d::Page& page) {
+    if (groupsOverview_) { buildGroupsPage(page); return; }
+    if (!groupID_.empty()) { buildGroupPage(page); return; }
     built_ = true;
     binders_.clear(); rows_.clear(); tiles_.clear(); grips_.clear(); list_ = nullptr; reorder_.reset();
     auto& add = page.make<d::Button>("apps:add", text("Add App", "添加应用"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
@@ -244,6 +405,117 @@ void AppShortcutCanvas::buildPage(d::Page& page) {
         ring.add(bar);
         page.layer().add(ring);
     }
+}
+
+void AppShortcutCanvas::buildGroupsPage(d::Page& page) {
+    built_ = true; binders_.clear(); rows_.clear(); tiles_.clear(); grips_.clear(); list_ = nullptr; reorder_.reset();
+    auto& add = page.make<d::Button>("groups:new", text("New group", "新建分组"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
+    add.setEnabled(store_.has_value()); add.onActivate = [this] { createGroup(); };
+    const auto count = store_ ? store_->groups.size() : 0;
+    auto& edit = page.make<d::Button>("groups:edit", editingGroup_ ? text("Done", "完成") : text("Edit", "编辑"), d::Icon::grid, d::Button::Kind::primary, d::Button::Height::compact);
+    edit.setEnabled(store_.has_value());
+    edit.onActivate = [this] { editingGroup_ = !editingGroup_; selectedItems_.clear(); selectedItem_.clear(); rerender(); };
+    auto& erase = page.make<d::Button>("groups:delete", text("Delete", "删除"), d::Icon::trash, d::Button::Kind::primary, d::Button::Height::compact);
+    erase.setEnabled(!selectedItems_.empty()); erase.onActivate = [this] { confirmRemoveSelected(); };
+    header().configure({}, "", title("Groups", "分组"), d::format::pad2(std::int64_t(count)), false,
+        editingGroup_ ? std::vector<d::Control*>{&erase, &edit} : std::vector<d::Control*>{&add, &edit});
+    const double top = d::metric::headerHeight;
+    if (!count) {
+        auto& empty = d::emptyState::make(page.builder(), "groups.empty", text("NO GROUPS", "暂无分组"));
+        empty.setOrigin({0, top}); page.layer().add(empty); return;
+    }
+    constexpr double gap = 12;
+    constexpr int columns = 4;
+    auto& scroll = page.scrollArea("groups", {0, top, d::metric::boxWidth, d::metric::boxHeight - top});
+    list_ = &scroll;
+    const double side = (scroll.contentWidth() - (columns - 1) * gap) / columns;
+    scroll.setContentHeight(((count + columns - 1) / columns) * (side + gap) - gap);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& group = store_->groups[index];
+        ShortcutRecord folder; folder.iconPreset = "folder";
+        auto& tile = page.make<ShortcutGridTile>("groups:item:" + group.id, group.name, side, artwork("folder", folder));
+        tile.layer().setOrigin({double(index % columns) * (side + gap), double(index / columns) * (side + gap)});
+        tile.setSelected(std::find(selectedItems_.begin(), selectedItems_.end(), group.id) != selectedItems_.end());
+        tile.onActivate = [this, id = group.id] {
+            if (!editingGroup_) { showGroup(id); return; }
+            const auto found = std::find(selectedItems_.begin(), selectedItems_.end(), id);
+            if (found == selectedItems_.end()) selectedItems_.push_back(id); else selectedItems_.erase(found);
+            refreshSelection();
+        };
+        tile.onDrop = [this, id = group.id, index, side](d::Point delta) {
+            if (!editingGroup_ || cancellingGestures() || !store_ || std::any_of(pending_.begin(), pending_.end(), [](const auto& r) { return r.kind == AppShortcutRequest::Kind::moveGroup; })) return;
+            const auto column = std::clamp<int>(int(index % columns) + int(std::round(delta.x / (side + gap))), 0, columns - 1);
+            const auto row = std::max(0, int(index / columns) + int(std::round(delta.y / (side + gap))));
+            AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::moveGroup; request.groupID = id;
+            request.index = std::min<std::ptrdiff_t>(row * columns + column, std::ptrdiff_t(store_->groups.size()) - 1);
+            if (request.index != std::ptrdiff_t(index)) (void)submit(std::move(request));
+        };
+        scroll.content().add(tile.layer()); page.add(tile); tiles_.emplace_back(group.id, &tile);
+    }
+    page.restoreOffset(scroll);
+}
+
+void AppShortcutCanvas::buildGroupPage(d::Page& page) {
+    built_ = true; binders_.clear(); rows_.clear(); tiles_.clear(); grips_.clear(); list_ = nullptr; reorder_.reset();
+    const auto found = std::find_if(store_->groups.begin(), store_->groups.end(), [&](const auto& g) { return g.id == groupID_; });
+    if (found == store_->groups.end()) return;
+    auto& add = page.make<d::Button>("group:add", text("Add shortcut", "添加快捷方式"), d::Icon::plus, d::Button::Kind::primary, d::Button::Height::compact);
+    add.onActivate = [this] { chooseApplication(); };
+    auto& edit = page.make<d::Button>("group:edit", editingGroup_ ? text("Done", "完成") : text("Edit", "编辑"), d::Icon::grid, d::Button::Kind::primary, d::Button::Height::compact);
+    edit.onActivate = [this] { endEditing(true); editingGroup_ = !editingGroup_; selectedItem_.clear(); selectedItems_.clear(); rerender(); };
+    auto& erase = page.make<d::Button>("group:delete-shortcut", text("Delete", "删除"), d::Icon::trash, d::Button::Kind::primary, d::Button::Height::compact);
+    erase.setEnabled(editingGroup_ && !selectedItems_.empty());
+    erase.onActivate = [this] { confirmRemoveSelected(); };
+    const auto caption = env().characters.count(found->name) > 10 ? env().characters.prefix(found->name, 9) + "…" : found->name;
+    header().configure({}, "", title(caption, caption), d::format::pad2(std::int64_t(items_.size())), false, editingGroup_ ? std::vector<d::Control*>{&erase, &edit} : std::vector<d::Control*>{&add, &edit});
+    const double top = d::metric::headerHeight;
+    d::TextFieldOptions options; options.light = true; options.maximumLength = 32;
+    auto& name = page.make<d::TextField>("group:name", text("Group name", "分组名称"), found->name, "", d::Size{d::metric::boxWidth - 86, 30}, options);
+    name.layer().setOrigin({0, top}); page.layer().add(name.layer()); page.add(name); registerField(name);
+    const auto group = groupID_;
+    name.onCommit = [this, group](const std::string& value) {
+        if (!store_) return;
+        const auto found = std::find_if(store_->groups.begin(), store_->groups.end(), [&](const auto& g) { return g.id == group; });
+        if (found == store_->groups.end() || value == found->name) return;
+        AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::saveGroup; request.groupID = group; request.name = value;
+        (void)submit(std::move(request));
+    };
+    auto& remove = page.make<d::IconButton>("group:remove", text("Delete group", "删除分组"), d::Icon::trash);
+    remove.layer().setOrigin({d::metric::boxWidth - 30, top}); page.layer().add(remove.layer()); page.add(remove);
+    remove.onActivate = [this] { removeGroup(); };
+    constexpr double gap = 12;
+    constexpr int columns = 4;
+    const double gridTop = top + 44;
+    auto& scroll = page.scrollArea("group:" + groupID_, {0, gridTop, d::metric::boxWidth, d::metric::boxHeight - gridTop});
+    list_ = &scroll;
+    const double side = (scroll.contentWidth() - (columns - 1) * gap) / columns;
+    const auto count = (items_.size() + columns - 1) / columns;
+    scroll.setContentHeight(count ? count * (side + gap) - gap : 0);
+    for (std::size_t index = 0; index < items_.size(); ++index) {
+        const auto& record = items_[index]; const auto id = record.id;
+        auto& tile = page.make<ShortcutGridTile>("group:item:" + id, record.name, side, artwork(record.iconPreset, record));
+        tile.layer().setOrigin({double(index % columns) * (side + gap), double(index / columns) * (side + gap)});
+        tile.setSelected(editingGroup_ ? std::find(selectedItems_.begin(), selectedItems_.end(), id) != selectedItems_.end() : selectedItem_ == id);
+        tile.onActivate = [this, id] {
+            if (editingGroup_) {
+                const auto found = std::find(selectedItems_.begin(), selectedItems_.end(), id);
+                if (found == selectedItems_.end()) selectedItems_.push_back(id);
+                else selectedItems_.erase(found);
+            } else selectedItem_ = id;
+            refreshSelection();
+        };
+        tile.onDrop = [this, id, index, side](d::Point delta) {
+            if (!editingGroup_ || cancellingGestures()) return;
+            const auto column = std::clamp<int>(int(index % columns) + int(std::round(delta.x / (side + gap))), 0, columns - 1);
+            const auto row = std::max(0, int(index / columns) + int(std::round(delta.y / (side + gap))));
+            moveRow(id, row * columns + column);
+        };
+        binders_.push_back([this, &tile, id] { if (const auto* current = item(id)) tile.setArtwork(artwork(current->iconPreset, *current)); });
+        scroll.content().add(tile.layer()); page.add(tile); tiles_.emplace_back(id, &tile);
+
+    }
+    page.restoreOffset(scroll);
+    page.back = [this] { showGroups(); };
 }
 
 // makeRow (:148-196): row plate 56, padding 8 10 6 16: grip (in the left
@@ -321,7 +593,12 @@ void AppShortcutCanvas::openItemMenu(const std::string& id, const d::Control* an
 // the right-hand order follow (requestFinished).
 void AppShortcutCanvas::moveRow(const std::string& id, std::ptrdiff_t index) {
     if (!store_ || moving()) return;
-    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id; request.index = index;
+    AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id;
+    if (!items_.empty()) {
+        const auto slot = std::clamp<std::ptrdiff_t>(index, 0, std::ptrdiff_t(items_.size()) - 1);
+        const auto target = std::find_if(store_->items.begin(), store_->items.end(), [&](const auto& v) { return v.id == items_[slot].id; });
+        request.index = target - store_->items.begin();
+    } else request.index = index;
     (void)submit(std::move(request));
 }
 
@@ -361,7 +638,10 @@ void AppShortcutCanvas::dragRow(const std::string& id, d::DragGrip::Phase phase,
         reorder_.reset();
         state.drop(reorderRows()(id), clock());
         if (state.order() == itemIDs() || !store_) return;
-        AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id; request.index = state.index();
+        AppShortcutRequest request; request.kind = AppShortcutRequest::Kind::move; request.id = id;
+        const auto& targetID = items_[state.index()].id;
+        const auto target = std::find_if(store_->items.begin(), store_->items.end(), [&](const auto& entry) { return entry.id == targetID; });
+        request.index = target - store_->items.begin();
         landing_ = request;
         // An owner that refuses the request at once: the rows return to the saved order.
         if (!submit(std::move(request))) { landing_.reset(); rerender(); }
@@ -481,6 +761,10 @@ void AppShortcutCanvas::closeChooser() {
 // Ctrl+V adds an application copied in Explorer (:277-284): Command alone
 // on the Mac, Ctrl alone here.
 bool AppShortcutCanvas::handleKey(const d::KeyInput& key) {
+    if (!groupID_.empty() && !editingGroup_ && !key.commandModifiers() && key.isReturn()) {
+        if (const auto* selected = item(selectedItem_)) open(*selected);
+        return true;
+    }
     if (!key.control || key.shift || key.alt || key.win || (key.character != U'v' && key.character != U'V') || chooser_) return false;
     std::vector<std::string> urls;
     if (services_.pasteboard) for (auto& p : services_.pasteboard()) if (services_.isApplication && services_.isApplication(p)) urls.push_back(std::move(p));

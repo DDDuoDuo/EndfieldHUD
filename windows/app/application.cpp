@@ -2722,6 +2722,7 @@ void Application::Impl::activate(const WatchActivation&event){
     // Saved app shortcuts bound between Power and Add App (close-first launch).
     if(entry==entries.end()){if(auto*apps=appNavigation()){bool launched{};(void)isolateService(appShortcutNavigationService,"app shortcut",[&]{launched=apps->activate(event.action,now());});if(launched)return;}}
     need(entry!=entries.end(),"Source activation exceeds exported actions");
+    if(entry->target=="addApp") if(auto* apps=appNavigation()) apps->showRoot();
     // Mac 1.3.0: selecting Projection shows its centre page (ProjectionCanvas);
     // the workspace opens from the page (openProjection, DOCS-600).
     if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){

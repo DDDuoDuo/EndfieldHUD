@@ -50,6 +50,7 @@ public:
     // imported target shows its error in Add App instead of closing).
     virtual bool activate(std::uint64_t action, double time) = 0;
     // The host's single observer (empty removes it).
+    virtual void showRoot() {}
     virtual void setObserver(std::function<void()>) = 0;
 
 protected:

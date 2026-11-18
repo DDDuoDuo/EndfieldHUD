@@ -42,11 +42,13 @@ struct AppShortcutRequest {
         add,    // importURLs: inspect `path`, save it with its own name and the App icon preset (`id`: relink that record)
         save,   // rename / Choose icon: reinspect record `id`, save `name` and `icon`
         remove, // the confirmed Remove of record `id`
+        saveGroup, removeGroup, moveGroup,
         move    // record `id` to slot `index` (clamped): a grip drag or Move up / Move down
     };
     Kind kind{Kind::add};
     std::string path, id, name, icon;
     std::ptrdiff_t index{};
+    std::string groupID;
     bool operator==(const AppShortcutRequest&) const = default;
 };
 struct AppShortcutCanvasServices {
@@ -122,6 +124,11 @@ public:
     void dragRow(const std::string& id, int slot);
     bool reordering() const noexcept { return reorder_.has_value(); }
 
+    void showGroup(std::string id);
+    void showGroups();
+    void createGroup();
+    const std::string& selectedGroup() const noexcept { return groupID_; }
+    bool interceptPointerDown(design::Point, const design::PointerInput&) override;
     void buildPage(design::Page&) override;
     void didActivate() override;
     void didDeactivate() override;
@@ -133,6 +140,14 @@ public:
     bool presentingPanel() const override { return chooser_; }
     bool inputLocked() const override { return Canvas::inputLocked() || chooser_ || dropTarget_; }
 private:
+    std::string groupID_, selectedItem_;
+    std::vector<std::string> selectedItems_;
+    void refreshSelection();
+    void confirmRemoveSelected();
+    bool groupsOverview_{}, editingGroup_{};
+    void buildGroupsPage(design::Page&);
+    void buildGroupPage(design::Page&);
+    void removeGroup();
     const AppShortcutArtwork* artwork_;
     AppShortcutCanvasServices services_;
     std::optional<ShortcutFile> store_;

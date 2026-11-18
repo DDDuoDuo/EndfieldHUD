@@ -29,6 +29,8 @@ if(TARGET hud_shortcuts)
     if(MSVC)
       target_compile_options(app_shortcut_canvas_tests PRIVATE /W4 /permissive- /EHsc)
     endif()
+    add_test(NAME app_shortcut_group_contracts COMMAND app_shortcut_canvas_tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/app-shortcut-source.json" "${CMAKE_CURRENT_SOURCE_DIR}/resources/app-shortcut" --groups)
     add_test(NAME app_shortcut_canvas_contracts COMMAND app_shortcut_canvas_tests
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/app-shortcut-source.json" "${CMAKE_CURRENT_SOURCE_DIR}/resources/app-shortcut")
   endif()

@@ -63,6 +63,7 @@ J record(const ShortcutRecord& value, const ShortcutTextRules& rules) {
     auto out = value.originalFields;
     for (const auto* key : locatorKeys) out.erase(key);
     for (const auto& [key, v] : value.locator.object()) out[key] = v;
+    if (value.groupID.empty()) out.erase("groupID"); else out["groupID"] = uuid(value.groupID);
     out["id"] = uuid(value.id); out["name"] = value.name;
     out["originalName"] = value.originalName; out["iconPreset"] = value.iconPreset;
     if (value.bundleIdentifier) out["bundleIdentifier"] = *value.bundleIdentifier;
@@ -89,14 +90,15 @@ bool validShortcutIcon(std::string_view s) noexcept {
 }
 bool ShortcutRecord::native() const noexcept { return locator["referencePlatform"] == J("windows"); }
 bool ShortcutRecord::operator==(const ShortcutRecord& v) const {
-    return std::tie(id, name, originalName, iconPreset, bundleIdentifier, createdAt, locator, originalFields) ==
-        std::tie(v.id, v.name, v.originalName, v.iconPreset, v.bundleIdentifier, v.createdAt, v.locator, v.originalFields);
+    return std::tie(id, name, originalName, iconPreset, bundleIdentifier, createdAt, locator, originalFields, groupID) ==
+        std::tie(v.id, v.name, v.originalName, v.iconPreset, v.bundleIdentifier, v.createdAt, v.locator, v.originalFields, v.groupID);
 }
 void validateShortcut(const ShortcutRecord& v, const ShortcutTextRules& r) {
     need(r.validName && r.trimmed && ehud::data::validUUID(v.id) && std::isfinite(v.createdAt));
     text(v.name); need(r.validName(v.name)); text(v.originalName); need(!v.originalName.empty());
     need(validShortcutIcon(v.iconPreset) && v.originalFields.isObject());
     if (v.bundleIdentifier) text(*v.bundleIdentifier);
+    need(v.groupID.empty() || ehud::data::validUUID(v.groupID));
     locator(v.locator);
 }
 ShortcutFile decodeShortcuts(const J& j, const ShortcutTextRules& rules) {
@@ -106,12 +108,25 @@ ShortcutFile decodeShortcuts(const J& j, const ShortcutTextRules& rules) {
         need(version <= 1, ShortcutErrorCode::newerVersion); need(version == 1 && j["items"].isArray());
         ShortcutFile out; out.originalFields = j; out.originalFields.erase("version"); out.originalFields.erase("items");
         std::set<std::string> ids;
+        if (j.contains("groups")) {
+            need(j["groups"].isArray() && j["groups"].array().size() <= 128);
+            for (const auto& group : j["groups"].array()) {
+                ShortcutGroup value{uuid(group["id"].string()), group["name"].string()};
+                need(rules.validName(value.name) && ids.insert(value.id).second);
+                out.groups.push_back(std::move(value));
+            }
+        }
+        out.originalFields.erase("groups");
         for (const auto& item : j["items"].array()) {
             need(item.isObject()); ShortcutRecord v;
             v.id = uuid(item["id"].string()); v.name = item["name"].string(); v.originalName = item["originalName"].string();
             v.iconPreset = item["iconPreset"].string(); v.createdAt = item["createdAt"].number(); v.originalDate = item["createdAt"];
             if (!item["bundleIdentifier"].isNull()) v.bundleIdentifier = item["bundleIdentifier"].string();
-            v.originalFields = item;
+            if (item.contains("groupID")) {
+                v.groupID = uuid(item["groupID"].string());
+                need(std::any_of(out.groups.begin(), out.groups.end(), [&](const auto& group) { return group.id == v.groupID; }));
+            }
+            v.originalFields = item; v.originalFields.erase("groupID");
             for (const auto* key : locatorKeys) {
                 if (item.contains(key)) v.locator[key] = item[key];
                 v.originalFields.erase(key);
@@ -126,25 +141,38 @@ ShortcutFile decodeShortcuts(const J& j, const ShortcutTextRules& rules) {
 J encodeShortcuts(const ShortcutFile& file, const ShortcutTextRules& rules) {
     need(file.originalFields.isObject()); auto out = file.originalFields; out["version"] = 1;
     J::Array items; items.reserve(file.items.size()); std::set<std::string> ids;
-    for (const auto& v : file.items) { need(ids.insert(uuid(v.id)).second); items.push_back(record(v, rules)); }
+    J::Array groups;
+    need(file.groups.size() <= 128);
+    for (const auto& group : file.groups) {
+        need(ids.insert(uuid(group.id)).second && rules.validName(group.name));
+        groups.push_back(J::Object{{"id", uuid(group.id)}, {"name", group.name}});
+    }
+    if (!groups.empty()) out["groups"] = std::move(groups); else out.erase("groups");
+    for (const auto& v : file.items) {
+        need(v.groupID.empty() || std::any_of(file.groups.begin(), file.groups.end(), [&](const auto& group) { return group.id == v.groupID; }));
+        need(ids.insert(uuid(v.id)).second); items.push_back(record(v, rules));
+    }
     out["items"] = std::move(items); return out;
 }
 std::string saveShortcutDraft(ShortcutFile& file, const ShortcutCandidate& selected,
     const ShortcutCandidate& verified, std::string name, std::string icon,
     std::optional<std::string> editingID, std::string newID, double now,
-    const ShortcutTextRules& rules, const ShortcutSameTarget& same) {
+    const ShortcutTextRules& rules, const ShortcutSameTarget& same, std::string groupID) {
     need(rules.trimmed && rules.validName && same); name = rules.trimmed(name);
     need(J::validUtf8(name) && rules.validName(name), ShortcutErrorCode::invalidName);
     if (editingID) *editingID = uuid(*editingID);
     auto next = file;
     auto found = std::find_if(next.items.begin(), next.items.end(), [&](const auto& v) { return editingID && uuid(v.id) == *editingID; });
     need(!editingID || found != next.items.end(), ShortcutErrorCode::missing);
+    if (found != next.items.end()) groupID = found->groupID;
+    need(groupID.empty() || std::any_of(next.groups.begin(), next.groups.end(), [&](const auto& group) { return group.id == groupID; }), ShortcutErrorCode::missing);
     locator(selected.locator); locator(verified.locator);
     need(selected.bundleIdentifier == verified.bundleIdentifier && same(selected.locator, verified.locator), ShortcutErrorCode::applicationChanged);
-    for (const auto& v : next.items) if ((!editingID || uuid(v.id) != *editingID) && same(v.locator, verified.locator)) throw ShortcutError(ShortcutErrorCode::duplicate);
+    for (const auto& v : next.items) if ((!editingID || uuid(v.id) != *editingID) && v.groupID == groupID && same(v.locator, verified.locator)) throw ShortcutError(ShortcutErrorCode::duplicate);
     ShortcutRecord result = found != next.items.end() ? *found : ShortcutRecord{};
     result.id = found != next.items.end() ? found->id : uuid(std::move(newID));
     result.createdAt = found != next.items.end() ? found->createdAt : now;
+    result.groupID = std::move(groupID);
     result.name = std::move(name); result.originalName = verified.name; result.bundleIdentifier = verified.bundleIdentifier;
     result.iconPreset = std::move(icon); result.locator = verified.locator; validateShortcut(result, rules);
     const auto id = result.id;

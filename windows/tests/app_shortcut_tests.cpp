@@ -119,13 +119,33 @@ void persistence(const J& oracle, const m::ShortcutTextRules& rules) {
     rejects(m::ShortcutErrorCode::newerVersion, [&] { m::ShortcutRepository future(temp.root, rules); future.load(); }, "Future archive preserved without repair/write");
     check(read(store.path()) == "{\"version\":2,\"items\":[]}", "Future-version file remains byte-identical");
 }
+void groups(const m::ShortcutTextRules& rules) {
+    m::ShortcutFile file;
+    file.groups = {{id(40), "工作"}, {id(41), "游戏"}};
+    m::ShortcutCandidate app{"Application", {}, target("same-app")};
+    m::saveShortcutDraft(file, app, app, "One", "original", {}, id(42), 1, rules, same, id(40));
+    m::saveShortcutDraft(file, app, app, "Two", "original", {}, id(43), 2, rules, same, id(41));
+    m::saveShortcutDraft(file, app, app, "Root", "original", {}, id(44), 3, rules, same);
+    check(file.items.size() == 3, "The same app can appear in two groups and the original top-level list");
+    rejects(m::ShortcutErrorCode::duplicate, [&] {
+        m::saveShortcutDraft(file, app, app, "Duplicate", "original", {}, id(45), 4, rules, same, id(40));
+    }, "Duplicates in one group are rejected");
+    check(m::decodeShortcuts(m::encodeShortcuts(file, rules), rules) == file, "Group names, membership and order round-trip");
+    Temp temp;
+    m::ShortcutRepository repository(temp.root, rules); repository.load(); repository.save(file);
+    m::ShortcutRepository reopened(temp.root, rules);
+    check(reopened.load() == file, "A restart restores all groups and shortcut membership");
+    auto broken = file; broken.items[0].groupID = id(99);
+    rejects(m::ShortcutErrorCode::invalidRecord, [&] { m::encodeShortcuts(broken, rules); }, "Orphan memberships cannot be persisted");
+}
+
 }
 int main(int argc, char** argv) {
     try {
         check(argc == 2, "Expected source fixture path");
         const auto oracle = J::parse(read(std::filesystem::u8path(argv[1])));
         const auto rules = endfield::native::nativeShortcutTextRules();
-        source(oracle, rules); edits(oracle, rules); moves(rules); persistence(oracle, rules);
+        groups(rules); source(oracle, rules); edits(oracle, rules); moves(rules); persistence(oracle, rules);
         std::cout << "Shortcut model/store passed " << checks << " checks\n"; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << checks << ": " << e.what() << '\n'; return 1; }
 }
