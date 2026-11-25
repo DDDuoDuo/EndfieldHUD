@@ -306,10 +306,11 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
         if(pendingDisconnects.erase(r)) {credentials.erase(r);credentialDates.erase(r);cache.records.erase(key(r));}
         lastAttemptDates[region()]=now();busy=true;statusMessage.clear();changed();
         const int token=generation;std::weak_ptr<Impl> weak=shared_from_this();
-        if(signingToken&&deviceID) {
-            if(!acceptsCredential(cred)||!acceptsCredential(*signingToken)||!acceptsCredential(*deviceID)) {fail(Error{ErrorKind::invalidCredentials});return;}
+        if(signingToken&&(deviceID||r==Region::global)) { // HypergryphAccountLoginPolicy.deviceOptional
+            // SKPORT (global) issues no Shumei device ID; mainland still requires it.
+            if(!acceptsCredential(cred)||!acceptsCredential(*signingToken)||(deviceID&&!acceptsCredential(*deviceID))) {fail(Error{ErrorKind::invalidCredentials});return;}
             // Official login already issued this signing pair; it is used as-is.
-            commitLoginCredentials(Credentials{cred,*signingToken,*deviceID},r,token,mutation);
+            commitLoginCredentials(Credentials{cred,*signingToken,deviceID},r,token,mutation);
         } else if(!signingToken&&!deviceID) {
             request=api.refreshCredentials(cred,r,[weak,r,token,mutation](Outcome<Credentials> result) {
                 auto self=weak.lock();if(!self||self->generation!=token||self->accountRevisions[r]!=mutation) return;

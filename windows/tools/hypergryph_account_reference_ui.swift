@@ -213,7 +213,9 @@ extension HypergryphAccountReference {
             ["op": "vault", "failSave": true],
             ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-H", "token": "synthetic-token-h", "device": "synthetic-device-h"],
             ["op": "vault", "failSave": false],
-            ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-I", "token": "synthetic-token-i"],
+            // A device without its signing token is still a partial context. A global
+            // token without a device is a complete SKPORT session (no Shumei key there).
+            ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-I", "device": "synthetic-device-i"],
             ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-J", "token": "synthetic-token-j", "device": "bad device"],
             ["op": "accept", "region": "global", "cred": "SYNTHETIC-CRED-K"],
             ["op": "resolve", "result": ["ok": ["cred": "SYNTHETIC-CRED-K", "signingToken": "synthetic-token-k", "deviceID": "synthetic-device-k"]]],

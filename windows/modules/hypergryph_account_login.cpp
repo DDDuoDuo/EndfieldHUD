@@ -15,9 +15,11 @@ std::string poster(std::string_view name,std::string_view payload,login_policy::
     if(host==login_policy::ScriptHost::macOS) return "window.webkit.messageHandlers."+std::string(name)+".postMessage("+std::string(payload)+")";
     return "window.chrome.webview.postMessage({channel:'"+std::string(name)+"',body:"+std::string(payload)+"})";
 }
-std::string sessionReader() {
+std::string sessionReader(Region r) {
     using namespace login_policy;
     return "const valid = value => typeof value === 'string' && /^[\\x21-\\x7e]{1,4096}$/.test(value);\n"
+        "const deviceOptional = "+std::string(deviceOptional(r)?"true":"false")+";\n"
+        "const hasDevice = value => valid(value.deviceID) || (deviceOptional && value.deviceID == null);\n"
         "const readSession = () => {\n"
         "  try {\n"
         "    const cred = window.localStorage.getItem('"+std::string(credentialKey)+"');\n"
@@ -27,7 +29,7 @@ std::string sessionReader() {
         "    if (typeof raw === 'string' && raw.length <= 16384) {\n"
         "      try { const value = JSON.parse(raw); if (value && !Array.isArray(value) && typeof value === 'object') deviceID = value.id; } catch (_) {}\n"
         "    }\n"
-        "    return {cred, signingToken, deviceID};\n"
+        "    return {cred, signingToken, deviceID: deviceID == null ? null : deviceID};\n"
         "  } catch (_) { return {}; }\n"
         "};";
 }
@@ -107,20 +109,26 @@ std::optional<LoginResult> decodeSession(const Json& body,std::string_view nonce
     const auto& o=body.object();
     if(o.size()!=4||!body.contains("nonce")||!body.contains("cred")||!body.contains("signingToken")||!body.contains("deviceID")) return std::nullopt;
     if(!body["nonce"].isString()||body["nonce"].string()!=nonce) return std::nullopt;
-    for(const char* key:{"cred","signingToken","deviceID"}) if(!body[key].isString()||!acceptsCredential(body[key].string())) return std::nullopt;
-    return LoginResult{r,body["cred"].string(),body["signingToken"].string(),body["deviceID"].string()};
+    for(const char* key:{"cred","signingToken"}) if(!body[key].isString()||!acceptsCredential(body[key].string())) return std::nullopt;
+    // SKPORT never writes the Shumei device key: only the global site may send
+    // an explicit null device; the mainland site still requires it.
+    std::optional<std::string> device;
+    if(body["deviceID"].isString()&&acceptsCredential(body["deviceID"].string())) device=body["deviceID"].string();
+    else if(!(body["deviceID"].isNull()&&deviceOptional(r))) return std::nullopt;
+    return LoginResult{r,body["cred"].string(),body["signingToken"].string(),device};
 }
+bool deviceOptional(Region r) {return r==Region::global;}
 std::string bridgeScript(Region r,std::string_view nonce,ScriptHost host) {
     const std::string n(nonce);
     return "(() => {\n"
         "  if (window.top !== window || location.origin !== '"+origin(r)+"') return;\n"
-        "  "+sessionReader()+"\n"
+        "  "+sessionReader(r)+"\n"
         "  const keys = ['"+std::string(credentialKey)+"', '"+std::string(signingTokenKey)+"', '"+std::string(deviceIDKey)+"'];\n"
         "  let last = null, missingReported = false;\n"
         "  const read = () => {\n"
         "    const value = readSession();\n"
         "    if (!valid(value.cred)) return;\n"
-        "    if (!valid(value.signingToken) || !valid(value.deviceID)) {\n"
+        "    if (!valid(value.signingToken) || !hasDevice(value)) {\n"
         "      if (!missingReported) {\n"
         "        missingReported = true;\n"
         "        "+poster(stateMessageName,"{nonce:'"+n+"',event:'context-missing'}",host)+";\n"
@@ -152,9 +160,9 @@ std::string credentialReadScript(Region r,std::string_view nonce,ScriptHost host
     const std::string n(nonce);
     return "(() => {\n"
         "  if (window.top !== window || location.origin !== '"+origin(r)+"') return;\n"
-        "  "+sessionReader()+"\n"
+        "  "+sessionReader(r)+"\n"
         "  const value = readSession();\n"
-        "  if (valid(value.cred) && valid(value.signingToken) && valid(value.deviceID))\n"
+        "  if (valid(value.cred) && valid(value.signingToken) && hasDevice(value))\n"
         "    "+poster(messageName,"{nonce:'"+n+"',cred:value.cred,signingToken:value.signingToken,deviceID:value.deviceID}",host)+";\n"
         "})();";
 }

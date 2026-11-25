@@ -111,6 +111,8 @@ enum HypergryphAccountLoginPolicy {
     /// context alongside the credential. A cred alone cannot bootstrap the
     /// signed refresh endpoint. The two-field decoder above remains a legacy
     /// fixture helper; production never completes from a partial payload.
+    /// SKPORT never writes the Shumei device key, so only the global site may
+    /// send an explicit null device; the mainland site still requires it.
     static func decodeSession(_ body: Any, expectedNonce: String, region: HypergryphAccountRegion,
                               mainFrame: Bool, frameOrigin: URL?, pageURL: URL?) -> HypergryphAccountLoginResult? {
         guard !expectedNonce.isEmpty, mainFrame, acceptsCredentialOrigin(frameOrigin, region: region),
@@ -118,17 +120,27 @@ enum HypergryphAccountLoginPolicy {
               Set(payload.keys) == ["nonce", "cred", "signingToken", "deviceID"],
               payload["nonce"] as? String == expectedNonce,
               let cred = payload["cred"] as? String, acceptsCredential(cred),
-              let token = payload["signingToken"] as? String, acceptsCredential(token),
-              let device = payload["deviceID"] as? String, acceptsCredential(device) else { return nil }
+              let token = payload["signingToken"] as? String, acceptsCredential(token) else { return nil }
+        let device: String?
+        switch payload["deviceID"] {
+        case let value as String where acceptsCredential(value): device = value
+        case is NSNull where deviceOptional(region): device = nil
+        default: return nil
+        }
         return HypergryphAccountLoginResult(region: region, cred: cred, signingToken: token, deviceID: device)
     }
+
+    /// The global community (SKPORT) has no Shumei device storage.
+    static func deviceOptional(_ region: HypergryphAccountRegion) -> Bool { region == .global }
 
     /// Only three known community keys are read. Device storage is a bounded
     /// {id,timestamp} object; only id leaves the owned page. Never read passport
     /// tokens, cookies, forms, unrelated storage or browser sessions.
-    private static var sessionReaderScript: String {
+    private static func sessionReaderScript(_ region: HypergryphAccountRegion) -> String {
         """
         const valid = value => typeof value === 'string' && /^[\\x21-\\x7e]{1,4096}$/.test(value);
+        const deviceOptional = \(deviceOptional(region) ? "true" : "false");
+        const hasDevice = value => valid(value.deviceID) || (deviceOptional && value.deviceID == null);
         const readSession = () => {
           try {
             const cred = window.localStorage.getItem('\(credentialKey)');
@@ -138,7 +150,7 @@ enum HypergryphAccountLoginPolicy {
             if (typeof raw === 'string' && raw.length <= 16384) {
               try { const value = JSON.parse(raw); if (value && !Array.isArray(value) && typeof value === 'object') deviceID = value.id; } catch (_) {}
             }
-            return {cred, signingToken, deviceID};
+            return {cred, signingToken, deviceID: deviceID == null ? null : deviceID};
           } catch (_) { return {}; }
         };
         """
@@ -148,13 +160,13 @@ enum HypergryphAccountLoginPolicy {
         """
         (() => {
           if (window.top !== window || location.origin !== '\(siteURL(region).absoluteString.dropLast())') return;
-          \(sessionReaderScript)
+          \(sessionReaderScript(region))
           const keys = ['\(credentialKey)', '\(signingTokenKey)', '\(deviceIDKey)'];
           let last = null, missingReported = false;
           const read = () => {
             const value = readSession();
             if (!valid(value.cred)) return;
-            if (!valid(value.signingToken) || !valid(value.deviceID)) {
+            if (!valid(value.signingToken) || !hasDevice(value)) {
               if (!missingReported) {
                 missingReported = true;
                 window.webkit.messageHandlers.\(stateMessageName).postMessage({nonce:'\(nonce)',event:'context-missing'});
@@ -188,9 +200,9 @@ enum HypergryphAccountLoginPolicy {
         """
         (() => {
           if (window.top !== window || location.origin !== '\(siteURL(region).absoluteString.dropLast())') return;
-          \(sessionReaderScript)
+          \(sessionReaderScript(region))
           const value = readSession();
-          if (valid(value.cred) && valid(value.signingToken) && valid(value.deviceID))
+          if (valid(value.cred) && valid(value.signingToken) && hasDevice(value))
             window.webkit.messageHandlers.\(messageName).postMessage({nonce:'\(nonce)',cred:value.cred,signingToken:value.signingToken,deviceID:value.deviceID});
         })();
         """

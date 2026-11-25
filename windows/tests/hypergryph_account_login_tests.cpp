@@ -52,7 +52,8 @@ void policy(const Json& d) {
         const auto s=p::decodeSession(body,row["nonce"].string(),region(row["region"]),row["mainFrame"].boolean(),h::parseURL(row["frame"].string()),h::parseURL(row["page"].string()));
         const auto& e=row["session"];const auto label="Session message validation matches Mac: "+row["body"].string()+" "+row["frame"].string()+" "+row["page"].string();
         check(s.has_value()==!e.isNull(),label);
-        if(s) check(s->cred==e["cred"].string()&&s->signingToken==std::optional<std::string>(e["signingToken"].string())&&s->deviceID==std::optional<std::string>(e["deviceID"].string())&&h::regionName(s->region)==e["region"].string(),label);
+        if(s) check(s->cred==e["cred"].string()&&s->signingToken==std::optional<std::string>(e["signingToken"].string())&&
+                    s->deviceID==(e["deviceID"].isNull()?std::nullopt:std::optional<std::string>(e["deviceID"].string()))&&h::regionName(s->region)==e["region"].string(),label);
         const auto legacy=p::decodeCredential(body,row["nonce"].string(),region(row["region"]),row["mainFrame"].boolean(),h::parseURL(row["frame"].string()),h::parseURL(row["page"].string()));
         check(legacy==(row["legacy"].isNull()?std::nullopt:std::optional<std::string>(row["legacy"].string())),"Legacy credential decoder matches Mac");
     }
@@ -107,6 +108,21 @@ void session() {
     s.finish(h::LoginSession::Outcome::completed);s.finish(h::LoginSession::Outcome::cancelled);
     check(!s.presenting()&&s.nonce().empty()&&!s.nextDeadline()&&!s.credentialMessage(good,true,"https://www.skland.com","https://www.skland.com/"),"Finished session accepts nothing and keeps no deadline");
     check(s.diagnostics().back()=="completed"&&std::count(s.diagnostics().begin(),s.diagnostics().end(),"cancelled")==0,"The Mac outcome tag is recorded once");
+    // SKPORT writes no SK_SHUMEI_DEVICE_ID_KEY: a global session completes with
+    // an explicit null device; the mainland site still requires its device.
+    const Json noDevice=Json::Object{{"nonce",nonce},{"cred","SYNTHETIC-CRED"},{"signingToken","synthetic-token"},{"deviceID",nullptr}};
+    h::LoginSession globalSession(h::Region::global,nonce);globalSession.consent(0);
+    const auto globalResult=globalSession.credentialMessage(noDevice,true,"https://www.skport.com","https://www.skport.com/");
+    check(globalResult&&globalResult->region==h::Region::global&&globalResult->signingToken==std::optional<std::string>("synthetic-token")&&!globalResult->deviceID,
+          "A global session without a device ID completes");
+    h::LoginSession mainlandSession(h::Region::mainland,nonce);mainlandSession.consent(0);
+    check(!mainlandSession.credentialMessage(noDevice,true,"https://www.skland.com","https://www.skland.com/"),"A mainland session still requires its device ID");
+    const Json missingDevice=Json::Object{{"nonce",nonce},{"cred","SYNTHETIC-CRED"},{"signingToken","synthetic-token"}};
+    check(!globalSession.credentialMessage(missingDevice,true,"https://www.skport.com","https://www.skport.com/"),"The device field itself is never omitted");
+    for(const auto r:{h::Region::mainland,h::Region::global}) {
+        const auto flag=std::string("const deviceOptional = ")+(r==h::Region::global?"true":"false")+";";
+        check(p::bridgeScript(r,nonce).find(flag)!=std::string::npos&&p::credentialReadScript(r,nonce).find(flag)!=std::string::npos,"Only the global scripts accept a missing device");
+    }
     h::LoginSession expiring(h::Region::global,nonce);expiring.consent(0);
     check(expiring.deadline(899.9)==std::nullopt&&expiring.deadline(900)==h::LoginFailure::expired,"Session expires after 900 s");
     expiring.finish(h::LoginSession::Outcome::expired);check(expiring.diagnostics().back()=="expired","Expiry records the expired tag");

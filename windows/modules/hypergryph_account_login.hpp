@@ -26,6 +26,8 @@ bool permitsNavigation(const std::optional<ParsedURL>&,Region,bool mainFrame);
 bool permitsPopup(const std::optional<ParsedURL>& url,const std::optional<ParsedURL>& source,Region);
 double pageZoom(double width);
 bool acceptsCredential(std::string_view);
+// The global community (SKPORT) has no Shumei device storage.
+bool deviceOptional(Region);
 std::optional<std::string> decodeCredential(const Json& body,std::string_view nonce,Region,bool mainFrame,
                                             const std::optional<ParsedURL>& frameOrigin,const std::optional<ParsedURL>& pageURL);
 std::optional<LoginResult> decodeSession(const Json& body,std::string_view nonce,Region,bool mainFrame,
