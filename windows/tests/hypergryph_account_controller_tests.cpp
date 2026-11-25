@@ -363,6 +363,21 @@ void vaultWording() {
     mac.setVisible(true,true);vault.failRemove=true;mac.disconnect();queue.pump();
     check(mac.presentation().statusMessage=="无法更新钥匙串，请重试","Mac wording keeps the Keychain text for oracle replays");
 }
+// SKPORT (global) writes no Shumei device key: its official login completes
+// with a signing token and no device; the mainland site still requires both.
+void globalWithoutDevice() {
+    double now=800000000;FakeAPI api;api.now=[&]{return now;};FakeVault vault;ManualQueue queue;
+    h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
+    h::HypergryphAccountController c(api,vault,queue,nullptr,nullptr,nullptr,nullptr,o);
+    c.setVisible(true,true);c.acceptLogin("SYNTHETIC-G",h::Region::global,"synthetic-t",std::nullopt);queue.pump();
+    const auto saved=vault.values.find(h::Region::global);
+    check(saved!=vault.values.end()&&saved->second.signingToken=="synthetic-t"&&!saved->second.deviceID,"A global token without a device is saved as issued");
+    check(api.pending.size()==1&&api.pending.front().kind=="bindings","The saved global session reads bindings without a refresh");
+    FakeAPI mainlandAPI;mainlandAPI.now=[&]{return now;};FakeVault mainlandVault;
+    h::HypergryphAccountController m(mainlandAPI,mainlandVault,queue,nullptr,nullptr,nullptr,nullptr,o);
+    m.setVisible(true,true);m.acceptLogin("SYNTHETIC-M",h::Region::mainland,"synthetic-t",std::nullopt);queue.pump();
+    check(mainlandVault.values.empty()&&mainlandAPI.pending.empty()&&!m.record().linked,"A mainland token without its device is rejected");
+}
 void avatarPolicy(const Json& rows) {
     for(const auto& row:rows.array()) check(h::avatarURLAllowed(row["url"].string())==row["allowed"].boolean(),"Avatar host allowlist matches Mac: "+row["url"].string());
 }
@@ -599,7 +614,7 @@ int main(int argc,char** argv) {
         check(argc==2,"Pass tests/fixtures/hypergryph-account-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
-        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();cacheFields();perFieldSync();
+        replay(fixture["controller"]);lifecycle();guardWake();vaultWording();globalWithoutDevice();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();cacheFields();perFieldSync();
         importedCache(fixture["controller"]);showSanity(fixture["controller"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account controller checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}

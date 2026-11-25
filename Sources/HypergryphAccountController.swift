@@ -310,10 +310,11 @@ final class HypergryphAccountController {
                 self.commitLoginCredentials(credentials, region: region, token: token, mutation: mutation)
             }
         }
-        if let signingToken, let deviceID {
+        if let signingToken, deviceID != nil || HypergryphAccountLoginPolicy.deviceOptional(region) {
+            // SKPORT (global) issues no Shumei device ID; mainland still requires it.
             guard HypergryphAccountLoginPolicy.acceptsCredential(cred),
                   HypergryphAccountLoginPolicy.acceptsCredential(signingToken),
-                  HypergryphAccountLoginPolicy.acceptsCredential(deviceID) else { fail(.invalidCredentials); return }
+                  deviceID.map(HypergryphAccountLoginPolicy.acceptsCredential) ?? true else { fail(.invalidCredentials); return }
             // Official login has already issued this complete signing pair.
             // Preserve it through the existing commit and first reads; rotating
             // it immediately adds a request before it has ever been used.
